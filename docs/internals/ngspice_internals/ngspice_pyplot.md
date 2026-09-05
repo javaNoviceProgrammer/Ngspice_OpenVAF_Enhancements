@@ -41,6 +41,11 @@ If your interpreter is not `python3`, point ngspice at it:
 set pyplot_python=/opt/homebrew/bin/python3.12
 ```
 
+The value is spliced into the command line as you wrote it, so it can carry
+options (`set pyplot_python="/usr/bin/env python3"`); a value that names an
+executable file whose path contains a space (`C:\Program Files\...\python.exe`)
+is passed as one word (E-547).
+
 ---
 
 ## 2. The basics
@@ -99,6 +104,10 @@ respected. The special names `temp` / `tmp` write to a temporary file instead:
 ```
 pyplot temp v(out)
 ```
+
+The folder's name may contain spaces or an apostrophe (`~/My Circuits/`, `it's`): the
+launch quotes the script path for the shell (E-547; before that, such a folder produced
+the `.py` and `.data` and no image).
 
 ---
 
@@ -571,6 +580,31 @@ easiest way to fine-tune a figure for a paper without re-running the simulation.
 python3 rcplot.py
 ```
 
+### 13.1 Did it work? — `pyplot_status`
+
+A hardcopy is waited for, and its exit status is published as the variable
+**`pyplot_status`** (E-547), the way the `shell` command publishes `shellstatus`. A
+non-zero exit is also reported by ngspice itself, naming the image that was not written:
+
+```
+Error: pyplot: python3 exited with status 1; rcplot.png was not written (the script is rcplot.py).
+```
+
+Python's own message (a traceback, `ModuleNotFoundError: No module named 'matplotlib'`)
+precedes it. A missing interpreter reads as status 127. A batch deck can act on it:
+
+```
+pyplot rcplot v(out)
+if $pyplot_status ne 0
+  echo no figure -- see the message above
+  quit 1
+end
+```
+
+An interactive window is launched in the background, where nothing can be waited for;
+`pyplot_status` is 0 for a launch that started, and on POSIX the background shell prints
+`pyplot: the viewer exited with status N` if the viewer later fails.
+
 ---
 
 ## 14. Worked example — one deck, several views
@@ -656,6 +690,7 @@ unset pyplot_style
 | `pyplot_contour_levels` | integer | `-contour` |
 | `pyplot_contour_cmap` | string | `-contour` |
 | `pyplot_contour_lines` | boolean | `-contour` |
+| `pyplot_status` | integer, **read** by the deck | set by every `pyplot`: the exit status of a hardcopy (E-547) |
 
 ---
 
@@ -666,7 +701,9 @@ headless machine there is nowhere to draw it. Set `pyplot_terminal=png` and
 `pyplot_backend=Agg`.
 
 **`ModuleNotFoundError: matplotlib`.** The interpreter ngspice used lacks matplotlib. Check
-which one it is and override with `set pyplot_python=...`.
+which one it is and override with `set pyplot_python=...`. Since E-547 ngspice follows the
+traceback with its own line, `Error: pyplot: python3 exited with status 1; NAME.png was not
+written`, and `pyplot_status` holds the status for the deck (§13.1).
 
 **Two plots show the same thing.** Both were given the same explicit base name, so the
 second overwrote the first. Omit the name and let the auto-counter do it, or give distinct

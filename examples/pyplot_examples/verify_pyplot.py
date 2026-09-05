@@ -24,6 +24,19 @@ Enhancement-208:
   [E-208] `pyplot [name] -eye <expr> -ui <T>` runs the `eye` analysis and renders
           the folded eye as a persistence 2-D-histogram eye diagram (hist2d),
           honouring the same pyplot_* settings; the base name defaults to "eye".
+
+Enhancement-547 (the launch: quoting and the exit status):
+  [E-547a] a deck folder with a SPACE in its path renders (the launch used to
+           hand Python the path's first word)
+  [E-547b] a deck folder with an APOSTROPHE renders (the shell used to wait for
+           a closing quote, and the script's own print line broke the same way)
+  [E-547c] an interpreter that exits non-zero is NAMED: "Error: pyplot: ...
+           exited with status 3; <file>.png was not written", and `pyplot_status`
+           reads 3 in the deck (it used to be Python's traceback and nothing else)
+  [E-547d] a missing interpreter: status 127, the same message, no image
+  [E-547e] a success publishes `pyplot_status` = 0
+  [E-547f] `pyplot_python` still carries options (`/usr/bin/env python3`)
+  [E-547g] an interpreter PATH with a space is one word
 """
 import os
 import random
@@ -273,6 +286,103 @@ check("E-208: the generated eye script is a persistence 2-D-histogram (hist2d)",
       "hist2d" in pyeye and "eye height" in pyeye and "matplotlib" in pyeye)
 check("E-208: the no-name form defaults the eye base to 'eye.png'",
       is_png(os.path.join(HERE, "eye.png")))
+
+# ---- Enhancement-547: the launch -- quoting, and the exit status ----
+import shutil
+import stat
+statusdeck = """* pyplot launch probe (Enhancement-547)
+V1 in 0 dc 1
+R1 in 0 1k
+.tran 10u 1m
+.control
+run
+set pyplot_terminal=png
+set pyplot_backend=Agg
+{extra}
+pyplot {name} v(in)
+echo pyplot_status=$pyplot_status
+.endc
+.end
+"""
+def run_deck(path, cwd):
+    r = subprocess.run([NGSPICE, "-b", path], capture_output=True, text=True, cwd=cwd)
+    return r.stdout + r.stderr
+def status_of(log):
+    m = re.search(r"pyplot_status=(-?\d+)", log)
+    return int(m.group(1)) if m else None
+
+e547_dirs = []
+for tag, sub in (("a", "with space"), ("b", "it's")):
+    d = os.path.join(HERE, sub)
+    os.makedirs(d, exist_ok=True)
+    e547_dirs.append(d)
+    deck = os.path.join(d, "probe.sp")
+    with open(deck, "w") as f:
+        f.write(statusdeck.format(extra="", name="probe"))
+    log = run_deck(deck, HERE)
+    png = os.path.join(d, "probe.png")
+    check(f"E-547{tag}: a deck folder named '{sub}' renders (run by absolute path)",
+          is_png(png) and status_of(log) == 0 and "can't open" not in log
+          and "unexpected EOF" not in log and "Error" not in log,
+          log.strip()[-200:])
+
+badpy = os.path.join(HERE, "badpy.sh")
+with open(badpy, "w") as f:
+    f.write("#!/bin/sh\necho 'ModuleNotFoundError: No module named matplotlib' >&2\nexit 3\n")
+os.chmod(badpy, os.stat(badpy).st_mode | stat.S_IXUSR)
+deck = os.path.join(HERE, "status.sp")
+with open(deck, "w") as f:
+    # quoted: an unquoted `set` value is lowercased by ngspice, which a
+    # case-sensitive file system would not forgive
+    f.write(statusdeck.format(extra=f"set pyplot_python=\"{badpy}\"", name="status"))
+log = run_deck(deck, HERE)
+check("E-547c: an interpreter that exits 3 is named, the missing image is named, pyplot_status=3",
+      "Error: pyplot:" in log and "exited with status 3" in log
+      and "status.png was not written" in log and status_of(log) == 3
+      and not os.path.exists(os.path.join(HERE, "status.png")),
+      log.strip()[-240:])
+
+with open(deck, "w") as f:
+    f.write(statusdeck.format(extra="set pyplot_python=no_such_python_xyz", name="status"))
+log = run_deck(deck, HERE)
+check("E-547d: a missing interpreter reports status 127 and no image",
+      "exited with status 127" in log and status_of(log) == 127
+      and not os.path.exists(os.path.join(HERE, "status.png")),
+      log.strip()[-240:])
+
+with open(deck, "w") as f:
+    f.write(statusdeck.format(extra="", name="status"))
+log = run_deck(deck, HERE)
+check("E-547e: a success publishes pyplot_status=0",
+      is_png(os.path.join(HERE, "status.png")) and status_of(log) == 0, log.strip()[-200:])
+
+with open(deck, "w") as f:
+    f.write(statusdeck.format(extra="set pyplot_python=\"/usr/bin/env python3\"", name="status2"))
+log = run_deck(deck, HERE)
+check("E-547f: pyplot_python still carries options (/usr/bin/env python3)",
+      is_png(os.path.join(HERE, "status2.png")) and status_of(log) == 0, log.strip()[-200:])
+
+real_py = shutil.which("python3")
+pydir = os.path.join(HERE, "py dir")
+os.makedirs(pydir, exist_ok=True)
+e547_dirs.append(pydir)
+spaced_py = os.path.join(pydir, "python3")
+if real_py and not os.path.exists(spaced_py):
+    os.symlink(real_py, spaced_py)
+with open(deck, "w") as f:
+    f.write(statusdeck.format(extra=f"set pyplot_python=\"{spaced_py}\"", name="status3"))
+log = run_deck(deck, HERE)
+check("E-547g: an interpreter path with a space is one word",
+      is_png(os.path.join(HERE, "status3.png")) and status_of(log) == 0, log.strip()[-200:])
+
+for d in e547_dirs:
+    shutil.rmtree(d, ignore_errors=True)
+for f in ("badpy.sh", "status.sp", "status.py", "status.data", "status.png",
+          "status2.py", "status2.data", "status2.png",
+          "status3.py", "status3.data", "status3.png"):
+    p = os.path.join(HERE, f)
+    if os.path.exists(p):
+        os.remove(p)
 
 for f in ("two.sp", "dir.sp", "lw.sp", "be.sp",
           "pyplot-2.py", "pyplot-2.data", "pyplot-2.png",

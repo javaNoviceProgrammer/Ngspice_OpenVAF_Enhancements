@@ -14,8 +14,10 @@
 #include "pyplot.h"
 #if defined(__MINGW32__) || defined(_MSC_VER)
 #include <windows.h>
+#include <io.h>          /* _access(): Enhancement-547 */
 #else
 #include <unistd.h>
+#include <sys/wait.h>    /* WIFEXITED/WEXITSTATUS: Enhancement-547 */
 #endif
 #include <locale.h>
 
@@ -34,6 +36,143 @@ quote_python_string(FILE *stream, const char *s)
         fputc(*s, stream);
     }
     fputc('\'', stream);
+}
+
+
+/* Enhancement-547: `print('pyplot: wrote <file>.<fmt>')`, the file name quoted
+   as a Python literal. It used to be spliced raw, so an apostrophe in the path
+   (a deck folder called `it's`) ended the string early and the whole script
+   failed to parse -- after the image had been written, in fact, but with a
+   traceback for a success. */
+static void
+emit_wrote_line(FILE *file, const char *filename, const char *fmt)
+{
+    fprintf(file, "print('pyplot: wrote ' + ");
+    quote_python_string(file, filename);
+    fprintf(file, " + '.%s')\n", fmt);
+}
+
+
+/* Enhancement-547: `s` as ONE argument for the shell that runs the script.
+   POSIX: single-quoted, an embedded quote spelled '\''. Windows (cmd.exe):
+   double-quoted -- a double quote cannot appear in a Windows path. */
+static char *
+shell_quote(const char *s)
+{
+#if defined(__MINGW32__) || defined(_MSC_VER)
+    return tprintf("\"%s\"", s);
+#else
+    size_t n = 2;
+    const char *p;
+    char *out, *q;
+
+    for (p = s; *p; p++)
+        n += (*p == '\'') ? 4 : 1;
+    out = TMALLOC(char, n + 1);
+    q = out;
+    *q++ = '\'';
+    for (p = s; *p; p++) {
+        if (*p == '\'') {
+            memcpy(q, "'\\''", 4);
+            q += 4;
+        } else {
+            *q++ = *p;
+        }
+    }
+    *q++ = '\'';
+    *q = '\0';
+    return out;
+#endif
+}
+
+
+/* Enhancement-547: the interpreter as the user set it. `pyplot_python` is
+   spliced verbatim so that it can carry options (`/usr/bin/env python3`,
+   `python3 -X utf8`) -- unless the whole value names an executable file, in
+   which case it is quoted so that a path with a space (`C:\Program Files\...`)
+   stays one word. */
+static char *
+python_arg(const char *python)
+{
+    if (strchr(python, ' ')) {
+#if defined(_MSC_VER)
+        if (_access(python, 0) == 0)
+#else
+        if (access(python, X_OK) == 0)
+#endif
+            return shell_quote(python);
+    }
+    return copy(python);
+}
+
+
+/* Enhancement-547: run the generated script and judge the outcome.
+ *
+ * The command line used to be built unquoted: with the deck-folder output of
+ * Enhancement-183 a folder named `My Circuits` handed Python the file `My`, an
+ * apostrophe left the shell waiting for a closing quote -- the script and the
+ * data were written, no image was, and ngspice went on. And only a -1 from
+ * system() was ever looked at: a missing interpreter or a missing matplotlib
+ * printed Python's own complaint and nothing else, so a batch deck finished
+ * with exit status 0 and no figure, a silent green in a CI run.
+ *
+ * Now the interpreter and the script path are quoted for the shell (see
+ * shell_quote / python_arg), a hardcopy is waited for and a non-zero exit is
+ * named together with the image that was not written, and `pyplot_status`
+ * carries the status for the deck -- as `shell` publishes `shellstatus` -- so
+ * `if $pyplot_status ne 0` can `quit 1`. A window runs in the background,
+ * where nothing can be waited for; on POSIX the background shell names a
+ * non-zero exit when it happens. */
+static void
+pyplot_run(const char *python, const char *filename, const char *filename_py,
+           bool hardcopy, const char *fmt)
+{
+    char *qpy = python_arg(python);
+    char *qfile = shell_quote(filename_py);
+    char *cmd;
+    int err, status;
+
+#if defined(__MINGW32__) || defined(_MSC_VER)
+    /* cmd.exe strips one outer pair of quotes from a command line that starts
+       with a quote, so the hardcopy line is wrapped in an extra pair; `start`
+       takes its first quoted argument as a window title, hence the "". */
+    if (hardcopy)
+        cmd = tprintf("\"%s %s\"", qpy, qfile);
+    else
+        cmd = tprintf("start /B \"\" %s %s", qpy, qfile);
+    _flushall();
+    err = system(cmd);
+    status = err;                          /* the exit code, or -1 */
+#else
+    if (hardcopy)
+        cmd = tprintf("%s %s", qpy, qfile);
+    else
+        cmd = tprintf("(%s %s || echo \"pyplot: the viewer exited with status $?\" >&2) &",
+                      qpy, qfile);
+    fflush(stdout);
+    fflush(stderr);
+    err = system(cmd);
+    if (err == -1)
+        status = -1;
+    else if (WIFEXITED(err))
+        status = WEXITSTATUS(err);
+    else if (WIFSIGNALED(err))
+        status = 128 + WTERMSIG(err);
+    else
+        status = err;
+#endif
+
+    if (status == -1)
+        fprintf(cp_err, "Error: pyplot could not run '%s'.\n", cmd);
+    else if (hardcopy && status != 0)
+        fprintf(cp_err, "Error: pyplot: %s exited with status %d; %s.%s was not "
+                "written (the script is %s).\n",
+                python, status, filename, fmt, filename_py);
+    cp_vset("pyplot_status", CP_NUM, &status);
+
+    tfree(cmd);
+    tfree(qpy);
+    tfree(qfile);
 }
 
 
@@ -69,7 +208,7 @@ void ft_pyplot(double *xlims, double *ylims,
     const bool fft  = (mode == PYMODE_FFT);
     FILE *file, *file_data;
     struct dvec *v;
-    int i, col, numVecs, err, nper, nrows, row;
+    int i, col, numVecs, nper, nrows, row;
     bool xlog, ylog, nogrid, markers, boxes, have_style, have_figsize;
     char pointstyle[BSIZE_SP], terminal[BSIZE_SP], python[BSIZE_SP], style[BSIZE_SP];
     char figsize[BSIZE_SP], fmt[16];
@@ -85,7 +224,6 @@ void ft_pyplot(double *xlims, double *ylims,
     /* Enhancement-183: hold a full directory path (the deck's folder) + base
        name, not just a bare "pyplot.data" -- 128 was too small for a path. */
     char filename_data[1024], filename_py[1024];
-    char buf[2 * 1024 + BSIZE_SP];
     char *text;
     double figw = 0.0, figh = 0.0;
     bool hardcopy = FALSE;
@@ -542,7 +680,7 @@ void ft_pyplot(double *xlims, double *ylims,
         quote_python_string(file, filename);
         fprintf(file, " + '.%s', dpi=%d%s)\n", fmt, dpi,
                 transparent ? ", transparent=True" : "");
-        fprintf(file, "print('pyplot: wrote %s.%s')\n", filename, fmt);
+        emit_wrote_line(file, filename, fmt);
     } else {
         /* Enhancement-299/300: an interactive cursor, kept in a variable so it is
            not garbage-collected before the event loop runs. `pyplot_mplcursors`
@@ -567,22 +705,7 @@ void ft_pyplot(double *xlims, double *ylims,
     }
     (void) fclose(file);
 
-    /* Run it: synchronously for a PNG, in the background for a window. */
-#if defined(__MINGW32__) || defined(_MSC_VER)
-    if (hardcopy)
-        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
-    else
-        (void) snprintf(buf, sizeof(buf), "start /B %s %s", python, filename_py);
-    _flushall();
-#else
-    if (hardcopy)
-        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
-    else
-        (void) snprintf(buf, sizeof(buf), "%s %s &", python, filename_py);
-#endif
-    err = system(buf);
-    if (err == -1)
-        fprintf(cp_err, "Error: could not run '%s'.\n", buf);
+    pyplot_run(python, filename, filename_py, hardcopy, fmt);
 
 #ifdef SHARED_MODULE
     setlocale(LC_NUMERIC, llocale);
@@ -601,13 +724,12 @@ ft_pyplot_contour(const char *filename, const char *title, struct dvec *vecs)
 {
     FILE *file, *file_data;
     struct dvec *z, *x, *y;
-    int i, n, numVecs, err;
+    int i, n, numVecs;
     bool hardcopy = FALSE, have_style, have_figsize, have_backend, lines;
     int levels;
     char terminal[BSIZE_SP], python[BSIZE_SP], style[BSIZE_SP];
     char figsize[BSIZE_SP], backend[BSIZE_SP], cmap[BSIZE_SP], fmt[16];
     char filename_data[1024], filename_py[1024];
-    char buf[2 * 1024 + BSIZE_SP];
     double figw = 0.0, figh = 0.0;
 
 #ifdef SHARED_MODULE
@@ -770,28 +892,13 @@ ft_pyplot_contour(const char *filename, const char *title, struct dvec *vecs)
         fprintf(file, "fig.savefig(");
         quote_python_string(file, filename);
         fprintf(file, " + '.%s', dpi=110)\n", fmt);
-        fprintf(file, "print('pyplot: wrote %s.%s')\n", filename, fmt);
+        emit_wrote_line(file, filename, fmt);
     } else {
         fprintf(file, "plt.show()\n");
     }
     (void) fclose(file);
 
-    /* run it: synchronously for a file, in the background for a window. */
-#if defined(__MINGW32__) || defined(_MSC_VER)
-    if (hardcopy)
-        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
-    else
-        (void) snprintf(buf, sizeof(buf), "start /B %s %s", python, filename_py);
-    _flushall();
-#else
-    if (hardcopy)
-        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
-    else
-        (void) snprintf(buf, sizeof(buf), "%s %s &", python, filename_py);
-#endif
-    err = system(buf);
-    if (err == -1)
-        fprintf(cp_err, "Error: could not run '%s'.\n", buf);
+    pyplot_run(python, filename, filename_py, hardcopy, fmt);
 
 #ifdef SHARED_MODULE
     setlocale(LC_NUMERIC, llocale);
@@ -811,12 +918,11 @@ ft_pyplot_smith(const char *filename, const char *title, struct dvec *vecs)
 {
     FILE *file, *file_data;
     struct dvec *d;
-    int i, vi, numVecs, err;
+    int i, vi, numVecs;
     bool hardcopy = FALSE, have_style, have_figsize, have_backend;
     char terminal[BSIZE_SP], python[BSIZE_SP], style[BSIZE_SP];
     char figsize[BSIZE_SP], backend[BSIZE_SP], fmt[16];
     char filename_data[1024], filename_py[1024];
-    char buf[2 * 1024 + BSIZE_SP];
     double figw = 0.0, figh = 0.0;
 
 #ifdef SHARED_MODULE
@@ -957,28 +1063,13 @@ ft_pyplot_smith(const char *filename, const char *title, struct dvec *vecs)
         fprintf(file, "fig.savefig(");
         quote_python_string(file, filename);
         fprintf(file, " + '.%s', dpi=110)\n", fmt);
-        fprintf(file, "print('pyplot: wrote %s.%s')\n", filename, fmt);
+        emit_wrote_line(file, filename, fmt);
     } else {
         fprintf(file, "plt.show()\n");
     }
     (void) fclose(file);
 
-    /* run it: synchronously for a file, in the background for a window. */
-#if defined(__MINGW32__) || defined(_MSC_VER)
-    if (hardcopy)
-        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
-    else
-        (void) snprintf(buf, sizeof(buf), "start /B %s %s", python, filename_py);
-    _flushall();
-#else
-    if (hardcopy)
-        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
-    else
-        (void) snprintf(buf, sizeof(buf), "%s %s &", python, filename_py);
-#endif
-    err = system(buf);
-    if (err == -1)
-        fprintf(cp_err, "Error: could not run '%s'.\n", buf);
+    pyplot_run(python, filename, filename_py, hardcopy, fmt);
 
 #ifdef SHARED_MODULE
     setlocale(LC_NUMERIC, llocale);
@@ -998,12 +1089,11 @@ ft_pyplot_ac(const char *filename, const char *title, struct dvec *vecs, int ac_
 {
     FILE *file, *file_data;
     struct dvec *d;
-    int i, vi, numVecs, err;
+    int i, vi, numVecs;
     bool hardcopy = FALSE, have_style, have_figsize, have_backend;
     char terminal[BSIZE_SP], python[BSIZE_SP], style[BSIZE_SP];
     char figsize[BSIZE_SP], backend[BSIZE_SP], fmt[16];
     char filename_data[1024], filename_py[1024];
-    char buf[2 * 1024 + BSIZE_SP];
     double figw = 0.0, figh = 0.0;
     const char *modename = ac_mode == AC_BODE ? "-bode"
                          : ac_mode == AC_NYQUIST ? "-nyquist" : "-polar";
@@ -1167,27 +1257,13 @@ ft_pyplot_ac(const char *filename, const char *title, struct dvec *vecs, int ac_
         fprintf(file, "fig.savefig(");
         quote_python_string(file, filename);
         fprintf(file, " + '.%s', dpi=110)\n", fmt);
-        fprintf(file, "print('pyplot: wrote %s.%s')\n", filename, fmt);
+        emit_wrote_line(file, filename, fmt);
     } else {
         fprintf(file, "plt.show()\n");
     }
     (void) fclose(file);
 
-#if defined(__MINGW32__) || defined(_MSC_VER)
-    if (hardcopy)
-        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
-    else
-        (void) snprintf(buf, sizeof(buf), "start /B %s %s", python, filename_py);
-    _flushall();
-#else
-    if (hardcopy)
-        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
-    else
-        (void) snprintf(buf, sizeof(buf), "%s %s &", python, filename_py);
-#endif
-    err = system(buf);
-    if (err == -1)
-        fprintf(cp_err, "Error: could not run '%s'.\n", buf);
+    pyplot_run(python, filename, filename_py, hardcopy, fmt);
 
 #ifdef SHARED_MODULE
     setlocale(LC_NUMERIC, llocale);
@@ -1218,12 +1294,11 @@ ft_pyplot_eye(const char *filename, const char *expr)
 {
     FILE *file, *file_data;
     struct dvec *ew, *et;
-    int i, err;
+    int i;
     bool hardcopy = FALSE, have_style, have_figsize, have_backend, dark;
     char terminal[BSIZE_SP], python[BSIZE_SP], style[BSIZE_SP];
     char figsize[BSIZE_SP], backend[BSIZE_SP], fmt[16];
     char filename_data[1024], filename_py[1024];
-    char buf[2 * 1024 + BSIZE_SP];
     double figw = 0.0, figh = 0.0;
     double ui, thr, eh, ewid, ewb, jr, amp;
     const char *acol, *wcol, *lcol;   /* annotation colours (theme-aware) */
@@ -1376,28 +1451,13 @@ ft_pyplot_eye(const char *filename, const char *expr)
         fprintf(file, "fig.savefig(");
         quote_python_string(file, filename);
         fprintf(file, " + '.%s', dpi=110)\n", fmt);
-        fprintf(file, "print('pyplot: wrote %s.%s')\n", filename, fmt);
+        emit_wrote_line(file, filename, fmt);
     } else {
         fprintf(file, "plt.show()\n");
     }
     (void) fclose(file);
 
-    /* run it: synchronously for a file, in the background for a window. */
-#if defined(__MINGW32__) || defined(_MSC_VER)
-    if (hardcopy)
-        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
-    else
-        (void) snprintf(buf, sizeof(buf), "start /B %s %s", python, filename_py);
-    _flushall();
-#else
-    if (hardcopy)
-        (void) snprintf(buf, sizeof(buf), "%s %s", python, filename_py);
-    else
-        (void) snprintf(buf, sizeof(buf), "%s %s &", python, filename_py);
-#endif
-    err = system(buf);
-    if (err == -1)
-        fprintf(cp_err, "Error: could not run '%s'.\n", buf);
+    pyplot_run(python, filename, filename_py, hardcopy, fmt);
 
 #ifdef SHARED_MODULE
     setlocale(LC_NUMERIC, llocale);
