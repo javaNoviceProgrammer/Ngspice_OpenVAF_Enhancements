@@ -122,7 +122,6 @@ impl ModuleInfo {
                     if declarations.in_block() {
                         continue;
                     }
-                    let path = declarations.to_path(name);
                     let units = units
                         .and_then(|attr| {
                             let lit = attr.val().and_then(|e| e.as_str_literal());

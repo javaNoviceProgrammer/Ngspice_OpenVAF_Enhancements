@@ -2780,9 +2780,13 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
             BuiltIn::idt | BuiltIn::idtmod if self.ctx.no_equations => {
                 match signature {
-                    // IDTMOD_NO_IC: the ic defaults to 0 (LRM 4.5.5), so 0 is
-                    // exact here, and args has no [1] to read anyway.
-                    IDT_NO_IC | IDTMOD_NO_IC => F_ZERO,
+                    // The no-ic form of either built-in: the ic defaults to 0
+                    // (LRM 4.5.5), so 0 is exact here, and args has no [1] to
+                    // read anyway. IDT_NO_IC and IDTMOD_NO_IC are both the first
+                    // signature of their group, i.e. the same value, so one
+                    // pattern covers idt and idtmod alike (a second alternative
+                    // was an unreachable pattern).
+                    IDT_NO_IC => F_ZERO,
                     _ => self.lower_expr(args[1]),
                 }
             }

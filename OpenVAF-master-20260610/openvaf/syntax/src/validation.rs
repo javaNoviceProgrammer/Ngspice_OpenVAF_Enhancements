@@ -3,7 +3,7 @@ use tokens::SyntaxKind;
 use tokens::SyntaxKind::NET_TYPE;
 
 use crate::ast::{
-    self, support, ArgListOwner, AttrsOwner, BlockItem, ConstraintValue, Expr, FunctionItem,
+    self, support, ArgListOwner, BlockItem, ConstraintValue, Expr, FunctionItem,
     LiteralKind, ModulePortKind, ModulePorts, Name, PathSegmentKind,
 };
 use crate::name::{kw, kw_comp};
