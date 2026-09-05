@@ -274,7 +274,11 @@ second run. A **model** parameter is one draw per model card per trial
 (process — instances sharing the card move in lockstep), an **instance**
 parameter (`(* type="instance" *)`) draws independently per instance
 (mismatch). Draws are pure functions of `(mcseed, trial, owner name,
-param id)`, so a deck re-runs bit-identically; `alter`/`altermod` recenter a
+param id)`, so a deck re-runs bit-identically — and inside `montecarlo`,
+`highsigma` and `wcd` the trial gives way to the command's `-seed` (1 by
+default) and the sample number counted from its start, so a seeded loop
+command replays the same draws whatever ran before it (2026-09-05 hunt,
+F13); `alter`/`altermod` recenter a
 parameter's nominal (machine writes — `.dc` parameter sweeps, the `sweep`
 command's points and restores, sensitivity perturbations — deliberately do
 not); dropping the option restores nominals on the next run;
@@ -356,7 +360,18 @@ fold that deterministic point into the yield and its confidence interval.
 **`-seed` varies the osdimc draws**, so independent replications really are
 independent (it keyed only the netlist PRNG before, and every "independent"
 run returned the same points — which made an estimate look perfectly stable
-when nothing had been re-sampled). **`-lhs` says so** when it cannot reach
+when nothing had been re-sampled). Since the 2026-09-05 hunt (F13) the seed
+also *pins* them: E-537 had left the session-wide trial counter in the key,
+so `montecarlo 3 -seed 1` run twice reproduced the netlist `agauss` values
+and not the model-declared ones, and `highsigma … -seed 3` gave a different
+estimate before and after a `reset`. A loop command now keys its
+model-declared draws on `(-seed, sample number)`, the seed defaulting to 1
+exactly as the netlist half's always has — so an unseeded run repeats itself
+whole, `-seed 1` equals it, and `montecarlo_seed` regenerates the ensemble;
+`.option osdimc_verbose` shows the pair as `[sample 2 of -seed 1]`. A
+never-run deck on `montecarlo`'s fast path also draws on its first sample
+now (the first run's new circuit pointer used to restart the count at the
+nominal baseline). **`-lhs` says so** when it cannot reach
 model-declared variability: it stratifies the netlist's own `.param` draws
 only. And every sampling command now **excludes samples that did not solve
 and reports them** rather than silently reusing the previous sample's
@@ -480,7 +495,7 @@ text (E-553; [`examples/rawfstring_examples/`](../../examples/rawfstring_example
 | form | meaning |
 |---|---|
 | `r"…"` / `r'…'` | a **raw string**: copied through the deck reader as written — case and spaces kept (also `R`) |
-| `f"…"` / `f'…'` | an **f-string**: every `{expression}` in it is evaluated with the control-language evaluator when the command runs and replaced by its text; `{expr:.3f}`, `{expr:.4g}`, `{expr:e}`, `{expr:d}` format it; a scalar prints with `%g`, a vector as its elements separated by spaces, a complex value as `re,im`; `\{` and `\}` are literal braces. The result is **plain text** — so `let z = f"{…}"`, `set t=f"{…}"`, `alter r1 = f"{2*rr}"`, `if f"{k*3}" = 6`, `setplot f"tran{n}"`, `wrdata f"run{i}.txt"` and a command's numeric option (`-max f"{lim}"`) all take it; a result with whitespace in it is quoted, so it stays one word and the command unquotes it (`set u=rf"{vmax:.3f} V"` stores `0.756 V`) (E-556) |
+| `f"…"` / `f'…'` | an **f-string**: every `{expression}` in it is evaluated with the control-language evaluator when the command runs and replaced by its text; `{expr:.3f}`, `{expr:.4g}`, `{expr:e}`, `{expr:d}` format it; a scalar prints with `%g`, a vector as its elements separated by spaces, a complex value as `re,im`; `\{` and `\}` are literal braces (they do not nest: `{{1+1}}` is refused as such); `{x:d}` prints a whole number beyond a `long` exactly, `:x`/`:u` refuse a negative or too-large value, and a colon tail with no conversion letter (`{x:.3}`) is told what it is missing (2026-09-05 hunt, F12). The result is **plain text** — so `let z = f"{…}"`, `set t=f"{…}"`, `alter r1 = f"{2*rr}"`, `if f"{k*3}" = 6`, `setplot f"tran{n}"`, `wrdata f"run{i}.txt"` and a command's numeric option (`-max f"{lim}"`) all take it; a result with whitespace in it is quoted, so it stays one word and the command unquotes it (`set u=rf"{vmax:.3f} V"` stores `0.756 V`) (E-556) |
 | `rf"…"` / `fr"…"` | both |
 
 ```spice

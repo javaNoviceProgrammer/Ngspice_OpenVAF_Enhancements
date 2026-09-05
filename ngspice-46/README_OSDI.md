@@ -89,7 +89,12 @@ the ordinary parameter setter — **no `reset`, no netlist re-expansion, no
   draws independently per instance (mismatch);
 * draws are **pure functions of (mcseed, trial, owner name, param id)** —
   `.option mcseed=42` makes whole ensembles bit-reproducible, with no
-  hidden RNG state; `resume` never redraws;
+  hidden RNG state; `resume` never redraws; inside `montecarlo`,
+  `highsigma` and `wcd` the trial is replaced by the command's **`-seed`
+  (1 by default) and the sample number** counted from its start, so the
+  same seed replays the same draws whatever ran before it and the
+  published `montecarlo_seed` regenerates an ensemble (the plain run after
+  the command is a fresh trial as ever);
 * `alter`/`altermod` of a statistical parameter **recenters its nominal**
   (machine writes -- `.dc` parameter sweeps, `sweep` points/restores,
   sensitivity perturbations -- deliberately do not, so a sweep can never

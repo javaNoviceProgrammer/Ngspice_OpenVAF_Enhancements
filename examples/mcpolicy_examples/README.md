@@ -102,7 +102,21 @@ restores, a plain netlist `alter`, `wcd`'s β against the closed-form 1.03σ
 from the recentred (1100, 0), `highsigma`'s P(r > 1100) = 0.5, the
 user-`reset` case, and an optimum carried through a `montecarlo`.
 
-`verify_mcpolicy.py` (41 checks, both solvers) pins each behavior with
+The 2026-09-05 hunt's F13 adds checks 42–46: **a loop command's `-seed`
+pins the model-declared draws**. E-537 mixed the seed into the draw key but
+left the session-wide trial counter in it, so `montecarlo 3 -seed 1` run
+twice reproduced the netlist `agauss` values and not the `@mm[r]` draws, a
+seeded `highsigma` gave a different estimate before and after a `reset`,
+and the published `montecarlo_seed` could not regenerate an ensemble. Inside
+`montecarlo`, `highsigma` and `wcd` the key now carries `(-seed, sample
+number counted from the command's start)`, the seed defaulting to 1 as the
+netlist half's always has — so an unseeded run repeats itself whole and
+equals `-seed 1`, the `osdimc_verbose` line shows `[sample 2 of -seed 1]`,
+and a never-run deck on `montecarlo`'s fast path draws on its first sample
+(the first run's new circuit pointer used to restart the count at the
+baseline). The plain run after a loop command is a fresh trial as before.
+
+`verify_mcpolicy.py` (46 checks, both solvers) pins each behavior with
 closed-form expectations computed from the same run's parameter readbacks —
 `v(2) = 1k/(r+dr+1k)` against `@mm[r]`/`@n1[dr]` — plus the deterministic
 mcseed-7 montecarlo discriminators for the init-resident and preserve legs,

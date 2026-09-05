@@ -91,6 +91,11 @@ Enhancement-537 -- a second hunt over the shipped work -- adds [19]-[28]:
        the previous run's answer to the scripts they exist for
   [28] an out-of-range altermod refuses instead of calling controlled_exit --
        a typo used to destroy the session once a dc/tran had run
+  [42]-[46] 2026-09-05 hunt F13: a loop command keys its model-declared draws
+       on (-seed, sample number), so the same seed replays them whatever ran
+       before; an unseeded run is seed 1 like its netlist half; the verbose
+       line names the sample; a never-run deck on montecarlo's fast path
+       draws on its first sample; a seeded highsigma repeats its estimate
 
 Enhancement-538 makes `-scale` scopeable, which is what makes highsigma
 usable on a deck with more than a couple of statistical dimensions; [29]-[33]
@@ -205,13 +210,16 @@ def main():
 
     # [5] BUG 1's pin: montecarlo runs its samples through an internal
     # reset+run, so the draw has to land through OSDIsetup's late apply. The
-    # metric only dips below 0.497 when the draw actually reaches the HOISTED
-    # init code; if it lands too late every sample computes the nominal 0.5 and
-    # nothing violates. So "at least one violation" is exactly the property,
-    # and 0 is the bug. (E-537 hunt J: montecarlo no longer spends a sample on
-    # the nominal baseline, so both samples here are draws.)
+    # metric leaves the band 0.5 +- 0.0005 (a draw more than 2 ohm off the
+    # nominal, on a 100-ohm sigma) only when the draw actually reaches the
+    # HOISTED init code; if it lands too late every sample computes the
+    # nominal 0.5 and nothing violates. So "at least one violation" is exactly
+    # the property, and 0 is the bug. (E-537 hunt J: montecarlo no longer
+    # spends a sample on the nominal baseline, so both samples here are draws;
+    # hunt F13 re-keyed the draws, and the one-sided `-min 0.497` this check
+    # used to have happened to sit above both of the new ones.)
     rc, out = run("mchoist",
-                  "montecarlo 2 -analysis op -spec v(2) -min 0.497")
+                  "montecarlo 2 -analysis op -spec v(2) -min 0.4995 -max 0.5005")
     m = re.search(r"spec 1 \(v\(2\)\): (\d+) violation", out)
     check("montecarlo's internal-reset path reaches init-resident code (bug 1)",
           rc == 0 and m and int(m.group(1)) >= 1,
@@ -728,6 +736,73 @@ def main():
           rc == 0 and "converged" in out and len(r1) == 2 and r1[0] == r1[1]
           and r1[0] != 1000.0,
           f"r1 before/after={r1}")
+
+    # ---- 2026-09-05 hunt F13: a loop command's draws are a function of ----
+    # (seed, sample number), whatever ran before. E-537 mixed -seed into the
+    # key but left the session-wide trial counter in it, so the same seed
+    # replayed the netlist half of a deck and not the model-declared half.
+    print("\n  hunt F13: a loop command's -seed pins the model-declared draws")
+
+    rc, out = run("mcres", "set osdimc_verbose\n"
+                           "montecarlo 3 -analysis op -seed 1 -spec v(2) -max 0.9\n"
+                           "op\nop\n"
+                           "montecarlo 3 -analysis op -seed 1 -spec v(2) -max 0.9")
+    d = re.findall(r"mm:r = ([\d.]+) \(nominal", out)
+    check("[42] the same -seed replays the same osdimc draws after two plain "
+          "runs in between (hunt F13)",
+          rc == 0 and len(d) == 8 and d[0:3] == d[5:8] and d[3] != d[4],
+          f"draws={d} (want [0:3] == [5:8]; the two plain runs between differ)")
+
+    rc, out = run("mcres", "set osdimc_verbose\n"
+                           "montecarlo 3 -analysis op -spec v(2) -max 0.9\n"
+                           "op\n"
+                           "montecarlo 3 -analysis op -spec v(2) -max 0.9\n"
+                           "montecarlo 3 -analysis op -seed 1 -spec v(2) -max 0.9")
+    d = re.findall(r"mm:r = ([\d.]+) \(nominal", out)
+    check("[43] an unseeded run is seed 1 for the model-declared draws too: it "
+          "repeats itself and equals -seed 1 (hunt F13)",
+          rc == 0 and len(d) == 10 and d[0:3] == d[4:7] == d[7:10]
+          and "and the model-declared statistics are drawn from the default "
+              "seed 1, so running this montecarlo again repeats them" in out,
+          f"draws={d}")
+    check("[44] the verbose line says which sample of which seed drew (hunt F13)",
+          "(nominal 1000) [sample 1 of -seed 1]" in out
+          and "(nominal 1000) [sample 3 of -seed 1]" in out,
+          out.strip()[-300:])
+
+    # a deck with a netlist random arms montecarlo's fast path (no per-sample
+    # reset); on a NEVER-RUN deck the first run's new circuit pointer restarted
+    # the trial count, so sample 0 was the nominal baseline (`ro` = 1000)
+    p = os.path.join(HERE, "_f13.cir")
+    with open(p, "w") as f:
+        f.write("f13 fast path\n.option osdimc\n.param rr=agauss(1000,100,3)\n"
+                "v1 1 0 dc 1\nn1 1 2 mm\nr1 2 0 {rr}\n.model mm mcres\n"
+                ".control\npre_osdi mcres.osdi\nset mcseed = 7\nset osdimc_verbose\n"
+                "montecarlo 2 -seed 1 -analysis op -expr ro=@mm[r]\n"
+                ".endc\n.end\n")
+    r = subprocess.run([NGSPICE, "-b", "_f13.cir"], cwd=HERE, capture_output=True,
+                       text=True, timeout=300, errors="replace")
+    os.remove(p)
+    out = r.stdout + r.stderr
+    tl = re.findall(r"osdimc: trial (\d+): mm:r = ([\d.]+) \(nominal 1000\) "
+                    r"\[sample (\d+) of -seed 1\]", out)
+    check("[45] a never-run deck on the fast path draws on its first sample "
+          "(trials 2,3 = samples 1,2; the baseline is skipped) (hunt F13)",
+          r.returncode == 0 and "fast path armed" in out
+          and [(t, s) for t, _, s in tl] == [("2", "1"), ("3", "2")]
+          and all(v != "1000" for _, v, _ in tl),
+          f"fast={'fast path armed' in out} trials={tl}")
+
+    rc, out = run("mcres", "op\nhighsigma 40 -scale 2 -seed 3 -analysis op "
+                           "-metric v(2) -max 0.505\necho p1=$highsigma_pfail\n"
+                           "op\nop\nhighsigma 40 -scale 2 -seed 3 -analysis op "
+                           "-metric v(2) -max 0.505\necho p2=$highsigma_pfail",
+                  timeout=600)
+    p1, p2 = seq(out, "p1"), seq(out, "p2")
+    check("[46] highsigma with a -seed gives the same estimate whatever ran "
+          "before it (hunt F13)",
+          rc == 0 and p1 and p2 and p1 == p2 and p1[0] > 0.0,
+          f"p1={p1} p2={p2}")
 
     print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: "
           f"{passed}/{checks} passed")

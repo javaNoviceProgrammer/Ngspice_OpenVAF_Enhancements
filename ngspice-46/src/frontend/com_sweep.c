@@ -547,18 +547,19 @@ static int sw_boundarg(const char *w, const char *cmd, const char *what, double 
  * which seed it had used. The default stays (a fixed seed pairs the samples
  * across design changes, which is what a comparison wants); the banner now
  * states the seed, and an un-seeded run says what repeating it will do.
- * osdimc draws are keyed per trial and advance across commands (E-537, hunt
- * J), so on such a deck only the netlist's own draws repeat -- say so. */
+ * 2026-09-05 hunt F13: the model-declared (.option osdimc) draws used to be
+ * keyed on the session-wide trial counter and so did NOT repeat -- a run
+ * repeated half of itself. They are now keyed on (seed, sample) like the
+ * netlist's own, so the note can say plainly that everything repeats. */
 static void sw_seed_note(const char *cmd, int seed_given)
 {
     if (seed_given)
         return;
-    fprintf(cp_out, "  NOTE    : no -seed given -- the netlist's random .params are "
+    fprintf(cp_out, "  NOTE    : no -seed given -- the random .params%s are "
                     "drawn from the default seed 1, so running this %s again "
-                    "repeats them%s; give -seed <n> for an independent "
+                    "repeats them; give -seed <n> for an independent "
                     "replication\n",
-            cmd, OSDImcActive() ? " (.option osdimc draws are keyed per trial "
-                                  "and do advance)" : "");
+            OSDImcActive() ? " and the model-declared statistics" : "", cmd);
 }
 
 static int sw_seedarg(const char *w, const char *cmd, unsigned int *out)
@@ -4211,7 +4212,7 @@ void com_highsigma(wordlist *wl)
      * sampling window (each sample keeps advancing the trial -- fresh
      * draws per sample are exactly what this command wants). */
     OSDImcSigmaScale(lambda);
-    if (seed_given) OSDImcSeedOffset(seed);   /* E-537 (hunt P) */
+    OSDImcSeedOffset(seed);   /* E-537 (hunt P); hunt F13: seed 1 by default */
     outp_loop_begin("highsigma", "sample", nsamp, sw_loopbar_mode());   /* Enhancement-477 */
     for (int i = 0; i < nsamp; i++) {
         /* E-536 (hunt bug 17): stop sampling on interrupt -- the next
@@ -4722,7 +4723,7 @@ void com_montecarlo(wordlist *wl)
     int mc_prev_failed = 0;
     sw_reuse_report(NULL, NULL);                 /* zero the tally */
 
-    if (seed_given) OSDImcSeedOffset(seed);   /* E-537 (hunt P) */
+    OSDImcSeedOffset(seed);   /* E-537 (hunt P); hunt F13: seed 1 by default */
     /* E-537 (hunt J): N samples must be N DRAWS. Without this the first sample
      * of a freshly sourced deck was osdimc's nominal baseline -- a deterministic
      * point folded into the yield and its confidence interval, with the
@@ -5285,7 +5286,7 @@ void com_wcd(wordlist *wl)
      * a deterministic MPFP search cannot ride a per-evaluation redraw.
      * Cleared beside every mc_wcd_off() exit. */
     OSDImcHoldTrial(TRUE);
-    if (seed_given) OSDImcSeedOffset(seed);   /* E-537 (hunt P) */
+    OSDImcSeedOffset(seed);   /* E-537 (hunt P); hunt F13: seed 1 by default */
 
     /* --- the nominal point, which also discovers the dimensionality --------
      * How many Gaussian .params a deck draws is not known until it has been

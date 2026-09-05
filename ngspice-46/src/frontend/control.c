@@ -177,21 +177,58 @@ static int fstr_valid_spec(const char *spec, char *conv)
     return 0;
 }
 
-/* format one real with `spec` (NULL: %g) into `out` (of `cap` bytes) */
-static void fstr_format_real(char *out, size_t cap, double v, const char *spec, char conv)
+/* hunt F12: a spec's flags and width, without its precision and conversion
+   -- what a :d that cannot go through a long keeps when it falls back to
+   %.0f. */
+static void fstr_spec_head(const char *spec, char *head, size_t n)
 {
-    char fmt[48];
+    size_t i = 0;
+    while (spec[i] && strchr("-+ #0", spec[i]))
+        i++;
+    while (isdigit((unsigned char) spec[i]))
+        i++;
+    if (i >= n)
+        i = n - 1;
+    memcpy(head, spec, i);
+    head[i] = '\0';
+}
+
+/* format one real with `spec` (NULL: %g) into `out` (of `cap` bytes); 0 when
+   the conversion cannot show the value (reported by the caller) */
+static int fstr_format_real(char *out, size_t cap, double v, const char *spec, char conv)
+{
+    char fmt[48], head[48];
     if (!spec) {
         (void) snprintf(out, cap, "%g", v);
-        return;
+        return 1;
     }
     if (strchr("diuxX", conv)) {
+        /* hunt F12: (long) of a value outside long's range is undefined --
+           arm64 saturates, so {1e20:d} printed 9223372036854775807 in
+           silence (x86 would have printed LONG_MIN). A whole number too big
+           for a long is what :d asked for, so print it exactly through %.0f
+           (and inf/nan as themselves); hex and unsigned conversions have no
+           such rendering, and a negative value in one is a mistake, not a
+           number to wrap. */
+        int fits = isfinite(v) && v < 9223372036854775808.0
+                   && v >= -9223372036854775808.0;
+        if (conv == 'd' || conv == 'i') {
+            if (!fits) {
+                fstr_spec_head(spec, head, sizeof head);
+                (void) snprintf(fmt, sizeof fmt, "%%%s.0f", head);
+                (void) snprintf(out, cap, fmt, v);
+                return 1;
+            }
+        } else if (!fits || v < 0.0) {
+            return 0;
+        }
         (void) snprintf(fmt, sizeof fmt, "%%%.*sl%c", (int) (strlen(spec) - 1), spec, conv);
         (void) snprintf(out, cap, fmt, (long) v);
     } else {
         (void) snprintf(fmt, sizeof fmt, "%%%s", spec);
         (void) snprintf(out, cap, fmt, v);
     }
+    return 1;
 }
 
 /* append `add` to the growable string */
@@ -206,10 +243,12 @@ static void fstr_cat(char **buf, size_t *len, size_t *cap, const char *add)
     *len += n;
 }
 
-/* Evaluate `expr` (with `spec`, NULL for none) and append its text. 0 on an
-   expression that resolves to nothing. */
+/* Evaluate `expr` (with `spec`, NULL for none) and append its text.
+   1: appended; 0: the expression resolves to nothing; -1: it does, but the
+   format cannot show the value (hunt F12; reported here, with the value). */
 static int fstr_eval_one(char **buf, size_t *len, size_t *cap,
-                         const char *expr, const char *spec, char conv)
+                         const char *expr, const char *spec, char conv,
+                         const char *word)
 {
     struct pnode *pn = ft_getpnames_from_string(expr, TRUE);
     struct dvec *v;
@@ -220,17 +259,30 @@ static int fstr_eval_one(char **buf, size_t *len, size_t *cap,
     v = ft_evaluate(pn);
     if (v && v->v_length >= 1) {
         ok = 1;
-        for (i = 0; i < v->v_length; i++) {
+        for (i = 0; i < v->v_length && ok > 0; i++) {
+            double parts[2];
+            int np = 1, k;
+            if (isreal(v)) {
+                parts[0] = v->v_realdata[i];
+            } else {
+                parts[0] = v->v_compdata[i].cx_real;
+                parts[1] = v->v_compdata[i].cx_imag;
+                np = 2;
+            }
             if (i > 0)
                 fstr_cat(buf, len, cap, " ");
-            if (isreal(v)) {
-                fstr_format_real(num, sizeof num, v->v_realdata[i], spec, conv);
-                fstr_cat(buf, len, cap, num);
-            } else {
-                fstr_format_real(num, sizeof num, v->v_compdata[i].cx_real, spec, conv);
-                fstr_cat(buf, len, cap, num);
-                fstr_cat(buf, len, cap, ",");
-                fstr_format_real(num, sizeof num, v->v_compdata[i].cx_imag, spec, conv);
+            for (k = 0; k < np; k++) {
+                if (k > 0)
+                    fstr_cat(buf, len, cap, ",");
+                if (!fstr_format_real(num, sizeof num, parts[k], spec, conv)) {
+                    fprintf(cp_err, "Error: f-string %s: {%s:%s}: %g cannot be "
+                                    "shown as %s (use :d for a whole number or "
+                                    ":g for any); the command is not run\n",
+                            word, expr, spec, parts[k],
+                            conv == 'u' ? "unsigned" : "hex");
+                    ok = -1;
+                    break;
+                }
                 fstr_cat(buf, len, cap, num);
             }
         }
@@ -239,6 +291,42 @@ static int fstr_eval_one(char **buf, size_t *len, size_t *cap,
         vec_free(v);
     free_pnode(pn);
     return ok;
+}
+
+/* hunt F12: `{1+1:.3}` is not a format (a format ends with a conversion
+   letter), so the colon is handed to the expression, which then fails. When
+   the tail after the colon has a format's shape -- flags, width, precision
+   and at most one letter, which is then not a conversion -- say so. 1 when a
+   hint was written. */
+static int fstr_spec_hint(const char *spec, char *hint, size_t n)
+{
+    const char *p = spec;
+    if (*p == ' ')      /* `a ? 1 : 2` -- a ternary's tail, not a format */
+        return 0;
+    while (*p == '-' || *p == '+' || *p == ' ' || *p == '#' || *p == '0')
+        p++;
+    while (isdigit((unsigned char) *p))
+        p++;
+    if (*p == '.') {
+        p++;
+        while (isdigit((unsigned char) *p))
+            p++;
+    }
+    if (p == spec)
+        return 0;
+    if (!*p) {
+        (void) snprintf(hint, n, "; if ':%s' was meant as a format, it needs a "
+                                 "conversion letter (e, f, g, d, i, u, x, X): "
+                                 ":%sf", spec, spec);
+        return 1;
+    }
+    if (isalpha((unsigned char) *p) && !p[1]) {
+        (void) snprintf(hint, n, "; if ':%s' was meant as a format, '%c' is not a "
+                                 "conversion letter (e, f, g, d, i, u, x, X)",
+                        spec, *p);
+        return 1;
+    }
+    return 0;
 }
 
 /* The body of one f-string (between the quotes) to its text; NULL on error,
@@ -258,8 +346,8 @@ static char *fstr_expand(const char *body, const char *word)
             p += 2;
         } else if (*p == '{') {
             const char *q = p + 1, *colon = NULL;
-            int depth = 1, par = 0;
-            char *expr, *spec = NULL, conv = 0;
+            int depth = 1, par = 0, rc;
+            char *expr, *spec = NULL, *tail = NULL, conv = 0;
             while (*q && depth > 0) {
                 if (*q == '{') depth++;
                 else if (*q == '}') { depth--; if (depth == 0) break; }
@@ -277,28 +365,49 @@ static char *fstr_expand(const char *body, const char *word)
                 spec = copy(colon + 1);
                 spec[q - colon - 1] = '\0';
                 if (!fstr_valid_spec(spec, &conv)) {
-                    /* not a format: the colon belongs to the expression */
-                    tfree(spec);
+                    /* not a format: the colon belongs to the expression;
+                       hunt F12: kept for the hint below */
+                    tail = spec;
                     spec = NULL;
                     colon = NULL;
                 }
             }
             expr = copy(p + 1);
             expr[(colon ? colon : q) - (p + 1)] = '\0';
-            if (!expr[0]) {
-                fprintf(cp_err, "Error: f-string %s: an empty {}\n", word);
-                tfree(expr); if (spec) tfree(spec); tfree(out);
-                return NULL;
+            {
+                const char *e = expr;
+                while (*e == ' ' || *e == '\t')
+                    e++;
+                if (!*e) {      /* hunt F12: `{ }` is as empty as `{}` */
+                    fprintf(cp_err, "Error: f-string %s: an empty {}\n", word);
+                    rc = -1;
+                } else if (*e == '{') {  /* hunt F12: `{{1+1}}` named vector `{1` */
+                    fprintf(cp_err, "Error: f-string %s: {%s}: braces do not nest "
+                                    "-- an expression cannot start with '{' "
+                                    "(write \\{ for a literal brace); the "
+                                    "command is not run\n", word, expr);
+                    rc = -1;
+                } else {
+                    rc = fstr_eval_one(&out, &len, &cap, expr, spec, conv, word);
+                }
             }
-            if (!fstr_eval_one(&out, &len, &cap, expr, spec, conv)) {
+            if (rc == 0) {
+                char hint[160] = "";
+                if (tail)
+                    (void) fstr_spec_hint(tail, hint, sizeof hint);
                 fprintf(cp_err, "Error: f-string %s: {%s} does not evaluate to a value "
-                                "(no such vector or variable in the current plot?); "
-                                "the command is not run\n", word, expr);
-                tfree(expr); if (spec) tfree(spec); tfree(out);
+                                "(no such vector or variable in the current plot?)%s; "
+                                "the command is not run\n", word, expr, hint);
+            }
+            if (rc <= 0) {
+                tfree(expr); if (spec) tfree(spec); if (tail) tfree(tail);
+                tfree(out);
                 return NULL;
             }
             tfree(expr);
             if (spec) tfree(spec);
+            if (tail) tfree(tail);
+            tail = NULL;
             p = q + 1;
         } else if (*p == '}') {
             fprintf(cp_err, "Error: f-string %s: a '}' without a '{' (write \\} for a "

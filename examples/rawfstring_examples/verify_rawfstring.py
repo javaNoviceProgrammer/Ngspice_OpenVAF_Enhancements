@@ -224,6 +224,28 @@ check("[19] E-558: a plain quoted file name is unquoted by wrdata, write and sou
       and not os.path.exists(os.path.join(WORK, '"q 1.txt"')) and "sub-deck-ok" in all_
       and "nosuch.cir: No such file or directory" in all_, all_.strip()[-200:])
 
+# ------------------------------------------------- [20]-[23] hunt F12 ---
+body, all_ = run('''echo f"big {1e20:d} {-1e20:d} {255:x} {255:08X} ok"
+echo f"neg-hex {-1:x}"
+echo f"dbl {{1+1}} braces"
+echo f"space { } braces"
+echo f"prec {1+1:.3}"
+echo f"letter {1+1:.3q}"
+echo r'abc
+echo f"tern {1 > 0 ? 2 : 3} ok"''', "huntf12")
+check("[20] hunt F12: a whole number beyond a long is printed exactly by :d (it saturated to LONG_MAX); a negative one is refused by :x",
+      "big 100000000000000000000 -100000000000000000000 ff 000000FF ok" in body
+      and "{-1:x}: -1 cannot be shown as hex" in all_, body.strip()[-120:])
+check("[21] hunt F12: {{1+1}} says braces do not nest (it named vector `{1`), and { } is an empty {}",
+      "{{1+1}}: braces do not nest" in all_ and 'f"space { } braces": an empty {}' in all_,
+      all_.strip()[-200:])
+check("[22] hunt F12: a format without a conversion letter, or with a wrong one, gets a hint; a ternary's colon does not",
+      "needs a conversion letter (e, f, g, d, i, u, x, X): :.3f" in all_
+      and "'q' is not a conversion letter" in all_ and "tern 2 ok" in body,
+      all_.strip()[-200:])
+check("[23] hunt F12: an unterminated r'... passes through as typed, not re-quoted", "r'abc" in body and 'r"abc' not in body,
+      body.strip()[-80:])
+
 print(f"\n{passed}/{checks} checks passed")
 shutil.rmtree(WORK, ignore_errors=True)
 sys.exit(0 if passed == checks else 1)

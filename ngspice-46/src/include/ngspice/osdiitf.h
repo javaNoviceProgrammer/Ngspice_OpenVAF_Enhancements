@@ -228,8 +228,11 @@ extern void OSDImcSigmaScale(double s);
  * nominal -- the E-531 rule that only user writes recenter. */
 extern void OSDImcMachineWrite(bool on);
 /* E-537 (hunt P): a loop command's own `-seed`, mixed into the draw key so
- * independent replications really are independent. 0 = not given (the draws a
- * deck gets today). */
+ * independent replications really are independent. 2026-09-05 hunt F13:
+ * while a seed is set the key carries the sample number counted from the
+ * call (which also steps past the baseline), so the same seed replays the
+ * same draws whatever ran before; every loop command sets it, 1 by default.
+ * 0 = no loop command in progress (plain runs key on the session trial). */
 extern void OSDImcSeedOffset(unsigned s);
 /* E-537 (hunt O): true while `.option osdimc` is drawing, so a command can say
  * that Latin-hypercube stratification does not cover these draws. */

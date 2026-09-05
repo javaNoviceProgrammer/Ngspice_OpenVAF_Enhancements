@@ -1759,6 +1759,25 @@ static double osdimc_scale = 1.0; /* sigma inflation, 1.0 = off */
  * been re-sampled. Applied only when the user actually passed -seed, so a deck
  * that never mentions it keeps the draws it has today. */
 static uint32_t osdimc_seed_extra;
+/* 2026-09-05 hunt F13: the trial the seeded command started at. E-537 mixed
+ * the command's -seed into the key but left the GLOBAL trial counter in it,
+ * so `montecarlo 3 -seed 1` run twice reproduced the netlist half of a deck
+ * (agauss .params re-seeded from the same seed) and not the model-declared
+ * half (1020.17 / 815.62 / 719.15, then 1213.59 / 1198.65 / 1133.03), and
+ * the published montecarlo_seed could not regenerate an ensemble; what the
+ * draws depended on was the number of run-class commands that had happened
+ * before. Under a seed the key carries the SAMPLE NUMBER -- the trial counted
+ * from the command's start -- so a loop command's draws are a function of
+ * (seed, sample) alone. The counter itself advances exactly as before, so the
+ * plain run after the command is a fresh trial as ever, and an unseeded
+ * command takes seed 1, the same default its netlist half has always had.
+ * Note this makes a run's position in the session irrelevant ONLY inside a
+ * loop command; plain runs keep their fresh-trial-per-run contract. */
+static unsigned long osdimc_seed_trial0;
+static unsigned long osdimc_seed_sample(void) {
+  return osdimc_trial > osdimc_seed_trial0 ? osdimc_trial - osdimc_seed_trial0
+                                           : osdimc_trial;
+}
 
 /* 2026-09-04 MC hunt, F3: WALK mode. `wcd` evaluates the deck at chosen
  * points of standardised normal space; that space held the netlist's
@@ -1789,7 +1808,19 @@ static void osdimc_say_applied(const char *owner, const char *param,
 static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
                               int *nunif);
 
-void OSDImcSeedOffset(unsigned s) { osdimc_seed_extra = (uint32_t) s; }
+void OSDImcSeedOffset(unsigned s) {
+  osdimc_seed_extra = (uint32_t) s;
+  if (s) {
+    /* hunt F13: sample 1 is a draw, never the nominal baseline (E-537 hunt J
+     * gave montecarlo this step; a seeded highsigma/wcd on a fresh deck
+     * spent its first sample on the baseline too), and the samples count
+     * from here. */
+    OSDImcSkipBaseline();
+    osdimc_seed_trial0 = osdimc_trial;
+  } else {
+    osdimc_seed_trial0 = 0;
+  }
+}
 
 /* ===================== E-538: scoped sigma inflation =====================
  *
@@ -1905,8 +1936,16 @@ bool OSDImcActive(void) { return osdimc_enabled(); }
  * count depended on how many run-class commands happened earlier in the
  * session. Idempotent: a sequence already past the baseline is untouched. */
 void OSDImcSkipBaseline(void) {
-  if (osdimc_enabled() && osdimc_trial < 1)
+  if (osdimc_enabled() && osdimc_trial < 1) {
     osdimc_trial = 1;
+    /* hunt F13: on a deck that has never run, OSDImcNewRun meets a NEW
+     * circuit pointer and restarts the count at 0 -- so a montecarlo whose
+     * fast path applied (no per-sample reset to bless the change) still
+     * spent its first sample on the baseline (`ro` = the nominal 1000 in
+     * sample 0). It is the same deck: bless the pointer change. */
+    if (ft_curckt && ft_curckt->ci_ckt && ft_curckt->ci_ckt != osdimc_ckt)
+      osdimc_internal_change = true;
+  }
 }
 
 /* E-535 fix (hunt bug 1): the current trial's draws are NOT in parameter
@@ -1955,6 +1994,7 @@ void OSDImcInterruptReset(void) {
   osdimc_internal_change = false;
   osdimc_scale = 1.0;
   osdimc_seed_extra = 0;          /* E-537 (hunt P) */
+  osdimc_seed_trial0 = 0;         /* hunt F13 */
   osdimc_walk_on = false;         /* MC hunt F3 */
   osdimc_walk_n = 0;
   osdimc_clear_pins();
@@ -2122,8 +2162,12 @@ static uint64_t osdimc_hash_str(const char *s) {
  * drawn. */
 static uint64_t osdimc_kbase(int seed) {
   uint64_t k = osdimc_mix(((uint64_t)(uint32_t)seed << 32) ^ 0x6f7364696d63ull);
-  if (osdimc_seed_extra)
+  if (osdimc_seed_extra) {
+    /* hunt F13: under a loop command's seed the key carries the sample
+     * number, not the session-wide trial */
     k = osdimc_mix(k ^ ((uint64_t)osdimc_seed_extra << 1));
+    return osdimc_mix(k ^ (uint64_t) osdimc_seed_sample());
+  }
   return osdimc_mix(k ^ osdimc_trial);
 }
 
@@ -2622,7 +2666,11 @@ static void osdimc_say_applied(const char *owner, const char *param,
                                const OsdiStatParam *info, double z) {
   char note[64];
   osdimc_dist_note(info, note, sizeof note);
-  if (!osdimc_walk_on)
+  if (!osdimc_walk_on && osdimc_seed_extra)   /* hunt F13: the key's half */
+    printf("osdimc: trial %lu: %s:%s = %g (nominal %g%s) [sample %lu of "
+           "-seed %u]\n", osdimc_trial, owner, param, val, nominal, note,
+           osdimc_seed_sample(), (unsigned) osdimc_seed_extra);
+  else if (!osdimc_walk_on)
     printf("osdimc: trial %lu: %s:%s = %g (nominal %g%s)\n", osdimc_trial,
            owner, param, val, nominal, note);
   else if (info->dist & OSDI_DIST_UNIFORM)

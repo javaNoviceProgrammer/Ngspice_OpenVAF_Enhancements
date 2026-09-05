@@ -309,11 +309,17 @@ nloop:
                double-quoted form, quotes kept, so that cp_unquote() and the
                f-string pass see one spelling; a backslash is kept verbatim. */
             if (cp_string_prefix_tail(buf.s, (size_t) buf.i) > 0) {
+                int open_at = buf.i;
                 push(&buf, '"');
                 while ((c = cp_readchar(&string, cp_inp_cur)) != '\'')
                 {
-                    if ((c == '\n') || (c == EOF) || (c == ESCAPE))
+                    if ((c == '\n') || (c == EOF) || (c == ESCAPE)) {
+                        /* hunt F12: unterminated -- it passes through as
+                           the text it was, not re-quoted (`r'abc` printed
+                           `r"abc`) */
+                        buf.s[open_at] = '\'';
                         goto gotchar;
+                    }
                     push(&buf, c);
                     push(&linebuf, c);
                 }

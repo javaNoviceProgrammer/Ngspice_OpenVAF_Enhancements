@@ -4,7 +4,7 @@
 python3 verify_rawfstring.py
 ```
 
-19 checks, both solvers.
+23 checks, both solvers.
 
 ## The need
 
@@ -48,3 +48,13 @@ double-quoted form; a backslash inside a prefixed string is kept), `cp_unquote`
 in `src/frontend/quote.c` (the prefix is stripped with the quotes), `cp_doglob`
 in `src/frontend/parser/glob.c` (a prefixed word is not brace-expanded) and
 `cp_fstringsubst` in `src/frontend/control.c` (the evaluation, after globbing).
+
+The 2026-09-05 hunt's F12 (checks 20–23) closes the small edges: `{1e20:d}`
+prints the whole number exactly instead of saturating to LONG_MAX (the cast
+to `long` was undefined for it), while `:x` / `:X` / `:u` refuse a negative
+or too-large value rather than wrapping it; `{{1+1}}` is told that braces do
+not nest (the message used to name a vector `{1`), `{ }` is an empty `{}`;
+a colon tail with a format's shape but no conversion letter (`{x:.3}`, or
+`{x:.3q}` with a letter that is not one) gets the hint, a ternary's colon
+does not; and an unterminated `r'abc` passes through as typed instead of
+re-quoted as `r"abc`.
