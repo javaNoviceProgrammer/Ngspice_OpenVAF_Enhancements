@@ -377,6 +377,7 @@ impl ModuleInfo {
                                         uniform,
                                         lognormal,
                                         trunc,
+                                        gated: false,
                                     }),
                                 }
                             }
@@ -410,6 +411,8 @@ impl ModuleInfo {
                             group,
                             is_instance,
                             instance_bounds: false,
+                            given_tested: false,
+                            dynamic_bounds: false,
                             stat,
                         },
                     );
@@ -434,6 +437,15 @@ impl ModuleInfo {
         }
 
         promote_instance_dependent(db, cu, &mut params, &explicit_model, sink);
+
+        // Enhancement-555: which parameters the module tests with $param_given
+        let tested = module_given_tests(db, module);
+        for (param, info) in params.iter_mut() {
+            info.given_tested = tested.contains(param);
+            if let Some(stat) = info.stat.as_mut() {
+                stat.gated = info.given_tested;
+            }
+        }
 
         ModuleInfo { module, params, op_vars, sys_fun_alias }
     }
@@ -499,6 +511,12 @@ fn promote_instance_dependent(
         })
         .collect();
 
+    // Enhancement-555: a bound that reads any module-level parameter may move
+    // after the default was declared; the setup judges such a default.
+    for i in 0..params.len() {
+        params[i].dynamic_bounds = !deps[i].1.is_empty();
+    }
+
     // To a fixpoint: a parameter whose default reads an instance parameter --
     // declared, or promoted by an earlier pass -- is one itself. `via`
     // remembers the read that decided it, for the diagnostic.
@@ -554,6 +572,29 @@ fn promote_instance_dependent(
 /// `roots` of `param`'s init body read -- directly, through the user functions
 /// they call (and those call), and through the function-local parameters (LRM
 /// 4.7.1) any of that reads, whose own defaults are inlined at every use.
+/// Enhancement-555: every parameter the module's analog blocks, or a user
+/// function they call (transitively), test with `$param_given`.
+fn module_given_tests(db: &CompilationDB, module: Module) -> Vec<Parameter> {
+    let mut tests: Vec<Parameter> = Vec::new();
+    let mut seen_funcs: AHashSet<Function> = AHashSet::new();
+    let mut work: Vec<Body> = vec![module.analog_block(db), module.analog_initial_block(db)];
+    while let Some(body) = work.pop() {
+        let bodyref = body.borrow();
+        for param in bodyref.param_given_tests() {
+            if !tests.contains(&param) {
+                tests.push(param);
+            }
+        }
+        let (_, called) = bodyref.param_reads_and_calls(None);
+        for func in called {
+            if seen_funcs.insert(func) {
+                work.push(func.body(db));
+            }
+        }
+    }
+    tests
+}
+
 fn module_param_reads(db: &CompilationDB, param: Parameter, roots: &[ExprId]) -> Vec<Parameter> {
     let mut reads: Vec<Parameter> = Vec::new();
     let mut seen_funcs: AHashSet<Function> = AHashSet::new();
@@ -916,6 +957,14 @@ pub struct ParamInfo {
     /// instance's values -- while resolving it, for an instance parameter; as
     /// a check alone, for a model parameter, which keeps its level.
     pub instance_bounds: bool,
+    /// Enhancement-555: the module tests `$param_given` on this parameter, so
+    /// a machine write that marks it given changes the model's behaviour.
+    pub given_tested: bool,
+    /// Enhancement-555: the `from`/`exclude` bounds read another parameter,
+    /// so the declared default must be judged at setup, when they may have
+    /// moved (a constant range is judged at compile time, lint L027, and a
+    /// constant default outside it is a deliberate "off" state, E-56).
+    pub dynamic_bounds: bool,
     /// `(* std= / std_rel= / dist= *)` statistics for `.option osdimc`
     pub stat: Option<ParamStat>,
 }
@@ -937,6 +986,9 @@ pub struct ParamStat {
     /// Enhancement-554: the Gaussian coordinate is confined to |z| <= trunc
     /// sigmas (rejection with a deterministic sub-key); 0 = untruncated
     pub trunc: f64,
+    /// Enhancement-555: the model tests `$param_given` on the parameter -- the
+    /// simulator draws it only when the deck gives it
+    pub gated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

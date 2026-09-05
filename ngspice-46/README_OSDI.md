@@ -100,7 +100,17 @@ the ordinary parameter setter — **no `reset`, no netlist re-expansion, no
   prints every draw;
 * a draw violating the parameter's Verilog-A `from` range fails that run
   with the device's own range error, exactly as the same `alter` would —
-  the descriptor does not export ranges, so size sigmas accordingly.
+  the descriptor does not export ranges, so size sigmas accordingly;
+* (Enhancement-555) a parameter the model tests with `$param_given` is drawn
+  **only when the deck gives it**: a draw is a write, a write marks the
+  parameter given, and a model that derives an ungiven parameter (BSIM4's
+  `toxp = toxe - dtox`) would switch to its "given" branch instead of
+  varying. The compiler flags such parameters in the side-table
+  (`OSDI_DIST_GATED`); the simulator skips them and says so once. The same
+  enhancement exports a per-descriptor given-flag entry point
+  (`OSDI_PARAM_GIVEN_FNS`, read/set/clear; the descriptor ABI is unchanged,
+  an older object simply has none), through which a `.dc` sweep, the `sweep`
+  command and `unset osdimc` put the flag back as they found it.
 
 Verified end to end by `examples/osdimc_examples/` (measured gauss
 mean/sigma, uniform bounds, relative sigma, mismatch independence,

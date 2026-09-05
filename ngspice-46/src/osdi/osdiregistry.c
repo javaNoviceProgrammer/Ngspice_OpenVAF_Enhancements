@@ -629,6 +629,10 @@ extern OsdiObjectFile load_object_file(const char *input) {
   sym = GET_SYM(handle, "OSDI_STAT_PARAM_TRUNCS");
   const double *stat_param_truncs_base = (const double *)sym;
 
+  /* Optional (Enhancement-555): one given-flag entry point per descriptor */
+  sym = GET_SYM(handle, "OSDI_PARAM_GIVEN_FNS");
+  const void *const *param_given_fns = (const void *const *)sym;
+
   /* Nature / discipline / attribute tables. Every one is optional: a model
    * that declares no custom nature exports none, and an older .osdi exports
    * none either -- both simply fall back to the circuit-wide tolerances. */
@@ -877,6 +881,7 @@ extern OsdiObjectFile load_object_file(const char *input) {
 
         .num_stat_params = n_stat_params,
         .stat_param_infos = stat_params_ptr,
+        .param_given_fn = param_given_fns ? param_given_fns[i] : NULL, /* E-555 */
 
         .num_natures = n_natures,
         .natures = natures_base,

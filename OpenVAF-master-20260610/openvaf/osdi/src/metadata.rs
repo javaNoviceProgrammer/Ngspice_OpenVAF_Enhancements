@@ -233,10 +233,12 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         const DIST_UNIFORM: u32 = 1;
         const DIST_REL: u32 = 2;
         const DIST_LOGNORMAL: u32 = 4; // Enhancement-554
+        const DIST_GATED: u32 = 8; // Enhancement-555: the model tests $param_given on it
         let flags_of = |stat: &ParamStat| {
             u32::from(stat.uniform) * DIST_UNIFORM
                 + u32::from(stat.rel) * DIST_REL
                 + u32::from(stat.lognormal) * DIST_LOGNORMAL
+                + u32::from(stat.gated) * DIST_GATED
         };
         let OsdiCompilationUnit { inst_data, model_data, module, .. } = self;
 

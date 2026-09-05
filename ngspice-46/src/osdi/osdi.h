@@ -203,6 +203,10 @@ typedef struct OsdiParamOpvar {
  * sigma of the logarithm under OSDI_DIST_REL, else an absolute sigma converted
  * at the nominal (s = std / |nominal|) */
 #define OSDI_DIST_LOGNORMAL 4u
+/* bit 3 (Enhancement-555): the model tests $param_given on this parameter --
+ * marking it given switches the model's branch, so the simulator draws it
+ * only when the deck gave it */
+#define OSDI_DIST_GATED 8u
 
 typedef struct OsdiStatParamInfo {
   uint32_t param_id;
@@ -215,6 +219,16 @@ typedef struct OsdiStatParamInfo {
  * (one double per entry in INFOS order: the truncation of the Gaussian
  * coordinate in sigmas, |z| <= trunc; 0 = untruncated; an object without the
  * symbol is read as untruncated). */
+/* Enhancement-555: the per-module given-flag entry point, one per descriptor
+ * in the optional OSDI_PARAM_GIVEN_FNS array (absent from an older object).
+ * op 0 reads the flag (0/1), 1 sets it, 2 clears it; an unknown id returns
+ * 0xFFFFFFFF; `inst == NULL` names the model's card-level flag of an instance
+ * parameter. The descriptor's access() sets the flag on every write, which
+ * is right for `alter` and wrong for a machine write that must leave
+ * givenness as it found it (an osdimc draw, a sweep's restore). */
+typedef uint32_t (*OsdiParamGivenFn)(void *inst, void *model, uint32_t id,
+                                     uint32_t op);
+
 typedef struct OsdiStatParam {
   uint32_t param_id;
   uint32_t dist;

@@ -29,10 +29,14 @@ text the range fold had already claimed, and the two overlapping rewrites panick
 the compiler.
 
 WHAT IS DELIBERATELY NOT CHANGED HERE: a parameter's DEFAULT is still not range
-checked. Enhancement-56 exempted it because CMC-standard models declare a default
-outside the range as the "feature disabled" state (FBH-HBT's `Fb = 0.0 from
-(0.0:inf)`), and enforcing it rejected stock models at setup. Ranges bind supplied
-values, which paramrange_examples covers.
+checked against a CONSTANT range. Enhancement-56 exempted it because CMC-standard
+models declare a default outside the range as the "feature disabled" state
+(FBH-HBT's `Fb = 0.0 from (0.0:inf)`), and enforcing it rejected stock models at
+setup. Ranges bind supplied values, which paramrange_examples covers. Since
+Enhancement-555 a default IS judged against a range that reads ANOTHER parameter
+(`bb = 4 from [aa:8]`): the card `aa=5` moves bb's bound past its default, and
+that is refused -- which is why the settability check below sets `aa=3`, and a
+separate check pins the refusal (paramgiven_examples has the rest).
 
 Exit code 0 = pass.
 """
@@ -151,7 +155,7 @@ def main():
     osdi_f = os.path.join(TMP, "eg_freeze.osdi")
     rc, log = compile_va(os.path.join(HERE, "elab_freeze.va"), osdi_f)
     check("elab_freeze.va compiles", rc == 0, "; ".join(log.strip().splitlines()[:1]))
-    for knob, want_aa, want_i in (("", 2.0, -0.002), ("aa=5", 5.0, -0.005)):
+    for knob, want_aa, want_i in (("", 2.0, -0.002), ("aa=3", 3.0, -0.003)):
         out = run("frz" + (knob or "def").replace("=", ""),
                   f"v1 a 0 dc 1\nn1 a 0 mm\n.model mm freeze({knob})",
                   "op\nprint @n1[seen_aa] i(v1)", osdi_f)
@@ -159,6 +163,12 @@ def main():
               num(out, "@n1[seen_aa]") == want_aa
               and abs((num(out, "i(v1)") or 0) - want_i) < 1e-8,
               f"aa={num(out, '@n1[seen_aa]')} i={num(out, 'i(v1)')}")
+    # Enhancement-555: the default of bb is judged against the bound aa moved
+    out = run("frzaa5", "v1 a 0 dc 1\nn1 a 0 mm\n.model mm freeze(aa=5)",
+              "op\nprint @n1[seen_aa] i(v1)", osdi_f)
+    check(".model mm freeze(aa=5) moves bb's bound past its default 4 and is refused (E-555)",
+          "Parameter bb of 'mm' is out of bounds" in out and num(out, "@n1[seen_aa]") is None,
+          out.strip()[-100:])
     rc, log = compile_text("selfrange", mod("parameter integer p = 4 from [p:8];"))
     check("a range that mentions its own parameter does not crash the compiler",
           not crashed(rc, log), f"rc={rc}")

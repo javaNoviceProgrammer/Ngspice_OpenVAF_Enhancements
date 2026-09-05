@@ -39,6 +39,7 @@ use crate::metadata::OsdiLimFunction;
 
 mod access;
 mod bitfield;
+mod given;
 mod compilation_unit;
 mod inst_data;
 mod metadata;
@@ -178,6 +179,7 @@ pub fn compile<'a>(
                 let cguint = OsdiCompilationUnit::new(&_db, module, &cx, &tys, false);
 
                 cguint.access_function();
+                cguint.param_given_function(); // Enhancement-555
                 if dump_unopt_ir {
                     let mut unoptirs = unoptirs_clone.lock().unwrap();
                     unoptirs.insert((i, access), cx.to_str().to_string());
@@ -334,6 +336,7 @@ pub fn compile<'a>(
         let mut stat_param_counts: Vec<u32> = Vec::new();
         let mut stat_param_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
         let mut stat_param_truncs_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // E-554
+        let mut param_given_fns_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // E-555
         let mut any_trunc = false;
 
         let descriptors: Vec<_> = osdi_modules
@@ -436,6 +439,9 @@ pub fn compile<'a>(
                 }
                 term_short_counts.push(n_ts);
 
+                // Enhancement-555: the given-flag entry point of this module
+                param_given_fns_ll.push(cguint.param_given_function_prototype());
+
                 // Collect declared parameter statistics for this module
                 let stats = cguint.stat_params();
                 stat_param_counts.push(stats.len() as u32);
@@ -459,6 +465,8 @@ pub fn compile<'a>(
             .collect();
 
         cx.export_array("OSDI_DESCRIPTORS", tys.osdi_descriptor, &descriptors, true, false);
+        // Enhancement-555: one given-flag entry point per descriptor, in order
+        cx.export_array("OSDI_PARAM_GIVEN_FNS", cx.ty_ptr(), &param_given_fns_ll, true, false);
         cx.export_val(
             "OSDI_NUM_DESCRIPTORS",
             cx.ty_int(),

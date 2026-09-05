@@ -294,6 +294,40 @@ impl<'ll> OsdiModelData<'ll> {
         bitfield::set_bit(cx, pos, arr_ptr, self.param_given, llbuilder)
     }
 
+    /// Enhancement-555: the counterparts of the two setters above.
+    pub unsafe fn clear_nth_inst_param_given(
+        &self,
+        cx: &CodegenCx<'_, 'll>,
+        pos: u32,
+        ptr: &'ll llvm_sys::LLVMValue,
+        llbuilder: &llvm_sys::LLVMBuilder,
+    ) {
+        let arr_ptr = &*LLVMBuildStructGEP2(
+            NonNull::from(llbuilder).as_ptr(),
+            NonNull::from(self.ty).as_ptr(),
+            NonNull::from(ptr).as_ptr(),
+            0,
+            UNNAMED,
+        );
+        bitfield::clear_bit(cx, pos + self.params.len() as u32, arr_ptr, self.param_given, llbuilder)
+    }
+    pub unsafe fn clear_nth_param_given(
+        &self,
+        cx: &CodegenCx<'_, 'll>,
+        pos: u32,
+        ptr: &'ll llvm_sys::LLVMValue,
+        llbuilder: &llvm_sys::LLVMBuilder,
+    ) {
+        let arr_ptr = &*LLVMBuildStructGEP2(
+            NonNull::from(llbuilder).as_ptr(),
+            NonNull::from(self.ty).as_ptr(),
+            NonNull::from(ptr).as_ptr(),
+            0,
+            UNNAMED,
+        );
+        bitfield::clear_bit(cx, pos, arr_ptr, self.param_given, llbuilder)
+    }
+
     // pub unsafe fn set_param_given(
     //     &self,
     //     cx: &CodegenCx<'_, 'll>,

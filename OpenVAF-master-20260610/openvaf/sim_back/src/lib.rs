@@ -267,6 +267,15 @@ impl<'a> CompiledModule<'a> {
             .copied()
             .filter(|param| !module.params[param].is_instance)
             .collect();
+        // Enhancement-555: a default whose bounds read another parameter is
+        // judged too (the bound may have moved); the E-546 model parameters
+        // judged here always have such bounds.
+        let mut check_default_inst: Vec<_> = inst_params
+            .iter()
+            .copied()
+            .filter(|param| module.params[param].dynamic_bounds)
+            .collect();
+        check_default_inst.extend(checked_per_instance.iter().copied());
         init.intern.insert_param_init(
             db,
             &mut init.func,
@@ -276,6 +285,7 @@ impl<'a> CompiledModule<'a> {
             &inst_params,
             &[],
             &checked_per_instance,
+            &check_default_inst,
         );
 
         // Model setup MIR. Every parameter is resolved here with the model
@@ -286,6 +296,14 @@ impl<'a> CompiledModule<'a> {
         let mut model_param_setup = Function::default();
         let model_params: Vec<_> = module.params.keys().copied().collect();
         let mut model_param_intern = HirInterner::default();
+        let check_default_model: Vec<_> = model_params
+            .iter()
+            .copied()
+            .filter(|param| {
+                let info = &module.params[param];
+                info.dynamic_bounds && !info.instance_bounds
+            })
+            .collect();
         model_param_intern.insert_param_init(
             db,
             &mut model_param_setup,
@@ -295,6 +313,7 @@ impl<'a> CompiledModule<'a> {
             &model_params,
             &instance_bounds,
             &[],
+            &check_default_model,
         );
         cx.cfg.compute(&model_param_setup);
         simplify_cfg(&mut model_param_setup, &mut cx.cfg);

@@ -54,6 +54,8 @@ typedef struct dct_xtarget {
     int          set_id;    /* IFparm id for DEVparam / DEVmodParam */
     int          ptype;     /* IF_REAL or IF_INTEGER */
     double       save;      /* nominal captured at resolution */
+    int          given;     /* Enhancement-555: the OSDI given flag at
+                               resolution (0/1), -1 when not applicable */
 } DCTxtarget;
 
 /* Enhancement-534: point-scale modes. LEGACY is the classic accumulate-by-step

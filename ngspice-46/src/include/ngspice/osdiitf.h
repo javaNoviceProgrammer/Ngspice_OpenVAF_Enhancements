@@ -54,6 +54,7 @@ typedef struct OsdiRegistryEntry {
   uint32_t num_stat_params;
   const void *stat_param_infos;  /* OsdiStatParam records built by the registry from the
                                     .osdi's OSDI_STAT_PARAM_INFOS (+ TRUNCS, E-554) */
+  const void *param_given_fn;    /* E-555: this descriptor's OsdiParamGivenFn, or NULL */
 
   /* Nature / discipline / attribute tables (OSDI_NATURES, OSDI_DISCIPLINES,
    * OSDI_ATTRIBUTES), filled at .osdi load time. The compiler has always
@@ -256,6 +257,13 @@ extern void OSDImcWalk(const double *z, int n);
 extern int  OSDImcWalkNdim(void);
 extern int  OSDImcWalkNuniform(void);
 extern int  OSDImcWalkClamped(void);   /* E-554 */
+/* Enhancement-555: read (op 0), set (1) or clear (2) the given flag of an OSDI
+ * parameter; -1 when the device is not OSDI or its object has no entry point.
+ * `ginst` is a GENinstance* (NULL: the model's card-level flag), `gmodel` a
+ * GENmodel* (NULL: taken from the instance). The ByName form takes the
+ * `@owner[param]` spelling the sweep command uses. */
+extern int  OSDIparamGiven(void *ginst, void *gmodel, int param, int op);
+extern int  OSDIparamGivenByName(const char *knob, int op);
 /* 2026-09-04 hunt, F1: Verilog-A modules whose name is one of ngspice's own
  * (a built-in device's name, or a `.model` type keyword). They are registered
  * but SHADOWED: a `.model` card of that type resolves to the built-in, and

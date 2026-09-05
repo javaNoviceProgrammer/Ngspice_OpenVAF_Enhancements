@@ -276,6 +276,18 @@ not); dropping the option restores nominals on the next run;
 parameter's `from` range fails that run with the device's own range error,
 exactly as the same `alter` would — size the sigmas accordingly.
 
+Two rules since E-555, because a draw is a *write*, and a write marks the
+parameter *given*. A parameter the model tests with `$param_given` and the
+deck never gave is **not drawn**: the draw would switch the model to its
+"given" branch (BSIM4 derives `toxp` from `toxe` unless `toxp` is given, and
+a 0.003 % sigma on it cost 32 % of the drain current) instead of varying it,
+so the simulator says so once — *`mos_va:toxp` is not given by the deck and
+the model tests `$param_given(toxp)` … not drawn. Give it on the card, or
+altermod it, to vary it* — and leaves the parameter alone. And a `.dc`
+sweep, the `sweep` command and `unset osdimc` put the given flag back as
+they found it, so a parameter the deck never gave is not given afterwards
+([`examples/paramgiven_examples/`](../../examples/paramgiven_examples/)).
+
 **Newton step limiting for compiled MOSFETs and BJTs** (F1 of the 2026-09-04
 large-circuit sweep): a Verilog-A model that calls no `$limit` used to run an
 un-limited Newton, so a chain of 100 BSIM4 or PSP103 inverters needed gmin

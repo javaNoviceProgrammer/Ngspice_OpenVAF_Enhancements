@@ -546,6 +546,12 @@ dct_xtarg_add(CKTcircuit *ckt, TRCV *job, int i, GENinstance *inst,
     t->set_id = set_id;
     t->ptype = ptype;
     t->save = 0.0;
+    t->given = -1;
+#ifdef OSDI
+    /* Enhancement-555: remember whether the deck gave the parameter, so the
+     * restore can clear the flag the sweep's writes set */
+    t->given = OSDIparamGiven(inst, mod, set_id, 0);
+#endif
     if (inst) {
         if (!DEVices[type]->DEVask ||
             DEVices[type]->DEVask(ckt, inst, ask_id, &v, NULL) != OK)
@@ -623,6 +629,10 @@ DCTrestoreXParam(CKTcircuit *ckt, TRCV *job, int i)
             (void) DEVices[t->type]->DEVparam(t->set_id, &v, t->inst, NULL);
         else
             (void) DEVices[t->type]->DEVmodParam(t->set_id, &v, t->mod);
+#ifdef OSDI
+        if (t->given == 0)      /* Enhancement-555: back to "not given" */
+            (void) OSDIparamGiven(t->inst, t->mod, t->set_id, 2);
+#endif
     }
     if (job->TRCVxN[i] > 0)
         (void) CKTtemp(ckt);
@@ -1198,6 +1208,16 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                 else
                     job->TRCVvSave[i] = job->TRCVvStart[i];
                 job->TRCVgSave[i] = 1;
+#ifdef OSDI
+                /* Enhancement-555: an OSDI parameter the deck never gave must
+                 * not come back from the sweep marked given -- a model that
+                 * tests $param_given would run its "given" branch for good */
+                {
+                    int q = OSDIparamGiven(pinst, NULL, pid, 0);
+                    if (q >= 0)
+                        job->TRCVgSave[i] = q;
+                }
+#endif
                 /* Enhancement-427: an INTEGER parameter may only be swept over
                  * whole numbers. Rounding happens at the DEVparam boundary, but
                  * the sweep ACCUMULATOR has to stay real (a rounded accumulator
@@ -1943,12 +1963,18 @@ osdi_finish:
             CKTtemp(ckt);
         } else if (job->TRCVvType[i] == PARAM_CODE) {
             /* value restored; the parameter stays marked "given" (the
-               generic DEVparam interface has no way to clear that).
+               generic DEVparam interface has no way to clear that --
+               Enhancement-555: an OSDI device has one, used below).
                Enhancement-427: deliberately NOT checked -- the sweep is over,
                its results are already published, and failing here would turn a
                completed analysis into an error. The value being put back was
                accepted once, so a refusal would itself be the anomaly. */
             (void) DCTsetInstParam(ckt, job, i, job->TRCVvSave[i], 0);
+#ifdef OSDI
+            if (job->TRCVgSave[i] == 0)     /* Enhancement-555 */
+                (void) OSDIparamGiven(job->TRCVvElt[i], NULL,
+                                      job->TRCVvParmId[i], 2);
+#endif
         } else if (job->TRCVvType[i] == XPARAM_CODE) {
             /* Enhancement-534: every target's own nominal back, unchecked */
             DCTrestoreXParam(ckt, job, i);

@@ -67,6 +67,14 @@ impl HirInterner {
     /// model; only the judgement moves, to where the instance's values exist.
     /// An instance parameter with such bounds needs neither list on the
     /// instance side -- it is resolved and checked there like any other.
+    ///
+    /// Enhancement-555: `check_default` names the parameters whose DEFAULT is
+    /// range-checked when the parameter is not given -- those whose bounds
+    /// read another parameter, so the range can have moved since the default
+    /// was declared (`parameter real l = 1.2 from [lmin:inf)` with `lmin`
+    /// altered, swept or drawn). A constant range is judged at compile time
+    /// (lint L027) and a constant default outside it stays the deliberate
+    /// "off" state of Enhancement-56.
     pub fn insert_param_init(
         &mut self,
         db: &CompilationDB,
@@ -77,6 +85,7 @@ impl HirInterner {
         params: &[Parameter],
         unchecked: &[Parameter],
         check_only: &[Parameter],
+        check_default: &[Parameter],
     ) {
         let mut default_vals = if build_stores { vec![GRAVESTONE; params.len()] } else { vec![] };
 
@@ -144,6 +153,37 @@ impl HirInterner {
                     // stock CMC models (diode_cmc, bsimcmg 110, fbh_hbt,
                     // hisimhv, ...) at setup with "parameter out of bounds".
                     let default_val = ctx.lower_expr_body(body.borrow(), 0);
+                    // Enhancement-555: a range that reads another parameter may
+                    // have moved; judge the default against it.
+                    if build_stores
+                        && check_default.contains(&param)
+                        && !unchecked.contains(&param)
+                    {
+                        let exit = ctx.create_block();
+                        {
+                            let mut bctx =
+                                BodyLoweringCtx { ctx: &mut *ctx, body: body.borrow(), path: "" };
+                            bctx.check_param(
+                                default_val,
+                                &bounds,
+                                &[],
+                                ConstraintKind::From,
+                                ops,
+                                invalid,
+                                exit,
+                            );
+                            bctx.check_param(
+                                default_val,
+                                &bounds,
+                                &[],
+                                ConstraintKind::Exclude,
+                                ops,
+                                invalid,
+                                exit,
+                            );
+                        }
+                        ctx.switch_to_block(exit);
+                    }
                     if build_stores {
                         default_vals[i] = ctx.ins().optbarrier(default_val);
                     }
@@ -321,8 +361,8 @@ impl HirInterner {
         // whose bounds read an instance parameter (see `check_only` above).
         // Emitted after the parameters of `params` so that a bound reading one
         // of them sees its resolved value, before the swap below restores the
-        // raw parameter slots. A default is not judged (Enhancement-56), so an
-        // ungiven parameter has nothing to check.
+        // raw parameter slots. Enhancement-555: these bounds read an instance
+        // parameter, so the default is judged as well (`check_default`).
         if build_stores {
             for param in check_only.iter().copied() {
                 let param_val = ctx.use_param(ParamKind::Param(param));
@@ -332,8 +372,9 @@ impl HirInterner {
                 let ops = CmpOps::from_ty(&param.ty(db));
                 let invalid =
                     ctx.dec_callback(CallBackKind::ParamInfo(ParamInfoKind::Invalid, param));
+                let judge_default = check_default.contains(&param);
                 ctx.make_cond(param_given, |ctx, param_given| {
-                    if param_given {
+                    if param_given || judge_default {
                         let exit = ctx.create_block();
                         let mut ctx = BodyLoweringCtx { ctx, body: body.borrow(), path: "" };
                         ctx.check_param(

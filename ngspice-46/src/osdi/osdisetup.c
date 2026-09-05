@@ -22,6 +22,8 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include "ngspice/fteext.h"      /* E-555: ft_curckt for OSDIparamGivenByName */
+#include "ngspice/stringutil.h"  /* E-555: cieq */
 #include <string.h>
 
 /*
@@ -1618,6 +1620,9 @@ typedef struct OsdiMcNominal {
   bool pinned;       /* E-535 fix (hunt bug 14): a machine write owns the
                         value; the draw applier must leave it alone until the
                         writing command's bracket ends */
+  int given;         /* E-555: the given flag when the nominal was captured
+                        (0/1; -1 when the object has no entry point) */
+  bool gated_noted;  /* E-555: the "not drawn" note was printed once */
 } OsdiMcNominal;
 
 static OsdiMcNominal *osdimc_tbl;
@@ -1946,13 +1951,56 @@ static OsdiMcNominal *osdimc_find(const void *owner, uint32_t id) {
   return NULL;
 }
 
-static void osdimc_insert(const void *owner, uint32_t id, double nominal) {
+static void osdimc_insert(const void *owner, uint32_t id, double nominal,
+                          int given) {
   if (osdimc_tbl_len == osdimc_tbl_cap) {
     osdimc_tbl_cap = osdimc_tbl_cap ? 2 * osdimc_tbl_cap : 16;
     osdimc_tbl = TREALLOC(OsdiMcNominal, osdimc_tbl, osdimc_tbl_cap);
   }
-  osdimc_tbl[osdimc_tbl_len++] =
-      (OsdiMcNominal){.owner = owner, .id = id, .nominal = nominal};
+  osdimc_tbl[osdimc_tbl_len++] = (OsdiMcNominal){
+      .owner = owner, .id = id, .nominal = nominal, .given = given};
+}
+
+/* Enhancement-555: the given flag of one parameter through the object's
+ * entry point; -1 when the object has none. */
+static int osdimc_query_given(const OsdiRegistryEntry *entry, void *inst,
+                              void *model, uint32_t id) {
+  OsdiParamGivenFn fn = (OsdiParamGivenFn)entry->param_given_fn;
+  if (!fn)
+    return -1;
+  uint32_t r = fn(inst, model, id, 0);
+  return r == UINT32_MAX ? -1 : (int)r;
+}
+
+/* Enhancement-555: a statistical parameter the model tests with $param_given
+ * and the deck never gave is NOT drawn -- the write that would carry the
+ * draw marks the parameter given, and the model then runs its "given" branch
+ * at the declared default instead of deriving the value it was using (BSIM4:
+ * toxp from toxe). Said once per parameter. */
+static bool osdimc_gated_off(const OsdiStatParam *info, const OsdiMcNominal *e) {
+  return (info->dist & OSDI_DIST_GATED) && e->given == 0;
+}
+
+static void osdimc_say_gated(OsdiMcNominal *e, const char *owner,
+                             const char *param) {
+  if (e->gated_noted)
+    return;
+  e->gated_noted = true;
+  fprintf(stderr,
+          "osdimc: %s:%s is not given by the deck and the model tests "
+          "$param_given(%s): a draw would switch the model to its \"given\" "
+          "branch instead of varying it -- not drawn. Give it on the card, "
+          "or altermod it, to vary it.\n",
+          owner, param, param);
+}
+
+/* Enhancement-555: after a nominal is written back (option off), a parameter
+ * the deck never gave gets its given flag cleared again. */
+static void osdimc_restore_given(const OsdiRegistryEntry *entry, void *inst,
+                                 void *model, uint32_t id, const OsdiMcNominal *e) {
+  OsdiParamGivenFn fn = (OsdiParamGivenFn)entry->param_given_fn;
+  if (fn && e->given == 0)
+    (void)fn(inst, model, id, 2);
 }
 
 static void osdimc_clear_pins(void) {
@@ -2111,7 +2159,8 @@ static void osdimc_capture(const OsdiRegistryEntry *entry, GENmodel *inModel) {
           void *src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
           if (src) {
             memcpy(&val, src, sizeof(double));
-            osdimc_insert(model, id, val);
+            osdimc_insert(model, id, val,
+                          osdimc_query_given(entry, NULL, model, id));
           }
         }
       } else { /* instance parameter */
@@ -2124,7 +2173,8 @@ static void osdimc_capture(const OsdiRegistryEntry *entry, GENmodel *inModel) {
                                       ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
             if (src) {
               memcpy(&val, src, sizeof(double));
-              osdimc_insert(inst, id, val);
+              osdimc_insert(inst, id, val,
+                            osdimc_query_given(entry, inst, model, id));
             }
           }
         }
@@ -2273,6 +2323,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
               OsdiMcNominal *e = osdimc_find(model, id);
               if (e) {
                 osdimc_write(descr, NULL, model, id, e->nominal);
+                osdimc_restore_given(entry, NULL, model, id, e); /* E-555 */
               }
             } else {
               for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
@@ -2281,6 +2332,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
                 OsdiMcNominal *e = osdimc_find(inst, id);
                 if (e) {
                   osdimc_write(descr, inst, model, id, e->nominal);
+                  osdimc_restore_given(entry, inst, model, id, e); /* E-555 */
                 }
               }
             }
@@ -2394,6 +2446,11 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
             continue; /* no nominal (a failed card stays undrawn), or a
                          machine write owns the value (hunt bug 14) */
           }
+          if (osdimc_gated_off(&infos[s], e)) {         /* E-555 */
+            osdimc_say_gated(e, (char *)gen_model->GENmodName,
+                             descr->param_opvar[id].name[0]);
+            continue;
+          }
           double val, z = 0.0;
           if (osdimc_walk_on) {                       /* MC hunt F3 */
             val = osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
@@ -2421,6 +2478,11 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
             void *inst = osdi_instance_data(entry, gen_inst);
             OsdiMcNominal *e = osdimc_find(inst, id);
             if (!e || e->pinned) {
+              continue;
+            }
+            if (osdimc_gated_off(&infos[s], e)) {       /* E-555 */
+              osdimc_say_gated(e, (char *)gen_inst->GENname,
+                               descr->param_opvar[id].name[0]);
               continue;
             }
             double val, z = 0.0;
@@ -2528,14 +2590,14 @@ static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
         int *cnt = (infos[s].dist & OSDI_DIST_UNIFORM) ? nunif : ngauss;
         if (id >= descr->num_instance_params) {
           OsdiMcNominal *e = osdimc_find(model, id);
-          if (e && !e->pinned)
+          if (e && !e->pinned && !osdimc_gated_off(&infos[s], e)) /* E-555 */
             (*cnt)++;
         } else {
           for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
                gen_inst = gen_inst->GENnextInstance) {
             OsdiMcNominal *e =
                 osdimc_find(osdi_instance_data(entry, gen_inst), id);
-            if (e && !e->pinned)
+            if (e && !e->pinned && !osdimc_gated_off(&infos[s], e)) /* E-555 */
               (*cnt)++;
           }
         }
@@ -2571,6 +2633,80 @@ int OSDImcWalkNdim(void) {
 /* E-554: how many walk coordinates the last application held at a `trunc`
  * truncation -- wcd's "zero gradient" has a different meaning then. */
 int OSDImcWalkClamped(void) { return osdimc_walk_clamped; }
+
+/* ======================= Enhancement-555: givenness =======================
+ *
+ * The descriptor's access() marks a parameter given on every write. A `.dc`
+ * or `sweep` of a parameter the deck never gave therefore left it given
+ * after the restore (the built-in devices put their Given flags back; OSDI
+ * had no way to), and a model that picks a default with $param_given ran a
+ * different transistor from then on -- BSIM4 lost 32% of its drain current
+ * after a sweep of toxp on a card that only gave toxe. The compiled object
+ * now exports a per-descriptor entry point (OSDI_PARAM_GIVEN_FNS) that
+ * reads, sets or clears the flag; these are its two callers' faces. */
+int OSDIparamGiven(void *ginst, void *gmodel, int param, int op) {
+  GENinstance *inst = (GENinstance *)ginst;
+  GENmodel *model = gmodel ? (GENmodel *)gmodel : (inst ? inst->GENmodPtr : NULL);
+  if (!model || param < 0 || !osdi_devtype_is_osdi(model->GENmodType))
+    return -1;
+  OsdiRegistryEntry *entry = osdi_reg_entry_model(model);
+  OsdiParamGivenFn fn = (OsdiParamGivenFn)entry->param_given_fn;
+  if (!fn)
+    return -1;
+  uint32_t r = fn(inst ? osdi_instance_data(entry, inst) : NULL,
+                  osdi_model_data(model), (uint32_t)param, (uint32_t)op);
+  return r == UINT32_MAX ? -1 : (int)r;
+}
+
+/* `@owner[param]`: the owner is a model card or an instance of an OSDI
+ * device, the parameter one of the descriptor's names or aliases; anything
+ * else is -1. */
+int OSDIparamGivenByName(const char *knob, int op) {
+  char owner[256], param[256];
+  const char *lb, *rb;
+  CKTcircuit *ckt = (ft_curckt && ft_curckt->ci_ckt) ? ft_curckt->ci_ckt : NULL;
+
+  if (!ckt || !knob || knob[0] != '@')
+    return -1;
+  lb = strchr(knob, '[');
+  rb = lb ? strchr(lb, ']') : NULL;
+  if (!lb || !rb || lb == knob + 1 || rb == lb + 1)
+    return -1;
+  if ((size_t)(lb - knob - 1) >= sizeof owner || (size_t)(rb - lb - 1) >= sizeof param)
+    return -1;
+  memcpy(owner, knob + 1, (size_t)(lb - knob - 1));
+  owner[lb - knob - 1] = '\0';
+  memcpy(param, lb + 1, (size_t)(rb - lb - 1));
+  param[rb - lb - 1] = '\0';
+
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+    const OsdiDescriptor *descr = entry->descriptor;
+    for (GENmodel *gm = ckt->CKThead[type]; gm; gm = gm->GENnextModel) {
+      GENinstance *hit_inst = NULL;
+      bool hit_model = gm->GENmodName && cieq((char *)gm->GENmodName, owner);
+      if (!hit_model) {
+        for (GENinstance *gi = gm->GENinstances; gi; gi = gi->GENnextInstance)
+          if (gi->GENname && cieq((char *)gi->GENname, owner)) {
+            hit_inst = gi;
+            break;
+          }
+        if (!hit_inst)
+          continue;
+      }
+      for (uint32_t id = 0; id < descr->num_params; id++) {
+        const OsdiParamOpvar *po = &descr->param_opvar[id];
+        for (uint32_t k = 0; k <= po->num_alias; k++)
+          if (po->name[k] && cieq(po->name[k], param))
+            return OSDIparamGiven(hit_inst, gm, (int)id, op);
+      }
+      return -1;
+    }
+  }
+  return -1;
+}
 
 int OSDImcWalkNuniform(void) {
   int g, u;
@@ -2653,7 +2789,7 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
           continue;
         if (id >= descr->num_instance_params) {
           OsdiMcNominal *e = osdimc_find(model, id);
-          if (!e || e->pinned)
+          if (!e || e->pinned || osdimc_gated_off(&infos[s], e)) /* E-555 */
             continue;
           /* E-538: weight EXACTLY the dimensions that were inflated. A
            * parameter `-inflate` left out of scope was drawn at its true
@@ -2670,7 +2806,7 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
                gen_inst = gen_inst->GENnextInstance) {
             void *inst = osdi_instance_data(entry, gen_inst);
             OsdiMcNominal *e = osdimc_find(inst, id);
-            if (!e || e->pinned)
+            if (!e || e->pinned || osdimc_gated_off(&infos[s], e)) /* E-555 */
               continue;
             double sc = osdimc_scale_for((char *)gen_inst->GENname,
                                          descr->param_opvar[id].name[0]);

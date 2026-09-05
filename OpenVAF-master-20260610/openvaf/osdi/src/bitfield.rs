@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 use std::mem::size_of;
 
 use llvm_sys::core::{
-    LLVMBuildAnd, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildLoad2, LLVMBuildOr, LLVMBuildStore,
+    LLVMBuildAnd, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildLoad2, LLVMBuildNot, LLVMBuildOr, LLVMBuildStore,
 };
 use llvm_sys::LLVMIntPredicate::{LLVMIntEQ, LLVMIntNE};
 use mir_llvm::{CodegenCx, MemLoc, UNNAMED};
@@ -79,6 +79,27 @@ pub unsafe fn is_set<'ll>(
         NonNull::from(zero).as_ptr(),
         UNNAMED,
     )
+}
+
+/// Enhancement-555: clear one bit -- the given flag of a parameter that a
+/// machine write (an osdimc draw, a sweep's restore) must leave as it found it.
+pub unsafe fn clear_bit<'ll>(
+    cx: &CodegenCx<'_, 'll>,
+    pos: u32,
+    arr_ptr: &'ll llvm_sys::LLVMValue,
+    arr_ty: &'ll llvm_sys::LLVMType,
+    llbuilder: &llvm_sys::LLVMBuilder,
+) {
+    let (ptr, mask) = word_ptr_and_mask(cx, pos, arr_ptr, arr_ty, llbuilder);
+    let mut word = LLVMBuildLoad2(
+        NonNull::from(llbuilder).as_ptr(),
+        NonNull::from(cx.ty_int()).as_ptr(),
+        NonNull::from(ptr).as_ptr(),
+        UNNAMED,
+    );
+    let not_mask = LLVMBuildNot(NonNull::from(llbuilder).as_ptr(), NonNull::from(mask).as_ptr(), UNNAMED);
+    word = LLVMBuildAnd(NonNull::from(llbuilder).as_ptr(), word, not_mask, UNNAMED);
+    LLVMBuildStore(NonNull::from(llbuilder).as_ptr(), word, NonNull::from(ptr).as_ptr());
 }
 
 pub unsafe fn set_bit<'ll>(

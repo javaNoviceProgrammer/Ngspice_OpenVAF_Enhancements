@@ -334,7 +334,10 @@ Its dimensions are the netlist's Gaussian `.params` **and, under
 `.option osdimc`, every Gaussian `(* std *)` parameter of every OSDI model card
 and instance** (MC hunt F3, 2026-09-04): the banner says how many of each, in
 that order in `u`, and holds a uniform `(* dist="uniform" *)` parameter at its
-nominal, since a bounded uniform has no Gaussian coordinate. A lognormal
+nominal, since a bounded uniform has no Gaussian coordinate. A parameter the
+model tests with `$param_given` and the deck did not give is no dimension
+either, and no factor of the `highsigma` weight: it is not drawn at all
+([E-555](../../../enhancements_doc/Enhancement-555.md)). A lognormal
 `(* dist="lognormal" *)` parameter takes its coordinate in the log domain, and a
 truncated one (`(* trunc=n *)`) is clamped at ±n: a boundary that needs more
 than n sigmas of that parameter is unreachable, which is the truth of the

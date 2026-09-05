@@ -3087,6 +3087,7 @@ void com_sweep(wordlist *wl)
     double  inplace_nominal[SW_MAXKNOB];
     int     ninplace_nominal = 0;
     int     inplace_ok[SW_MAXKNOB];  /* Enhancement-438: per-knob capture flag */
+    int     inplace_given[SW_MAXKNOB]; /* Enhancement-555: OSDI given flag, -1 n/a */
     /* Enhancement-409: a WILDCARD knob overwrites many targets whose nominals all
      * differ, so one number cannot undo it. These hold the per-target capture;
      * wild_nominal[j] != NULL marks knob j as the wildcard kind. wild_ckt[j]
@@ -3105,7 +3106,7 @@ void com_sweep(wordlist *wl)
         kname[j] = NULL; kvals[j] = NULL; kscname[j] = NULL;
         wild_nominal[j] = NULL; wild_n[j] = 0; wild_domodel[j] = 0;
         wild_param[j][0] = '\0'; wild_ckt[j] = NULL;
-        wild_leaf[j][0] = '\0'; inplace_ok[j] = 0;
+        wild_leaf[j][0] = '\0'; inplace_ok[j] = 0; inplace_given[j] = -1;
     }
 
     if (sweep_active)                /* re-entered via a .param re-source */
@@ -3383,6 +3384,11 @@ void com_sweep(wordlist *wl)
                     continue;
                 }
                 inplace_ok[nin] = 1;
+#ifdef OSDI
+                /* Enhancement-555: whether the deck gave an OSDI knob, so the
+                 * restore can clear the flag the points set */
+                inplace_given[nin] = OSDIparamGivenByName(kname[j], 0);
+#endif
                 inplace_nominal[nin++] = v;
             }
             ninplace_nominal = nin;      /* Enhancement-438: keep what we got */
@@ -3921,6 +3927,10 @@ cleanup:
                     }
                 } else {
                     sw_set_inplace(kkind[j], kname[j], inplace_nominal[nin]);
+#ifdef OSDI
+                    if (inplace_given[nin] == 0)     /* Enhancement-555 */
+                        (void) OSDIparamGivenByName(kname[j], 2);
+#endif
                 }
             }
             nin++;

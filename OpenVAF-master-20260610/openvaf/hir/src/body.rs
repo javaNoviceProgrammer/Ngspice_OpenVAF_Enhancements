@@ -435,6 +435,29 @@ impl<'a> BodyRef<'a> {
     /// (`dynamic_param_index_refs`) all count as reads. Function-local parameters
     /// (LRM 4.7.1) are returned like any other; the caller decides what a read of
     /// one means.
+    /// Enhancement-555: the parameters whose givenness this body tests with
+    /// `$param_given(p)`. A model that picks a default that way runs a
+    /// different branch once the simulator marks the parameter given, so the
+    /// OSDI side-table says which statistical parameters are tested.
+    pub fn param_given_tests(&self) -> Vec<Parameter> {
+        let mut res = Vec::new();
+        for (expr, call) in self.infere.resolved_calls.iter() {
+            if !matches!(call, inference::ResolvedFun::BuiltIn(BuiltIn::param_given)) {
+                continue;
+            }
+            let hir_def::Expr::Call { ref args, .. } = self.body.exprs[*expr] else { continue };
+            for arg in args.iter() {
+                if let Some(Ty::Param(_, id)) = self.infere.expr_types.get(*arg) {
+                    let param = Parameter { id: *id };
+                    if !res.contains(&param) {
+                        res.push(param);
+                    }
+                }
+            }
+        }
+        res
+    }
+
     pub fn param_reads_and_calls(
         &self,
         roots: Option<&[ExprId]>,
