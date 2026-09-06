@@ -1,0 +1,19 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module nlres (inout electrical a, b);
+parameter real res = 1k from (0:inf);
+parameter real coeff1 = 0.0;
+parameter integer nqsMod = 0 from [0:1];
+generate
+if ($param_given(coeff1) && coeff1 != 0.0)
+  analog V(a, b) <+ res * (1.0 + coeff1 * I(a, b)) * I(a, b);
+else if (res == 0.0)
+  analog V(a, b) <+ 0.0;
+else
+  analog I(a, b) <+ V(a,b)/res;
+endgenerate
+if (nqsMod) begin : nqs
+  electrical GP, BP;
+  analog V(GP, BP) <+ 0.0;
+end
+endmodule

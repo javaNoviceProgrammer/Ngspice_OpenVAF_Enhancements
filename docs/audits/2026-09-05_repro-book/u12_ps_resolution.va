@@ -1,0 +1,20 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module vres(inout electrical p, n);
+parameter string MAT = "poly" from '{"poly","metal"};
+parameter real W = 1.0u from (0.0:inf);
+parameter real L = 2.0u from (0.0:inf);
+parameter real RSH = 100.0;
+(* desc="effective resistance" *) real reff;
+analog begin reff = RSH*L/W; I(p,n) <+ V(p,n)/reff; end
+endmodule
+paramset rp vres;
+parameter real LEN = 2u from [0.5u:5u);
+parameter real WID = 1u;
+.L = LEN; .W = WID;
+endparamset
+paramset rp vres;
+parameter real LEN = 10u from [5u:inf);
+parameter real WID = 1u;
+.L = LEN; .W = WID; .RSH = 90.0;
+endparamset

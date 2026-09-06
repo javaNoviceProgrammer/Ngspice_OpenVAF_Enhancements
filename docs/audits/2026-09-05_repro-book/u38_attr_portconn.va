@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module r(inout electrical p, n);
+analog I(p,n) <+ V(p,n);
+endmodule
+module top(inout electrical n1, n2);
+r r3 ((* port_discipline="electrical" *) n1, n2);
+endmodule

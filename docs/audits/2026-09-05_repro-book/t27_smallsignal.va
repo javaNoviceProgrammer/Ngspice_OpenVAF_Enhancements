@@ -1,0 +1,25 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module noisydiv(inout electrical p, n);
+electrical m, l;
+parameter real R1 = 1k from (0:inf), R2 = 2k from (0:inf), C1 = 1p from [0:inf), L1 = 1n from [0:inf);
+parameter real AF = 1, KF = 1e-24, IS = 1e-15, RHO = 0.3;
+real pw1, pw2, vac, pf, na, n1, n2, n12, Ij;
+analog begin
+  pw1 = 4.0 * `P_K * $temperature / R1;
+  pw2 = 4.0 * `P_K * $temperature / R2;
+  vac = ac_stim("ac", 1.0, 0.5);
+  I(p,m) <+ V(p,m) / R1 + white_noise(pw1) + ac_stim() + ac_stim("ac") + ac_stim("ac", 2.0) + vac;
+  na = white_noise(pw2, "thermal");
+  I(m, n) <+ V(m, n) / R2 + na;
+  I(m, n) <+ C1 * ddt(V(m, n));
+  V(p, l) <+ L1 * ddt(I(p, l));
+  I(l, n) <+ V(l, n) / R2;
+  Ij = IS * (exp(V(p,n) / $vt) - 1);
+  pf = KF * pow(abs(Ij), AF);
+  I(p,n) <+ Ij + white_noise(2 * `P_Q * abs(Ij), "shot") + flicker_noise(pf, 1.0, "flicker") + flicker_noise(pf, 1.0);
+  I(p,n) <+ noise_table('{10, 1e-20, 100, 5e-21, 1e3, 2e-21, 1e4, 1e-21}, "tbl") + noise_table_log('{1, 1e-18, 1e6, 1e-24}) + noise_table("noise_table_input.tbl");
+  n1 = white_noise(1-RHO); n2 = white_noise(1-RHO); n12 = white_noise(RHO);
+  V(m,l) <+ 1e-3*(n1 + n12) + 1e-3*(n2 + n12);
+end
+endmodule

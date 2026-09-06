@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+analog begin
+  @(initial_step) $display("\\\t\\\n\"\123 %m %r", 1500.0);
+  I(a,b) <+ V(a,b);
+end
+endmodule

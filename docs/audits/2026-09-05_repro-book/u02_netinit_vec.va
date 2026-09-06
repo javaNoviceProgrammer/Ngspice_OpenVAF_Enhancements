@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+electrical [0:2] pins = '{2.3,4.5,6.0};
+analog I(a,b) <+ V(a,b) + V(pins[0]);
+endmodule

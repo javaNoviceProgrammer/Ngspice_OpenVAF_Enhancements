@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module drv(inout electrical x, y);
+branch (x, y) br;
+analog I(br) <+ V(br);
+endmodule
+module top(inout electrical m, o);
+electrical q;
+drv d1(m, q);
+analog begin V(o, d1.y) <+ 0.9; V(m) <+ V(d1.x); end
+endmodule

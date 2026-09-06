@@ -1,0 +1,5 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module cell #(parameter real WP = 60u, parameter real LP = 0.15u) (inout electrical a, b);
+analog I(a,b) <+ V(a,b)*WP/LP;
+endmodule

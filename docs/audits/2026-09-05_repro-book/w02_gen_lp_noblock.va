@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+localparam integer sw = 1;
+if (sw) begin : blk electrical x; analog V(x) <+ V(a); end
+analog I(a,b) <+ V(a,b);
+endmodule

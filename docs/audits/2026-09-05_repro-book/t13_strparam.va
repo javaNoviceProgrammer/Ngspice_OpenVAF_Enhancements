@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+parameter string TYPE = "NMOS" from '{"NMOS", "PMOS"};
+parameter string filename = "output.dat" exclude '{""};
+parameter integer dir = 1 from [-1:1] exclude 0;
+parameter real neg_bias = -15.0 exclude (-inf:-50) exclude [0:inf);
+parameter real val1 = 0.0 from (-inf:0];
+analog I(a,b) <+ V(a,b)*dir*(TYPE == "PMOS" ? -1 : 1) + neg_bias*0 + val1;
+endmodule

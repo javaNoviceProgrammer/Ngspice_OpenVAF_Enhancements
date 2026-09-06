@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+`include "constants.vams"
+(* compact *) module rheat (inout electrical d, (* thermal_port *) inout electrical s);
+(* level = 504, channel = "N", level = 505 *) parameter integer lev = 1;
+(* distributed *) electrical [7:0] internal;
+real sum, a1, b1, c1, d1, r, cg;
+analog function real larger; input n1, n2; real n1, n2; larger = (n1 > n2) ? n1 : n2; endfunction
+analog begin
+  a1 = V(d); b1 = V(s); c1 = 1.0; d1 = 2.0;
+  sum = a1 + (* second_argument *) b1;
+  r = b1 ? (* no_glitch *) c1 : d1;
+  cg = larger (* smooth *) (a1, b1);
+  (* an_event *) @(cross(V(d)-0.5)) sum = 0;
+  I(d,s) <+ V(d,s)*lev + 0*(sum + r + cg);
+end
+endmodule
+module top(inout electrical n1, n2);
+(* wide *) rheat mos1 (n1, n2);
+(* override_1 *) defparam mos1.lev = 2;
+(* port_discipline = "electrical" *) rheat mos2 (n1, n2);
+endmodule

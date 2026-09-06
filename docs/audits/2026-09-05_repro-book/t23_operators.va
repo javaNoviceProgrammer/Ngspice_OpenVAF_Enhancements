@@ -1,0 +1,25 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module voicecoil(inout electrical vp, vn, inout kinematic x);
+parameter real Bl = 5.0, Rc = 8.0, Lc = 0.5m, Kx = 2.0e3, Bx = 0.5;
+analog begin
+  V(vp, vn) <+ Rc*I(vp, vn) + ddt(Lc*I(vp, vn), vp.flow.abstol) + Bl*ddt(Pos(x), Velocity);
+  F(x) <+ Bl*I(vp, vn) - Kx*Pos(x) - Bx*ddt(Pos(x), Velocity);
+end
+endmodule
+module ops(inout electrical a, c);
+parameter real I0 = 2.0e-15, F0 = 1e3, KV = 5e3;
+real ij, fr, ph, dva, dvc, dfl, q;
+integer hold;
+(* desc="junction conductance" *) real gj;
+analog initial hold = 1;
+analog begin
+  ij = I0 * (limexp(V(a,c)/(1.5*$vt)) - 1);
+  gj = ddx(ij, V(a));
+  dva = ddx(V(a,c), V(a)); dvc = ddx(V(a,c), V(c)); dfl = ddx(ij, I(a,c));
+  fr = F0 + KV*V(a);
+  ph = 2*`M_PI*idtmod(fr, 0.0, 1.0, -0.5);
+  q = idt(V(a,c), 0.0, hold, 1e-9) + idt(V(a,c), 0.0, hold, Voltage) + idtmod(fr, 0.0, 1.0, 0.0, Voltage) + ddt(V(a,c), Current) + ddt(V(a,c), 1e-6);
+  I(a,c) <+ ij + 1e-12*(cos(ph) + q);
+end
+endmodule

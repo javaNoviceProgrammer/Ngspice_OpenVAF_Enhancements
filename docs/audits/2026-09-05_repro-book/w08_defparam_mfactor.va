@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module gainblk(inout electrical a, b);
+parameter real gain = 10.0;
+analog I(a,b) <+ V(a,b)*gain*$mfactor;
+endmodule
+module top(inout electrical a, b);
+gainblk g3(a, b);
+defparam g3.$mfactor = 3;
+endmodule

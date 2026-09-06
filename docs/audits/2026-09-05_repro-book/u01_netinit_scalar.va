@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+electrical c = 5.0;
+analog I(a,b) <+ V(a,b) + V(c);
+endmodule

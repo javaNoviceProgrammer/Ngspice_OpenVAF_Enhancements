@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+integer x, en = 1;
+parameter real period = 1u;
+analog begin @(timer(0, period, 1n, en)) x = 1; @(timer(0, period)) x = 2; @(timer(0.5u)) x = 3; I(a,b) <+ V(a,b) + x; end
+endmodule

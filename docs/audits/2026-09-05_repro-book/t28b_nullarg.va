@@ -1,0 +1,5 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module f(inout electrical in, out);
+analog V(out) <+ laplace_zd(V(in), , '{1, 1}) + laplace_zp(V(in), , '{-1, 0});
+endmodule

@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+parameter string mode = "fast";
+string s = "abc", t;
+integer k;
+analog begin
+  t = {s, "def"};
+  k = (s < t) + (s == "abc") + (mode != "slow");
+  I(a,b) <+ V(a,b)*k;
+end
+endmodule

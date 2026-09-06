@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+localparam integer sel = 1;
+case (sel)
+  1: begin : one electrical q; analog V(q) <+ V(a); end
+  default: begin : dflt electrical q; analog V(q) <+ V(b); end
+endcase
+analog I(a,b) <+ V(a,b) + V(one.q);
+endmodule

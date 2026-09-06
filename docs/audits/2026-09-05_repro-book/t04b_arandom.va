@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+integer seed = 7, r;
+analog begin
+  r = $arandom % 60;
+  r = $arandom(seed) + $random;
+  I(a,b) <+ V(a,b)*r*1e-9 + $rdist_chi_square(seed, 2.0) + $rdist_t(seed, 3.0) + $rdist_erlang(seed, 2.0, 1.0) + $rdist_poisson(seed, 2.0) + $rdist_exponential(seed, 1.0) + $rdist_uniform(seed, 0.0, 1.0);
+end
+endmodule

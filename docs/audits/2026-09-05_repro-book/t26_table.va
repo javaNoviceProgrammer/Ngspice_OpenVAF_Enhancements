@@ -1,0 +1,32 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module lut2d(inout electrical a, b);
+real y[0:10], x[0:10], f[0:10];
+real table[0:2][0:10] = '{
+  '{0.0,0.0,0.0,0.0,0.0,0.5,0.5,0.5,1.0,1.0,1.0},
+  '{1.0,2.0,3.0,4.0,5.0,1.0,2.5,4.0,1.0,3.0,5.0},
+  '{2.0,4.0,6.0,8.0,10.0,2.5,5.5,8.5,3.0,7.0,11.0}};
+parameter string ctl = "3LL,3LL";
+real i1, i2, i3, i4, i5;
+analog initial begin
+  y[0]=0.0; x[0]=1.0; f[0]=2.0;
+  y[1]=0.0; x[1]=2.0; f[1]=4.0;
+  y[2]=0.0; x[2]=3.0; f[2]=6.0;
+  y[3]=0.0; x[3]=4.0; f[3]=8.0;
+  y[4]=0.0; x[4]=5.0; f[4]=10.0;
+  y[5]=0.5; x[5]=1.0; f[5]=2.5;
+  y[6]=0.5; x[6]=2.5; f[6]=5.5;
+  y[7]=0.5; x[7]=4.0; f[7]=8.5;
+  y[8]=1.0; x[8]=1.0; f[8]=3.0;
+  y[9]=1.0; x[9]=3.0; f[9]=7.0;
+  y[10]=1.0; x[10]=5.0; f[10]=11.0;
+end
+analog begin
+  i1 = $table_model(0.0, V(a,b), "sample.tbl");
+  i2 = $table_model(0, V(a,b), y, x, f);
+  i3 = $table_model(0, V(a,b), table);
+  i4 = $table_model(0, V(a,b), "sample.tbl", ctl);
+  i5 = $table_model(0, V(a,b), "sample2.tbl", "1LL,1LL;2");
+  I(a, b) <+ i1 + i2 + i3 + i4 + i5;
+end
+endmodule

@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module gapsensor(inout kinematic x, inout electrical p, n);
+parameter real M = 2.0e-9, B = 1.0e-5, K = 3.0, C0 = 5.0e-13, D0 = 2.0e-6;
+real cgap;
+analog begin
+  Pos(x): ddt(Pos(x)) == (idt(F(x) - K*Pos(x)) - B*Pos(x))/M;
+  cgap = C0 * D0 / (D0 + Pos(x));
+  I(p, n) <+ cgap * ddt(V(p, n));
+end
+endmodule
+module opamp(inout electrical out, pin, nin);
+analog V(out) : V(pin, nin) == 0;
+endmodule
+module motion(inout kinematic velocity, y);
+parameter real B = 1.0;
+analog begin
+  Pos(velocity): ddt(Pos(y)) == Pos(velocity);
+  Pos(y): ddt(Pos(velocity)) == B*pow(Pos(y),3.0);
+end
+endmodule

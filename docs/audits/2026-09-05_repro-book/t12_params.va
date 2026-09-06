@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module gainblk #(parameter real gain = 10.0, parameter real rout = 50.0) (inout electrical a, b);
+parameter real k = 1.0;
+real m;
+analog begin
+  m = $mfactor + $xposition + $yposition + $angle + $hflip + $vflip;
+  I(a,b) <+ V(a,b)*gain/rout*k*m;
+end
+endmodule
+module top(inout electrical a, b);
+gainblk #(5.0, 100.0) g1(a, b);
+gainblk #(.gain(2.0), .rout(), .$mfactor(2), .$xposition(1u)) g2(a, b);
+gainblk g3(a, b);
+defparam g3.gain = 7.5, g3.$mfactor = 3;
+endmodule

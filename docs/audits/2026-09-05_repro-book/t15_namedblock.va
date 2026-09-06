@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+parameter integer order = 2;
+real gtot;
+analog begin
+  begin: inner
+    parameter real g0 = 2.5e-3;
+    real gl = 0.5 * g0;
+    gl = gl + 1e-4;
+  end
+  gtot = inner.gl;
+  I(a,b) <+ V(a,b)*gtot*order;
+end
+endmodule

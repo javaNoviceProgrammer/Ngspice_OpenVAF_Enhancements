@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+parameter real poles[0:3] = '{1.0, 3.198, 4.554, 2.00} from [0:inf);
+parameter real c[0:2][0:2] = '{'{0.0,0.2,0.2},'{0.2,0.0,0.2},'{0.2,0.2,0.0}};
+real p2[0:3] = '{1.0, 3.198, 4.554, 2.00};
+integer n[1:2][1:3] = '{'{0,1,2}, '{1,1,3}};
+string names[1:3] = '{"first", "middle", "last"};
+real y = 2.0;
+real rep[0:1] = '{2{2.0}};
+analog begin
+  rep = '{2{y}};
+  I(a,b) <+ V(a,b)*(poles[1] + c[1][2] + p2[2] + n[2][3] + rep[1]);
+end
+endmodule

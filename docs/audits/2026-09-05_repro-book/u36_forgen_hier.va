@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+genvar i;
+for (i = 0; i < 2; i = i + 1) begin : g1
+  electrical z;
+  analog V(z) <+ V(a)*i;
+end
+analog I(a,b) <+ V(a,b) + V(g1[0].z) + V(g1[1].z);
+endmodule

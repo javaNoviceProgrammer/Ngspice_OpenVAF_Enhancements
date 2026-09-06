@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module top (inout electrical a, b);
+parameter integer sel = 1;
+localparam integer genblk2 = 0;
+genvar i;
+if (genblk2) electrical x; else electrical y;
+case (sel)
+  1: begin : one electrical q; analog V(q) <+ V(a); end
+  default: begin : dflt electrical q; analog V(q) <+ V(b); end
+endcase
+for (i = 0; i < 2; i = i + 1) begin : g1
+  if (1) electrical z;
+end
+analog I(a,b) <+ V(a,b) + V(genblk1.y) + V(g1[0].genblk1.z);
+endmodule

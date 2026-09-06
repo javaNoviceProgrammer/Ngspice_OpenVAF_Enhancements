@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+integer A[10:1], B[0:9];
+analog begin
+  B[0] = 1;
+  A = B;
+  I(a,b) <+ V(a,b)*A[10];
+end
+endmodule

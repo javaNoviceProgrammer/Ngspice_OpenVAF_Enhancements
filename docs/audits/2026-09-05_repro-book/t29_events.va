@@ -1,0 +1,23 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module sah (input electrical in, smpl, output electrical out);
+parameter real thresh = 0.0, period = 1.0;
+parameter integer dir = +1 from [-1 : +1] exclude 0;
+real state, latest, previous; integer crossings, x;
+analog begin
+  @(initial_step("ac", "noise", "dc") or initial_step("tran")) begin crossings = 0; previous = 0; end
+  @(cross(V(smpl) - thresh, dir)) state = V(in);
+  @(cross(V(smpl) - thresh, dir, 1n, 1u, 1), above(V(in) - 0.5, 1n, 1u, 1) OR timer(0, period, 1n, 1)) begin
+    crossings = crossings + 1; previous = latest;
+  end
+  @(above(V(in))) x = 1;
+  @(timer(0.5)) x = 2;
+  latest = last_crossing(V(in), +1) + last_crossing(V(in));
+  @(final_step("tran")) begin
+    if (crossings < 2) $strobe("Could not measure period.");
+    else $strobe("period = %g, crossings = %d", latest-previous, crossings);
+  end
+  @(final_step) $strobe("done");
+  V(out) <+ transition(state, 0, 10n) + x;
+end
+endmodule

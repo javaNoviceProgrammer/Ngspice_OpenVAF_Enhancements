@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module resistor(inout electrical a, b);
+parameter real x = 1.0 from (0:inf);
+analog begin
+  if (x / $mfactor < 1.0e-3)
+    V(a,b) <+ 0.0;
+  else
+    I(a,b) <+ V(a,b) / x;
+end
+endmodule
+module relay (inout electrical p, n, ps, ns);
+parameter real thresh=0, ron=0 from [0:inf), goff=0 from [0:inf);
+analog if (V(ps,ns) > thresh) V(p,n) <+ ron * I(p,n); else I(p,n) <+ goff * V(p,n);
+endmodule

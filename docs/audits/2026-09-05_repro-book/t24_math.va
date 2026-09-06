@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+real r; integer i;
+analog begin
+  r = hypot(V(a), 1.0) + atan2(V(a), 1.0) + $sin(1.0) + $ln(2.0) + $log10(10.0) + $sqrt(4.0) + $pow(2.0, 3.0) + $exp(1.0) + $floor(1.5) + $ceil(1.5) + $hypot(3.0,4.0) + $atan2(1.0,1.0) + $asinh(1.0) + $acosh(2.0) + $atanh(0.5) + $tanh(1.0);
+  r = r + min(1, 2) + max(1.0, 2) + abs(-3) + floor(2.5) + ceil(2.5) + ln(2.0) + log(100.0) + pow(2.0, 2.0);
+  i = $clog2(17) + $clog2(0);
+  I(a,b) <+ V(a,b)*(r + i);
+end
+endmodule

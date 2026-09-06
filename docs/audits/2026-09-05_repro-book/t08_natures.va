@@ -1,0 +1,22 @@
+`include "disciplines.vams"
+`include "constants.vams"
+nature my_current;
+  units = "A"; access = J; abstol = 1u; reltol = 1m;
+endnature
+nature new_current : my_current;
+  abstol = 1m; maxval = 10.0;
+endnature
+discipline enode;
+  potential Voltage; flow new_current;
+  flow.abstol = 10u; flow.maxval = 1K;
+enddiscipline
+nature enode_curr : enode.flow;
+  reltol = 1u; minval = 1p;
+endnature
+module m(inout enode a, b);
+real k;
+analog begin
+  k = a.flow.maxval + a.potential.abstol;
+  J(a,b) <+ V(a,b)*k + ddt(V(a,b), a.flow.abstol);
+end
+endmodule

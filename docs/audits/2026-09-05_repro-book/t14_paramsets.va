@@ -1,0 +1,56 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module vres(inout electrical p, n, inout thermal dt);
+parameter string MAT = "poly" from '{"poly","metal"};
+parameter real W = 1.0u from (0.0:inf);
+parameter real L = 2.0u from (0.0:inf);
+parameter real RSH = 100.0, TC1 = 1m, TC2 = 0.0 from [0:inf), DW = 0.0, DL = 0.0;
+parameter integer SELFHEAT = 0;
+(* desc="effective resistance" *) real reff;
+analog begin
+  reff = RSH*(L-DL)/(W-DW)*(1 + TC1*Temp(dt));
+  I(p,n) <+ V(p,n)/reff;
+end
+endmodule
+module fab;
+localparam real rsh_poly = 120.0;
+localparam real k_tc = 1.2e-3;
+localparam real bias = 0.8;
+endmodule
+paramset rpoly vres;
+parameter string KIND = "poly";
+parameter real L = 2u;
+parameter real W = 1u;
+parameter integer SELFHEAT = 0;
+.MAT = KIND; .L = L; .W = W; .SELFHEAT = SELFHEAT;
+.RSH = fab.rsh_poly * fab.bias; .TC1 = fab.k_tc; .DW = 20n; .DL = 30n;
+.$mfactor = 1.0;
+endparamset
+paramset rpoly_n rpoly;
+parameter real L = 2u;
+parameter real W = 1u;
+localparam real AREA = L * W from [0:10p);
+.L = L; .W = W;
+endparamset
+paramset rmetal rpoly;
+parameter real L = 2u;
+parameter real W = 1u;
+aliasparam LEN = L; aliasparam WID = W;
+.KIND = "metal"; .L = L; .W = W;
+endparamset
+paramset rpoly_n rpoly;
+parameter real L = 10u from [10u:inf);
+parameter real W = 1u;
+.L = L; .W = W;
+endparamset
+paramset rpoly_pd vres;
+(* desc="dissipated power" *) real pdis;
+.RSH = 150.0;
+pdis = .reff * 1e-6;
+endparamset
+module divider(inout electrical in, out, gnd, inout thermal dt);
+parameter real WA = 2u, WB = 1u, LA = 4u, LB = 4u;
+rmetal #(.WID(WA), .LEN(LA)) ra (in, out, dt);
+rpoly_n #(.W(WB), .L(LB)) rb (out, gnd, dt);
+rpoly_n #(LB, WB) rb2 (out, gnd, dt);
+endmodule

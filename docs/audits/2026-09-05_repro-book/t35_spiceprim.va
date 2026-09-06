@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module sensor(inout electrical etop, ebot);
+electrical el_gnd; ground el_gnd;
+vsine #(.dc(0), .ampl(1.0), .offset(1.5), .freq(1k)) vsrct (etop, el_gnd);
+resistor #(.r(1k)) R1 (etop, ebot);
+endmodule

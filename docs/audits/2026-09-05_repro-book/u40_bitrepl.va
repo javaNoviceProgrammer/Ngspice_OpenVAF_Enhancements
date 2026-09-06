@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+integer w = 3, r;
+analog begin r = {4{w}}; I(a,b) <+ V(a,b)*r; end
+endmodule

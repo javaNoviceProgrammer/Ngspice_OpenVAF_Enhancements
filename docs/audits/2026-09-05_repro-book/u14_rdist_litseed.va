@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+real r;
+analog begin r = $rdist_normal(1, 0, 1n) + $rdist_normal(2, 0, 5n, "instance"); I(a,b) <+ V(a,b) + r; end
+endmodule

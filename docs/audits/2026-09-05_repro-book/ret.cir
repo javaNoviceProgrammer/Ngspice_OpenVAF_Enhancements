@@ -1,0 +1,11 @@
+value retention
+N1 a 0 mm
+R1 a 0 1k
+.model mm value_ret
+.control
+pre_osdi t21_retention.osdi
+op
+print v(a) i(v1)
+print v(a)
+.endc
+.end

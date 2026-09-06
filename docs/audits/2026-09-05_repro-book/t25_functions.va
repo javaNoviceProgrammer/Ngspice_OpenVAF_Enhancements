@@ -1,0 +1,34 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical in1, in2, out);
+analog function softplus2;
+  input x, s; real x, s;
+  softplus2 = 0.5 * (x + hypot(x, s));
+endfunction
+analog function real norm3;
+  input [0:2] u; input [0:2] v;
+  real u[0:2], v[0:2];
+  norm3 = sqrt((u[0]-v[0])**2 + (u[1]-v[1])**2 + (u[2]-v[2])**2);
+endfunction
+analog function real boxcalc;
+  input h, w; output area, diag;
+  real area, w, h, diag;
+  begin area = h * w; diag = hypot(h, w); end
+endfunction
+analog function real vecmac;
+  inout [0:1] acc; input [0:1] x;
+  real acc[0:1], x[0:1]; integer i;
+  parameter real gain = 2.0;
+  begin
+    for (i = 0; i < 2; i = i + 1) acc[i] = acc[i] + gain*x[i];
+  end
+endfunction
+real acc[0:1], y, z, ar, dg, dummy, dist;
+analog begin
+  acc[0] = 1; acc[1] = 2; y = 3; z = 4;
+  dummy = vecmac(acc, '{y, z});
+  dummy = boxcalc(1.5, 2.5, ar, dg);
+  dist = norm3('{acc[0], y, z}, '{acc[1], y, z});
+  V(out) <+ softplus2(V(in1) - V(in2), 1e-3) + ar + dg + dist;
+end
+endmodule

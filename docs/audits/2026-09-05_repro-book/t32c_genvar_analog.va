@@ -1,0 +1,15 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module genvarexp(output electrical out, input electrical [1:4] dt);
+parameter integer width = 4;
+real tmp;
+genvar k;
+analog begin
+  tmp = 0.0;
+  for (k = 1; k <= width; k = k + 1) begin
+    tmp = tmp + V(dt[k]);
+    V(out) <+ ddt(V(dt[k]));
+  end
+  $strobe("Summ of potentials = %e", tmp);
+end
+endmodule

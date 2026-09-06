@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+ground electrical gnd;
+thermal [0:1] dt;
+ground [0:1] dt;
+electrical c = 5.0;
+electrical [0:2] pins = '{2.3, ,6.0};
+analog begin
+  I(a,b) <+ V(a,b) + V(c) + V(pins[0]);
+end
+endmodule

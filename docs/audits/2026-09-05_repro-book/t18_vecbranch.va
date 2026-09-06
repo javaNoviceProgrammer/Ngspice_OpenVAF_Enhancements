@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical [5:3] a, inout electrical [1:3] b);
+branch (a, b) vb;
+branch (a[5:4], b[1:2]) vb2 [1:2];
+analog I(vb[0]) <+ V(vb[0]);
+endmodule

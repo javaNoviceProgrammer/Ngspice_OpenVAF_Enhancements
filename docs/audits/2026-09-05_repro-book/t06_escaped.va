@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+real \level-1 = 2.0, \begin = 3.0;
+analog I(a,b) <+ V(a,b)*\level-1 *\begin ;
+endmodule

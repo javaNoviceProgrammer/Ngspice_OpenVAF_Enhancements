@@ -1,0 +1,54 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module diode(inout electrical a, c, output electrical vout);
+parameter real IS = 1.0e-14, CJ0 = 0.0, tdevice = 27.0;
+parameter string inst = "default", quant = "default";
+analog function real spicepnjlim;
+  input vnew, vold, vt, vcrit;
+  real vnew, vold, vt, vcrit, vlimit, arg;
+  begin
+    vlimit = vnew;
+    if ((vnew > vcrit) && (abs(vnew-vold) > (vt+vt))) begin
+      if (vold > 0) begin
+        arg = 1 + (vnew-vold) / vt;
+        if (arg > 0) vlimit = vold + vt * ln(arg); else vlimit = vcrit;
+      end else vlimit = vt * ln(vnew/vt);
+      $discontinuity(-1);
+    end
+    spicepnjlim = vlimit;
+  end
+endfunction
+real vdio, idio, qdio, vcrit, temp, gmin, sourcescale, probe, v2;
+string an;
+analog begin
+  vcrit = 0.7;
+  vdio = $limit(V(a,c), spicepnjlim, $vt, vcrit);
+  v2 = $limit(V(a,c), "pnjlim", $vt, vcrit) + $limit(V(a,c), "fetlim", 0.5) + $limit(V(a,c));
+  idio = IS * (exp(vdio/$vt) - 1);
+  I(a,c) <+ idio + 1e-15*v2;
+  if (vdio < 0.5) qdio = 0.5 * CJ0 * (1-sqrt(1-V(a,c))); else qdio = CJ0*(2.0*(1.0-sqrt(0.5)) + sqrt(2.0)/2.0*(vdio*vdio+vdio-3.0/4.0));
+  I(a,c) <+ ddt(qdio);
+  if ($port_connected(vout)) V(vout) <+ transition(qdio, 1n, 1n, 1n); else V(vout) <+ 0.0;
+  if ($param_given(tdevice)) temp = tdevice + `P_CELSIUS0; else temp = $temperature;
+  if (analysis("ic")) V(vout) <+ 0.0; else V(vout) <+ 1e-3*I(a,c);
+  if (analysis("nodeset") || analysis("static") || analysis("dc", "tran")) temp = temp + $vt(300.0) + $abstime;
+  gmin = $simparam("gmin");
+  sourcescale = $simparam("sourceScaleFactor", 1.0) + $simparam("iteration", 0.0) + $simparam("tnom", 27.0) + $simparam("scale", 1.0) + $simparam("gdev", 0.0) + $simparam("imax", 1.0) + $simparam("simulatorVersion", 0.0);
+  an = $simparam$str("analysis_name");
+  an = $simparam$str("analysis_type");
+  an = $simparam$str("cwd");
+  an = $simparam$str("module");
+  an = $simparam$str("instance");
+  an = $simparam$str("path");
+  probe = $simprobe(inst, quant, 0.0);
+  $bound_step(0.05);
+  @(cross(V(a,c) - 0.3)) $discontinuity;
+  @(cross(V(a,c) - 0.4)) $discontinuity(1);
+  if (probe > 1e30) begin
+    $strobe("ERROR: Time %e: %s.%s (%g) > threshold", $abstime, inst, quant, probe);
+    $finish;
+  end
+  if (probe > 2e30) $fatal(1, "too big %g", probe);
+  if (probe > 3e30) begin $error("err %d", 1); $warning("warn"); $info("info"); $finish(1); $stop; $stop(2); $finish(0); end
+end
+endmodule

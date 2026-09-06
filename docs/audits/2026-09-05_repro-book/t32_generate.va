@@ -1,0 +1,26 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module resistor(inout electrical p, n);
+parameter real r = 1k;
+analog I(p,n) <+ V(p,n)/r;
+endmodule
+module rcline (inout electrical n1, n2);
+electrical gnd; ground gnd;
+parameter integer N = 10 from (0:inf);
+electrical [0:N] n;
+parameter Cap = 1p, Res = 1k;
+localparam Csec = Cap/N, Rsec = Res/(2*N);
+genvar i;
+generate
+for (i=0; i<N; i=i+1) begin : section
+  electrical n_int;
+  resistor #(.r(Rsec)) R1(n[i], n_int);
+  resistor #(.r(Rsec)) R2(n_int, n[i+1]);
+  analog I(n_int, gnd) <+ Csec * ddt(V(n_int));
+end
+endgenerate
+analog begin
+  V(n1, n[0]) <+ 0.0;
+  V(n2, n[N]) <+ 0.0;
+end
+endmodule

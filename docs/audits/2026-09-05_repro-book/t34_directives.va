@@ -1,0 +1,47 @@
+`include "disciplines.vams"
+`include "constants.vams"
+`define LIGHT_SPEED 2.997925e8
+`define MAX(A, B) ((A) > (B) ? (A) : (B))
+`define softplus(x, s) \
+  (0.5*((x)+sqrt((x)*(x) + (s)*(s))))
+`define wow
+`define CURRENT_ABSTOL 1e-13
+nature Current2;
+  units = "A"; access = I2; idt_nature = Charge;
+`ifdef CURRENT_ABSTOL
+  abstol = `CURRENT_ABSTOL;
+`else
+  abstol = 1e-12;
+`endif
+endnature
+`default_transition 1n
+module m(inout electrical a, b);
+real y, t3, reff, iab;
+analog begin
+  y = `MAX(V(a), V(b));
+  t3 = `softplus(V(a)-V(b), 1.0E-3) + `LIGHT_SPEED*0;
+`ifdef wow
+  $strobe("wow is defined");
+`ifdef nest_one
+  $strobe("nest_one is defined");
+`elsif nest_two
+  $strobe("nest_two");
+`else
+  $strobe("nest_one is not defined");
+`endif
+`else
+  $strobe("wow is not defined");
+`endif
+`ifdef __VAMS_COMPACT_MODELING__
+  iab = V(a,b); reff = ddx(iab, V(a));
+  I(a,b) <+ white_noise(4.0 * `P_K * $temperature * reff, "thermal");
+`else
+  if (analysis("noise")) $strobe("Noise not computed.");
+`endif
+`undef wow
+`ifndef wow
+  y = y + 1;
+`endif
+  I(a,b) <+ transition(y + t3) + `__VAMS_COMPACT_MODELING__;
+end
+endmodule

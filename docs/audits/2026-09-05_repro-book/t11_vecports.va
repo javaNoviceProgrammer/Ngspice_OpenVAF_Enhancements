@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module sumv (inout voltage [7:0] in, output voltage out);
+analog V(out) <+ 0.5*(V(in[0]) + V(in[7]));
+endmodule
+module bank (input voltage [7:0] a, input voltage [3:0] b, output voltage [0:1] c);
+sumv s1 (.in(a), .out(c[0]));
+sumv s2 (.in({a[3:0], b}), .out(c[1]));
+sumv s3 (.in(a), .out());
+endmodule

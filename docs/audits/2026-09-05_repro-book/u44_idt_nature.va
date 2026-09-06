@@ -1,0 +1,5 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+analog I(a,b) <+ idt(V(a,b), 0.0, 0, Voltage) + idt(V(a,b), 0.0, 0, 1e-9) + idtmod(V(a,b), 0.0, 1.0, 0.0, Voltage);
+endmodule

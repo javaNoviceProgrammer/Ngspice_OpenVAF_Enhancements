@@ -1,0 +1,5 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+analog I(a,b) <+ $table_model(V(a), V(a,b), 0.0, "sample3.tbl", "I,1,1");
+endmodule

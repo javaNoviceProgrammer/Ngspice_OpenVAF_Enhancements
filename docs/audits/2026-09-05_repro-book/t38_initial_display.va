@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+integer i;
+analog initial begin
+  i = 3;
+  $display("init %d", i);
+  $strobe("init2");
+end
+analog initial i = i + 1;
+analog I(a,b) <+ V(a,b)*i;
+endmodule

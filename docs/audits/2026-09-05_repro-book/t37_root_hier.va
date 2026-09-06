@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module leaf(inout electrical p, n);
+parameter real g = 1.0;
+electrical mid;
+analog begin I(p,mid) <+ g*V(p,mid); I(mid,n) <+ g*V(mid,n); end
+endmodule
+module top(inout electrical a, b);
+leaf u1(a, b);
+analog V(a) <+ 0.0*V($root.top.u1.mid) + 0.0*V(u1.mid);
+endmodule

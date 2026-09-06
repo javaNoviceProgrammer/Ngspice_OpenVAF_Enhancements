@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module g(output electrical out, input electrical [1:4] dt);
+real tmp; genvar k;
+analog begin tmp = 0.0; for (k = 1; k <= 4; k = k + 1) begin tmp = tmp + V(dt[k]); V(out) <+ ddt(V(dt[k])); end end
+endmodule

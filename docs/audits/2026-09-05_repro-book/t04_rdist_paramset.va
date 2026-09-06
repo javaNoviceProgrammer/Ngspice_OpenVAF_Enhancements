@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module semicoCMOS ();
+localparam real tox = 3e-8;
+localparam real dtox_g = $rdist_normal(1,0,1n,"global");
+localparam real dtox_mm = $rdist_normal(2,0,5n,"instance");
+endmodule
+module nmos3(inout electrical d, g, s, b);
+parameter real l=1u, w=1u, tox=3e-8;
+analog I(d,s) <+ V(d,s)*w/l*tox;
+endmodule
+paramset nch nmos3;
+parameter real l=1u from [0.25u:inf);
+parameter real w=1u from [0.2u:inf);
+parameter integer mm=0 from [0:1];
+.l=l; .w=w;
+.tox = semicoCMOS.tox + semicoCMOS.dtox_g + semicoCMOS.dtox_mm;
+endparamset

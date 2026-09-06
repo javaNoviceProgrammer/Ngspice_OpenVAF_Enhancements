@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module value_ret(inout electrical p, n);
+analog begin
+  V(p,n) <+ 1.0;
+  I(p,n) <+ 2.0;
+  V(p,n) <+ 3.0;
+  V(p,n) <+ 4.0;
+end
+endmodule

@@ -1,0 +1,29 @@
+`include "disciplines.vams"
+`include "constants.vams"
+(* compact *) module rheat (inout electrical p, n, (* thermal_port *) inout thermal dt);
+(* desc = "Sheet resistance", units = "Ohms", op = "no", multiplicity = "none" *) parameter real rsh = 100.0 from [0:inf);
+(* type="instance" *) parameter real w = 1.0e-6;
+(* level = 2, kind = "R", level = 3 *) parameter integer lev = 1;
+(* desc="thermal conductance", units="W/K" *) real gth;
+(* desc="effective resistance", units="Ohms", op="yes", multiplicity="divide" *) real reff;
+(* distributed *) electrical [3:0] taps;
+(* desc="mid tap" *) electrical mid;
+real sum, a1, b1, c1, d1;
+analog function real larger;
+  input u, v; real u, v;
+  larger = (u > v) ? u : v;
+endfunction
+analog begin
+  a1 = V(p); b1 = V(n); c1 = 1.0; d1 = 2.0;
+  sum = a1 + (* second_argument *) b1;
+  reff = b1 ? (* no_glitch *) c1 : d1;
+  gth = larger (* smooth *) (a1, b1);
+  I(p,n) <+ V(p,n)/rsh*w*lev + 0*(sum + reff + gth);
+end
+endmodule
+module top(inout electrical n1, n2, inout thermal dt);
+(* wide *) rheat r1 (n1, n2, (* thermal_port *) dt);
+(* override_1 *) defparam r1.rsh = 250.0;
+(* port_discipline = "electrical" *) rheat r2 (n1, n2, dt);
+rheat r3 ((* port_discipline="electrical" *) n1, n2, dt);
+endmodule

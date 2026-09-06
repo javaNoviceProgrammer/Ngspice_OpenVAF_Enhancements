@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module f(inout electrical in, out);
+parameter real T = 1u;
+parameter real zeros[0:1] = '{-1, 0}, poles[0:3] = '{-1,-1,-1,1};
+real x;
+analog begin
+  x = V(in);
+  V(out) <+ absdelay(x, 1n) + absdelay(x, 1n, 2n) + transition(x) + transition(x, 1n) + transition(x, 1n, 2n) + transition(x, 1n, 2n, 3n) + transition(x, 1n, 2n, 3n, 1p);
+  V(out) <+ slew(x) + slew(x, 1e6) + slew(x, 1e6, -1e6);
+  V(out) <+ laplace_zp(x, '{-1,0}, '{-1,-1,-1,1}) + laplace_zp(x, zeros, poles, 1e-9) + laplace_zp(x, zeros, poles, Voltage);
+  V(out) <+ laplace_np(x, '{1}, '{-0.81, 0.59, -0.81, -0.59, -0.31, 0.95, -0.31, -0.95, -1.0, 0.0});
+  V(out) <+ laplace_nd(x, '{1.0}, '{2.0, 1}) + laplace_zd(x, '{-1,0}, '{1, 1});
+  V(out) <+ zi_zp(x, '{0, 0}, '{-1, 0}, T) + zi_zp(x, '{0, 0}, '{-1, 0}, T, 1n) + zi_zp(x, '{0, 0}, '{-1, 0}, T, 1n, 2u);
+  V(out) <+ zi_nd(x, '{1}, '{0, -1}, T) + zi_zd(x, '{0,0}, '{1, 0.5}, T, 1n) + zi_np(x, '{1}, '{-1, 0}, T, 1n, 0.0);
+end
+endmodule

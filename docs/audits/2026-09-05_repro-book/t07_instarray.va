@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module res(inout electrical p, n);
+parameter real r = 1k;
+analog I(p,n) <+ V(p,n)/r;
+endmodule
+module m(inout electrical a, b);
+electrical [0:3] x;
+res r[0:3] (x, b);
+analog V(a, x[0]) <+ 0.0;
+endmodule

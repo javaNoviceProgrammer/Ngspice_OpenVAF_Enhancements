@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module m(inout electrical a, b);
+integer x;
+analog begin @(cross(V(a)-0.5) OR above(V(b)-0.5)) x = 1; I(a,b) <+ V(a,b) + x; end
+endmodule

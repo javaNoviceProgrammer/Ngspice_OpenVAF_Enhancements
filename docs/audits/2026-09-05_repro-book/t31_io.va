@@ -1,0 +1,35 @@
+`include "disciplines.vams"
+`include "constants.vams"
+module f2(inout electrical a, b);
+integer file1, file2, fd, n, code, errno, offset, i;
+real r;
+string str, s2;
+analog initial begin
+  file1 = $fopen("file1");
+  file2 = $fopen("file2");
+  $display("The number used for file 1 is %0d", file1);
+  $fdisplay(file1, "Hello File 1");
+  $fdisplay(file1 | file2, "Hello both files");
+  $fdisplay(file1 | file2 | 1, "Hello files and screen");
+  $fwrite(file1, "x"); $fstrobe(file1, "y"); $fmonitor(file1, "z %d", i); $fdebug(file1, "d");
+  $fclose(file1); $fclose(file2);
+  fd = $fopen("data.txt", "r");
+  offset = $ftell(fd);
+  code = $fseek(fd, 0, 0);
+  code = $rewind(fd);
+  errno = $ferror(fd, str);
+  code = $feof(fd);
+  n = $fgets(str, fd);
+  n = $fscanf(fd, "%f %d", r, i);
+  n = $fscanf(fd, "%f,%d", r, i);
+  n = $fscanf(fd, "%f*%d", r, i);
+  n = $sscanf("1.5 3", "%f %d", r, i);
+  $fflush(fd); $fflush();
+  $fclose(fd);
+  $swrite(s2, "v=%g", r);
+  $sformat(s2, "data is %d", i);
+  $write("w"); $strobe("s"); $monitor("m %d", i); $debug("dbg %d", i); $display();
+  $display("%h %d %o %b %c %s %e %f %g %r %m %l %%", i, i, i, i, 65, s2, r, r, r, r);
+end
+analog I(a,b) <+ V(a,b);
+endmodule
