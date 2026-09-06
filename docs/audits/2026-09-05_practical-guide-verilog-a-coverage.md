@@ -17,28 +17,37 @@ audit (or the LRM's own example, where the book reprints one). The result is the
 list of features the book discusses that this tool chain does **not** cover, ranked by how
 much a compact-model or behavioural-model author would miss them.
 
+> **Update, 2026-09-06 (tree `757d27db`).** Five enhancements followed this audit:
+> [E-561](../../enhancements_doc/Enhancement-561.md) (bit-level concatenation, §3.2), [E-562](../../enhancements_doc/Enhancement-562.md) (lookup tables, §3.5), [E-563](../../enhancements_doc/Enhancement-563.md)
+> (paramsets and the crash, §3.1, §3.3), [E-564](../../enhancements_doc/Enhancement-564.md) (names into generate blocks, §3.4) and
+> [E-565](../../enhancements_doc/Enhancement-565.md) (paramset overloading, §3.3). Re-running the 107 probes on that tree
+> ([`run_all_after.out`](2026-09-05_repro-book/run_all_after.out)) gives **73 compiling
+> and 34 refused, no crash** (was 53 / 54 with one crash). Each finding below keeps its
+> original text and carries a **fixed** tag where it no longer holds; §6 sums up what
+> remains. The chapter table shows the status after the update.
+
 ## 1. Summary by chapter
 
 | Ch. | Topic | Coverage | What is missing (details in §3) |
 |---|---|---|---|
 | 1 | Lexical basis | ✅ full | — |
-| 2 | Basic types and expressions | ✅ full, one edge | bit-level concatenation `{1'b1, 3'b101}` and replication `{4{w}}` of integers (3.2) |
+| 2 | Basic types and expressions | ✅ full | — (bit-level concatenation and replication of integers: fixed, E-561; was the one edge) |
 | 3 | Net-discipline types | ✅ full | vector-net initialiser with a *gap* (`'{2.3, ,6.0}`) (3.2) |
 | 4 | Modules and ports | ✅ with edges | `macromodule`; a bus *part-select* in a port connection (`{a[4:0], b}`); SPICE primitive instantiation (documented ✖) (3.2, 3.7) |
 | 5 | Parameters | ✅ with edges | the module-header parameter list `module m #(parameter …) (…)`; `defparam x.$mfactor` (3.2) |
-| 6 | Paramsets | ⚠️ partial | parameter names shadowing the parent's; paramset-of-paramset overrides; overloaded (same-name) paramsets; `aliasparam` in a paramset; paramset variables and output-variable overrides; **a compiler crash** on a hierarchical reference in an override (3.1, 3.3) |
+| 6 | Paramsets | ✅ full | — (all of 3.3 fixed, E-563 and E-565, and the 3.1 crash; a random draw in an override stays the documented E-545 deviation) |
 | 7 | Procedural programming | ✅ full | — |
 | 8 | Branches | ✅ with edges | vector branches (documented ✖); vector *port* branches; hierarchical references to a child's **ports** and the `inst.branch(a,b)` spelling (3.4) |
 | 9 | Derivative and integral operators | ✅ full | — |
 | 10 | Built-in math functions | ✅ with edges | a *constant* seed in `$arandom`/`$rdist_*`; random draws in paramset overrides (documented deviation, E-545) (3.6) |
 | 11 | User-defined functions | ✅ full | — |
-| 12 | Lookup tables | ⚠️ partial | array *variables* as the data source; a string *parameter* as the control string; the `I` (ignore) control; quadratic and cubic splines (3.5) |
+| 12 | Lookup tables | ✅ full | — (all of 3.5 fixed, E-562; the control string or file name is a `localparam string`, an overridable `parameter string` being refused by design) |
 | 13 | Small-signal functions | ✅ full | — |
 | 14 | Filters | ✅ full | — |
 | 15 | Events | ✅ full | `OR` in upper case (the LRM has only `or`); tolerances accepted, not honoured (documented ⚠️) |
 | 16 | Runtime support | ✅ full | `$simparam$str` of `module`/`instance`/`path` (documented ⚠️); `$simprobe` fallback (documented ⚠️) |
 | 17 | Input and output | ✅ full | literal separators in a `$fscanf` format (documented) |
-| 18 | Generative programming | ⚠️ partial | `case`-generate; hierarchical names into generate blocks (`blk.x`, `g1[0].z`); generate conditions on module *parameters* (documented deviation, E-67) (3.4) |
+| 18 | Generative programming | ✅ with one edge | names into generate blocks and `case`-generate: fixed, E-564; generate conditions on module *parameters* remain the documented deviation, E-67 (3.4) |
 | 19 | Attributes | ✅ with one edge | an attribute instance inside a port-connection list (3.2) |
 | 20 | Compiler directives | ✅ full | — |
 | App. | Reserved words, SPICE primitives | ✅ / ✖ | SPICE primitives are not instantiable from Verilog-A (documented ✖, Annex E) |
@@ -48,7 +57,8 @@ correct answer (the book's own mistakes, §4, and constructs this project docume
 of scope: vector branches, SPICE primitives, an upper-case `OR`, a random draw in a
 constant, a generate condition on a module parameter). The other 43 reduce, once the
 isolation rounds are folded together, to **24 distinct constructs** the tool chain does not
-cover (§3.1–3.6) — one of them a compiler crash.
+cover (§3.1–3.6) — one of them a compiler crash. *After the 2026-09-06 update: 73 compile
+and 34 are refused, none crashes; 12 of the 24 constructs are covered (§6).*
 
 ## 2. What the book teaches and this tool chain covers
 
@@ -145,7 +155,8 @@ one is named in brackets; the diagnostic quoted is the compiler's.
 ### 3.1 A compiler crash
 
 * **A hierarchical reference to another module's `localparam` inside a paramset
-  override crashes the compiler** [`u10_ps_hierref`]. The book's "constant module"
+  override crashes the compiler** [`u10_ps_hierref`] — **fixed, [E-563](../../enhancements_doc/Enhancement-563.md)** (the reference
+  is folded at elaboration; a non-local parameter is refused, as LRM 6.4.1 requires). The book's "constant module"
   idiom — a top-level module of `localparam`s read from an override, as in
   `.RSH = fab.rsh_poly * fab.bias;` — is LRM 6.4.1 ("hierarchical
   out-of-module references to local parameters of a different module" are allowed in
@@ -160,7 +171,7 @@ one is named in brackets; the diagnostic quoted is the compiler's.
   `module gainblk #(parameter real gain = 10.0) (inout electrical a, b);` →
   *unexpected token '#'; expected ';'*. Parameters must be declared in the body.
 * **`macromodule`** [`t10`, `w07`]: not accepted as a synonym for `module` (LRM 6.2).
-* **Bit-level concatenation and replication of integers** [`u39`, `u40`]:
+* **Bit-level concatenation and replication of integers** [`u39`, `u40`] — **fixed, [E-561](../../enhancements_doc/Enhancement-561.md)**:
   `r = {1'b1, 3'b101};` and `r = {4{w}};` are typed as arrays (*expected integer value
   but found integer[0:2] value*), not as the 4-bit integer 4'b1101 the LRM defines.
   String concatenation `{s, "def"}` works.
@@ -184,25 +195,28 @@ one is named in brackets; the diagnostic quoted is the compiler's.
 
 ### 3.3 Paramsets (chapter 6)
 
-The plain paramset works; the chapter's central idioms do not:
+The plain paramset works; the chapter's central idioms do not — *as of 2026-09-06 they
+all do ([E-563](../../enhancements_doc/Enhancement-563.md), [E-565](../../enhancements_doc/Enhancement-565.md)), except the documented random-draw deviation:*
 
 * **A paramset parameter with the same name as a parent-module parameter is refused**
-  [`u07`]: `paramset rp vres; parameter real L = 3u; .L = L;` →
+  — **fixed, [E-563](../../enhancements_doc/Enhancement-563.md)** [`u07`]: `paramset rp vres; parameter real L = 3u; .L = L;` →
   *'L' was already declared in this scope* and *definition of 'L' references itself*.
   LRM 6.4 makes paramset parameters independent of the module's, and every paramset in
   the book (and most in practice) reuses the names.
 * **A paramset whose parent is another paramset cannot override the parent paramset's
-  own parameters** [`u08`]: `.KIND = "metal"` in the child gives *definition of 'MAT'
+  own parameters** — **fixed, [E-563](../../enhancements_doc/Enhancement-563.md)** [`u08`]: `.KIND = "metal"` in the child gives *definition of 'MAT'
   references parameter 'KIND' defined afterwards* — the two-level chain is elaborated
   in one scope in the wrong order.
-* **Same-name (overloaded) paramsets are refused** [`u12`, `t14`]: *'rp' was already
+* **Same-name (overloaded) paramsets are refused** — **fixed, [E-565](../../enhancements_doc/Enhancement-565.md)**, with the 6.4.2
+  selection on both routes [`u12`, `t14`]: *'rp' was already
   declared in this scope*. The LRM 6.4.2 resolution rules (fewest un-overridden
   parameters, most ranged locals, …) that the book explains at length therefore have
   nothing to act on.
-* **`aliasparam` inside a paramset is not usable in an instance override** [`w03`]:
+* **`aliasparam` inside a paramset is not usable in an instance override** — **fixed,
+  [E-563](../../enhancements_doc/Enhancement-563.md)** [`w03`]:
   `aliasparam LL = LEN;` then `rp #(.LL(3u))` → *'.LL' names no parameter of module
   'rp'*.
-* **Paramset variables and output-variable overrides** [`u11`]:
+* **Paramset variables and output-variable overrides** — **fixed, [E-563](../../enhancements_doc/Enhancement-563.md)** [`u11`]:
   `(* desc="dissipated power" *) real pdis; pdis = .reff * 1e-6;` → *expected
   'parameter', 'localparam' or '.'*. LRM 6.4.1 allows variables and procedural statements in a
   paramset to compute output variables; this project has no such mechanism.
@@ -221,12 +235,14 @@ The plain paramset works; the chapter's central idioms do not:
   `I(d1.br) <+`, [`u17`, `u18`]) work, so the gap is the port alias only.
 * **The `instance.branch(a, b)` spelling of a hierarchical unnamed branch** [`u19`]:
   `V(d1.branch(x,y)) <+ 1.25;` is not recognised.
-* **Hierarchical names into generate blocks** [`w01`, `u34b`, `u36`]: `V(blk.x)` for a
+* **Hierarchical names into generate blocks** — **fixed, [E-564](../../enhancements_doc/Enhancement-564.md)**, the implicit
+  `genblk<n>` names included [`w01`, `u34b`, `u36`]: `V(blk.x)` for a
   named `if`-generate block and `V(g1[0].z)` for a `for`-generate instance are not found
   (*'blk' was not found in the current scope*; *unexpected token '.'*). The blocks
   themselves elaborate; only naming into them fails. The book's chapter-18 examples on
   `genblk<n>` naming are therefore not reachable either.
-* **`case`-generate** [`u33`, `t32d`]: a module-level `case (sel) 1: begin : one … end
+* **`case`-generate** — **fixed, [E-564](../../enhancements_doc/Enhancement-564.md)** (`t32d` now fails only on its `parameter`
+  selector, the E-67 deviation below; with a `localparam` it compiles) [`u33`, `t32d`]: a module-level `case (sel) 1: begin : one … end
   default: … endcase` is not elaborated (*'one' was not found*).
 * **Generate conditions on a module parameter** [`t32b`, `t32c`]: `if ($param_given(coeff1)
   && coeff1 != 0.0)` and `for (k = 1; k <= width; …)` with a `genvar` are refused —
@@ -240,15 +256,18 @@ The plain paramset works; the chapter's central idioms do not:
 
 ### 3.5 Lookup tables (chapter 12)
 
-* **Array variables as the data source** [`u22`, `u23`]: `$table_model(0, V(a,b), y, x, f)`
+* **Array variables as the data source** — **fixed, [E-562](../../enhancements_doc/Enhancement-562.md)** [`u22`, `u23`]: `$table_model(0, V(a,b), y, x, f)`
   with 1-D arrays, and `$table_model(0, V(a,b), grid)` with a 2-D array, are refused
   (*'y' requires a bit-select [i]*). A file and an assignment pattern (`'{1.0,2.0,3.0}`)
   work [`u23b`].
-* **A string parameter as the control string** [`u21`]: `parameter string ctl = "3LL,3LL"; … $table_model(…, "sample.tbl", ctl)`
+* **A string parameter as the control string** — **fixed, [E-562](../../enhancements_doc/Enhancement-562.md)**, as a `localparam
+  string` (the table is built when the model is compiled, so an overridable `parameter
+  string`, which `u21` declares, is refused with that reason) [`u21`]: `parameter string ctl = "3LL,3LL"; … $table_model(…, "sample.tbl", ctl)`
   → *invalid function arguments*; only a literal is accepted, so the book's "external
   control of the interpolation" is unavailable.
 * **The `I` (ignore this column) control** [`u25`] and **quadratic/cubic spline
-  interpolation (`2`, `3`)** [`u27`, `t26`]: *unsupported $table_model control string*.
+  interpolation (`2`, `3`)** [`u27`, `t26`] — **fixed, [E-562](../../enhancements_doc/Enhancement-562.md)** (`3` already worked;
+  `2` and `I` were the gap): *unsupported $table_model control string*.
   `D` (closest point), `1`, `C`/`L`/`E` extrapolation and the `;n` selector work.
 
 ### 3.6 Random numbers (chapter 10)
@@ -312,4 +331,46 @@ not gaps:
   compliance matrix and its suites and *re-checked* by compiling a probe; no claim in
   §2 rests on the documents alone.
 * Nothing was fixed during the audit. The crash in §3.1 and the paramset gaps in §3.3
-  are the two items that would matter first for a model author following this book.
+  are the two items that would matter first for a model author following this book
+  (both were fixed in the following days; §6).
+
+## 6. Status after the follow-up enhancements (2026-09-06)
+
+Tree `757d27db`; the 107 probes re-run with the same script
+([`run_all_after.out`](2026-09-05_repro-book/run_all_after.out)): 73 compile, 34 are
+refused, none crashes. Twenty probes changed status, all from refused (or crashed) to
+compiling: `t02`, `t14`, `t26c`, `u07`, `u08`, `u10`, `u11`, `u12`, `u22`, `u23`, `u25`,
+`u27`, `u33`, `u34`, `u34b`, `u36`, `u39`, `u40`, `w01`, `w03`.
+
+| finding | enhancement | pinned by |
+|---|---|---|
+| 3.1 the crash on `fab.rsh_poly` in an override | [E-563](../../enhancements_doc/Enhancement-563.md) | `paramsetlrm_examples` |
+| 3.2 bit-level concatenation and replication of integers | [E-561](../../enhancements_doc/Enhancement-561.md) | `concat_examples` |
+| 3.3 same-name parameters, paramset chains, `aliasparam`, variables and statements | [E-563](../../enhancements_doc/Enhancement-563.md) | `paramsetlrm_examples` |
+| 3.3 overloaded paramsets and the 6.4.2 selection | [E-565](../../enhancements_doc/Enhancement-565.md) | `paramsetoverload_examples` |
+| 3.4 names into generate blocks, `case`-generate, single-item branches | [E-564](../../enhancements_doc/Enhancement-564.md) | `genhier_examples` |
+| 3.5 array data sources, a string parameter as control, `I`, the `2` spline | [E-562](../../enhancements_doc/Enhancement-562.md) | `tablesrc_examples` |
+
+Beyond the probes, the same work fixed two things the audit had not seen: a paramset
+instantiated *inside a module* rendered the module at its defaults (the book's divider
+never computed what it said), and a generate branch without `begin`/`end` swallowed the
+items after it. Both are pinned in the suites above.
+
+Still open, with the probe that shows each (eleven constructs):
+
+* the module-header parameter port list `module m #(parameter …) (…)` [`u05`, `u06`, `t12`];
+* `macromodule` [`t10`, `w07`];
+* a vector-net initialiser with a gap [`t09`];
+* a bus part-select in a port connection [`u42b`, `t11`];
+* a vector port branch with a range [`t18b`] (vector branches are documented out of scope);
+* `defparam` of a hierarchical system parameter [`w08`];
+* an attribute instance inside a port-connection list [`u38`, `t33`];
+* hierarchical references to a child instance's *ports* [`u20`, `w06`, `t19b`] and the
+  `instance.branch(a, b)` spelling [`u19`];
+* a constant seed in `$arandom`/`$rdist_*` [`u14`];
+* `OR` in upper case in an event expression [`u29b`, `t29`] (the book's extension).
+
+Unchanged by design, as documented: a random draw in a paramset override (E-545;
+[`u15`, `t04`]), a generate condition or case selector on a module parameter (E-67;
+[`t32b`, `t32c`, `t32d`]), SPICE primitives, vector branches, event tolerances, the
+`$fscanf` literal separators, and the book's own mistakes of §4.

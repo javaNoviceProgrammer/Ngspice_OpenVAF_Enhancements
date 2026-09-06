@@ -38,3 +38,8 @@ diagnostic; `run_all.out` is the listing the audit was written from. An exit
 code of 0 is a compile, 65 a diagnostic, 101 a compiler crash. Some refusals
 are the correct answer (the book's own mistakes, and documented deviations);
 the audit says which.
+
+`run_all_after.out` is the same listing on tree `757d27db` (2026-09-06), after
+Enhancements 561 to 565 closed the audit's chapter-2, 6, 12 and 18 findings: 73
+probes compile and 34 are refused, none crashes. The audit's §6 lists the
+twenty probes that changed status and what remains open.
