@@ -351,7 +351,7 @@ static char *prefixed_span_end(char *s, const char *line, int *has_r)
 {
     char *p = s;
     int n = 0, r = 0;
-    if (s > line && (isalnum_c((unsigned char) s[-1]) || s[-1] == '_'))
+    if (s > line && (isalnum_c(s[-1]) || s[-1] == '_'))   /* isalnum_c takes a char */
         return NULL;
     while (n < 2 && (*p == 'r' || *p == 'R' || *p == 'f' || *p == 'F')) {
         if (*p == 'r' || *p == 'R')
