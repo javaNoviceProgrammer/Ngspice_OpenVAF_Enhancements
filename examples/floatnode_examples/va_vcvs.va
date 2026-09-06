@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+module va_vcvs(in, out);
+  inout in, out;
+  electrical in, out;
+  parameter real gain = 2.0;
+  analog V(out) <+ gain * V(in);
+endmodule

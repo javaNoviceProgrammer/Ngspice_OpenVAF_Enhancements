@@ -1418,26 +1418,43 @@ SMPsizeHint (SMPmatrix *Matrix, int n)
 }
 
 /*
- * SMPmarkOccupied() -- F1/F8: set occupied[e] = 1 for every unknown e in 1..n
- * whose matrix COLUMN has at least one entry.  Called by CKTsetup before the
- * KLU conversion, so the KLU side reads the COO list; the Sparse side reads
- * the column heads of the indices that have been translated so far.
+ * SMPmarkOccupied() -- F1/F8, Enhancement-569: for every unknown e in 1..n
+ * set rowocc[e] = 1 if its matrix ROW has an entry and colocc[e] = 1 if its
+ * COLUMN has one.  A structurally solvable unknown needs both: the row is its
+ * equation, the column is where it appears in the others'.  E-566 tested the
+ * column alone, which catches a node nothing conducts to (a current source or
+ * a controlled-current-source output: an equation with no unknown in it) but
+ * not a node that a device only READS -- a B-source `v=2*v(x)` or an XSPICE
+ * input port puts its derivative in the reader's row, column x, so x had a
+ * column entry and an EMPTY row, no gmin could rescue it, and the operating
+ * point failed on both solvers, Sparse blaming x and KLU the reader's branch.
+ * Called by CKTsetup before the KLU conversion, so the KLU side reads the COO
+ * list; the Sparse side walks every element of the indices translated so far.
  */
 void
-SMPmarkOccupied (SMPmatrix *Matrix, unsigned char *occupied, int n)
+SMPmarkOccupied (SMPmatrix *Matrix, unsigned char *rowocc, unsigned char *colocc, int n)
 {
     if (Matrix->CKTkluMODE) {
         KluLinkedListCOO *t ;
-        for (t = Matrix->SMPkluMatrix->KLUmatrixLinkedListCOO ; t != NULL ; t = t->next)
+        for (t = Matrix->SMPkluMatrix->KLUmatrixLinkedListCOO ; t != NULL ; t = t->next) {
+            if ((int) t->row + 1 <= n)
+                rowocc [t->row + 1] = 1 ;
             if ((int) t->col + 1 <= n)
-                occupied [t->col + 1] = 1 ;
+                colocc [t->col + 1] = 1 ;
+        }
     } else {
         MatrixPtr M = Matrix->SPmatrix ;
-        int e ;
-        for (e = 1 ; e <= n && e <= M->ExtSize ; e++) {
-            int ic = M->ExtToIntColMap [e] ;
-            if (ic > 0 && ic <= M->Size && M->FirstInCol [ic] != NULL)
-                occupied [e] = 1 ;
+        int ic ;
+        for (ic = 1 ; ic <= M->Size ; ic++) {
+            ElementPtr e ;
+            int ec = M->IntToExtColMap [ic] ;
+            for (e = M->FirstInCol [ic] ; e != NULL ; e = e->NextInCol) {
+                int er = M->IntToExtRowMap [e->Row] ;
+                if (er >= 1 && er <= n)
+                    rowocc [er] = 1 ;
+                if (ec >= 1 && ec <= n)
+                    colocc [ec] = 1 ;
+            }
         }
     }
 }

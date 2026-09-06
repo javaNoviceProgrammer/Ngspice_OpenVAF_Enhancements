@@ -76,7 +76,7 @@ int SMPmatSize( SMPmatrix *);
 void SMPdenseExtractReal(SMPmatrix *Matrix, int n, double *out);
 int SMPnewMatrix( SMPmatrix *, int );
 void SMPsizeHint( SMPmatrix *, int );                   /* F8: the matrix spans this many unknowns */
-void SMPmarkOccupied( SMPmatrix *, unsigned char *, int ); /* F1/F8: 1-based unknowns whose column has an entry */
+void SMPmarkOccupied( SMPmatrix *, unsigned char *, unsigned char *, int ); /* F1/F8, E-569: 1-based unknowns whose row / column has an entry */
 double SMPdiagNorm( SMPmatrix * );   /* Enhancement-153: max |diagonal| (pre-factor) */
 void SMPdestroy( SMPmatrix *);
 int SMPpreOrder( SMPmatrix *);
