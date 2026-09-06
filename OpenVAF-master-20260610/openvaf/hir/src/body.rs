@@ -377,6 +377,13 @@ impl<'a> BodyRef<'a> {
         self.infere.expr_types[expr].to_value().unwrap()
     }
 
+    /// Hunt F12 of the 2026-09-05 book audit: a `{...}` typed as a bit-level
+    /// integer concatenation (LRM 4.1.13), with its operand widths in order
+    /// and its replication count.
+    pub fn bit_concat(&self, expr: ExprId) -> Option<&'a inference::BitConcat> {
+        self.infere.bit_concats.get(&expr)
+    }
+
     /// Returns whether the result of an expression
     /// needs to be cast to a different type before use.
     pub fn needs_cast(&self, expr: ExprId) -> Option<(Type, &'a Type)> {

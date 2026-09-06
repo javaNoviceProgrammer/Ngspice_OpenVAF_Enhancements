@@ -328,8 +328,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
             // concatenation (numeric concats are array-valued and consumed element-wise
             // by their contexts via `lower_array_elems`, never reaching this path).
             Expr::Concat { rep, elems } => {
-                debug_assert!(matches!(self.body.expr_type(expr), Type::String));
-                self.lower_string_concat(rep, elems)
+                if let Some(bc) = self.body.bit_concat(expr) {
+                    self.lower_bit_concat(elems, &bc.widths, bc.rep)
+                } else {
+                    debug_assert!(matches!(self.body.expr_type(expr), Type::String));
+                    self.lower_string_concat(rep, elems)
+                }
             }
             Expr::Literal(lit) => match *lit {
                 Literal::String(ref str) => {
@@ -365,6 +369,30 @@ impl BodyLoweringCtx<'_, '_, '_> {
         };
         self.ctx.set_srcloc(old_loc);
         res
+    }
+
+    /// Hunt F12 (2026-09-05 book audit), LRM 4.1.13: `{4'hA, 4'h5}` is the integer
+    /// 0xA5 -- each operand is masked to its width and shifted in from the left, the
+    /// operand list repeated `rep` times. A 32-bit operand needs no mask, and a shift
+    /// by 32 is not formed (LLVM would poison it): the accumulator it would shift is
+    /// exactly the part an `integer` drops, so it is replaced by zero.
+    fn lower_bit_concat(&mut self, elems: &[ExprId], widths: &[u32], rep: u32) -> Value {
+        let mut acc = self.ctx.iconst(0);
+        for _ in 0..rep {
+            for (&e, &w) in elems.iter().zip(widths) {
+                let v = self.lower_expr(e);
+                let (masked, shifted) = if w >= 32 {
+                    (v, self.ctx.iconst(0))
+                } else {
+                    let mask = self.ctx.iconst(((1u64 << w) - 1) as i32);
+                    let masked = self.ctx.ins().iand(v, mask);
+                    let sh = self.ctx.iconst(w as i32);
+                    (masked, self.ctx.ins().binary1(Opcode::Ishl, acc, sh))
+                };
+                acc = self.ctx.ins().ior(shifted, masked);
+            }
+        }
+        acc
     }
 
     fn lower_unary_op(&mut self, expr: ExprId, arg: ExprId, op: UnaryOp) -> Value {

@@ -393,7 +393,14 @@ is the clause's own example) — the round-4 audit (2026-09-03) found the
 runtime form refused, and it now lowers to a loop appending the
 once-evaluated unit, so a zero or negative count yields the empty string
 and a parameter count tracks its override (pinned in `lrmdata`); numeric
-replication still requires the constant count LRM 4.2.13 mandates. The
+replication still requires the constant count LRM 4.2.13 mandates. Since F12 of
+the 2026-09-05 book audit a `{…}` whose operands are all scalar integers is the
+**bit-level** concatenation of 4.1.13 wherever a *scalar* is expected of it
+(`{4'hA, 4'h5}` = 165, `{2{4'b1010}}` = 170; a sized literal contributes its
+size, any other integer 32 bits; an unsized literal is refused per the clause;
+a result wider than 32 bits is warned as truncated) — in an array context the
+same spelling keeps the flat array E-34 defined, so `laplace_nd(x, {1}, {1, 2})`
+and `real w[0:1] = {a, b}` are untouched. The
 operator sweep ran with self-checking bitmask modules whose failure modes
 are numerically visible. Two real defects found and fixed in the audits:
 unary `~` emitted arithmetic negate, and the constant folder disagreed

@@ -148,9 +148,35 @@ impl AssignDst {
     }
 }
 
+/// Hunt F12 of the 2026-09-05 book audit, LRM 4.1.13: a `{...}` concatenation
+/// of scalar integers that stands where a SCALAR is expected is a BIT-LEVEL
+/// concatenation -- `{4'hA, 4'h5}` is the integer 0xA5, `{2{4'b1010}}` is 0xAA --
+/// not the flat array E-34 builds for array contexts. `widths` is each operand's
+/// width in bits, in order (a sized literal's size, 32 for any other integer
+/// expression); `rep` the replication count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitConcat {
+    pub widths: Vec<u32>,
+    pub rep: u32,
+}
+
+/// A numeric concatenation that COULD be bit-level: all operands scalar integers.
+/// Kept by the context until the expression meets its expectation -- an array
+/// context keeps E-34's array, a scalar one converts it (see `take_bit_concat`).
+struct BitCandidate {
+    elems: Vec<ExprId>,
+    /// `None`: an unsized literal, whose width the LRM says the concatenation
+    /// may not guess (4.1.13 "unsized constant numbers shall not be allowed")
+    widths: Vec<Option<u32>>,
+    rep: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct InferenceResult {
     pub expr_types: ArenaMap<Expr, Ty>,
+    /// Hunt F12 (2026-09-05 book audit): the `{...}` expressions typed as
+    /// bit-level integer concatenations, with their operand widths.
+    pub bit_concats: AHashMap<ExprId, BitConcat>,
     pub resolved_calls: AHashMap<ExprId, ResolvedFun>,
     pub resolved_signatures: AHashMap<ExprId, Signature>,
     pub assignment_destination: AHashMap<StmtId, AssignDst>,
@@ -192,7 +218,14 @@ impl InferenceResult {
             ..Default::default()
         };
 
-        let mut ctx = Ctx { result, body: &body, db, expr_stmt_ty: None, owner: id };
+        let mut ctx = Ctx {
+            result,
+            body: &body,
+            db,
+            expr_stmt_ty: None,
+            owner: id,
+            bit_candidates: AHashMap::default(),
+        };
         ctx.expr_stmt_ty = match id {
             DefWithBodyId::ParamId(param) => match &db.param_data(param).ty {
                 Some(ty) => Some(ty.clone()),
@@ -223,9 +256,45 @@ struct Ctx<'a> {
     /// bodys this is simply none
     expr_stmt_ty: Option<Type>,
     owner: DefWithBodyId,
+    /// hunt F12: numeric concatenations whose operands are all scalar integers
+    bit_candidates: AHashMap<ExprId, BitCandidate>,
 }
 
 impl Ctx<'_> {
+    /// Hunt F12 (2026-09-05 book audit): `expr` is a `{...}` of scalar integers
+    /// that has just failed to meet a SCALAR expectation as E-34's array. Retype
+    /// it as the bit-level integer concatenation LRM 4.1.13 defines and return
+    /// the new type; `None` when it is not such a candidate. An unsized literal
+    /// operand is an error (its width is undefined -- it is still given 32 bits
+    /// so the rest of the expression can be checked); a result wider than the
+    /// 32-bit `integer` is warned about, since the high bits are dropped.
+    fn take_bit_concat(&mut self, expr: ExprId) -> Option<Ty> {
+        let cand = self.bit_candidates.remove(&expr)?;
+        let mut widths = Vec::with_capacity(cand.widths.len());
+        for (&e, w) in cand.elems.iter().zip(&cand.widths) {
+            if matches!(self.body.exprs[e], Expr::Concat { .. }) {
+                self.take_bit_concat(e); // a nested `{...}`: bit-level as well
+            }
+            match w {
+                Some(w) => widths.push(*w),
+                None => {
+                    self.result
+                        .diagnostics
+                        .push(InferenceDiagnostic::UnsizedInBitConcat { concat: expr, operand: e });
+                    widths.push(32);
+                }
+            }
+        }
+        let bits = widths.iter().map(|&w| w as u64).sum::<u64>() * cand.rep as u64;
+        if bits > 32 {
+            self.result.diagnostics.push(InferenceDiagnostic::BitConcatTruncated { expr, bits });
+        }
+        let ty = Ty::Val(Type::Integer);
+        self.result.expr_types[expr] = ty.clone();
+        self.result.bit_concats.insert(expr, BitConcat { widths, rep: cand.rep });
+        Some(ty)
+    }
+
     pub fn infere_stmt(&mut self, stmt: StmtId) {
         match self.body.stmts[stmt] {
             Stmt::Expr(expr) => {
@@ -315,6 +384,15 @@ impl Ctx<'_> {
                         self.result.casts.insert(val, Type::Integer);
                     } else if dst_ty.is_assignable_to(&value_ty) {
                         if dst_ty != value_ty {
+                            self.result.casts.insert(val, dst_ty);
+                        }
+                    } else if !matches!(value_ty, Type::String)
+                        && !matches!(dst_ty, Type::String | Type::Array { .. })
+                        && self.take_bit_concat(val).is_some()
+                    {
+                        // hunt F12: `r = {4'hA, 4'h5};` -- a bit-level concatenation
+                        // into a scalar; cast to a real destination like any integer
+                        if dst_ty != Type::Integer {
                             self.result.casts.insert(val, dst_ty);
                         }
                     } else {
@@ -2182,6 +2260,34 @@ impl Ctx<'_> {
             });
             return None;
         }
+
+        // hunt F12 (2026-09-05 book audit): every operand a scalar integer -- this
+        // may turn out to be a bit-level concatenation (LRM 4.1.13) if a scalar is
+        // expected of it; remember the widths and decide when the expectation comes
+        if elem == Type::Integer
+            && elems.iter().zip(&tys).all(|(e, t)| {
+                t.as_ref().and_then(|t| t.to_value()) == Some(Type::Integer)
+                    || self.bit_candidates.contains_key(e)
+            })
+        {
+            let widths = elems
+                .iter()
+                .map(|&e| match self.body.exprs[e] {
+                    Expr::Literal(Literal::Int(_)) => self.body.literal_sizes.get(&e).copied(),
+                    // a nested `{...}` of scalar integers: its own total width, an
+                    // unsized literal anywhere inside making the whole width unknown
+                    Expr::Concat { .. } => {
+                        let inner = &self.bit_candidates[&e];
+                        inner.widths.iter().try_fold(0u64, |acc, w| Some(acc + (*w)? as u64)).map(
+                            |bits| (bits * inner.rep as u64).min(32) as u32,
+                        )
+                    }
+                    _ => Some(32),
+                })
+                .collect();
+            self.bit_candidates
+                .insert(expr, BitCandidate { elems: elems.clone(), widths, rep: rep_cnt });
+        }
         Some(Ty::Val(Type::Array { ty: Box::new(elem), len: flat as u32 }))
     }
 
@@ -2371,14 +2477,16 @@ impl Ctx<'_> {
         src: Option<FunctionId>,
     ) -> (Option<Ty>, bool) {
         debug_assert!(signatures.iter().any(|sig| sig.args.len() == args.len()));
-        let arg_types: Vec<_> = args.iter().map(|arg| self.infere_expr(stmt, *arg)).collect();
+        let mut arg_types: Vec<_> =
+            args.iter().map(|arg| self.infere_expr(stmt, *arg)).collect();
         let mut valid_args = true;
 
         let mut candidates: Vec<_> = signatures.keys().collect();
         let mut new_candidates = Vec::new();
         let mut errors = Vec::new();
-        for (i, (arg, ty)) in zip(args, &arg_types).enumerate() {
-            if let Some(ty) = ty {
+        for i in 0..args.len() {
+            let arg = &args[i];
+            if let Some(mut ty) = arg_types[i].clone() {
                 new_candidates.clone_from(&candidates);
                 new_candidates.retain(|candidate| {
                     signatures[*candidate]
@@ -2386,6 +2494,21 @@ impl Ctx<'_> {
                         .get(i)
                         .map_or(false, |req| ty.satisfies_with_conversion(req))
                 });
+                if new_candidates.is_empty() {
+                    // hunt F12 (2026-09-05 book audit): a `{...}` of scalar integers in
+                    // a scalar slot is the bit-level integer of LRM 4.1.13 -- retry as such
+                    if let Some(int_ty) = self.take_bit_concat(*arg) {
+                        new_candidates.clone_from(&candidates);
+                        new_candidates.retain(|candidate| {
+                            signatures[*candidate]
+                                .args
+                                .get(i)
+                                .map_or(false, |req| int_ty.satisfies_with_conversion(req))
+                        });
+                        arg_types[i] = Some(int_ty.clone());
+                        ty = int_ty;
+                    }
+                }
                 if new_candidates.is_empty() {
                     // Enhancement-403: one entry per surviving CANDIDATE SIGNATURE, but
                     // several signatures of the same builtin often want the SAME type at
@@ -2404,7 +2527,7 @@ impl Ctx<'_> {
                     debug_assert_ne!(&candidate_types, &[]);
                     errors.push(TypeMismatch {
                         expected: Cow::from(candidate_types),
-                        found_ty: ty.clone(),
+                        found_ty: ty,
                         expr: *arg,
                     });
                 } else {
@@ -2514,10 +2637,32 @@ impl Ctx<'_> {
                     }
                 }
             }
-            None => self
-                .result
-                .diagnostics
-                .push(TypeMismatch { expected: req, found_ty: ty, expr }.into()),
+            None => {
+                // hunt F12: a `{...}` of scalar integers meeting a scalar expectation
+                // is a bit-level concatenation, not E-34's array
+                if let Some(int_ty) = self.take_bit_concat(expr) {
+                    if let Some(matched) = req.iter().position(|req| fun(&int_ty, req)) {
+                        if !EXACT {
+                            if let Some(parent_fun) = parent_fun {
+                                self.result
+                                    .resolved_signatures
+                                    .insert(parent_fun, Signature::from(matched));
+                            }
+                            if let Some(cast) = req[matched].cast(&Type::Integer) {
+                                self.result.casts.insert(expr, cast);
+                            }
+                        }
+                        return Some(matched);
+                    }
+                    self.result
+                        .diagnostics
+                        .push(TypeMismatch { expected: req, found_ty: int_ty, expr }.into());
+                    return None;
+                }
+                self.result
+                    .diagnostics
+                    .push(TypeMismatch { expected: req, found_ty: ty, expr }.into())
+            }
         }
 
         res
@@ -3355,6 +3500,16 @@ pub enum InferenceDiagnostic {
     },
 
     /// Enhancement-34: an empty `{}` concatenation.
+    /// hunt F12, LRM 4.1.13: an unsized literal in a bit-level concatenation
+    UnsizedInBitConcat {
+        concat: ExprId,
+        operand: ExprId,
+    },
+    /// hunt F12: a bit-level concatenation wider than the 32-bit `integer` it yields
+    BitConcatTruncated {
+        expr: ExprId,
+        bits: u64,
+    },
     EmptyConcat {
         expr: ExprId,
     },

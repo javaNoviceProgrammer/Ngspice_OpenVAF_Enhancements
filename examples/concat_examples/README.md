@@ -24,6 +24,15 @@ scale = avg4({1, 3, 2.0, 2.0});      // concat as a whole-array function argumen
 tag = {"con", "cat"};                // runtime STRING concatenation -> "concat"
 ```
 
+**Bit-level concatenation (F12 of the 2026-09-05 book audit).** Where a *scalar*
+is expected of it, a `{...}` whose operands are all scalar integers is the
+LRM 4.1.13 bit-level concatenation instead: `{1'b1, 3'b101}` is 13, `{4'hA, 4'h5}`
+is 165, `{2{4'b1010}}` is 170. A sized literal contributes its declared size and
+any other integer expression 32 bits; an unsized literal is refused, as the
+clause requires; a result wider than 32 bits is warned as truncated to the low
+32 (`{4{w}}` is therefore `w`). In an array context the same spelling keeps the
+flat array described below. `bitcat.va` pins the values through ngspice.
+
 Numeric concats flatten scalars / whole arrays / nested concats into one flat
 array; `{n{...}}` repeats the list (`n` a positive integer literal, diagnosed
 otherwise); string concats produce a runtime string via the `$swrite` machinery.

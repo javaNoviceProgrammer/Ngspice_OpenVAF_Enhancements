@@ -87,6 +87,49 @@ def main():
         check(label, (not built) and "replication count" in log,
               "clean error" if not built else "WRONGLY ACCEPTED")
 
+    # hunt F12 of the 2026-09-05 book audit: bit-level concatenation of integers
+    # (LRM 4.1.13). `{1'b1, 3'b101}` used to be typed as an integer ARRAY, so it
+    # could not be assigned to an integer or used as an operand at all.
+    print("[4] bit-level concatenation / replication of integers (hunt F12)")
+    built, log = compile_va("bitcat.va", "bitcat.osdi")
+    check("bitcat.va compiles; the 38-bit `{2'b11, 4'hF, w}` is warned as truncated to 32",
+          built and "bits wide; an `integer` keeps the low 32" in log,
+          "" if built else log.strip().splitlines()[0])
+    if built:
+        deck = ("* bitcat op\nvin a 0 dc 1\nn1 a 0 bm\n.model bm bitcat\n"
+                ".control\npre_osdi bitcat.osdi\nop\n"
+                "print @n1[c1] @n1[c2] @n1[c3] @n1[c4] @n1[c5] @n1[c6]\n.endc\n.end\n")
+        with open(os.path.join(HERE, "_b.cir"), "w") as fh:
+            fh.write(deck)
+        r = subprocess.run([NGSPICE, "-b", "_b.cir"], cwd=HERE, capture_output=True, text=True)
+        out = r.stdout + r.stderr
+        import re
+        got = {k: float(v) for k, v in re.findall(r"@n1\[(c\d)\]\s*=\s*([-\d.eE+]+)", out)}
+        want = {"c1": 13, "c2": 165, "c3": 170, "c4": 82.5, "c5": 3, "c6": 6}
+        for k, v in want.items():
+            check(f"{k} == {v}", got.get(k) == v, f"got {got.get(k)}")
+    for code, needle, label in (
+            ("integer r; analog begin r = {1, 2}; I(a,c) <+ 1e-3*V(a,c) + r*1e-15; end",
+             "unsized literal cannot be an operand of a bit-level concatenation",
+             "an unsized literal in a bit concatenation is refused (LRM 4.1.13)"),
+            ("real x[0:1]; analog begin x = {1.0, 2.0}; I(a,c) <+ 1e-3*V(a,c)*x[1]; end",
+             None, "an array assignment from `{...}` still takes E-34's array")):
+        with open(os.path.join(HERE, "_e.va"), "w") as fh:
+            fh.write('`include "disciplines.vams"\n'
+                     'module concat_e(a,c); inout a,c; electrical a,c;\n'
+                     f'{code}\nendmodule\n')
+        built, log = compile_va("_e.va", "_e.osdi")
+        if needle is None:
+            check(label, built, "" if built else log.strip().splitlines()[0])
+        else:
+            check(label, (not built) and needle in log,
+                  "clean error" if not built else "WRONGLY ACCEPTED")
+    for f in ("_b.cir", "_e.va", "_e.osdi", "bitcat.osdi"):
+        try:
+            os.remove(os.path.join(HERE, f))
+        except OSError:
+            pass
+
     print("\nALL PASS" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)
 

@@ -464,6 +464,17 @@ impl ast::SiRealNumber {
 }
 
 impl ast::IntNumber {
+    /// The explicit size of a sized based literal (`4'b1001` -> 4, LRM 2.6.1),
+    /// clamped to 1..=32 exactly as the value parser clamps it; `None` for an
+    /// unsized literal (`15984`, `'h837FF`). Hunt F12 of the 2026-09-05 book
+    /// audit: a bit-level concatenation needs its operands' widths.
+    pub fn declared_size(&self) -> Option<u32> {
+        let text = self.number_text();
+        let quote = text.find('\'')?;
+        let size: u32 = text[..quote].parse().ok()?;
+        Some(size.clamp(1, 32))
+    }
+
     /// The literal's full text with `_` separators (and, for a multi-token
     /// based literal, white space between the tokens) stripped. A based
     /// literal may span several sibling tokens of one LITERAL node -- size,

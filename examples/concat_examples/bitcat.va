@@ -1,0 +1,24 @@
+`include "disciplines.vams"
+// hunt F12 (2026-09-05 book audit): bit-level concatenation / replication of
+// integers, LRM 4.1.13 -- `{...}` of scalar integers where a scalar is expected.
+module bitcat(a, c);
+inout a, c; electrical a, c;
+parameter integer w = 3;
+(* desc="{1'b1, 3'b101} = 13" *) integer c1;
+(* desc="{4'hA, 4'h5} = 165" *) integer c2;
+(* desc="{2{4'b1010}} = 170" *) integer c3;
+(* desc="{4'hA, 4'h5} as real operand" *) real c4;
+(* desc="{2'b11, w} low 32 bits = w with 3 above" *) integer c5;
+(* desc="{4'h0, {2'b01, 2'b10}} nested = 6" *) integer c6;
+integer arr[0:1];
+analog begin
+  c1 = {1'b1, 3'b101};
+  c2 = {4'hA, 4'h5};
+  c3 = {2{4'b1010}};
+  c4 = {4'hA, 4'h5} * 0.5;
+  c5 = {2'b11, 4'hF, w} & 32'h0000000F;
+  c6 = {4'h0, {2'b01, 2'b10}};
+  arr = {1, 2};                      // an array context keeps E-34's array
+  I(a,c) <+ 1e-3*V(a,c) + 1e-15*(c1 + c2 + c3 + c4 + c5 + c6 + arr[1]);
+end
+endmodule

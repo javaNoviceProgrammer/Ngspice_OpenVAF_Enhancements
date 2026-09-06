@@ -213,6 +213,9 @@ impl LowerCtx<'_> {
                     if int.dontcare_masks().is_some() {
                         self.body.stray_dontcare_literals.push(id);
                     }
+                    if let Some(size) = int.declared_size() {
+                        self.body.literal_sizes.insert(id, size); // hunt F12
+                    }
                 }
                 return id;
             }

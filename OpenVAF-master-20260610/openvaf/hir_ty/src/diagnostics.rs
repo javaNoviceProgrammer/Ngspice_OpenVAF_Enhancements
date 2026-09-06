@@ -671,6 +671,49 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            InferenceDiagnostic::UnsizedInBitConcat { concat, operand } => {
+                let src = self.parse.to_file_span(self.expr_range(operand), self.sm);
+                let whole = self.parse.to_file_span(self.expr_range(concat), self.sm);
+                Report::error()
+                    .with_labels(vec![
+                        Label {
+                            style: LabelStyle::Primary,
+                            file_id: src.file,
+                            range: src.range.into(),
+                            message: "unsized literal".to_owned(),
+                        },
+                        Label {
+                            style: LabelStyle::Secondary,
+                            file_id: whole.file,
+                            range: whole.range.into(),
+                            message: "bit-level concatenation".to_owned(),
+                        },
+                    ])
+                    .with_message(
+                        "an unsized literal cannot be an operand of a bit-level concatenation",
+                    )
+                    .with_notes(vec![
+                        "help: LRM 4.1.13 -- the width of every operand decides the result; give the literal a size, e.g. `8'd5` or `4'b0101`"
+                            .to_owned(),
+                    ])
+            }
+            InferenceDiagnostic::BitConcatTruncated { expr, bits } => {
+                let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: format!("{bits} bits wide"),
+                    }])
+                    .with_message(format!(
+                        "bit-level concatenation is {bits} bits wide; an `integer` keeps the low 32"
+                    ))
+                    .with_notes(vec![
+                        "note: an unsized integer operand contributes 32 bits (LRM 3.2); the value is truncated on assignment (LRM 3.3)"
+                            .to_owned(),
+                    ])
+            }
             InferenceDiagnostic::EmptyConcat { expr } => {
                 let src = self
                     .parse

@@ -36,6 +36,11 @@ pub struct Body {
     /// never body-lower -- elaboration consumes them textually), so every
     /// entry here is an error, reported by hir_ty body validation.
     pub stray_part_selects: Vec<ExprId>,
+    /// Hunt F12 of the 2026-09-05 book audit: the explicit size of every SIZED
+    /// based integer literal in this body (`4'b1001` -> 4), so a bit-level
+    /// concatenation (LRM 4.1.13) knows its operands' widths. An unsized
+    /// literal has no entry.
+    pub literal_sizes: HashMap<ExprId, u32>,
 }
 
 #[derive(Default, Debug, Eq, PartialEq)]
