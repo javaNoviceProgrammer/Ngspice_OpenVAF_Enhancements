@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module m(inout electrical a, b);
+real y[0:3], x[0:3], f[0:3];
+analog begin
+  if (V(a,b) > 0) y[0] = 1.0;
+  x[0]=1.0; f[0]=2.0; y[1]=0.0; x[1]=2.0; f[1]=4.0; y[2]=1.0; x[2]=1.0; f[2]=3.0; y[3]=1.0; x[3]=2.0; f[3]=5.0;
+  I(a,b) <+ $table_model(0.5, V(a,b), y, x, f);
+end
+endmodule

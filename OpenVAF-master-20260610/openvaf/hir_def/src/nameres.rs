@@ -318,6 +318,13 @@ pub struct Scope {
     pub declarations: IndexMap<Name, ScopeDefItem, BuildHasherDefault<FxHasher>>,
 }
 
+impl Scope {
+    /// The enclosing scope within the same def map, `None` at the root.
+    pub fn parent(&self) -> Option<LocalScopeId> {
+        self.parent
+    }
+}
+
 impl DefMap {
     pub fn def_map_query(db: &dyn HirDefDB, root_file: FileId) -> Arc<DefMap> {
         collect::collect_root_def_map(db, root_file)

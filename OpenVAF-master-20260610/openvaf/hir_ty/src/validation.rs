@@ -27,6 +27,8 @@ use crate::validation::types::DuplicateItem;
 mod body;
 mod types;
 
+pub(crate) use body::{const_num_in, const_param_value};
+
 #[derive(PartialEq, Eq, Clone, Debug)]
 struct IncompatibleBranchDiagnostic {
     branch_span: FileSpan,
@@ -447,11 +449,59 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         message: why.to_string(),
                     }])
                     .with_notes(vec![
-                        "supported: interpolation '1' (linear) or '3' (cubic spline), and \
-                         extrapolation 'C' (constant) or 'L' (linear) applied to both ends"
+                        "supported per axis: interpolation '1' (linear), '2' (quadratic spline), \
+                         '3' (cubic spline) or 'D' (closest point); extrapolation 'C' (constant), \
+                         'L' (linear) or 'E' (error), one character per end; 'I' ignores a column \
+                         of a data file or of the array form; a trailing ';N' selects dependent \
+                         column N"
                             .to_owned(),
                         "an unrecognised code used to fall through to linear interpolation \
                          with clamped ends, with nothing reported"
+                            .to_owned(),
+                    ])
+            }
+            // book audit (lookup tables)
+            BodyValidationDiagnostic::TableArrayNotConstant { expr, ref name, ref why } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message(format!(
+                        "$table_model array data '{name}' is not a compile-time constant"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: why.to_string(),
+                    }])
+                    .with_notes(vec![
+                        "the array form of the data source (LRM 9.21.1) is read when the model \
+                         is compiled, like a data file: each element must be its declaration \
+                         initialiser, or a single straight-line assignment -- in an `analog \
+                         initial` block, an `@(initial_step)` block or the analog block itself \
+                         -- of a literal or a `localparam`"
+                            .to_owned(),
+                        "data computed at run time has the 1-D runtime form \
+                         `$table_model(x, xs, ys[, \"ctrl\"])`"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::TableStringNotConst { expr, ref what } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message(format!(
+                        "the $table_model {what} must be a compile-time constant string"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "an overridable `parameter string`, which the model card may \
+                                  replace after the table has been built"
+                            .to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "LRM 9.21 allows a string parameter here: declare it `localparam \
+                         string`, whose value is fixed when the model is compiled"
                             .to_owned(),
                     ])
             }

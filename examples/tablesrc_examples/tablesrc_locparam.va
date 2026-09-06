@@ -1,0 +1,14 @@
+// `localparam` arrays as the columns, a `localparam string` as the control
+// string and another as the file name (LRM 9.21: file_name ::= string_literal
+// | string_parameter). Two lookups of the same table, summed: 2 * (2x + y).
+`include "disciplines.vams"
+module tablesrc_locparam(inout electrical a, b);
+parameter real xx = 1.5;
+parameter real yy = 0.25;
+localparam real y[0:10] = '{0.0, 0.0, 0.0, 0.0, 0.0,  0.5, 0.5, 0.5, 1.0, 1.0, 1.0};
+localparam real x[0:10] = '{1.0, 2.0, 3.0, 4.0, 5.0,  1.0, 2.5, 4.0, 1.0, 3.0, 5.0};
+localparam real f[0:10] = '{2.0, 4.0, 6.0, 8.0, 10.0, 2.5, 5.5, 8.5, 3.0, 7.0, 11.0};
+localparam string ctl = "1LL,1LL";
+localparam string fname = "sample.tbl";
+analog I(a,b) <+ 1e-3 * ($table_model(yy, xx, y, x, f, ctl) + $table_model(yy, xx, fname, ctl));
+endmodule

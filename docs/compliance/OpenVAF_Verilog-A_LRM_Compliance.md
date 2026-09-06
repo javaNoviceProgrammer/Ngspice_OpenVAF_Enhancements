@@ -735,11 +735,25 @@ per-operator override, not nature tolerances in general.
   LRM's own sample file interpolates correctly), with the project's
   self-describing N-D grid format still accepted as an extension — and
   1-D data may be a **pair of arrays** (`'{xs}, '{ys}`) besides the
-  interleaved layout. ⚠️ Still refused with located errors and recorded
-  here: quadratic splines (`2`), the ignore-column code (`I`), and the
-  9.21.5 whole-array N-dimensional data form (use the isoline file
-  format); the runtime array-variable form supports `1`/`3` with
-  same-both-ends `C`/`L` only.
+  interleaved layout. Enhancement-562 (the 2026-09-05 book audit) added
+  the rest of the clause: the **quadratic spline** (`2`, a C1 spline
+  whose knot slopes chain from the first chord); the **ignore-column
+  code `I`** for a data file and for the array form; the **9.21.1 array
+  data source** for a table of any dimension — column arrays, filled in
+  an `analog initial` block (the textbook idiom) or initialised at
+  declaration, or one 2-D array whose rows are the columns — read when
+  the model is compiled exactly as a file is, so every element must be a
+  compile-time constant (a declaration initialiser, a `localparam`
+  array, or a single straight-line assignment of a literal or
+  `localparam`; an element written at run time, or an overridable
+  `parameter` array, is refused with the reason); and a **`localparam
+  string`** as the file name or the control string (`file_name ::=
+  string_literal | string_parameter`). ⚠️ Still refused with located
+  errors: an overridable `parameter string` in either place (the table
+  is built before the model card is read — declare it `localparam`),
+  `I` on the runtime 1-D array form and on inline `'{...}` data; the
+  runtime array-variable form supports `1`/`2`/`3` with same-both-ends
+  `C`/`L` only.
 - ⚠️ **`limexp`** is implemented **stateless** (exact `exp` below the
   overflow threshold, tangent-continued above): a stateful
   previous-iterate limiting version was built and *reverted* because
@@ -1492,7 +1506,7 @@ connected port.)*
 | 9.6–9.7 Simulation control; **9.7.3 severity tasks: the non-fatal three defer to the accepted iteration, `$error` in an `analog initial` block stops the run, and each message reports its time / swept value / initialization** ([E-541](../../enhancements_doc/Enhancement-541.md)) | ✅ | `simctrl`, `simparamdiag`, `lrmvoice` |
 | 9.17.3 / Annex E.3.4 `$limit` | ✅ (unknown name falls back to no limiting with a warning, per 9.17.3; `vdslim` = Table E.2's preferred spelling of `limvds`) | `fetlim`, `lrm` |
 | Annex E SPICE primitives (E.2/E.3, Table E.1) | ✖ not supported: `resistor`/`capacitor`/`bjt`/… cannot be instantiated from Verilog-A source (clean error); instantiate SPICE devices at netlist level instead | — |
-| 9 misc ($finish family, $simparam; $simparam$str serves analysis_name/analysis_type/cwd/simulator — module/instance/path unserved ⚠️; $bound_step smallest-wins; $table_model per 9.21 incl. isoline files, per-dimension controls, D/E codes, `;N` selector — `2`/`I`/whole-array-N-D ⚠️ refused; attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
+| 9 misc ($finish family, $simparam; $simparam$str serves analysis_name/analysis_type/cwd/simulator — module/instance/path unserved ⚠️; $bound_step smallest-wins; $table_model per 9.21 incl. isoline files, per-dimension controls, `2`/`3`/`D`/`E` codes, `I`, `;N` selector, the array data source of any dimension from compile-time-constant arrays, `localparam string` names — `I` on runtime/inline data and overridable `parameter string` names ⚠️ refused; attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
 | plusargs (`$test`/`$value`) | ✅ ([E-215](../../enhancements_doc/Enhancement-215.md)) | `plusargs` |
 | simprobe / node aliases | ⚠️ LRM fallbacks (no-default `$simprobe` = warn + the mandated runtime fatal; all three 9.20 `shall be an error` rules enforced — context, a port as the aliased net, and a target that is another call's net ([E-541](../../enhancements_doc/Enhancement-541.md)); ⚠️ the third only within one module) | `alias`, `lrmvoice` |
 | 10 Compiler directives (incl. `` `__FILE__``/`` `__LINE__``, predefined-macro protection, `` `begin_keywords ``) | ✅ ([E-515](../../enhancements_doc/Enhancement-515.md)) | `preproc`, `directive`, `defaulttransition`, `filemacro`, `lrmlex` |

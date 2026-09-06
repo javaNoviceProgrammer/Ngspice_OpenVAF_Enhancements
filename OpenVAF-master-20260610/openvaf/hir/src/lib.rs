@@ -519,6 +519,26 @@ impl Variable {
     }
 }
 
+/// Book audit (lookup tables): the compile-time values of an array variable's
+/// elements used as `$table_model` data, or why they are not constants -- see
+/// `hir_ty::table_source`.
+pub fn table_array_const_values(
+    db: &CompilationDB,
+    vars: &[Variable],
+) -> Result<Vec<f64>, String> {
+    let ids: Vec<VarId> = vars.iter().map(|v| v.id).collect();
+    hir_ty::table_source::table_array_const_values(db, &ids)
+}
+
+/// The parameter-array twin of [`table_array_const_values`].
+pub fn table_param_const_values(
+    db: &CompilationDB,
+    params: &[Parameter],
+) -> Result<Vec<f64>, String> {
+    let ids: Vec<ParamId> = params.iter().map(|p| p.id).collect();
+    hir_ty::table_source::table_param_const_values(db, &ids)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Parameter {
     id: ParamId,

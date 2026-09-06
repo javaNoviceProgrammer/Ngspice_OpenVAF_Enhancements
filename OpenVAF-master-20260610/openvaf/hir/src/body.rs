@@ -377,6 +377,12 @@ impl<'a> BodyRef<'a> {
         self.infere.expr_types[expr].to_value().unwrap()
     }
 
+    /// Book audit (lookup tables): the dimension sizes of a bare array identifier
+    /// argument, outermost first (`InferenceResult::array_shapes`).
+    pub fn array_shape(&self, expr: ExprId) -> Option<&'a [usize]> {
+        self.infere.array_shapes.get(&expr).map(|s| s.as_slice())
+    }
+
     /// Hunt F12 of the 2026-09-05 book audit: a `{...}` typed as a bit-level
     /// integer concatenation (LRM 4.1.13), with its operand widths in order
     /// and its replication count.

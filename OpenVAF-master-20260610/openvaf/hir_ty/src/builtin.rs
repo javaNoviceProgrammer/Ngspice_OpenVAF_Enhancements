@@ -458,27 +458,27 @@ const TABLE_MODEL: BuiltinInfo = BuiltinInfo::varargs(
             return_ty: Type::Real,
         },
         SignatureData {
-            args: Cow::Borrowed(&[Val(Real), ArrayAnyLength { ty: Real }, Literal(String)]),
+            args: Cow::Borrowed(&[Val(Real), ArrayAnyLength { ty: Real }, Val(String)]),
             return_ty: Type::Real,
         },
         SignatureData {
-            args: Cow::Borrowed(&[Val(Real), Literal(String)]),
+            args: Cow::Borrowed(&[Val(Real), Val(String)]),
             return_ty: Type::Real,
         },
         SignatureData {
-            args: Cow::Borrowed(&[Val(Real), Literal(String), Literal(String)]),
+            args: Cow::Borrowed(&[Val(Real), Val(String), Val(String)]),
             return_ty: Type::Real,
         },
         SignatureData {
-            args: Cow::Borrowed(&[Val(Real), Val(Real), Literal(String)]),
+            args: Cow::Borrowed(&[Val(Real), Val(Real), Val(String)]),
             return_ty: Type::Real,
         },
         SignatureData {
-            args: Cow::Borrowed(&[Val(Real), Val(Real), Literal(String), Literal(String)]),
+            args: Cow::Borrowed(&[Val(Real), Val(Real), Val(String), Val(String)]),
             return_ty: Type::Real,
         },
         SignatureData {
-            args: Cow::Borrowed(&[Val(Real), Val(Real), Val(Real), Literal(String)]),
+            args: Cow::Borrowed(&[Val(Real), Val(Real), Val(Real), Val(String)]),
             return_ty: Type::Real,
         },
         SignatureData {
@@ -486,8 +486,8 @@ const TABLE_MODEL: BuiltinInfo = BuiltinInfo::varargs(
                 Val(Real),
                 Val(Real),
                 Val(Real),
-                Literal(String),
-                Literal(String),
+                Val(String),
+                Val(String),
             ]),
             return_ty: Type::Real,
         },

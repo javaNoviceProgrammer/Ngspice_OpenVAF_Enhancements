@@ -271,6 +271,12 @@
       "note": ""
     },
     {
+      "file": "lrm_p274_3.va",
+      "block": "block_274_3",
+      "page": 274,
+      "note": "$table_model with the LRM 9.21.1 array data source, the column arrays filled in @(initial_step) (E-562)"
+    },
+    {
       "file": "lrm_p416_1.va",
       "block": "block_416_1",
       "page": 416,
@@ -354,13 +360,6 @@
       "page": 267,
       "note": "$analog_node_alias/$analog_port_alias example; elaboration rejects the unconnected instance nets",
       "expect": "refers to module 'resistor'"
-    },
-    {
-      "file": "lrm_p274_3.va",
-      "block": "block_274_3",
-      "page": 274,
-      "note": "$table_model with runtime array data arguments",
-      "expect": "requires a bit-select"
     },
     {
       "file": "lrm_p343_1.va",

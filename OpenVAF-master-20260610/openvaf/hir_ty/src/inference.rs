@@ -148,6 +148,12 @@ impl AssignDst {
     }
 }
 
+/// Book audit (lookup tables): the dimension sizes of an array declaration,
+/// outermost first.
+fn bus_shape(arr: &BusDecl) -> Vec<usize> {
+    arr.dims.iter().map(|&(msb, lsb)| (msb - lsb).unsigned_abs() as usize + 1).collect()
+}
+
 /// Hunt F12 of the 2026-09-05 book audit, LRM 4.1.13: a `{...}` concatenation
 /// of scalar integers that stands where a SCALAR is expected is a BIT-LEVEL
 /// concatenation -- `{4'hA, 4'h5}` is the integer 0xA5, `{2{4'b1010}}` is 0xAA --
@@ -189,6 +195,16 @@ pub struct InferenceResult {
     /// literal: the variable's expanded scalar `VarId`s, in ascending declared-index order
     /// (`coeffs[0]`, `coeffs[1]`, ...). See `infere_array_arg`.
     pub array_var_refs: AHashMap<ExprId, Vec<VarId>>,
+    /// Book audit (lookup tables): the dimension sizes of every bare array
+    /// identifier resolved as a whole-array argument, outermost first --
+    /// `real m[0:2][0:11]` records `[3, 12]` -- so `$table_model` can read a 2-D
+    /// array as the columns of a table.
+    pub array_shapes: AHashMap<ExprId, Vec<usize>>,
+    /// Book audit (lookup tables): the `$table_model` calls whose data source is
+    /// the LRM 9.21.1 ARRAY form for N >= 2 (column arrays, or one 2-D array),
+    /// keyed by the call with its number of coordinate inputs. The arrays are
+    /// read when the model is compiled, so validation checks they are constants.
+    pub table_array_calls: AHashMap<ExprId, usize>,
     /// The parameter-array twin of [`Self::array_var_refs`]. LRM 4.5.1 says an array
     /// argument to a Laplace/Z filter or `noise_table` may be "an array_identifier
     /// (e.g. an array parameter or an array variable)", and Syntax 4-3 lists
@@ -1229,9 +1245,16 @@ impl Ctx<'_> {
             // which rejects a bare array-variable reference with "requires a bit-select"
             // before `infere_array_arg` can special-case it.
             BuiltIn::table_model
-                if args.len() >= 3 && self.is_bare_array_ref(args[1]) =>
+                if args.len() >= 3
+                    && self.is_bare_array_ref(args[1])
+                    && self.table_runtime_shape(args) =>
             {
                 return self.infere_table_model_runtime(stmt, expr, args);
+            }
+            // Book audit (lookup tables): the LRM 9.21.1 ARRAY data source for a
+            // table of any dimension -- column arrays, or one 2-D array.
+            BuiltIn::table_model if (1..args.len()).any(|i| self.is_bare_array_ref(args[i])) => {
+                return self.infere_table_model_arrays(stmt, expr, args);
             }
 
             BuiltIn::table_model => {
@@ -1261,16 +1284,21 @@ impl Ctx<'_> {
                 } else if is_arr || args.len() < 4 {
                     Cow::Borrowed(TiSlice::from_ref(info.signatures))
                 } else {
-                    let is_str = |e: ExprId| {
-                        matches!(self.body.exprs[e], Expr::Literal(Literal::String(_)))
+                    // book audit (lookup tables): a `localparam string` is as good a
+                    // file name or control string as a literal (LRM 9.21 `file_name ::=
+                    // string_literal | string_parameter`); validation checks constness
+                    let is_str = |sel: &Self, e: ExprId| {
+                        matches!(sel.body.exprs[e], Expr::Literal(Literal::String(_)))
+                            || sel.is_string_param_path(stmt, e)
                     };
                     let last = args.len() - 1;
-                    let n_str = if is_str(args[last]) && is_str(args[last - 1]) { 2 } else { 1 };
+                    let n_str =
+                        if is_str(self, args[last]) && is_str(self, args[last - 1]) { 2 } else { 1 };
                     let ndim = args.len() - n_str;
                     let mut sig_args = vec![TyRequirement::Val(Type::Real); ndim];
-                    sig_args.push(TyRequirement::Literal(Type::String));
+                    sig_args.push(TyRequirement::Val(Type::String));
                     if n_str == 2 {
-                        sig_args.push(TyRequirement::Literal(Type::String));
+                        sig_args.push(TyRequirement::Val(Type::String));
                     }
                     Cow::Owned(TiVec::from(vec![SignatureData {
                         args: Cow::Owned(sig_args),
@@ -1886,7 +1914,10 @@ impl Ctx<'_> {
                     ctrl,
                     None,
                     ty,
-                    Cow::Borrowed(&[TyRequirement::Literal(Type::String)]),
+                    Cow::Borrowed(&[
+                        TyRequirement::Literal(Type::String),
+                        TyRequirement::Val(Type::String),
+                    ]),
                 );
             } else {
                 valid = false;
@@ -1903,6 +1934,146 @@ impl Ctx<'_> {
             valid = false;
         }
 
+        (Some(Ty::Val(Type::Real)), valid)
+    }
+
+    /// The Enhancement-389 runtime 1-D shape `(x, xs, ys[, "ctrl"])`: two 1-D
+    /// arrays after one input, with nothing but an optional control string
+    /// behind them. Any other call with an array identifier is the compile-time
+    /// N-D array source of LRM 9.21.1 (book audit, lookup tables).
+    fn table_runtime_shape(&self, args: &[ExprId]) -> bool {
+        args.len() <= 4
+            && self.bare_array_ndim(args[1]) == Some(1)
+            && self.bare_array_ndim(args[2]) == Some(1)
+            && (args.len() == 3 || self.bare_array_ndim(args[3]).is_none())
+    }
+
+    /// The dimension count of a bare array identifier (or a part select, which is
+    /// one-dimensional); `None` when the expression is not one.
+    fn bare_array_ndim(&self, arg: ExprId) -> Option<usize> {
+        match self.body.exprs[arg] {
+            Expr::Path { ref path, port: false } => {
+                let name = path.as_ident()?;
+                self.find_var_array(&name)
+                    .or_else(|| self.find_param_array(&name))
+                    .map(|arr| arr.ndim())
+            }
+            Expr::BitSelect { ref base, ref indices }
+                if indices.len() == 2 && self.body.stray_part_selects.contains(&arg) =>
+            {
+                let name = base.as_ident()?;
+                (self.find_var_array(&name).is_some() || self.find_param_array(&name).is_some())
+                    .then_some(1)
+            }
+            _ => None,
+        }
+    }
+
+    /// Book audit (lookup tables): is `e` a bare path to a string parameter or
+    /// localparam? Resolved without diagnostics; the caller's own inference of the
+    /// argument reports an unresolvable name.
+    fn is_string_param_path(&self, stmt: StmtId, e: ExprId) -> bool {
+        let Expr::Path { ref path, port: false } = self.body.exprs[e] else { return false };
+        match self.body.stmt_scopes[stmt].resolve_path(self.db.upcast(), path) {
+            Ok(ResolvedPath::ScopeDefItem(ScopeDefItem::ParamId(param))) => {
+                self.db.param_data(param).ty == Some(Type::String)
+            }
+            _ => false,
+        }
+    }
+
+    /// Book audit (lookup tables), LRM 9.21.1 `table_model_array`: after the k
+    /// coordinate inputs come the data columns as 1-D array identifiers -- one
+    /// per independent column (an 'I'-ignored column included) and ONE dependent
+    /// column, so at least k + 1 -- or a single 2-D array whose rows are those
+    /// columns; then the optional control string. The arrays are compile-time
+    /// constants (validation enforces it), so the lowering builds from them the
+    /// isoline tree it builds from a data file. The 1-D `(x, xs, ys)` shape keeps
+    /// Enhancement-389's runtime kernel and never reaches here.
+    fn infere_table_model_arrays(
+        &mut self,
+        stmt: StmtId,
+        expr: ExprId,
+        args: &[ExprId],
+    ) -> (Option<Ty>, bool) {
+        let k = (1..args.len()).find(|&i| self.is_bare_array_ref(args[i])).unwrap_or(1);
+        let mut valid = true;
+        for &a in &args[..k] {
+            match self.infere_expr(stmt, a) {
+                Some(ty) => {
+                    self.expect::<false>(
+                        a,
+                        None,
+                        ty,
+                        Cow::Borrowed(&[TyRequirement::Val(Type::Real)]),
+                    );
+                }
+                None => valid = false,
+            }
+        }
+        let mut n_arr = 0;
+        while k + n_arr < args.len() && self.is_bare_array_ref(args[k + n_arr]) {
+            let a = args[k + n_arr];
+            match self.infere_array_arg(stmt, a) {
+                None => valid = false,
+                Some(ty) => {
+                    if !matches!(ty.to_value(), Some(Type::Array { .. })) {
+                        self.expect::<false>(
+                            a,
+                            None,
+                            ty,
+                            Cow::Owned(vec![TyRequirement::Val(Type::Array {
+                                ty: Box::new(Type::Real),
+                                len: 0,
+                            })]),
+                        );
+                        valid = false;
+                    }
+                }
+            }
+            n_arr += 1;
+        }
+        let rest = &args[k + n_arr..];
+        if let Some(&c) = rest.first() {
+            match self.infere_expr(stmt, c) {
+                Some(ty) => {
+                    self.expect::<false>(
+                        c,
+                        None,
+                        ty,
+                        Cow::Borrowed(&[
+                            TyRequirement::Literal(Type::String),
+                            TyRequirement::Val(Type::String),
+                        ]),
+                    );
+                }
+                None => valid = false,
+            }
+        }
+        if rest.len() > 1 {
+            self.result.diagnostics.push(InferenceDiagnostic::ArgCntMismatch {
+                expected: k + n_arr + 1,
+                found: args.len(),
+                expr,
+                exact: false,
+            });
+            valid = false;
+        }
+        let dims: Vec<usize> = (0..n_arr)
+            .map(|i| self.result.array_shapes.get(&args[k + i]).map_or(1, |s| s.len()))
+            .collect();
+        let matrix = n_arr == 1 && dims.first() == Some(&2);
+        if !matrix && (n_arr < k + 1 || dims.iter().any(|&d| d != 1)) {
+            self.result.diagnostics.push(InferenceDiagnostic::TableArrayShape {
+                expr,
+                inputs: k,
+                arrays: n_arr,
+            });
+            valid = false;
+        }
+        if valid {
+            self.result.table_array_calls.insert(expr, k);
+        }
         (Some(Ty::Val(Type::Real)), valid)
     }
 
@@ -2019,15 +2190,25 @@ impl Ctx<'_> {
         if let Expr::Path { ref path, port: false } = self.body.exprs[arg] {
             if let Some(name) = path.as_ident() {
                 if let Some(arr) = self.find_var_array(&name) {
-                    let (lo, hi) = arr.min_max();
-                    let mut vars = Vec::with_capacity((hi - lo + 1) as usize);
-                    for bit in lo..=hi {
-                        let synth_path = Path::new_ident(arr.bit_name(bit));
+                    // 1-D: ascending declared index, the coefficient order every
+                    // consumer relies on. N-D (book audit, lookup tables): declaration
+                    // order, outermost first -- the order an array literal fills --
+                    // where the 1-D spelling below produced names no element has.
+                    let names: Vec<Name> = if arr.ndim() == 1 {
+                        let (lo, hi) = arr.min_max();
+                        (lo..=hi).map(|bit| arr.bit_name(bit)).collect()
+                    } else {
+                        arr.index_tuples().iter().map(|idx| arr.elem_name(idx)).collect()
+                    };
+                    let mut vars = Vec::with_capacity(names.len());
+                    for n in names {
+                        let synth_path = Path::new_ident(n);
                         match self.resolve_path(stmt, arg, &synth_path)? {
                             ScopeDefItem::VarId(var) => vars.push(var),
                             _ => return None,
                         }
                     }
+                    self.result.array_shapes.insert(arg, bus_shape(&arr));
                     let len = vars.len() as u32;
                     // Enhancement-33: type the array from its actual element variables.
                     // The element type was hardcoded `Real`, which let an *integer*
@@ -2058,6 +2239,7 @@ impl Ctx<'_> {
                     }
                     let len = params.len() as u32;
                     let elem_ty = self.db.param_data(params[0]).ty.clone()?;
+                    self.result.array_shapes.insert(arg, bus_shape(&arr));
                     self.result.array_param_refs.insert(arg, params);
                     let ty = Ty::Val(Type::Array { ty: Box::new(elem_ty), len });
                     self.result.expr_types[arg] = ty.clone();
@@ -3509,6 +3691,13 @@ pub enum InferenceDiagnostic {
     BitConcatTruncated {
         expr: ExprId,
         bits: u64,
+    },
+    /// Book audit (lookup tables), LRM 9.21.1: an array data source without the
+    /// shape the clause defines.
+    TableArrayShape {
+        expr: ExprId,
+        inputs: usize,
+        arrays: usize,
     },
     EmptyConcat {
         expr: ExprId,

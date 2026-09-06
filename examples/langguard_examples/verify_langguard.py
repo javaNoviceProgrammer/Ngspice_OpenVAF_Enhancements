@@ -63,6 +63,9 @@ compiler should have rejected and silently accepted instead; one is a crash.
 
       These are rejected now rather than silently substituted. The codes that
       ARE implemented keep working, whitespace and the `;N` suffix included.
+      (E-562 implemented `2`, the quadratic spline, for compile-time and
+      runtime data alike, so `"2"` moved to the compiling list -- its values are
+      pinned in tablesrc_examples; `I` stays refused on runtime arrays.)
 
   [5] `$discontinuity;` WITH NO ARGUMENT PANICKED THE COMPILER.
 
@@ -471,13 +474,13 @@ endmodule
         _d, _rc, _o = build(src, "tc")
         return _rc, _o
 
-    for ctrl in ["2", "3,2", "D", "I", "E", "1E", "1CL", "1LC", "3CL", "Q"]:
+    for ctrl in ["D", "I", "E", "1E", "1CL", "1LC", "3CL", "Q"]:
         rc2, o = tbl_ctrl(ctrl)
         check(f'control "{ctrl}" is rejected rather than silently substituted',
               rc2 != 0, (o.strip().splitlines() or [""])[0][:60])
     for ctrl in ["1", "1L", "1C", "3L", "3C", "1L,1L", "3C,3C", "1;5", "3 L",
                  " 1L ", "1L ,1L", "3", "3;2", "1C,1C",
-                 "1C,1L", "1L,1C", "1CC", "3LL"]:
+                 "1C,1L", "1L,1C", "1CC", "3LL", "2", "2L", "3,2"]:
         rc2, o = tbl_ctrl(ctrl)
         check(f'control "{ctrl}" still compiles', rc2 == 0,
               (o.strip().splitlines() or [""])[0][:60])

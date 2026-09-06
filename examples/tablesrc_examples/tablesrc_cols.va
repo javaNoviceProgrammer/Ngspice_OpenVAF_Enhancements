@@ -1,0 +1,23 @@
+// Column arrays as the $table_model data source (LRM 9.21.1), filled in an
+// `analog initial` block -- the idiom of "A Practical Guide to Verilog-A".
+// f = 2x + y on ragged isolines; linear interpolation reproduces it exactly.
+`include "disciplines.vams"
+module tablesrc_cols(inout electrical a, b);
+parameter real xx = 1.5;
+parameter real yy = 0.25;
+real y[0:10], x[0:10], f[0:10];
+analog initial begin
+  y[0]=0.0;  x[0]=1.0;  f[0]=2.0;
+  y[1]=0.0;  x[1]=2.0;  f[1]=4.0;
+  y[2]=0.0;  x[2]=3.0;  f[2]=6.0;
+  y[3]=0.0;  x[3]=4.0;  f[3]=8.0;
+  y[4]=0.0;  x[4]=5.0;  f[4]=10.0;
+  y[5]=0.5;  x[5]=1.0;  f[5]=2.5;
+  y[6]=0.5;  x[6]=2.5;  f[6]=5.5;
+  y[7]=0.5;  x[7]=4.0;  f[7]=8.5;
+  y[8]=1.0;  x[8]=1.0;  f[8]=3.0;
+  y[9]=1.0;  x[9]=3.0;  f[9]=7.0;
+  y[10]=1.0; x[10]=5.0; f[10]=11.0;
+end
+analog I(a,b) <+ 1e-3 * $table_model(yy, xx, y, x, f);
+endmodule

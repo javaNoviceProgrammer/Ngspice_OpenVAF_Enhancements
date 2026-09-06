@@ -17,8 +17,9 @@ What this suite pins, each against the quoted clause:
     the ';N' dependent-column selector honoured; the LRM 9.21.1
     N+M-column isoline file format -- RAGGED isolines included (the
     LRM's own sample file) -- beside the project's self-describing grid;
-    and the 1-D '{xs}, '{ys} array-pair form. '2'/'I' stay clean
-    refusals.
+    and the 1-D '{xs}, '{ys} array-pair form. E-562 (the book audit)
+    then implemented '2' (quadratic spline) and 'I' (ignore a column);
+    on the linear lin.dat the quadratic spline reproduces 2x exactly.
   * 9.13.2 -- "mean, degree_of_freedom, and k_stage shall be greater
     than zero. Otherwise an error shall be reported": a deck-supplied
     violation now aborts with the mandated runtime error naming the
@@ -188,11 +189,16 @@ if rc == 0:
           "9.21.2" in sim and "fatal" in sim.lower(),
           next((l.strip()[:60] for l in sim.splitlines() if "fatal" in l.lower()), ""))
 
-rc, out, _ = compile_src(
+rc, out, osdi = compile_src(
     '`include "disciplines.vams"\nmodule q(a,c); inout a,c; electrical a,c;\n'
-    ' real r;\n analog begin r = $table_model(1.5, "lin.dat", "2");'
+    ' (* desc="quadratic" *) real r;\n analog begin r = $table_model(1.5, "lin.dat", "2");'
     ' I(a,c) <+ V(a,c); end\nendmodule\n', "q2")
-check("'2' (quadratic) stays a clean refusal", rc != 0 and "quadratic" in out)
+check("'2' (quadratic spline, E-562) compiles", rc == 0,
+      (out.strip().splitlines() or [""])[0][:60])
+if rc == 0:
+    sim = run("V1 in 0 1.0\nN1 in 0 q\n.model q q", "op\nprint @N1[r]", "q2", osdi)
+    check("'2' on linear data is exact: q(1.5) = 3", close(num(sim, "@n1[r]"), 3.0, 1e-9),
+          f"{num(sim, '@n1[r]')}")
 
 # ---- [3] 9.13.2 domain errors on the deck route ----------------------------
 print("\ndistribution domains (LRM 9.13.2):")

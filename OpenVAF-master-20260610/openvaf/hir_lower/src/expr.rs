@@ -32,6 +32,8 @@ use crate::{
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TblInterp {
     Linear,
+    /// Book audit (lookup tables): Table 9-30's '2', the 9.21.4 quadratic spline.
+    Quadratic,
     Cubic,
     Closest,
 }
@@ -111,10 +113,19 @@ fn split_table_dep(ctrl: &str) -> (&str, usize) {
 /// takes the default. The old lowering scanned the WHOLE string, so any
 /// 'L' anywhere made ALL axes extrapolate linearly and any '3' made all
 /// axes cubic -- a per-dimension request was silently executed with the
-/// wrong method (kernel audit). Unsupported characters ('2', 'I') are
+/// wrong method (kernel audit). A character that is not a control code is
 /// refused by validation before this runs.
 fn parse_table_ctrl(ctrl: Option<&str>, ndim: usize) -> Vec<TblAxisCtrl> {
-    let Some(ctrl) = ctrl else { return vec![TblAxisCtrl::default(); ndim] };
+    parse_table_ctrl_cols(ctrl, ndim).0
+}
+
+/// `parse_table_ctrl` with Table 9-30's 'I' (book audit, lookup tables): a
+/// sub-string carrying 'I' names a column of the data source to IGNORE, so
+/// the table has one input fewer than the source has leading columns. The
+/// 0-based positions of the ignored columns are returned beside the per-axis
+/// controls of the columns that remain, to which the broadcast rule applies.
+fn parse_table_ctrl_cols(ctrl: Option<&str>, ndim: usize) -> (Vec<TblAxisCtrl>, Vec<usize>) {
+    let Some(ctrl) = ctrl else { return (vec![TblAxisCtrl::default(); ndim], Vec::new()) };
     let (body, _) = split_table_dep(ctrl);
     let parse_one = |sub: &str| -> TblAxisCtrl {
         let mut interp = TblInterp::Linear;
@@ -122,6 +133,7 @@ fn parse_table_ctrl(ctrl: Option<&str>, ndim: usize) -> Vec<TblAxisCtrl> {
         for c in sub.chars() {
             match c {
                 '1' => interp = TblInterp::Linear,
+                '2' => interp = TblInterp::Quadratic,
                 '3' => interp = TblInterp::Cubic,
                 'D' | 'd' => interp = TblInterp::Closest,
                 'C' | 'c' => ends.push(TblExtrap::Clamp),
@@ -139,12 +151,35 @@ fn parse_table_ctrl(ctrl: Option<&str>, ndim: usize) -> Vec<TblAxisCtrl> {
     };
     let subs: Vec<String> =
         body.split(',').map(|s| s.chars().filter(|c| !c.is_whitespace()).collect()).collect();
-    if subs.len() <= 1 {
-        vec![parse_one(subs.first().map(String::as_str).unwrap_or("")); ndim]
+    let ignores = |s: &String| s.chars().any(|c| c == 'I' || c == 'i');
+    let ignored: Vec<usize> =
+        subs.iter().enumerate().filter(|(_, s)| ignores(s)).map(|(i, _)| i).collect();
+    let subs: Vec<&String> = subs.iter().filter(|s| !ignores(s)).collect();
+    let ctrls = if subs.len() <= 1 {
+        vec![parse_one(subs.first().map(|s| s.as_str()).unwrap_or("")); ndim]
     } else {
         (0..ndim)
             .map(|i| subs.get(i).map(|s| parse_one(s)).unwrap_or_default())
             .collect()
+    };
+    (ctrls, ignored)
+}
+
+/// Removes the 'I'-ignored columns from every row of a data source (book
+/// audit, lookup tables): "the column is ignored", so what remains is the
+/// N+M table the tree is built from.
+fn drop_table_columns(rows: &mut [Vec<f64>], ignored: &[usize]) {
+    if ignored.is_empty() {
+        return;
+    }
+    for row in rows.iter_mut() {
+        let kept: Vec<f64> = row
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !ignored.contains(i))
+            .map(|(_, &v)| v)
+            .collect();
+        *row = kept;
     }
 }
 
@@ -1140,8 +1175,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// spacing of samples may be different on each isoline") -- the LRM's
     /// own sample.dat is. Each level sorts ascending; a repeated full
     /// coordinate keeps its first row, matching the 1-D `dedup_by`.
-    fn read_table_isoline_tree(&self, fname: &str, ndim: usize, dep: usize) -> Option<TblTree> {
-        let rows = self.read_table_lines(fname);
+    /// Book audit (lookup tables): `ignored` are the 0-based columns an 'I'
+    /// control drops before the first `ndim` remaining columns are the inputs.
+    fn read_table_isoline_tree(
+        &self,
+        fname: &str,
+        ndim: usize,
+        dep: usize,
+        ignored: &[usize],
+    ) -> Option<TblTree> {
+        let mut rows = self.read_table_lines(fname);
+        drop_table_columns(&mut rows, ignored);
         let width = rows.first()?.len();
         if width <= ndim || rows.iter().any(|r| r.len() != width) {
             return None;
@@ -1399,8 +1443,158 @@ impl BodyLoweringCtx<'_, '_, '_> {
         self.apply_end_extrap(x, grid, vals[0], vals[n - 1], result, ends)
     }
 
+    /// Book audit (lookup tables), LRM 9.21.4: Table 9-30's '2', a C1 quadratic
+    /// spline. Interval i carries the parabola through its two knots whose slope
+    /// at the left knot is the spline's slope there; the knot slopes chain from
+    /// the first chord -- z_0 = s_0, z_{i+1} = 2 s_i - z_i -- so consecutive
+    /// parabolas share value and slope at every knot (the first interval is
+    /// therefore the chord itself). Fewer than three knots is a line. Outside
+    /// the grid the end TANGENT continues ('L'), the endpoint holds ('C') or the
+    /// evaluation aborts ('E'), as for the cubic.
+    fn interp_1d_quad(
+        &mut self,
+        x: Value,
+        grid: &[f64],
+        vals: &[Value],
+        ctrl: TblAxisCtrl,
+    ) -> Value {
+        let n = grid.len();
+        if n < 3 {
+            return self.interp_1d_values(x, grid, vals, ctrl);
+        }
+        let two = self.ctx.fconst(2.0);
+        // knot slopes z_i
+        let mut z: Vec<Value> = Vec::with_capacity(n);
+        for i in 0..n - 1 {
+            let dv = self.ctx.ins().fsub(vals[i + 1], vals[i]);
+            let inv_h = self.ctx.fconst(1.0 / (grid[i + 1] - grid[i]));
+            let s = self.ctx.ins().fmul(dv, inv_h);
+            if i == 0 {
+                z.push(s);
+            }
+            let two_s = self.ctx.ins().fmul(two, s);
+            let zi = z[i];
+            z.push(self.ctx.ins().fsub(two_s, zi));
+        }
+        // piece i:  v_i + z_i·dx + (z_{i+1} - z_i) / (2 h_i) · dx²
+        let mut seg = Vec::with_capacity(n - 1);
+        for i in 0..n - 1 {
+            let xi = self.ctx.fconst(grid[i]);
+            let dx = self.ctx.ins().fsub(x, xi);
+            let lin = self.ctx.ins().fmul(z[i], dx);
+            let dz = self.ctx.ins().fsub(z[i + 1], z[i]);
+            let inv_2h = self.ctx.fconst(0.5 / (grid[i + 1] - grid[i]));
+            let c = self.ctx.ins().fmul(dz, inv_2h);
+            let dx2 = self.ctx.ins().fmul(dx, dx);
+            let quad = self.ctx.ins().fmul(c, dx2);
+            let s = self.ctx.ins().fadd(vals[i], lin);
+            seg.push(self.ctx.ins().fadd(s, quad));
+        }
+        let mut result = seg[0];
+        for i in 1..n - 1 {
+            let gi = self.ctx.fconst(grid[i]);
+            let ge = self.ctx.ins().fge(x, gi);
+            let seg_i = seg[i];
+            result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
+        }
+        // 'L': the end tangents continue, not the parabolas
+        if ctrl.lo == TblExtrap::Linear {
+            let g0 = self.ctx.fconst(grid[0]);
+            let dx0 = self.ctx.ins().fsub(x, g0);
+            let ext0 = self.ctx.ins().fmul(dx0, z[0]);
+            let low = self.ctx.ins().fadd(vals[0], ext0);
+            let below = self.ctx.ins().flt(x, g0);
+            result = self.ctx.make_select(below, move |_c, b| if b { low } else { result });
+        }
+        if ctrl.hi == TblExtrap::Linear {
+            let gl = self.ctx.fconst(grid[n - 1]);
+            let dxl = self.ctx.ins().fsub(x, gl);
+            let extl = self.ctx.ins().fmul(dxl, z[n - 1]);
+            let high = self.ctx.ins().fadd(vals[n - 1], extl);
+            let above = self.ctx.ins().fgt(x, gl);
+            result = self.ctx.make_select(above, move |_c, b| if b { high } else { result });
+        }
+        self.apply_end_extrap(x, grid, vals[0], vals[n - 1], result, ctrl)
+    }
+
+    /// `interp_1d_quad` over a RUNTIME grid (the Enhancement-389 array form):
+    /// the same chain of knot slopes with guarded divisions. After
+    /// `compact_distinct_runtime` the dead (zero-width) intervals sit at the
+    /// end; each passes the slope through unchanged, so `z[n-1]` is the slope
+    /// at the last LIVE knot and the upper tangent is right.
+    fn interp_1d_quad_runtime(
+        &mut self,
+        x: Value,
+        grid: &[Value],
+        vals: &[Value],
+        linear_extrap: bool,
+    ) -> Value {
+        let n = grid.len();
+        if n < 3 {
+            return self.interp_1d_runtime(x, grid, vals, linear_extrap);
+        }
+        let (mut grid, mut vals) = (grid.to_vec(), vals.to_vec());
+        self.compact_distinct_runtime(&mut grid, &mut vals);
+        let (grid, vals) = (&grid[..], &vals[..]);
+        let two = self.ctx.fconst(2.0);
+        let mut h: Vec<Value> = Vec::with_capacity(n - 1);
+        let mut z: Vec<Value> = Vec::with_capacity(n);
+        for i in 0..n - 1 {
+            let hi = self.ctx.ins().fsub(grid[i + 1], grid[i]);
+            let dv = self.ctx.ins().fsub(vals[i + 1], vals[i]);
+            let s = self.fdiv_guarded(dv, hi);
+            if i == 0 {
+                z.push(s);
+            }
+            let two_s = self.ctx.ins().fmul(two, s);
+            let zi = z[i];
+            let next = self.ctx.ins().fsub(two_s, zi);
+            let dead = self.ctx.ins().feq(hi, F_ZERO);
+            z.push(self.ctx.make_select(dead, move |_c, b| if b { zi } else { next }));
+            h.push(hi);
+        }
+        let mut seg = Vec::with_capacity(n - 1);
+        for i in 0..n - 1 {
+            let dx = self.ctx.ins().fsub(x, grid[i]);
+            let lin = self.ctx.ins().fmul(z[i], dx);
+            let dz = self.ctx.ins().fsub(z[i + 1], z[i]);
+            let two_h = self.ctx.ins().fmul(two, h[i]);
+            let c = self.fdiv_guarded(dz, two_h);
+            let dx2 = self.ctx.ins().fmul(dx, dx);
+            let quad = self.ctx.ins().fmul(c, dx2);
+            let s = self.ctx.ins().fadd(vals[i], lin);
+            seg.push(self.ctx.ins().fadd(s, quad));
+        }
+        let mut result = seg[0];
+        for i in 1..n - 1 {
+            let ge = self.ctx.ins().fge(x, grid[i]);
+            let live = self.ctx.ins().fgt(grid[i + 1], grid[i]);
+            let take = crate::stmt::bool_and(self.ctx, ge, live);
+            let seg_i = seg[i];
+            result = self.ctx.make_select(take, move |_c, b| if b { seg_i } else { result });
+        }
+        let (g0, gl, v0, vl) = (grid[0], grid[n - 1], vals[0], vals[n - 1]);
+        let below = self.ctx.ins().flt(x, g0);
+        let above = self.ctx.ins().fgt(x, gl);
+        if linear_extrap {
+            let dx0 = self.ctx.ins().fsub(x, g0);
+            let ext0 = self.ctx.ins().fmul(dx0, z[0]);
+            let low = self.ctx.ins().fadd(v0, ext0);
+            result = self.ctx.make_select(below, move |_c, b| if b { low } else { result });
+            let dxl = self.ctx.ins().fsub(x, gl);
+            let extl = self.ctx.ins().fmul(dxl, z[n - 1]);
+            let high = self.ctx.ins().fadd(vl, extl);
+            result = self.ctx.make_select(above, move |_c, b| if b { high } else { result });
+        } else {
+            result = self.ctx.make_select(below, move |_c, b| if b { v0 } else { result });
+            result = self.ctx.make_select(above, move |_c, b| if b { vl } else { result });
+        }
+        result
+    }
+
     /// Dispatches one axis of a compile-time-grid `$table_model` on its
-    /// control (LRM 9.21.2): linear, natural cubic spline, or closest-point.
+    /// control (LRM 9.21.2): linear, quadratic or natural cubic spline, or
+    /// closest-point.
     fn interp_1d_ctrl(
         &mut self,
         x: Value,
@@ -1410,6 +1604,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
     ) -> Value {
         match ctrl.interp {
             TblInterp::Linear => self.interp_1d_values(x, grid, vals, ctrl),
+            TblInterp::Quadratic => self.interp_1d_quad(x, grid, vals, ctrl),
             TblInterp::Cubic => self.interp_1d_spline(x, grid, vals, ctrl),
             TblInterp::Closest => self.interp_1d_closest(x, grid, vals, ctrl),
         }
@@ -2072,38 +2267,62 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // data arguments being bare array references, which inference resolved to
         // element variables; everything below this point is the compile-time path and
         // is untouched.
-        if args.len() >= 3 && self.body.array_var_ref(args[1]).is_some() {
-            if self.body.array_var_ref(args[2]).is_some() {
-                let grid = self.lower_array_elems_impl(args[1], true);
-                let vals = self.lower_array_elems_impl(args[2], true);
-                // A shorter y than x would index past the end; the extra abscissae
-                // describe no data, so drop them rather than fault.
-                let n = grid.len().min(vals.len());
-                // The runtime kernels keep a single linear/clamp switch;
-                // validation restricts runtime-array controls to the shapes
-                // they can express. The DEFAULT is the Table 9-31 linear
-                // extrapolation now (kernel audit) -- it used to clamp.
-                let ctrl = match args.get(3).and_then(|&a| self.body.as_literal(a)) {
-                    Some(Literal::String(c)) => parse_table_ctrl(Some(c), 1)[0],
-                    _ => TblAxisCtrl::default(),
-                };
-                let linear_extrap = ctrl.lo == TblExtrap::Linear;
-                let cubic = ctrl.interp == TblInterp::Cubic;
-                let x = self.lower_expr(args[0]);
-                // Enhancement-390: sort as the compile-time forms do, and honour the
-                // cubic control code instead of silently interpolating linearly.
-                let (mut grid, mut vals) = (grid[..n].to_vec(), vals[..n].to_vec());
-                self.sort_pairs_runtime(&mut grid, &mut vals);
-                return if cubic {
-                    self.interp_1d_spline_runtime(x, &grid, &vals, linear_extrap)
-                } else {
-                    self.interp_1d_runtime(x, &grid, &vals, linear_extrap)
-                };
-            }
+        //
+        // Book audit (lookup tables): that is the 1-D shape only -- two 1-D arrays
+        // after one input, with at most a control string behind them. Every other
+        // array shape is LRM 9.21.1's compile-time ARRAY source, handled next. A
+        // `localparam` array takes the runtime path too (it fell through to an
+        // empty table before), the same way inference keys the two forms.
+        let is_arr = |sel: &Self, e: ExprId| {
+            sel.body.array_var_ref(e).is_some() || sel.body.array_param_ref(e).is_some()
+        };
+        let arr_ndim = |sel: &Self, e: ExprId| sel.body.array_shape(e).map_or(1, |s| s.len());
+        let runtime_1d = (3..=4).contains(&args.len())
+            && is_arr(self, args[1])
+            && arr_ndim(self, args[1]) == 1
+            && is_arr(self, args[2])
+            && arr_ndim(self, args[2]) == 1
+            && (args.len() == 3 || !is_arr(self, args[3]));
+        if runtime_1d {
+            let grid = self.lower_array_elems_impl(args[1], true);
+            let vals = self.lower_array_elems_impl(args[2], true);
+            // A shorter y than x would index past the end; the extra abscissae
+            // describe no data, so drop them rather than fault.
+            let n = grid.len().min(vals.len());
+            // The runtime kernels keep a single linear/clamp switch;
+            // validation restricts runtime-array controls to the shapes
+            // they can express. The DEFAULT is the Table 9-31 linear
+            // extrapolation now (kernel audit) -- it used to clamp.
+            let ctrl = match args.get(3).and_then(|&a| self.const_str(a)) {
+                Some(c) => parse_table_ctrl(Some(&c), 1)[0],
+                None => TblAxisCtrl::default(),
+            };
+            let linear_extrap = ctrl.lo == TblExtrap::Linear;
+            let x = self.lower_expr(args[0]);
+            // Enhancement-390: sort as the compile-time forms do, and honour the
+            // spline control codes instead of silently interpolating linearly.
+            let (mut grid, mut vals) = (grid[..n].to_vec(), vals[..n].to_vec());
+            self.sort_pairs_runtime(&mut grid, &mut vals);
+            return match ctrl.interp {
+                TblInterp::Cubic => self.interp_1d_spline_runtime(x, &grid, &vals, linear_extrap),
+                TblInterp::Quadratic => {
+                    self.interp_1d_quad_runtime(x, &grid, &vals, linear_extrap)
+                }
+                _ => self.interp_1d_runtime(x, &grid, &vals, linear_extrap),
+            };
+        }
+        if let Some(k) = (1..args.len()).find(|&i| is_arr(self, args[i])) {
+            return self.lower_table_model_arrays(args, k);
         }
 
-        let is_str =
-            |sel: &Self, e: ExprId| matches!(sel.body.as_literal(e), Some(Literal::String(_)));
+        // book audit (lookup tables): a `localparam string` names a file or a
+        // control as a literal does (LRM 9.21); an overridable `parameter string`
+        // is refused by validation, but still marks where the file name stands
+        let is_str = |sel: &Self, e: ExprId| {
+            matches!(sel.body.as_literal(e), Some(Literal::String(_)))
+                || matches!(sel.body.get_expr(e), Expr::Read(Ref::Parameter(p))
+                    if p.ty(sel.ctx.db) == Type::String)
+        };
         // LRM 9.21.1 (kernel audit): the 1-D array data may also arrive as a
         // PAIR of arrays -- abscissae then values ("arrays of reals may be
         // specified directly via the concatenation operator") -- where only
@@ -2123,18 +2342,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
         // Per-axis controls (LRM 9.21.2) and the dependent-variable selector
         // (`"1L;2"` picks dependent column 2 of a multi-column file).
-        let ctrl_str = args
-            .get(ctrl_idx)
-            .and_then(|&a| self.body.as_literal(a))
-            .and_then(|l| match l {
-                Literal::String(s) => Some(s.to_string()),
-                _ => None,
-            });
-        let ctrls = parse_table_ctrl(ctrl_str.as_deref(), ndim);
+        let ctrl_str = args.get(ctrl_idx).and_then(|&a| self.const_str(a));
+        let (ctrls, ignored) = parse_table_ctrl_cols(ctrl_str.as_deref(), ndim);
         let dep = ctrl_str.as_deref().map(|c| split_table_dep(c).1).unwrap_or(1);
 
         if is_file {
-            let fname = self.body.as_literal(args[ndim]).unwrap().unwrap_str().to_string();
+            let fname = self.const_str(args[ndim]).unwrap_or_default();
             // the self-describing grid format keeps working for N >= 2; the
             // LRM 9.21.1 N+M-column isoline format -- ragged isolines and the
             // dependent selector included -- is the normative path (kernel
@@ -2143,7 +2356,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
             for i in 0..ndim {
                 coords.push(self.lower_expr(args[i]));
             }
-            if ndim >= 2 {
+            // (the self-describing grid has no column to ignore)
+            if ndim >= 2 && ignored.is_empty() {
                 if let Some((axes, tensor)) = self.read_table_grid_nd(&fname, ndim) {
                     if axes.iter().any(|a| a.is_empty()) {
                         return F_ZERO;
@@ -2151,7 +2365,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     return self.interp_nd(&coords, &axes, &tensor, &ctrls);
                 }
             }
-            return match self.read_table_isoline_tree(&fname, ndim, dep) {
+            return match self.read_table_isoline_tree(&fname, ndim, dep, &ignored) {
                 Some(tree) => self.interp_tbl_tree(&coords, &tree, &ctrls),
                 None => F_ZERO,
             };
@@ -2197,6 +2411,74 @@ impl BodyLoweringCtx<'_, '_, '_> {
             coords.push(self.lower_expr(args[i]));
         }
         self.interp_nd(&coords, &axes, &tensor, &ctrls)
+    }
+
+    /// Book audit (lookup tables), LRM 9.21.1 `table_model_array`: after the k
+    /// inputs come the data COLUMNS as constant 1-D arrays -- one per independent
+    /// column ('I'-ignored ones included), then the dependent column(s) -- or one
+    /// 2-D array whose rows are those columns; then the optional control string.
+    /// The columns become the rows of the same N+M table a data file holds and go
+    /// through the same isoline tree, so the two data sources cannot disagree.
+    /// Validation has established that every element is a compile-time constant.
+    fn lower_table_model_arrays(&mut self, args: &[ExprId], k: usize) -> Value {
+        let is_arr = |sel: &Self, e: ExprId| {
+            sel.body.array_var_ref(e).is_some() || sel.body.array_param_ref(e).is_some()
+        };
+        let mut n_arr = 0;
+        while k + n_arr < args.len() && is_arr(self, args[k + n_arr]) {
+            n_arr += 1;
+        }
+        let ctrl_str = args.get(k + n_arr).and_then(|&a| self.const_str(a));
+        let (ctrls, ignored) = parse_table_ctrl_cols(ctrl_str.as_deref(), k);
+        let dep = ctrl_str.as_deref().map(|c| split_table_dep(c).1).unwrap_or(1);
+        let matrix = n_arr == 1 && self.body.array_shape(args[k]).map_or(false, |s| s.len() == 2);
+        let columns: Vec<Vec<f64>> = if matrix {
+            let shape = self.body.array_shape(args[k]).unwrap();
+            let (r, c) = (shape[0], shape[1]);
+            let flat = self.const_array_values(args[k]);
+            (0..r).map(|i| flat[i * c..(i + 1) * c].to_vec()).collect()
+        } else {
+            (0..n_arr).map(|i| self.const_array_values(args[k + i])).collect()
+        };
+        // one sample per index; a shorter column ends the table
+        let n_samples = columns.iter().map(Vec::len).min().unwrap_or(0);
+        let mut rows: Vec<Vec<f64>> =
+            (0..n_samples).map(|s| columns.iter().map(|c| c[s]).collect()).collect();
+        drop_table_columns(&mut rows, &ignored);
+        let width = rows.first().map_or(0, Vec::len);
+        let mut coords = Vec::with_capacity(k);
+        for &a in &args[..k] {
+            coords.push(self.lower_expr(a));
+        }
+        if width <= k {
+            return F_ZERO;
+        }
+        let dep_col = k + (dep - 1).min(width - k - 1);
+        let refs: Vec<&Vec<f64>> = rows.iter().collect();
+        let tree = build_tbl_tree(&refs, 0, k, dep_col);
+        self.interp_tbl_tree(&coords, &tree, &ctrls)
+    }
+
+    /// The compile-time values of an array variable or `localparam` array used
+    /// as table data (validation refused every other case; zeros stand in for
+    /// them so the lowering stays total).
+    fn const_array_values(&self, e: ExprId) -> Vec<f64> {
+        if let Some(vars) = self.body.array_var_ref(e) {
+            return hir::table_array_const_values(self.ctx.db, &vars)
+                .unwrap_or_else(|_| vec![0.0; vars.len()]);
+        }
+        if let Some(params) = self.body.array_param_ref(e) {
+            return hir::table_param_const_values(self.ctx.db, &params)
+                .unwrap_or_else(|_| vec![0.0; params.len()]);
+        }
+        Vec::new()
+    }
+
+    /// Book audit (lookup tables): the compile-time text of a string argument --
+    /// a literal, or a `localparam string` holding one (LRM 9.21 `file_name ::=
+    /// string_literal | string_parameter`).
+    fn const_str(&self, expr: ExprId) -> Option<String> {
+        const_str_in_body(self.ctx.db, self.body, expr, 0)
     }
 
     fn lower_builtin(&mut self, expr: ExprId, builtin: BuiltIn, args: &[ExprId]) -> Value {
@@ -4907,6 +5189,31 @@ fn param_derived_in_body(
         // A `localparam` is fixed at compile time, so it carries no deck value; a
         // `parameter` is the one the model card may replace.
         Expr::Read(Ref::Parameter(param)) => Some(!param.is_local(db)),
+        _ => None,
+    }
+}
+
+/// The string twin of [`const_real_in_body`]: a literal, or a `localparam
+/// string` whose default is one (through any chain of them). An overridable
+/// `parameter string` is not folded, for the reason given there.
+fn const_str_in_body(
+    db: &CompilationDB,
+    body: BodyRef<'_>,
+    expr: ExprId,
+    depth: u32,
+) -> Option<String> {
+    if depth > 512 {
+        return None;
+    }
+    if let Some(Literal::String(s)) = body.as_literal(expr) {
+        return Some(s.to_string());
+    }
+    match body.get_expr(expr) {
+        Expr::Read(Ref::Parameter(param)) if param.is_local(db) => {
+            let init = param.init(db);
+            let default = param.default(db);
+            const_str_in_body(db, init.borrow(), default, depth + 1)
+        }
         _ => None,
     }
 }

@@ -82,6 +82,7 @@ defects must compile, open gaps must keep their exact diagnostic.
 | `lrm_p263_3.va` | 263 | verbatim |
 | `lrm_p265_1.va` | 265 | timer/transition/$port_connected clock source; $port_connected on unconnected flattened ports used to fail - fixed by E-84 (F5). Also fixes a genuine typo in the LRM's own example |
 | `lrm_p274_1.va` | 274 | verbatim |
+| `lrm_p274_3.va` | 274 | verbatim; the LRM 9.21.1 array data source (`$table_model(0, V(a,b), y, x, f_xy)`, columns filled in `@(initial_step)`) -- a limitation until E-562 |
 | `lrm_p416_1.va` | 416 | differential pair; LRM omits port directions (lint demoted) + vertNPN context stub |
 | `lrm_p416_3.va` | 416 | ECP oscillator pair of examples merged; Annex E primitive stubs added. The vertNPN stub declares FOUR terminals (c, b, e, s) -- the LRM wires `vertNPN Q1 (vcc, b1, e, vcc)`; the three-terminal stub used to have its fourth actual silently dropped, which E-392 now diagnoses |
 
@@ -105,7 +106,6 @@ the file graduates to `va/`.
 | `lrm_p171_2.va` | 171 | `instantiates itself` | the condition `bits > 1` now folds (E-92 freezes the width-shaping `bits`, E-392 accepts it); blocked instead on RECURSIVE instantiation -- `pipeline_adc` instantiates itself |
 | `lrm_p172_1.va` | 172 | `unexpected token 'if'` | generate-if with parameter condition + implicit genblk naming (E-67 scope decision) |
 | `lrm_p267_1.va` | 267 | `refers to module 'resistor'` | $analog_node_alias/$analog_port_alias example; elaboration rejects the unconnected instance nets |
-| `lrm_p274_3.va` | 274 | `requires a bit-select` | $table_model with runtime array data arguments |
 | `lrm_p343_1.va` | 343 | `'$resistor' was not found` | Annex E SPICE-compatibility system function $resistor() |
 | `lrm_p438_1.va` | 438 | `legacy generate 'i': the bounds must be elaboration-time constants` | legacy Verilog-A 1.0 'generate i (msb,lsb)' statement (Annex C) now supported (E-88) with constant bounds; this example uses a PARAMETER bound (bits-1) + parameter bus width, both elaboration-time-unresolvable -- stays a limitation |
 

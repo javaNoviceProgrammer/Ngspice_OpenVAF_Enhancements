@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module m(inout electrical a, b);
+real xs[0:2], ys[0:2];
+analog begin
+  xs[0]=0.0; xs[1]=1.0; xs[2]=2.0; ys[0]=V(a,b); ys[1]=1.0; ys[2]=4.0;
+  I(a,b) <+ $table_model(V(a,b), xs, ys, "I");
+end
+endmodule

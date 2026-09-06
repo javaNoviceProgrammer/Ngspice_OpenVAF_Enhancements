@@ -15,7 +15,8 @@ undisclosed gaps across `$bound_step`, `$table_model`, the distributions,
   extrapolation, the **`;N` dependent-column selector**, the normative
   **N+M-column isoline files** — *ragged* isolines included (the LRM's
   own sample file interpolates to exact f = 0.5x+y) — and the
-  `'{xs}, '{ys}` array pair. `2`/`I` stay clean refusals.
+  `'{xs}, '{ys}` array pair. `2` (quadratic spline) and `I` (ignore a
+  column) followed in E-562; the suite pins `2` exact on linear data.
 - **9.13.2 domain errors on the deck route**: a deck-supplied
   non-positive mean/dof/k now aborts with the mandated runtime error for
   all five listed distributions (chi-square/t/erlang previously returned

@@ -19,6 +19,7 @@ use crate::builtin::{
 };
 use crate::db::HirTyDB;
 use crate::inference::{AssignDst, BranchWrite, InferenceResult, ResolvedFun};
+use crate::table_source::{table_array_const_values, table_param_const_values};
 use crate::lower::BranchKind;
 use crate::types::{BuiltinInfo, Signature, Ty};
 
@@ -151,6 +152,17 @@ pub enum BodyValidationDiagnostic {
     /// one; a model asking for `E`, whose whole purpose is to be told when the
     /// table is left, got silent clamping instead. Saying so is the point.
     TableControlUnsupported { expr: ExprId, code: Box<str>, why: Box<str> },
+
+    /// Book audit (lookup tables), LRM 9.21.1: an array data source whose
+    /// elements are not fixed when the model is compiled -- the array form is
+    /// read then, like a data file (`table_source` says which values qualify).
+    TableArrayNotConstant { expr: ExprId, name: Box<str>, why: Box<str> },
+
+    /// Book audit (lookup tables), LRM 9.21: a string parameter as the data
+    /// file name or the control string that is not a `localparam` holding a
+    /// literal. The table is built at compile time; an overridable `parameter
+    /// string` may be replaced by the model card afterwards.
+    TableStringNotConst { expr: ExprId, what: Box<str> },
 
     /// Enhancement-390: `disable <name>` naming no enclosing named block.
     ///
@@ -1791,15 +1803,48 @@ impl ExprValidator<'_, '_> {
                             // then the CONTROL STRING. Treating that as a filename
                             // would reject every inline table for failing to open a
                             // file named "1L".
+                            // book audit (lookup tables): the N-D ARRAY source is
+                            // read at compile time -- every array must be a constant
+                            let arrays_form =
+                                self.parent.infer.table_array_calls.get(&expr).copied();
+                            let mut n_arrays = 0;
+                            if let Some(k) = arrays_form {
+                                while k + n_arrays < args.len() {
+                                    let a = args[k + n_arrays];
+                                    let is_var = self.parent.infer.array_var_refs.contains_key(&a);
+                                    let is_par =
+                                        self.parent.infer.array_param_refs.contains_key(&a);
+                                    if !is_var && !is_par {
+                                        break;
+                                    }
+                                    self.check_table_array_const(a);
+                                    n_arrays += 1;
+                                }
+                            }
                             let inline = matches!(
                                 self.parent.body.exprs[args[1]],
                                 Expr::Array(_)
-                            ) || self.parent.infer.array_var_refs.contains_key(&args[1]);
+                            ) || self.parent.infer.array_var_refs.contains_key(&args[1])
+                                || self.parent.infer.array_param_refs.contains_key(&args[1])
+                                || arrays_form.is_some();
                             if !inline {
                                 for (i, &arg) in args[1..].iter().enumerate() {
-                                    if let Expr::Literal(Literal::String(ref path)) =
-                                        self.parent.body.exprs[arg]
+                                    if !self.is_table_str_arg(arg) {
+                                        continue;
+                                    }
+                                    let Some(path) = self.table_str_value(arg) else {
+                                        // book audit (lookup tables): a `parameter string`
+                                        // file name has no compile-time value
+                                        self.parent.diagnostics.push(
+                                            BodyValidationDiagnostic::TableStringNotConst {
+                                                expr: arg,
+                                                what: "data file name".into(),
+                                            },
+                                        );
+                                        break;
+                                    };
                                     {
+                                        let path: Box<str> = path.into_boxed_str();
                                         // Enhancement-425: the data file is preceded by
                                         // `1 + i` input arguments, which IS the call's
                                         // dimensionality -- the same quantity
@@ -1831,30 +1876,36 @@ impl ExprValidator<'_, '_> {
                             // the LAST string literal argument for inline data, and
                             // the one AFTER the file otherwise -- the same rule
                             // lowering uses to pick it.
-                            let ctrl_arg = if inline {
+                            let ctrl_arg = if let Some(k) = arrays_form {
+                                args.get(k + n_arrays).copied()
+                            } else if inline {
                                 args[2..].iter().rev().copied().find(|&a| {
-                                    matches!(
-                                        self.parent.body.exprs[a],
-                                        Expr::Literal(Literal::String(_))
-                                    )
+                                    self.is_table_str_arg(a)
                                 })
                             } else {
-                                let mut it = args[1..].iter().copied().filter(|&a| {
-                                    matches!(
-                                        self.parent.body.exprs[a],
-                                        Expr::Literal(Literal::String(_))
-                                    )
-                                });
+                                let mut it =
+                                    args[1..].iter().copied().filter(|&a| self.is_table_str_arg(a));
                                 it.next();
                                 it.next()
                             };
                             if let Some(carg) = ctrl_arg {
-                                if let Expr::Literal(Literal::String(ref ctrl)) =
-                                    self.parent.body.exprs[carg]
-                                {
-                                    let runtime_data =
-                                        self.parent.infer.array_var_refs.contains_key(&args[1]);
-                                    if let Some(why) = table_ctrl_problem(ctrl, runtime_data) {
+                                if let Some(ctrl) = self.table_str_value(carg) {
+                                    let ctrl: Box<str> = ctrl.into_boxed_str();
+                                    // book audit (lookup tables): the 1-D runtime form keeps
+                                    // its runtime kernels; the array form is compile-time data
+                                    let runtime_data = arrays_form.is_none()
+                                        && (self.parent.infer.array_var_refs.contains_key(&args[1])
+                                            || self
+                                                .parent
+                                                .infer
+                                                .array_param_refs
+                                                .contains_key(&args[1]));
+                                    // 'I' names a column of a file or of the array form;
+                                    // inline `'{...}` data has no column to drop
+                                    let columns = arrays_form.is_some() || !inline;
+                                    if let Some(why) =
+                                        table_ctrl_problem(&ctrl, runtime_data, columns)
+                                    {
                                         self.parent.diagnostics.push(
                                             BodyValidationDiagnostic::TableControlUnsupported {
                                                 expr: carg,
@@ -1863,6 +1914,13 @@ impl ExprValidator<'_, '_> {
                                             },
                                         );
                                     }
+                                } else if self.is_table_str_arg(carg) {
+                                    self.parent.diagnostics.push(
+                                        BodyValidationDiagnostic::TableStringNotConst {
+                                            expr: carg,
+                                            what: "control string".into(),
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -3567,6 +3625,48 @@ impl ExprValidator<'_, '_> {
         }
     }
 
+    /// Book audit (lookup tables): an ARRAY data source of `$table_model` is
+    /// read when the model is compiled, so every element must be a constant --
+    /// `table_source` decides, and says why not.
+    fn check_table_array_const(&mut self, arg: ExprId) {
+        let name: Box<str> = match self.parent.body.exprs[arg] {
+            Expr::Path { ref path, .. } => path.as_ident().map(|n| n.to_string()),
+            Expr::BitSelect { ref base, .. } => base.as_ident().map(|n| n.to_string()),
+            _ => None,
+        }
+        .unwrap_or_default()
+        .into_boxed_str();
+        let res = if let Some(vars) = self.parent.infer.array_var_refs.get(&arg) {
+            table_array_const_values(self.parent.db, vars)
+        } else if let Some(params) = self.parent.infer.array_param_refs.get(&arg) {
+            table_param_const_values(self.parent.db, params)
+        } else {
+            return;
+        };
+        if let Err(why) = res {
+            self.parent.diagnostics.push(BodyValidationDiagnostic::TableArrayNotConstant {
+                expr: arg,
+                name,
+                why: why.into_boxed_str(),
+            });
+        }
+    }
+
+    /// Book audit (lookup tables): is `arg` a string literal or a string
+    /// parameter -- the two spellings LRM 9.21 allows for a file name or a
+    /// control string?
+    fn is_table_str_arg(&self, arg: ExprId) -> bool {
+        matches!(self.parent.body.exprs[arg], Expr::Literal(Literal::String(_)))
+            || matches!(self.parent.infer.expr_types.get(arg), Some(Ty::Param(Type::String, _)))
+    }
+
+    /// The compile-time text of a string argument: a literal, or a `localparam
+    /// string` whose default is one (through any chain of them). An overridable
+    /// `parameter string` has no such text.
+    fn table_str_value(&self, arg: ExprId) -> Option<String> {
+        const_str_in(self.parent.db, self.parent.body, self.parent.infer, arg, 0)
+    }
+
     /// Enhancement-507: a string LITERAL argument's text, if it is one.
     fn const_str(&self, expr: ExprId) -> Option<String> {
         match self.parent.body.exprs[expr] {
@@ -3765,7 +3865,7 @@ fn calls_reach(
 /// kernels keep a single linear/clamp switch: the closest-point lookup,
 /// error-on-extrapolation and per-end methods are compile-time-grid features
 /// (kernel audit) and stay refused there rather than silently degraded.
-fn table_ctrl_problem(ctrl: &str, runtime_data: bool) -> Option<String> {
+fn table_ctrl_problem(ctrl: &str, runtime_data: bool, columns: bool) -> Option<String> {
     // strip the dependent-variable selector
     let body = match ctrl.split_once(';') {
         Some((head, sel)) => {
@@ -3785,14 +3885,24 @@ fn table_ctrl_problem(ctrl: &str, runtime_data: bool) -> Option<String> {
         let mut chars = sub.chars();
         let Some(first) = chars.next() else { continue };
         let rest: String = match first {
-            '1' | '3' => chars.collect(),
-            '2' => {
+            // book audit (lookup tables): '2' is the quadratic spline of 9.21.4
+            '1' | '2' | '3' => chars.collect(),
+            'I' | 'i' if runtime_data => {
                 return Some(
-                    "quadratic spline interpolation ('2') is not implemented; use '1', '3' \
-                     or 'D'"
+                    "ignoring a data column ('I') is not supported for runtime array data; \
+                     give the arrays a constant initialiser, or use a data file"
                         .to_owned(),
                 )
             }
+            'I' | 'i' if !columns => {
+                return Some(
+                    "ignoring a data column ('I') applies to a data file or to the array \
+                     form of the data; inline `'{...}` data has no column to ignore"
+                        .to_owned(),
+                )
+            }
+            // book audit (lookup tables): 'I' drops this column of the data source
+            'I' | 'i' => chars.collect(),
             'D' | 'd' if runtime_data => {
                 return Some(
                     "closest-point lookup ('D') is not supported for runtime array data; \
@@ -3801,9 +3911,6 @@ fn table_ctrl_problem(ctrl: &str, runtime_data: bool) -> Option<String> {
                 )
             }
             'D' | 'd' => chars.collect(),
-            'I' | 'i' => {
-                return Some("column selection ('I') is not implemented".to_owned())
-            }
             'C' | 'L' | 'c' | 'l' | 'E' | 'e' => {
                 // no interpolation character: the whole sub-string is extrapolation
                 sub.to_owned()
@@ -3871,7 +3978,7 @@ fn hir_lower_max_runtime_table() -> usize {
 /// and refusing a module because of its default would police a value no
 /// simulation need ever use. That is the same rule under which a parameter's
 /// default is not checked against its own `from`/`exclude` range.
-fn const_num_in(
+pub(crate) fn const_num_in(
     db: &dyn HirTyDB,
     body: &Body,
     infer: &InferenceResult,
@@ -3925,10 +4032,40 @@ fn const_num_in(
     }
 }
 
+/// Book audit (lookup tables): the string twin of [`const_num_in`] -- a
+/// literal, or a `localparam string` holding one (LRM 9.21 `file_name ::=
+/// string_literal | string_parameter`). An overridable `parameter string` is
+/// not folded, for the reason [`const_num_in`] gives.
+pub(crate) fn const_str_in(
+    db: &dyn HirTyDB,
+    body: &Body,
+    infer: &InferenceResult,
+    expr: ExprId,
+    depth: u32,
+) -> Option<String> {
+    if depth > 512 {
+        return None;
+    }
+    match body.exprs[expr] {
+        Expr::Literal(Literal::String(ref s)) => Some(s.to_string()),
+        Expr::Path { port: false, .. } => match infer.expr_types.get(expr) {
+            Some(Ty::Param(Type::String, param)) if db.param_data(*param).is_local => {
+                let owner = DefWithBodyId::ParamId(*param);
+                let body = db.body(owner);
+                let infer = db.inference_result(owner);
+                let default = db.param_exprs(*param).default;
+                const_str_in(db, &body, &infer, default, depth + 1)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The compile-time value of a `localparam`, or `None` for anything the
 /// compiler cannot pin down (an overridable `parameter` included -- see
 /// [`const_num_in`]).
-fn const_param_value(db: &dyn HirTyDB, param: ParamId, depth: u32) -> Option<f64> {
+pub(crate) fn const_param_value(db: &dyn HirTyDB, param: ParamId, depth: u32) -> Option<f64> {
     if depth > 512 || !db.param_data(param).is_local {
         return None;
     }

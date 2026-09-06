@@ -1,0 +1,13 @@
+// Table 9-30's 'I': the first data column is a tag, ignored, in a file and in
+// the array form; the remaining columns are y, x, f = 2x + y. Summed: 2*(2x+y).
+`include "disciplines.vams"
+module tablesrc_ignore(inout electrical a, b);
+parameter real xx = 1.5;
+parameter real yy = 0.25;
+localparam integer tag[0:10] = '{7, 7, 7, 7, 7, 8, 8, 8, 9, 9, 9};
+localparam real y[0:10] = '{0.0, 0.0, 0.0, 0.0, 0.0,  0.5, 0.5, 0.5, 1.0, 1.0, 1.0};
+localparam real x[0:10] = '{1.0, 2.0, 3.0, 4.0, 5.0,  1.0, 2.5, 4.0, 1.0, 3.0, 5.0};
+localparam real f[0:10] = '{2.0, 4.0, 6.0, 8.0, 10.0, 2.5, 5.5, 8.5, 3.0, 7.0, 11.0};
+analog I(a,b) <+ 1e-3 * ($table_model(yy, xx, "tagged.tbl", "I,1L,1L")
+                       + $table_model(yy, xx, tag, y, x, f, "I,1,1"));
+endmodule

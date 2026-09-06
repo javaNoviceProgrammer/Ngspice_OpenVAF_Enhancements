@@ -236,6 +236,13 @@ pub struct BlockLoc {
 }
 
 impl BlockLoc {
+    /// The scope the block is declared in (book audit, lookup tables: to
+    /// walk from a block-scoped array up to the module whose bodies may
+    /// write it).
+    pub fn parent(self) -> ScopeId {
+        self.parent
+    }
+
     pub fn name(self, db: &dyn HirDefDB) -> Name {
         let tree = db.item_tree(self.parent.root_file);
         tree.block_scope(self.ast)

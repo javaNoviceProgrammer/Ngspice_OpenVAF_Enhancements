@@ -1,0 +1,12 @@
+// One 2-D array as the data source: each ROW is one column of the table
+// (y, x, f), the layout LRM 9.21.1 gives for the array form.
+`include "disciplines.vams"
+module tablesrc_matrix(inout electrical a, b);
+parameter real xx = 1.5;
+parameter real yy = 0.25;
+real tab[0:2][0:10] = '{
+  '{0.0, 0.0, 0.0, 0.0, 0.0,  0.5, 0.5, 0.5, 1.0, 1.0, 1.0},
+  '{1.0, 2.0, 3.0, 4.0, 5.0,  1.0, 2.5, 4.0, 1.0, 3.0, 5.0},
+  '{2.0, 4.0, 6.0, 8.0, 10.0, 2.5, 5.5, 8.5, 3.0, 7.0, 11.0}};
+analog I(a,b) <+ 1e-3 * $table_model(yy, xx, tab);
+endmodule

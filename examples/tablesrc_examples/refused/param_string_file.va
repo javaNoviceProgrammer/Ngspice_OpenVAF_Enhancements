@@ -1,0 +1,5 @@
+`include "disciplines.vams"
+module m(inout electrical a, b);
+parameter string fname = "sample.tbl";
+analog I(a,b) <+ $table_model(0.5, V(a,b), fname);
+endmodule

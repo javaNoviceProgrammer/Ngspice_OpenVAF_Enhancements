@@ -1,0 +1,4 @@
+`include "disciplines.vams"
+module m(inout electrical a, b);
+analog I(a,b) <+ $table_model(V(a,b), '{0.0, 1.0, 2.0}, '{0.0, 1.0, 4.0}, "I");
+endmodule

@@ -1,0 +1,22 @@
+// Table 9-30's '2', the quadratic spline (LRM 9.21.4), on inline data and on
+// runtime arrays; `ends` selects 'L' (0) or 'C' (1) extrapolation.
+`include "disciplines.vams"
+module tablesrc_quad(inout electrical a, b);
+parameter real xx = 1.5;
+parameter integer ends = 0;
+parameter integer runtime = 0;
+real xs[0:3], vs[0:3];
+real v;
+analog begin
+  xs[0]=0.0; xs[1]=1.0; xs[2]=2.0; xs[3]=3.0;
+  vs[0]=0.0; vs[1]=1.0; vs[2]=4.0; vs[3]=9.0;
+  if (runtime) begin
+    if (ends) v = $table_model(xx, xs, vs, "2C");
+    else      v = $table_model(xx, xs, vs, "2L");
+  end else begin
+    if (ends) v = $table_model(xx, '{0.0, 1.0, 2.0, 3.0}, '{0.0, 1.0, 4.0, 9.0}, "2C");
+    else      v = $table_model(xx, '{0.0, 1.0, 2.0, 3.0}, '{0.0, 1.0, 4.0, 9.0}, "2L");
+  end
+  I(a,b) <+ 1e-3 * v;
+end
+endmodule

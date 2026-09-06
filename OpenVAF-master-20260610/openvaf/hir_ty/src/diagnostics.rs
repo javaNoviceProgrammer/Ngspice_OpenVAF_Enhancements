@@ -714,6 +714,24 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            InferenceDiagnostic::TableArrayShape { expr, inputs, arrays } => {
+                let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: format!("{inputs} input(s), {arrays} array(s)"),
+                    }])
+                    .with_message("invalid array data source for $table_model")
+                    .with_notes(vec![format!(
+                        "help: LRM 9.21.1 -- after the {inputs} input(s), give one 1-D array per \
+                         independent column (a column an 'I' control ignores included) and ONE \
+                         dependent array, so at least {} arrays all one-dimensional; or a single \
+                         2-D array whose rows are those columns",
+                        inputs + 1
+                    )])
+            }
             InferenceDiagnostic::EmptyConcat { expr } => {
                 let src = self
                     .parse
