@@ -1808,6 +1808,32 @@ static void osdimc_say_applied(const char *owner, const char *param,
 static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
                               int *nunif);
 
+/* hunt F16 (2026-09-05): `osdi -f` swaps the registered device to the new
+ * descriptor IN PLACE (E-229), and a circuit resolves its device type through
+ * that table -- so a circuit built earlier would run the NEW object's code on
+ * instance and model data blocks laid out by the OLD one. That is harmless
+ * while the two layouts agree (the same file reloaded, which is what the hunt
+ * probed and found every run labelled and counted) and memory corruption the
+ * moment the recompiled model adds a parameter, a node or an opvar -- which is
+ * what a recompile is for. Mark every loaded circuit that has models of the
+ * type; if_run refuses it until a reset / re-source rebuilds it against the
+ * new object. The deck whose control block carried the (hoisted) `pre_osdi
+ * -f` is parsed AFTER this and is built against the new object already. */
+void OSDIreloadedType(int type, const char *path) {
+  for (struct circ *ci = ft_circuits; ci; ci = ci->ci_next) {
+    if (!ci->ci_ckt || type < 0 || type >= DEVmaxnum || !ci->ci_ckt->CKThead[type])
+      continue;
+    ci->ci_osdi_stale = TRUE;
+    if (ci->ci_osdi_stale_path)
+      tfree(ci->ci_osdi_stale_path);
+    ci->ci_osdi_stale_path = copy(path);
+    printf("Note(osdi): circuit \"%s\" was built against the previous \"%s\" "
+           "and keeps its data; `reset` (or re-`source`) it before its next "
+           "run, which is refused until then\n",
+           ci->ci_name ? ci->ci_name : "?", path);
+  }
+}
+
 void OSDImcSeedOffset(unsigned s) {
   osdimc_seed_extra = (uint32_t) s;
   if (s) {

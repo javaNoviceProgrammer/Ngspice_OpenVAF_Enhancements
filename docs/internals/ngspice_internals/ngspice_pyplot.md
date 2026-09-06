@@ -310,7 +310,10 @@ carries, and labelled with the type's name and unit (E-551):
 
 A label the user gives (`xlabel "my x"`) is kept verbatim, with the ticks still in the
 unit; `set pyplot_eng=off` keeps matplotlib's plain numbers (`0.0005`) and the typed
-labels. The default title drops the deck's leading `* ` comment marker (`* rc lowpass` →
+labels. An **untyped** axis is labelled by name: the scale's name on x and a single
+untyped signal's own name on y — `pyplot mcv rr` on a `montecarlo` plot reads
+`sample` / `rr`, and `-hist` of an untyped value labels its x-axis with the value's
+name (2026-09-05 hunt, F14; before that such a plot had no labels at all). The default title drops the deck's leading `* ` comment marker (`* rc lowpass` →
 `rc lowpass`); a `title` given on the command is untouched. The same ticks go on the
 Bode frequency axis, the eye's folded time axis, a contour's axes and colour bar, and
 a histogram's value axis.

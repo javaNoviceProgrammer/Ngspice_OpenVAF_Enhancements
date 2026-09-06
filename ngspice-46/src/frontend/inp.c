@@ -2283,6 +2283,12 @@ inp_dodeck(
         ft_curckt = ct;
     }
     ct->ci_name = tt;
+    /* hunt F16: (re)built now, against whatever objects are registered */
+    ct->ci_osdi_stale = FALSE;
+    if (ct->ci_osdi_stale_path) {
+        tfree(ct->ci_osdi_stale_path);
+        ct->ci_osdi_stale_path = NULL;
+    }
     ct->ci_deck = deck;
     ct->ci_mcdeck = mc_deck;
     ct->ci_options = options;

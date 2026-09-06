@@ -86,6 +86,8 @@ static struct variable *parmtovar(IFvalue *pv, IFparm *opt,
                                   int use_description);
 static IFparm *parmlookup(IFdevice *dev, GENinstance **inptr, char *param,
                            int do_model, int inout);
+static int say_instance_level(IFdevice *device, const char *model,
+                              const char *param, int writing);   /* hunt F15 */
 static IFvalue *doask(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod,
                        IFparm *opt, int ind);
 
@@ -236,6 +238,19 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
     int which = -1;
     IFuid specUid, optUid;
     char *s;
+
+    /* hunt F16 (2026-09-05): the circuit was built against an OSDI object
+     * that `osdi -f` has since replaced; running it would execute the new
+     * object's code on the old layout's data (see OSDIreloadedType). */
+    if (ft_curckt && ft_curckt->ci_osdi_stale && ft_curckt->ci_ckt == ckt) {
+        fprintf(cp_err, "Error: circuit \"%s\" was built against \"%s\" before "
+                        "`osdi -f` reloaded it, and cannot run on the new "
+                        "object's code; `reset` (or re-`source`) the deck to "
+                        "rebuild it against the reloaded object\n",
+                ft_curckt->ci_name ? ft_curckt->ci_name : "?",
+                ft_curckt->ci_osdi_stale_path ? ft_curckt->ci_osdi_stale_path : "?");
+        return 1;
+    }
 
     /* `.option osdimc`: every run-class command starts a new Monte-Carlo
      * trial; `resume` continues the current one and must not redraw. */
@@ -1023,7 +1038,9 @@ spif_getparam_special(CKTcircuit *ckt, char **name, char *param, int ind, int do
         device = ft_sim->devices[typecode];
         opt = parmlookup(device, &dev, param, modelo_dispositivo, 0);
         if (!opt) {
-            fprintf(cp_err, "Error: no such parameter %s.\n", param);
+            if (!(modelo_dispositivo && !dev && mod &&
+                  say_instance_level(device, *name, param, 0)))
+                fprintf(cp_err, "Error: no such parameter %s.\n", param);
             return (NULL);
         }
         pv = doask(ckt, typecode, dev, mod, opt, ind);
@@ -1100,7 +1117,9 @@ spif_getparam(CKTcircuit *ckt, char **name, char *param, int ind, int do_model)
         device = ft_sim->devices[typecode];
         opt = parmlookup(device, &dev, param, do_model, 0);
         if (!opt) {
-            fprintf(cp_err, "Error: no such parameter %s.\n", param);
+            if (!(do_model && !dev && mod &&
+                  say_instance_level(device, *name, param, 0)))
+                fprintf(cp_err, "Error: no such parameter %s.\n", param);
             return (NULL);
         }
         pv = doask(ckt, typecode, dev, mod, opt, ind);
@@ -1310,6 +1329,44 @@ if_setparam_string(CKTcircuit *ckt, char **name, char *param, char *strval,
     return 1;
 }
 
+/* hunt F15 (2026-09-05): the name is a MODEL and `param` is one of its
+ * INSTANCE parameters. `altermod mm l=10` was refused as "model 'mm' has no
+ * parameter l" while `.model mm vidd l=10` set every instance and `alter n1
+ * l=10` worked: E-546 resolves a Verilog-A parameter whose default reads an
+ * instance parameter PER INSTANCE (it is instance-level, lint L028 says so at
+ * compile time), so the runtime setter looks for it in the wrong table, and
+ * the message denied a parameter the card had just proved exists. A .model
+ * card's instance parameters are the instances' DEFAULTS, replayed onto each
+ * instance as it is parsed -- a runtime write cannot tell an instance that
+ * took the default from one that gave its own, so the command stays a
+ * per-instance one; the message now says so and points at the two routes.
+ * Nonzero when the message was printed. */
+static int
+say_instance_level(IFdevice *device, const char *model, const char *param,
+                   int writing)
+{
+    GENinstance *dummy = NULL;
+    if (!param || !model
+        || !parmlookup(device, &dummy, (char *) param, 0, writing ? 1 : 0))
+        return 0;
+    fprintf(cp_err, "Error: '%s' is an INSTANCE parameter of model '%s'%s; ",
+            param, model,
+            device->registry_entry
+                ? " (declared (* type=\"instance\" *), or resolved per "
+                  "instance because its default reads an instance parameter, "
+                  "lint L028)"
+                : "");
+    if (writing)
+        fprintf(cp_err, "`altermod` sets model parameters. Use `alter "
+                        "@<instance>[%s]=...` on each instance, or write %s=... "
+                        "on the .model card, where it is the instances' "
+                        "default.\n", param, param);
+    else
+        fprintf(cp_err, "a model has no value of its own to read. Read it from "
+                        "an instance: @<instance>[%s].\n", param);
+    return 1;
+}
+
 /* bug-hunt F4: does this device type register `param` as PER-ELEMENT entries
  * (`cf[0]`, `cf[1]`, ...)? The OSDI layer exposes array parameters that way,
  * so the whole-array spelling has no IFparm and the old diagnostic asserted
@@ -1367,6 +1424,8 @@ if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_
                 fprintf(cp_err, "Error: array parameter '%s' is set per "
                         "element: use @%s[%s[0]] = <value> (one element at a "
                         "time).\n", param, *name, param);
+            else if (say_instance_level(device, *name, param, 1))
+                ;                                  /* hunt F15 */
             else
                 fprintf(cp_err, "Error: model '%s' has no parameter %s.\n",
                         *name, param);

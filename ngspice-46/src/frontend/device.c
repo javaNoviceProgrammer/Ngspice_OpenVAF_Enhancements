@@ -1689,7 +1689,12 @@ com_alter_common_impl(wordlist *wl, int do_model)
        (altering a device's principal value, no named parameter) -- reached
        directly and via the `sweep` knob path -- so guard it before eq(): an
        m-device with no `w`/`l` parameter must not deref a NULL param. */
-    if (param && (dev[0] == 'm') && (eq(param, "w") || eq(param, "l")))
+    /* hunt F15 (2026-09-05): only for an INSTANCE. The probe reads the
+       instance's own `w` to pick a bin, so on `altermod mm l=10` -- a MODEL
+       name that merely starts with `m` -- it could never succeed and only
+       printed "no such parameter w" and "Can't access width instance
+       parameter" ahead of the real answer. */
+    if (param && !do_model && (dev[0] == 'm') && (eq(param, "w") || eq(param, "l")))
         if_set_binned_model(ft_curckt->ci_ckt, dev, param, dv);
 
     alter_journal_stage_real(dv);              /* Enhancement-544 */

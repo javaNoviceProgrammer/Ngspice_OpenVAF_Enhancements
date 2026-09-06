@@ -1111,6 +1111,17 @@ void ft_pyplot(double *xlims, double *ylims,
     const char *vunit = eng ? eng_unit_for((int) vecs->v_type) : NULL;   /* the value's */
     char *xdefault = axis_label_for(xtype);
     char *ydefault = axis_label_for((int) vecs->v_type);
+    /* hunt F14 (2026-09-05): an UNTYPED axis got no label at all -- `pyplot
+       mcv rr` on a montecarlo plot (scale `sample`, value `rr`, both notype)
+       wrote a script with neither set_xlabel nor set_ylabel, because E-551
+       labels an axis by its vector TYPE and plotit hands a NULL abbreviation
+       for notype. The scale's NAME is the obvious x label, and a single
+       untyped signal is labelled by its own name (several are told apart by
+       the legend, as before). A label the user gave still wins. */
+    const char *xname = (!xlabel || !*xlabel) && !fft && vecs->v_scale
+                        && xtype == SV_NOTYPE ? vecs->v_scale->v_name : NULL;
+    const char *yname = (!ylabel || !*ylabel) && !fft && !mixed && !vecs->v_link2
+                        && (int) vecs->v_type == SV_NOTYPE ? vecs->v_name : NULL;
     const char *xabbrev = ft_typabbrev(xtype);
     const char *yabbrev = ft_typabbrev((int) vecs->v_type);
     const bool xlabel_is_default = xlabel && xabbrev && eq(xlabel, xabbrev);
@@ -1133,6 +1144,10 @@ void ft_pyplot(double *xlims, double *ylims,
         quote_python_string(file, text);
         fprintf(file, ")\n");
         tfree(text);
+    } else if (yname) {                        /* hunt F14 */
+        fprintf(file, "    _ax.set_ylabel(");
+        quote_python_string(file, yname);
+        fprintf(file, ")\n");
     }
     if (xlog || (fft && fftlogf))
         fprintf(file, "    _ax.set_xscale('log')\n");
@@ -1232,15 +1247,20 @@ void ft_pyplot(double *xlims, double *ylims,
     if (fft) {
         fprintf(file, "axes[-1, 0].set_xlabel('Frequency [Hz]')\n");
     } else {
-        if (hist && ylabel) {
-            text = (ylabel_is_default && ydefault) ? copy(ydefault) : cp_unquote(ylabel);
+        if (hist && (ylabel || yname)) {
+            /* hunt F14: a histogram of an untyped value is labelled by its name */
+            text = ylabel ? ((ylabel_is_default && ydefault) ? copy(ydefault)
+                                                              : cp_unquote(ylabel))
+                          : copy(yname);
             fprintf(file, "    _ax.set_xlabel(");
             quote_python_string(file, text);
             fprintf(file, ")\n");
             tfree(text);
         }
-        if (!hist && xlabel) {
-            text = (xlabel_is_default && xdefault) ? copy(xdefault) : cp_unquote(xlabel);
+        if (!hist && (xlabel || xname)) {
+            text = xlabel ? ((xlabel_is_default && xdefault) ? copy(xdefault)
+                                                              : cp_unquote(xlabel))
+                          : copy(xname);          /* hunt F14 */
             fprintf(file, "axes[-1, 0].set_xlabel(");
             quote_python_string(file, text);
             fprintf(file, ")\n");

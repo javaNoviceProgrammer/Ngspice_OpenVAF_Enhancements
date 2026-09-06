@@ -71,6 +71,15 @@ alter @n1[r] = 2k     ; change + re-run setup on the next analysis
 altermod @mm[r] = 2k  ; same for a model-card parameter
 ```
 
+A parameter the compiler resolves *per instance* — declared
+`(* type="instance" *)`, or promoted because its default reads an instance
+parameter (E-546, lint L028) — is instance-level however the card spells it:
+`altermod mm l=10` is refused with a message that says so and points at the two
+routes, `alter @n1[l]=10` per instance and `l=10` on the `.model` card, where it
+is the instances' default; `print @mm[l]` and `dc @mm[l] …` say the same
+(2026-09-05 hunt, F15; the refusal used to read *model 'mm' has no parameter l*
+after a stray MOS width probe).
+
 **`.dc` sweeps over device parameters** work for OSDI (and built-in)
 devices — the sweep refreshes the device per point exactly as `alter`
 would, restores the original value afterwards, and nests with other sweep

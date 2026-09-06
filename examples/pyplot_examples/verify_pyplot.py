@@ -788,14 +788,48 @@ ph = open(os.path.join(HERE, "hst.py")).read() if os.path.isfile(os.path.join(HE
 check("E-551g: -fft labels `Frequency [Hz]` / `Magnitude [V]` with Hz ticks; -hist labels `voltage [V]` with V ticks",
       "set_xlabel('Frequency [Hz]')" in pf and "set_ylabel('Magnitude [V]')" in pf and "EngFormatter(unit='Hz')" in pf
       and "set_xlabel('voltage [V]')" in ph and "EngFormatter(unit='V')" in ph)
+# hunt F14 (2026-09-05): an UNTYPED axis had no label at all -- `pyplot mcv rr` on a
+# montecarlo plot (scale `sample`, value `rr`, both notype) wrote neither set_xlabel
+# nor set_ylabel. The scale's name and a single signal's name are the labels; a
+# user's label still wins; a histogram of an untyped value is labelled by its name.
+NT = """* notype probe deck
+V1 in 0 dc 1
+R1 in 0 1k
+.control
+set pyplot_terminal=png
+set pyplot_backend=Agg
+setplot new
+let s = vector(6)
+let y = s*s
+setscale s
+pyplot nt y
+pyplot ntl y xlabel "my s"
+pyplot nth -hist y
+.endc
+.end
+"""
+deck = os.path.join(HERE, "nt.sp")
+with open(deck, "w") as f:
+    f.write(NT)
+log = run_deck(deck, HERE)
+pn = open(os.path.join(HERE, "nt.py")).read() if os.path.isfile(os.path.join(HERE, "nt.py")) else ""
+pl = open(os.path.join(HERE, "ntl.py")).read() if os.path.isfile(os.path.join(HERE, "ntl.py")) else ""
+pht = open(os.path.join(HERE, "nth.py")).read() if os.path.isfile(os.path.join(HERE, "nth.py")) else ""
+check("E-551h (hunt F14): an untyped scale and signal are labelled by name (`s`, `y`); a user's xlabel wins; a -hist of an untyped value is labelled by its name",
+      "set_xlabel('s')" in pn and "set_ylabel('y')" in pn
+      and "set_xlabel('my s')" in pl and "set_ylabel('y')" in pl
+      and "set_xlabel('y')" in pht and "set_ylabel('count')" in pht,
+      f"nt: x={'set_xlabel(' in pn} y={'set_ylabel(' in pn}; ntl x={'my s' in pl}; hist x={'set_xlabel(' in pht}")
 _plt.close("all")
-for base in ("eng", "mix", "lab", "raw", "fft", "hst", "dbp"):
+for base in ("eng", "mix", "lab", "raw", "fft", "hst", "dbp", "nt", "ntl", "nth"):
     for ext in (".py", ".data", ".npy", ".png"):
         q = os.path.join(HERE, base + ext)
         if os.path.exists(q):
             os.remove(q)
 if os.path.exists(deck):
     os.remove(deck)
+if os.path.exists(os.path.join(HERE, "e551.sp")):
+    os.remove(os.path.join(HERE, "e551.sp"))
 
 for d in e547_dirs:
     shutil.rmtree(d, ignore_errors=True)

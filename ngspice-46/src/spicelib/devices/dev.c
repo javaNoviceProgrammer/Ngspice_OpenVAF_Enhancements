@@ -754,6 +754,7 @@ static int osdi_add_device(int n, OsdiRegistryEntry *devs, bool replace,
          * a circuit still built against the old model keeps a valid device, and
          * freeing descriptor-owned memory here would risk a double free. */
         DEVices[k] = dev;
+        OSDIreloadedType(k, path);            /* hunt F16 */
       } else if (strcmp(existing, name) != 0) {
         /* the F2 shape: same name to a netlist, different name to the
          * compiler -- say which spelling survives, because the model's

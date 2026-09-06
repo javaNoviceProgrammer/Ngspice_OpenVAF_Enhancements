@@ -61,6 +61,11 @@ struct circ {
     JOB *ci_specOpt;          /* special options anal. for command line jobs */
     JOB *ci_curOpt;           /* most recent options anal. for the circuit */
     char *ci_last_an;         /* name of last analysis run */
+    /* hunt F16 (2026-09-05): `osdi -f` replaced an OSDI device type this
+       circuit was built against; it must be rebuilt (reset / re-source)
+       before it runs again. The path names the reloaded object. */
+    bool ci_osdi_stale;
+    char *ci_osdi_stale_path;
 
     int ci_dicos;               /* index to the numparam dicoS structure
                                    for this circuit */

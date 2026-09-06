@@ -567,7 +567,7 @@ N1 d g s b bsim4mod          ; an OSDI device instance (N-prefix)
 
 | Command | Purpose |
 |---|---|
-| `osdi` (`pre_osdi`) | load one/more compiled `.osdi` models; `-f` force-reloads a recompiled file |
+| `osdi` (`pre_osdi`) | load one/more compiled `.osdi` models; `-f` force-reloads a recompiled file — the deck whose control block carries it is parsed afterwards and is built against the new object, while a circuit loaded earlier is named at the reload and its next run refused until `reset` / re-`source` rebuilds it (2026-09-05 hunt, F16: it would otherwise run the new object's code on the old layout's data) |
 | `snp` (`pre_snp`) | compile a Touchstone `.sNp` to a Verilog-A n-port OSDI model, then load it |
 | `codemodel` | load an XSPICE code-model (`.cm`) library |
 | `use` | load a device library |

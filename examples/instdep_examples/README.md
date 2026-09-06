@@ -4,7 +4,7 @@
 python3 verify_instdep.py
 ```
 
-20 checks, both solvers. Compiler hunt F2 (2026-09-04).
+23 checks, both solvers. Compiler hunt F2 (2026-09-04); F15 of the 2026-09-05 hunt.
 
 ## The shape
 
@@ -64,6 +64,7 @@ read that value.
 | 13–14 | a promoted parameter given on the card and per instance; a parameter reading only model parameters stays on the model |
 | 15–16 | a declared instance parameter whose bounds read another instance parameter |
 | 17–18 | a model parameter whose range reads a promoted parameter |
+| 19–21 | `altermod mm l=…`, `print @mm[l]` and `dc @mm[l] …` say that `l` is an INSTANCE parameter of the model — declared so, or resolved per instance because its default reads one — and point at `alter @<instance>[l]=…` and at `l=…` on the card, where it is the instances' default; the MOS bin probe no longer complains about a width first (2026-09-05 hunt, F15: it was *model 'mm' has no parameter l*) |
 
 Where it lives: `sim_back::module_info::promote_instance_dependent` (the
 classification), `HirInterner::insert_param_init` (`unchecked` for the model

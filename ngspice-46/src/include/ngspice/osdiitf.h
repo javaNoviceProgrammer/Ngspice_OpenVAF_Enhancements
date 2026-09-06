@@ -227,6 +227,11 @@ extern void OSDImcSigmaScale(double s);
  * machine-computed (aging's dose), so they do not recenter a statistical
  * nominal -- the E-531 rule that only user writes recenter. */
 extern void OSDImcMachineWrite(bool on);
+/* hunt F16 (2026-09-05): `osdi -f` swapped device type `type` to a freshly
+ * loaded descriptor; every loaded circuit that has models of that type is
+ * marked stale (it would run the new object's code on data laid out by the
+ * old one) and says so. if_run refuses such a circuit until it is rebuilt. */
+extern void OSDIreloadedType(int type, const char *path);
 /* E-537 (hunt P): a loop command's own `-seed`, mixed into the draw key so
  * independent replications really are independent. 2026-09-05 hunt F13:
  * while a seed is set the key carries the sample number counted from the

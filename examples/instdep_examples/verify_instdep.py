@@ -302,5 +302,29 @@ if osdi:
 else:
     check("[18] (skipped: the model did not compile)", False)
 
+# ------------------------------------------ [19]-[21] hunt F15: the runtime forms through the model name ---
+# `altermod mm l=10` was refused as "model 'mm' has no parameter l" (and, because
+# the model's name starts with `m`, the MOS bin probe first complained about a
+# width) while `.model mm m(l=...)` set every instance and `alter n1 l=...`
+# worked: a promoted parameter is instance-level, and the message says so now.
+print("\nhunt F15: altermod / print / dc of a promoted parameter through the model name")
+rc, out, osdi = compile_va(SET, "set")
+if osdi:
+    rc2, o = sim(osdi, "v1 1 0 dc 1\nn1 1 0 mm w=8e-6\nn2 1 0 mm w=8e-6 l=2e-6\n.model mm m",
+                 "op\naltermod mm l=4e-6\nprint @mm[l]\ndc @mm[l] 4e-6 8e-6 2e-6\n"
+                 "alter @n1[l]=4e-6\nop\nprint @n1[rl] @n2[rl]", "f15")
+    check("[19] altermod of a promoted parameter says it is INSTANCE-level and points at alter and the card (was: 'has no parameter l' after a MOS width probe)",
+          "'l' is an INSTANCE parameter of model 'mm'" in o and "`altermod` sets model parameters" in o
+          and "alter @<instance>[l]=" in o and "has no parameter l" not in o
+          and "no such parameter w" not in o and "width instance parameter" not in o, o.strip()[-300:])
+    check("[20] print @mm[l] and dc @mm[l] say the same and point at the instance",
+          "a model has no value of its own to read" in o and "sweep @<instance>[l] instead" in o, o.strip()[-300:])
+    check("[21] the instance route works: alter @n1[l] moves n1 only",
+          close(val(o, "@n1[rl]"), 4e-6) and close(val(o, "@n2[rl]"), 2e-6),
+          f"rl={val(o, '@n1[rl]')}/{val(o, '@n2[rl]')}")
+else:
+    for i in (19, 20, 21):
+        check(f"[{i}] (skipped: the model did not compile)", False)
+
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

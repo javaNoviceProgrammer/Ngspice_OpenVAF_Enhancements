@@ -756,11 +756,22 @@ DCTresolveXParam(CKTcircuit *ckt, TRCV *job, int i)
         if (!cmod)
             return E_NODEV;
         if (!dct_parm_ids(cmod_type, param, 1, &sid, &aid, &pt)) {
-            SPfrontEnd->IFerrorf(ERR_FATAL,
-                "DC sweep %d: %s names a model that exists, but not a "
-                "sweepable parameter of it (it must be a settable real or "
-                "integer model parameter)",
-                i + 1, name);
+            /* hunt F15 (2026-09-05): an INSTANCE parameter of the model --
+             * E-546 resolves a parameter whose default reads an instance
+             * parameter per instance -- is swept on an instance */
+            if (dct_parm_ids(cmod_type, param, 0, &sid, &aid, &pt))
+                SPfrontEnd->IFerrorf(ERR_FATAL,
+                    "DC sweep %d: %s names a model that exists, but '%s' is "
+                    "an INSTANCE parameter of it (declared (* type=\"instance\" "
+                    "*), or resolved per instance because its default reads "
+                    "an instance parameter): sweep @<instance>[%s] instead",
+                    i + 1, name, param, param);
+            else
+                SPfrontEnd->IFerrorf(ERR_FATAL,
+                    "DC sweep %d: %s names a model that exists, but not a "
+                    "sweepable parameter of it (it must be a settable real or "
+                    "integer model parameter)",
+                    i + 1, name);
             return E_BADPARM;
         }
         if (!dct_xtarg_add(ckt, job, i, NULL, cmod, cmod_type, sid, aid, pt))

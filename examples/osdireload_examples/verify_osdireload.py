@@ -80,6 +80,8 @@ script = "\n".join([
     "shell %s mv2.osdi m.osdi" % CP,
     "osdi m.osdi",            # plain: already loaded -> skipped
     "osdi -f m.osdi",         # forced: reloaded
+    "op",                     # hunt F16: the circuit built against v1 is refused
+    "reset", "op", "print i(v1)",   # rebuilt against v2
     "source run.cir", "op", "print i(v1)",
     "quit", ""])
 r = subprocess.run([NGSPICE, "-p"], input=script, capture_output=True, text=True,
@@ -95,8 +97,16 @@ check("plain re-load of an already-loaded file is skipped (with a hint)",
 check("`-f` reports a reload of the recompiled file",
       re.search(r"reloaded .*m\.osdi", out) is not None)
 check("after `-f`, the recompiled model takes effect (R=2k -> i(v1) = -0.5mA)",
-      len(vals) >= 2 and abs(vals[1] - (-0.5e-3)) < 1e-6,
-      f"vals={vals}" if len(vals) < 2 else f"i={vals[1]:.3e}")
+      len(vals) >= 3 and abs(vals[2] - (-0.5e-3)) < 1e-6,
+      f"vals={vals}" if len(vals) < 3 else f"i={vals[2]:.3e}")
+# hunt F16 (2026-09-05): the circuit built against v1 resolves its device type
+# through the table `-f` just swapped, so a run would execute v2's code on v1's
+# data layout. The reload says so, the run is refused, and a `reset` rebuilds
+# the circuit against v2 (the same -0.5 mA the re-source gives).
+check("hunt F16: the reload names the circuit built against the previous object, its next run is refused, and `reset` rebuilds it against the new one",
+      "was built against the previous" in out and "cannot run on the new object's code" in out
+      and len(vals) >= 3 and abs(vals[1] - (-0.5e-3)) < 1e-6,
+      f"vals={vals} note={'was built against the previous' in out} refused={'cannot run on the new' in out}")
 
 shutil.rmtree(D, ignore_errors=True)
 print(f"\n{passed}/{checks} checks passed")

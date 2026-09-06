@@ -62,7 +62,14 @@ the new run. The previous `SPICEdev` and its library mapping are intentionally
 left resident: any circuit still built against the old model keeps a valid
 device, and freeing descriptor-owned memory would risk a double free. (The one
 caveat, documented, is not to re-run a *pre-existing* circuit built against the
-prior version of a model after reloading it.)
+prior version of a model after reloading it. Since F16 of the 2026-09-05 hunt
+that caveat is enforced: such a circuit resolves its device type through the
+table the reload just swapped, so a run would execute the new object's code on
+the old layout's data; the reload names every loaded circuit built against the
+previous object, its next run is refused, and `reset` or a re-`source` rebuilds
+it against the new one. The deck whose control block carries the hoisted
+`pre_osdi -f` is parsed after the reload and is built against the new object
+already.)
 
 Behaviour is unchanged without `-f`: a plain re-load is still skipped, now with a
 hint pointing at `-f`.
@@ -73,7 +80,9 @@ hint pointing at `-f`.
 drives ngspice in pipe mode to load the 1 kΩ version (`i(v1) = −1 mA`),
 recompiles the same file to 2 kΩ mid-session, confirms a plain re-load is skipped
 (still 1 kΩ), then `osdi -f` reloads it and the operating point changes to the
-2 kΩ result (`i(v1) = −0.5 mA`) — all in one process, no restart.
+2 kΩ result (`i(v1) = −0.5 mA`) — all in one process, no restart. Since the
+2026-09-05 hunt (F16) it also checks that the circuit built against the 1 kΩ
+object is named at the reload and refused until `reset` rebuilds it (6 checks).
 
 ## Scope
 
