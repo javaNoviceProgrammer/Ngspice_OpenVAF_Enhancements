@@ -68,15 +68,13 @@ retry:
                 /* the problem is that the matrix can't be solved with the
                  * current LU factorization.  Maybe if we reload and
                  * try to reorder again it will help...
-                 */
-
-                int i, j ;
-                SMPgetError(ckt->CKTmatrix, &i, &j);
-                if(eq(NODENAME(ckt, i), NODENAME(ckt, j)))
-                    SPfrontEnd->IFerrorf(ERR_WARNING, "singular matrix:  check node %s\n", NODENAME(ckt, i));
-                else
-                    SPfrontEnd->IFerrorf(ERR_WARNING, "singular matrix:  check nodes %s and %s\n", NODENAME(ckt, i), NODENAME(ckt, j));
-
+                 *
+                 * F7 (2026-09-06): under KLU this is also how SMPcLUfac asks for
+                 * a fresh pivot order when the reused one has lost its accuracy
+                 * (klu_z_rcond collapsed relative to the last full complex
+                 * factorization) -- not a singular matrix at all.  Do not warn
+                 * here; the retry goes through SMPcReorder above, which names
+                 * the node if the matrix really is singular. */
                 ckt->CKTniState |= NIACSHOULDREORDER;
                 goto retry;
             }

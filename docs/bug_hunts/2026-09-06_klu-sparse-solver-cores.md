@@ -719,6 +719,31 @@ double-free in the frontend/XSPICE path after op + AC on this topology, not a wr
 answer, and it belongs to an XSPICE hunt; noted here because a CI script sees a
 failed exit code and no output.
 
+## Status after the fixes (2026-09-06, build of 13:25)
+
+Seven of the eight are fixed in the tree; the regression suite
+[`examples/solvercore_examples/`](../../examples/solvercore_examples/) pins them on both
+solvers (17 checks per solver).
+
+| # | fix | where |
+|---|---|---|
+| F1, F8 | `CKTsetup` gives every node that owns no matrix entry a zero diagonal (with a warning naming it) and every `.nodeset`/`.ic` node its diagonal, then tells the solver the true unknown count; KLU's `SMPconvertCOOtoCSC` no longer collapses columns and sizes itself from the hint and the largest index seen, the solves use the identity map, `SMPfindElt` is bounded; Sparse gains `spEnsureNode` (a `Translate` without an element); `NIreinit` never sizes the vectors below the node numbering; the pole-zero setup is deliberately left without the hint (its reduced matrix has no source branches, and the hint made every PZ run "shorted") | `cktsetup.c`, `klusmp.c`, `spbuild.c`, `spmatrix.h`, `smpdefs.h`, `nireinit.c`, `cktpzset.c` |
+| F2 | covered by the diagonals above; `CKTic`'s message names the node and returns `E_NOTFOUND` instead of `E_NOMEM` | `cktic.c` |
+| F3 | `CKTacLoad` adds the shunt through `SMPfindElt`, which returns the live slot for the matrix's current kind | `acan.c` |
+| F4 | `CKTdoJob` rebinds the devices to the real arrays after any analysis returns while the matrix is flagged complex | `cktdojob.c` |
+| F5 | `isfinite` on the four normalisation loops | `sputils.c`, `klusmp.c` |
+| F7 | `SMPcLUfac` runs `klu_z_rcond` after every successful complex refactor and returns `E_SINGULAR` on a zero or a collapse relative to the last full complex factorization (recorded by `SMPcReorder` and the E-499 full-factor branch); `NIacIter` re-pivots silently on that code and warns only if the fresh factorization is singular too | `klusmp.c`, `niaciter.c`, `klu.h` |
+| F6 | **open** — the XSPICE batch-exit double free is outside the solver core; the file-name ownership path was ruled out and the writer was not found in the time box | — |
+
+After the fixes every deck in this report gives the same numbers under KLU and Sparse:
+the floating node reads I/gmin (2 mA into 1 pS is 2e9 V) with `singular matrix: check
+node` naming it, the nodeset decks run, the shunt is present in ac/noise/sp/disto, the
+paused sweep records all its points, the wide-range ladder is within 0.05 dB of the
+70-digit reference with either `pivrel`, and guard-malloc is clean on all of them. The
+F7 guard forced one extra full factorization on the 31-point ladder sweep, two on the
+buffered chain and none on an ordinary common-emitter AC. The control decks, eleven
+solver-centric and OSDI suites are unchanged, and the full regression sweep is 464 of 464 (the first pass caught two things the fixes had to respect: E-492's single note for a circuit with no matrix at all, and pole-zero's reduced matrix).
+
 ## Smaller notes (not pursued)
 
 * `SMPsolve` (`klusmp.c:1222-1250`) prints when `klu_solve` fails and then scatters

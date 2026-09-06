@@ -1183,3 +1183,20 @@ spInitialize(MatrixPtr Matrix, int (*pInit)(RealNumber*, void *InitInfo, int , i
     return 0;
 }
 #endif /* INITIALIZE */
+
+
+/* F8 (2026-09-06): make external node `Node` part of the matrix WITHOUT
+ * creating an element, so that spGetSize() covers every unknown the circuit
+ * has and not only those that carry an entry.  It uses the same mapping
+ * Translate() gives a first-seen index; an unknown that never receives an
+ * element ends up as an empty column, which the factorization reports as
+ * singular by name instead of the RHS vectors being allocated one short. */
+void
+spEnsureNode(MatrixPtr Matrix, int Node)
+{
+    int Row = Node, Col = Node;
+
+    assert( IS_SPARSE( Matrix ) && Node >= 0 );
+    if (Node == 0) return;
+    Translate( Matrix, &Row, &Col );
+}

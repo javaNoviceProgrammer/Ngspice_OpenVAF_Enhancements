@@ -33,6 +33,12 @@ NIreinit( CKTcircuit *ckt)
         size = (int)ckt->CKTmatrix->SMPkluMatrix->KLUmatrixNrhs;
     }
 #endif
+    /* F8 (2026-09-06): the devices stamp RHS[node] with the circuit's own node
+     * numbers, which run to CKTmaxEqNum-1 whatever the solver believes its size
+     * is.  The matrix now spans every unknown (SMPsizeHint), but the vectors
+     * that the loads write must never be shorter than the numbering. */
+    if (size < ckt->CKTmaxEqNum - 1)
+        size = ckt->CKTmaxEqNum - 1;
 
     CKALLOC(CKTrhs,size+1,double);
     CKALLOC(CKTrhsOld,size+1,double);

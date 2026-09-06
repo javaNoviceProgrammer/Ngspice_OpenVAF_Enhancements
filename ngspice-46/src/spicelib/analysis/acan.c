@@ -472,9 +472,22 @@ CKTacLoad(CKTcircuit* ckt)
      /* Value of resistor is set by new "rshunt" option.     */
 
     if (ckt->enh->rshunt_data.enabled) {
-        for (i = 0; i < ckt->enh->rshunt_data.num_nodes; i++) {
-            *(ckt->enh->rshunt_data.diag[i]) +=
-                ckt->enh->rshunt_data.gshunt;
+        /* F3 (2026-09-06): rshunt_data.diag[] holds pointers bound to the REAL
+         * value array (cktsetup.c binds them to matched->CSC and never to
+         * CSC_Complex).  Adding through them here, while the devices are bound
+         * to the complex array that SMPcReorder/SMPcLUfac factor, put the
+         * shunt where no small-signal analysis ever read it: AC, noise, sp and
+         * disto all ran without the shunt under KLU.  SMPfindElt returns the
+         * live slot for the matrix's current kind -- the complex one during
+         * an AC-family analysis under KLU, the same element as before under
+         * Sparse -- so go through it, node by node, in the setup order. */
+        CKTnode *node;
+        for (node = ckt->CKTnodes; node; node = node->next) {
+            if (node->type == SP_VOLTAGE && node->number != 0) {
+                double *d = (double *) SMPfindElt(ckt->CKTmatrix, node->number, node->number, 0);
+                if (d)
+                    *d += ckt->enh->rshunt_data.gshunt;
+            }
         }
     }
 

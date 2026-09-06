@@ -173,6 +173,63 @@ CKTsetup(CKTcircuit *ckt)
     /* gtri - end - Setup for adding rshunt option resistors */
 #endif
 
+    /* F1/F2/F8 (2026-09-06): make the matrix agree with the node numbering.
+     *
+     * The matrix is created empty (NIinit) and grows only as devices stamp
+     * it, so its size was the largest node index that carried an entry, not
+     * the number of unknowns.  A node nothing conducts to -- fed only by a
+     * current source, or the output of a controlled current source -- was
+     * therefore either an empty column in the middle (which KLU's COO->CSC
+     * conversion "collapsed", mis-addressing every other node's RHS) or,
+     * numbered last, outside the matrix altogether: NIreinit sized the RHS
+     * vectors one short, the device load wrote past them, and both solvers
+     * printed the injected current as the node's voltage.
+     *
+     * Two things fix that at the one place where the count is final:
+     *  - every node that owns no matrix entry at all gets a zero diagonal
+     *    element, so it is a real (singular) column that gmin stepping can
+     *    hold up -- the same thing Sparse already did for such a node once a
+     *    .nodeset had created its diagonal -- and the user is told;
+     *  - a node with a .nodeset/.ic gets its diagonal here too, so CKTic finds
+     *    it under KLU instead of aborting the whole run as "out of memory"
+     *    (nodes held only by inductor or voltage-source branches have none);
+     *  - the solver is told the true size, so a trailing node is inside the
+     *    matrix and the RHS vectors cover the numbering. */
+    {
+        int nunk = ckt->CKTmaxEqNum - 1;
+        if (nunk > 0) {
+            unsigned char *occupied = TMALLOC(unsigned char, (size_t) nunk + 2);
+            CKTnode *nd;
+            int nfloat = 0, anyoccupied = 0, k;
+            memset(occupied, 0, (size_t) nunk + 2);
+            SMPmarkOccupied(matrix, occupied, nunk);
+            for (k = 1; k <= nunk; k++)
+                anyoccupied |= occupied[k];
+            /* A circuit with NO matrix at all (nothing conducts anywhere -- an
+             * XSPICE digital-only deck, or a current source into a lone node)
+             * keeps Enhancement-492's single "no matrix to solve" note rather
+             * than one warning per node; only a floating node in an otherwise
+             * connected circuit gets a diagonal here. */
+            for (nd = ckt->CKTnodes; nd && anyoccupied; nd = nd->next) {
+                if (nd->number <= 0 || nd->number > nunk)
+                    continue;
+                if (!occupied[nd->number]) {
+                    if (nfloat < 5)
+                        fprintf(stderr, "Warning: node '%s' is connected to nothing that conducts; "
+                                "it is held only by gmin\n", CKTnodName(ckt, nd->number));
+                    nfloat++;
+                    SMPmakeElt(matrix, nd->number, nd->number);
+                } else if (nd->nsGiven || nd->icGiven) {
+                    SMPmakeElt(matrix, nd->number, nd->number);
+                }
+            }
+            if (nfloat > 5)
+                fprintf(stderr, "Warning: ... and %d more nodes like that\n", nfloat - 5);
+            FREE(occupied);
+        }
+        SMPsizeHint(matrix, nunk);
+    }
+
 #ifdef KLU
     if (ckt->CKTmatrix->CKTkluMODE)
     {

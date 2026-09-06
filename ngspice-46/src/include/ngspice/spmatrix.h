@@ -265,6 +265,7 @@ extern  int      spFillinCount( MatrixPtr );
 extern  int      spGetAdmittance( MatrixPtr, int, int, struct spTemplate* );
 extern  spREAL  *spFindElement(MatrixPtr Matrix, int Row, int Col );
 extern  spREAL  *spGetElement(MatrixPtr, int, int );
+extern  void     spEnsureNode( MatrixPtr, int );   /* F8 */
 extern  void    *spGetInitInfo( spREAL* );
 extern  int      spGetOnes( MatrixPtr, int, int, int, struct spTemplate* );
 extern  int      spGetQuad( MatrixPtr, int, int, int, int, struct spTemplate* );

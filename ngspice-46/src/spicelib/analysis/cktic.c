@@ -39,8 +39,8 @@ CKTic(CKTcircuit *ckt)
             if (ckt->CKTkluMODE) {
                 node->ptr = (double *) SMPfindElt (ckt->CKTmatrix, node->number, node->number, 0) ;
                 if (node->ptr == NULL) {
-                    printf ("Warning: The needed element doesn't exist in the matrix, but KLU mode cannot create a new element. ") ;
-                    printf ("Please specify an existing element for .nodeset\n") ;
+                    fprintf (stderr, "Error: .nodeset on node '%s': the node has no diagonal matrix entry "
+                             "(CKTsetup should have created one)\n", CKTnodName (ckt, node->number)) ;
                 }
             } else {
 #endif
@@ -51,7 +51,7 @@ CKTic(CKTcircuit *ckt)
             }
 #endif
 
-            if(node->ptr == NULL) return(E_NOMEM);
+            if(node->ptr == NULL) return(E_NOTFOUND);   /* F2: was E_NOMEM, which read as "out of memory" */
             ckt->CKThadNodeset = 1;
             ckt->CKTrhsOld[node->number] = ckt->CKTrhs[node->number] = node->nodeset;
         }
@@ -62,8 +62,8 @@ CKTic(CKTcircuit *ckt)
                 if (ckt->CKTkluMODE) {
                     node->ptr = (double *) SMPfindElt (ckt->CKTmatrix, node->number, node->number, 0) ;
                     if (node->ptr == NULL) {
-                        printf ("Warning: The needed element doesn't exist in the matrix, but KLU mode cannot create a new element. ") ;
-                        printf ("Please specify an existing element for .ic\n") ;
+                        fprintf (stderr, "Error: .ic on node '%s': the node has no diagonal matrix entry "
+                                 "(CKTsetup should have created one)\n", CKTnodName (ckt, node->number)) ;
                     }
                 } else {
 #endif
@@ -74,7 +74,7 @@ CKTic(CKTcircuit *ckt)
                 }
 #endif
 
-                if(node->ptr == NULL) return(E_NOMEM);
+                if(node->ptr == NULL) return(E_NOTFOUND);   /* F2: was E_NOMEM, which read as "out of memory" */
             }
             ckt->CKTrhsOld[node->number] = ckt->CKTrhs[node->number] = node->ic;
         }

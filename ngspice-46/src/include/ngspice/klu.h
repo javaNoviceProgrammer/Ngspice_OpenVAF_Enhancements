@@ -996,6 +996,8 @@ typedef struct sKLUmatrix {
     unsigned int KLUloadDiagGmin:1 ;                /* KLU flag to load Diag Gmin */
     double KLUmatrixRcondFactor ;                   /* rcond of the last FULL factorization (the pivot order
                                                        every refactor reuses); 0 when none -- see SMPluFac */
+    double KLUmatrixRcondFactorComplex ;            /* F7: the same for the last FULL COMPLEX factorization,
+                                                       the reference for every klu_z_refactor -- see SMPcLUfac */
 
 #ifdef CIDER
     int *KLUmatrixColCOOforCIDER ;             /* KLU Col Index for COO storage (for CIDER) */

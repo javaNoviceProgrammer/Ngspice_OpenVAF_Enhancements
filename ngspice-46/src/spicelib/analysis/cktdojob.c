@@ -458,6 +458,26 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
                     }
 #endif
                     error = analInfo[i]->an_func(ckt, reset);
+#ifdef KLU
+                    /* F4 (2026-09-06): AC, noise, sp and disto bind every device to
+                     * the COMPLEX value arrays on the way in and back to the real
+                     * ones only on their success path.  An error or a pause
+                     * (a `stop when` breakpoint) returned in between left the
+                     * binding complex; the next job normally rebuilt the circuit
+                     * and hid it, but under Enhancement-471's setup reuse the next
+                     * sweep point's operating point loaded the complex array while
+                     * SMPluFac factored the real one -- singular, NaN recorded.
+                     * Whatever the analysis returned, leave the circuit real. */
+                    if (ckt->CKTmatrix && ckt->CKTmatrix->CKTkluMODE &&
+                        ckt->CKTmatrix->SMPkluMatrix &&
+                        ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex) {
+                        int d;
+                        for (d = 0; d < DEVmaxnum; d++)
+                            if (DEVices[d] && DEVices[d]->DEVbindCSCComplexToReal && ckt->CKThead[d])
+                                DEVices[d]->DEVbindCSCComplexToReal(ckt->CKThead[d], ckt);
+                        ckt->CKTmatrix->SMPkluMatrix->KLUmatrixIsComplex = KLUmatrixReal;
+                    }
+#endif
                     /* txl, cpl addition */
                     if (error == 1111) break;
                 }

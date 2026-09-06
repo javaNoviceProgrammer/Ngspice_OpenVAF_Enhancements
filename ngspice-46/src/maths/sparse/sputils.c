@@ -58,6 +58,7 @@
  *  spDefs.h
  *      Matrix type and macro definitions for the sparse matrix routines.
  */
+#include <math.h>   /* isfinite -- F5 */
 #include <assert.h>
 #include <stdlib.h>
 
@@ -909,7 +910,7 @@ spDeterminant(MatrixPtr Matrix, int *pExponent, RealNumber *pDeterminant,
 
 	    /* Scale Determinant. */
             Norm = NORM( cDeterminant );
-            if (Norm != 0.0)
+            if (Norm != 0.0 && isfinite(Norm))   /* F5: an Inf pivot would loop forever */
             {
 		while (Norm >= 1.0e12)
                 {
@@ -930,7 +931,7 @@ spDeterminant(MatrixPtr Matrix, int *pExponent, RealNumber *pDeterminant,
 
 	/* Scale Determinant again, this time to be between 1.0 <= x < 10.0. */
         Norm = NORM( cDeterminant );
-        if (Norm != 0.0)
+        if (Norm != 0.0 && isfinite(Norm))
         {
 	    while (Norm >= 10.0)
             {
@@ -963,7 +964,7 @@ spDeterminant(MatrixPtr Matrix, int *pExponent, RealNumber *pDeterminant,
 	    *pDeterminant /= Matrix->Diag[I]->Real;
 
 	    /* Scale Determinant. */
-            if (*pDeterminant != 0.0)
+            if (*pDeterminant != 0.0 && isfinite(*pDeterminant))   /* F5 */
             {
 		while (ABS(*pDeterminant) >= 1.0e12)
                 {
@@ -980,7 +981,7 @@ spDeterminant(MatrixPtr Matrix, int *pExponent, RealNumber *pDeterminant,
 
 	/* Scale Determinant again, this time to be between 1.0 <= x <
            10.0. */
-        if (*pDeterminant != 0.0)
+        if (*pDeterminant != 0.0 && isfinite(*pDeterminant))
         {
 	    while (ABS(*pDeterminant) >= 10.0)
             {

@@ -171,9 +171,10 @@ void SMPconvertCOOtoCSC (SMPmatrix *Matrix)
     unsigned int *Ap_COO, current_group, i, j ;
 
     if (Matrix->SMPkluMatrix->KLUmatrixLinkedListNZ == 0) {
-        /* Assign N and NZ */
+        /* Assign N and NZ.  F8: the RHS span follows the size hint so NIreinit
+         * still covers the node numbering; the matrix itself stays empty. */
+        Matrix->SMPkluMatrix->KLUmatrixNrhs = Matrix->SMPkluMatrix->KLUmatrixN + 1 ;
         Matrix->SMPkluMatrix->KLUmatrixN = 0 ;
-        Matrix->SMPkluMatrix->KLUmatrixNrhs = 0 ;
         Matrix->SMPkluMatrix->KLUmatrixNZ = 0 ;
 
         /* Allocate Diag Gmin CSC Vector */
@@ -184,6 +185,7 @@ void SMPconvertCOOtoCSC (SMPmatrix *Matrix)
 
         /* Allocate the needed KLU data structures */
         Matrix->SMPkluMatrix->KLUmatrixAp = (int *) malloc (sizeof (int)) ;
+        Matrix->SMPkluMatrix->KLUmatrixAp [0] = 0 ;   /* F1 deck G: SMPfindElt read this uninitialised */
         Matrix->SMPkluMatrix->KLUmatrixAi = NULL ;
         Matrix->SMPkluMatrix->KLUmatrixBindStructCOO = NULL ;
         Matrix->SMPkluMatrix->KLUmatrixAx = NULL ;
@@ -238,54 +240,26 @@ void SMPconvertCOOtoCSC (SMPmatrix *Matrix)
         i = j ;
     }
 
-    /* Look for columns with all structural zeroes, not numerical zeroes - Circuits Matrix are NxN, so checking for columns is sufficient */
+    /* F1/F8 (2026-09-06): the matrix spans EVERY unknown the circuit has.
+     *
+     * The code that stood here sized the matrix from the largest column that
+     * carried an entry and "collapsed" any empty column in between, renumbering
+     * the columns (and the rows, whether or not the row was empty) and keeping a
+     * new->old map that the solves consumed in the wrong index base.  A node
+     * nothing conducts to therefore made every other node's voltage wrong with
+     * no message (E-232/E-233 had called the path unreachable).  Now the size
+     * is the larger of the hint CKTsetup/CKTpzSetup give through SMPsizeHint()
+     * and the largest row or column index seen, and an empty column stays an
+     * empty column: klu_analyze records the structural singularity, klu_factor
+     * names it, and CKTsetup gives such a node a zero diagonal so gmin stepping
+     * can hold it up.  Node i of the matrix is RHS entry i+1, full stop. */
     unsigned int n = MatrixCOO [Matrix->SMPkluMatrix->KLUmatrixLinkedListNZ - 1].col + 1 ;
-//    Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingOldToNew = (unsigned int *) malloc ((n + 1) * sizeof (unsigned int)) ;
-    Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld = (unsigned int *) malloc ((n + 1) * sizeof (unsigned int)) ;
-    for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixLinkedListNZ ; i++) {
-        // Initialization
-//        Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingOldToNew [MatrixCOO [i].col] = MatrixCOO [i].col ;
-        Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [MatrixCOO [i].col] = MatrixCOO [i].col ;
-    }
-//    Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingOldToNew [n] = n ;
-    Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [n] = n ;
-
-    unsigned int search_index = 0 ;
-    while (search_index < Matrix->SMPkluMatrix->KLUmatrixLinkedListNZ - 1)
-    {
-        int col_index = -1 ;
-        unsigned int col_diff = 0 ;
-        for (i = search_index, j = search_index + 1 ; i < Matrix->SMPkluMatrix->KLUmatrixLinkedListNZ - 1 ; i++, j++)
-        {
-            col_diff = MatrixCOO [j].col - MatrixCOO [i].col ;
-            if (col_diff > 1)
-            {
-                col_index = (int)(MatrixCOO [i].col) ;
-                break ;
-            }
-        }
-        search_index = i ;
-
-        /* If col_index != -1 --> Row/Col elimination of all nodes greater than this one - compact by col_diff */
-        if (col_index != -1)
-        {
-            for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixLinkedListNZ ; i++)
-            {
-                if (MatrixCOO [i].col > (unsigned int)col_index) {
-//                    Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingOldToNew [MatrixCOO [i].col] = MatrixCOO [i].col - col_diff + 1 ;
-                    /* Chain through the existing map so multi-gap collapse resolves to the
-                     * TRUE original column, not a partially-reduced intermediate: on a
-                     * later pass MatrixCOO[i].col is already-reduced, and NewToOld at that
-                     * index holds the original from the earlier pass (identity on pass 1). */
-                    Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [MatrixCOO [i].col - col_diff + 1] = Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [MatrixCOO [i].col] ;
-                    MatrixCOO [i].col = MatrixCOO [i].col - col_diff + 1 ;
-                }
-                if (MatrixCOO [i].row > (unsigned int)col_index) {
-                    MatrixCOO [i].row = MatrixCOO [i].row - col_diff + 1 ;
-                }
-            }
-        }
-    }
+    for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixLinkedListNZ ; i++)
+        if (MatrixCOO [i].row + 1 > n)
+            n = MatrixCOO [i].row + 1 ;
+    if (Matrix->SMPkluMatrix->KLUmatrixN > n)
+        n = Matrix->SMPkluMatrix->KLUmatrixN ;
+    Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld = NULL ;
 
     /* Assign labels to avoid duplicates */
     for (i = 0, j = 1 ; i < Matrix->SMPkluMatrix->KLUmatrixLinkedListNZ - 1 ; i++, j++) {
@@ -301,7 +275,7 @@ void SMPconvertCOOtoCSC (SMPmatrix *Matrix)
     }
 
     /* Assign N and NZ */
-    Matrix->SMPkluMatrix->KLUmatrixN = (unsigned int)MatrixCOO [Matrix->SMPkluMatrix->KLUmatrixLinkedListNZ - 1].col + 1 ;
+    Matrix->SMPkluMatrix->KLUmatrixN = n ;
     Matrix->SMPkluMatrix->KLUmatrixNrhs = Matrix->SMPkluMatrix->KLUmatrixN + 1 ;
     Matrix->SMPkluMatrix->KLUmatrixNZ = MatrixCOO [Matrix->SMPkluMatrix->KLUmatrixLinkedListNZ - 1].group + 1 ;
 
@@ -550,10 +524,38 @@ SMPclearKLUforCIDER (SMPmatrix *Matrix)
  */
 /*ARGSUSED*/
 
+#ifndef KLU_REFACTOR_RCOND_DROP
+#define KLU_REFACTOR_RCOND_DROP 1e-6
+#endif
+
+/* F7 (2026-09-06): remember the rcond of a full COMPLEX factorization, the
+ * reference for every klu_z_refactor that reuses its pivot order.  The twin of
+ * klu_note_factor_rcond below, for the AC/noise/sp/disto path, which until now
+ * had no guard at all: every frequency after the first reused the order chosen
+ * at the first one and nothing ever asked NIacIter to re-pivot. */
+static void
+klu_note_zfactor_rcond (SMPmatrix *Matrix)
+{
+    Matrix->SMPkluMatrix->KLUmatrixRcondFactorComplex = 0.0 ;
+    if (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL &&
+        Matrix->SMPkluMatrix->KLUmatrixSymbolic != NULL &&
+        Matrix->SMPkluMatrix->KLUmatrixCommon != NULL &&
+        Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_OK)
+    {
+        if (klu_z_rcond (Matrix->SMPkluMatrix->KLUmatrixSymbolic,
+                         Matrix->SMPkluMatrix->KLUmatrixNumeric,
+                         Matrix->SMPkluMatrix->KLUmatrixCommon) &&
+            Matrix->SMPkluMatrix->KLUmatrixCommon->status == KLU_OK)
+            Matrix->SMPkluMatrix->KLUmatrixRcondFactorComplex = Matrix->SMPkluMatrix->KLUmatrixCommon->rcond ;
+        Matrix->SMPkluMatrix->KLUmatrixCommon->status = KLU_OK ;
+    }
+}
+
 int
 SMPcLUfac (SMPmatrix *Matrix, double PivTol)
 {
     int ret ;
+    int refactored = 0 ;   /* F7 */
 
     NG_IGNORE (PivTol) ;
 
@@ -599,9 +601,11 @@ SMPcLUfac (SMPmatrix *Matrix, double PivTol)
             Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex =
                 (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL) ? 1 : 0 ;
             ret = (Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL) ;
+            klu_note_zfactor_rcond (Matrix) ;   /* F7: the reference for the refactors that follow */
         } else {
             ret = klu_z_refactor (Matrix->SMPkluMatrix->KLUmatrixAp, Matrix->SMPkluMatrix->KLUmatrixAi, Matrix->SMPkluMatrix->KLUmatrixAxComplex,
                                   Matrix->SMPkluMatrix->KLUmatrixSymbolic, Matrix->SMPkluMatrix->KLUmatrixNumeric, Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+            refactored = 1 ;
         }
 
         if (ret == 0)
@@ -628,6 +632,48 @@ SMPcLUfac (SMPmatrix *Matrix, double PivTol)
             }
             return 1 ;
         } else {
+            /* F7 (2026-09-06): a successful klu_z_refactor is not necessarily a
+             * usable one -- the complex twin of Enhancement-439 and of the
+             * large-circuit relative-rcond test in SMPluFac.  Across a wide AC
+             * sweep the pivot order chosen at the first frequency can become
+             * arbitrarily bad once jwC dominates: a ten-section ladder with
+             * resistances over nine decades was 26 dB off at 1 THz (613 dB with
+             * pivrel=1) while Sparse was exact, and nothing in the loop could
+             * notice because the refactor tests only for an exact zero pivot.
+             * klu_z_rcond is O(n); a zero, or a collapse by more than
+             * KLU_REFACTOR_RCOND_DROP relative to the last full complex
+             * factorization, is reported as E_SINGULAR, which NIacIter (and
+             * NIdIter) answer with SMPcReorder: a fresh factorization that
+             * pivots on the values of THIS frequency.  A stiff matrix's small
+             * rcond passes: the test is relative to its own full-factor value. */
+            if (refactored &&
+                Matrix->SMPkluMatrix->KLUmatrixNumeric != NULL &&
+                Matrix->SMPkluMatrix->KLUmatrixSymbolic != NULL &&
+                Matrix->SMPkluMatrix->KLUmatrixCommon != NULL)
+            {
+                klu_z_rcond (Matrix->SMPkluMatrix->KLUmatrixSymbolic,
+                             Matrix->SMPkluMatrix->KLUmatrixNumeric,
+                             Matrix->SMPkluMatrix->KLUmatrixCommon) ;
+                if (Matrix->SMPkluMatrix->KLUmatrixCommon->rcond == 0.0) {
+                    if (ft_ngdebug)
+                        fprintf (stderr, "Warning (ReFactor Complex): reuse of the existing "
+                                 "pivot order produced a singular U; forcing a full factorization\n") ;
+                    return E_SINGULAR ;
+                }
+                if (Matrix->SMPkluMatrix->KLUmatrixRcondFactorComplex > 0.0 &&
+                    Matrix->SMPkluMatrix->KLUmatrixCommon->rcond <
+                        KLU_REFACTOR_RCOND_DROP * Matrix->SMPkluMatrix->KLUmatrixRcondFactorComplex) {
+                    if (ft_ngdebug)
+                        fprintf (stderr, "Warning (ReFactor Complex): reuse of the existing pivot "
+                                 "order lost %.1e in rcond (%.3e vs %.3e at the last full "
+                                 "factorization); forcing a full factorization\n",
+                                 Matrix->SMPkluMatrix->KLUmatrixCommon->rcond /
+                                 Matrix->SMPkluMatrix->KLUmatrixRcondFactorComplex,
+                                 Matrix->SMPkluMatrix->KLUmatrixCommon->rcond,
+                                 Matrix->SMPkluMatrix->KLUmatrixRcondFactorComplex) ;
+                    return E_SINGULAR ;
+                }
+            }
             return 0 ;
         }
     } else {
@@ -922,6 +968,7 @@ SMPcReorder (SMPmatrix *Matrix, double PivTol, double PivRel, int *NumSwaps)
                                                                Matrix->SMPkluMatrix->KLUmatrixAxComplex, Matrix->SMPkluMatrix->KLUmatrixSymbolic,
                                                                Matrix->SMPkluMatrix->KLUmatrixCommon) ;
         Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex = 1 ;   /* Enhancement-499 */
+        klu_note_zfactor_rcond (Matrix) ;   /* F7: the reference for every refactor of this sweep */
 
         if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL)
         {
@@ -1107,18 +1154,12 @@ SMPcaSolve (SMPmatrix *Matrix, double RHS[], double iRHS[], double Spare[], doub
 
     if (Matrix->CKTkluMODE)
     {
-        /* Gather the RHS through the node-collapse map, exactly as the real
-         * SMPsolve does.  The complex solves used a plain identity copy, so if
-         * a structural-zero column ever collapsed a node (NewToOld != identity)
-         * the AC/noise/pz RHS would be silently mis-ordered relative to the real
-         * DC/tran solve.  For a solvable circuit the map is the identity, so this
-         * is behaviour-preserving; it only makes the two paths consistent. */
+        /* F1 (2026-09-06): node i of the matrix is RHS entry i+1; the
+         * node-collapse map is gone (see SMPconvertCOOtoCSC). */
         for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixN ; i++)
         {
-            if (Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1] != 0) {
-                Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] = RHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] ;
-                Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] = iRHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] ;
-            }
+            Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] = RHS [i + 1] ;
+            Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] = iRHS [i + 1] ;
         }
 
         /* SMPcaSolve is the complex *adjoint* (transposed) solve -- the Sparse
@@ -1136,10 +1177,8 @@ SMPcaSolve (SMPmatrix *Matrix, double RHS[], double iRHS[], double Spare[], doub
         }
         for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixN ; i++)
         {
-            if (Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1] != 0) {
-                RHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] ;
-                iRHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] ;
-            }
+            RHS [i + 1] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] ;
+            iRHS [i + 1] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] ;
         }
     } else {
         spSolveTransposed (Matrix->SPmatrix, RHS, RHS, iRHS, iRHS) ;
@@ -1161,14 +1200,11 @@ SMPcSolve (SMPmatrix *Matrix, double RHS[], double iRHS[], double Spare[], doubl
 
     if (Matrix->CKTkluMODE)
     {
-        /* Gather through the node-collapse map for consistency with the real
-         * SMPsolve (identity for any solvable circuit -- behaviour-preserving). */
+        /* F1 (2026-09-06): node i of the matrix is RHS entry i+1. */
         for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixN ; i++)
         {
-            if (Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1] != 0) {
-                Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] = RHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] ;
-                Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] = iRHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] ;
-            }
+            Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] = RHS [i + 1] ;
+            Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] = iRHS [i + 1] ;
         }
 
         ret = klu_z_solve (Matrix->SMPkluMatrix->KLUmatrixSymbolic, Matrix->SMPkluMatrix->KLUmatrixNumeric, (int)Matrix->SMPkluMatrix->KLUmatrixN, 1,
@@ -1180,10 +1216,8 @@ SMPcSolve (SMPmatrix *Matrix, double RHS[], double iRHS[], double Spare[], doubl
         }
         for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixN ; i++)
         {
-            if (Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1] != 0) {
-                RHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] ;
-                iRHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] ;
-            }
+            RHS [i + 1] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i] ;
+            iRHS [i + 1] = Matrix->SMPkluMatrix->KLUmatrixIntermediateComplex [2 * i + 1] ;
         }
     } else {
         spSolve (Matrix->SPmatrix, RHS, RHS, iRHS, iRHS) ;
@@ -1211,9 +1245,7 @@ SMPsolve (SMPmatrix *Matrix, double RHS[], double Spare[])
         }
 
         for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixN ; i++) {
-            if (Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1] != 0) {
-                Matrix->SMPkluMatrix->KLUmatrixIntermediate [i] = RHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] ;
-            }
+            Matrix->SMPkluMatrix->KLUmatrixIntermediate [i] = RHS [i + 1] ;   /* F1: identity, see SMPconvertCOOtoCSC */
         }
 
         ret = klu_solve (Matrix->SMPkluMatrix->KLUmatrixSymbolic, Matrix->SMPkluMatrix->KLUmatrixNumeric, (int)Matrix->SMPkluMatrix->KLUmatrixN, 1,
@@ -1254,9 +1286,7 @@ SMPsolve (SMPmatrix *Matrix, double RHS[], double Spare[])
         }
 
         for (i = 0 ; i < Matrix->SMPkluMatrix->KLUmatrixN ; i++) {
-            if (Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1] != 0) {
-                RHS [Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld [i + 1]] = Matrix->SMPkluMatrix->KLUmatrixIntermediate [i] ;
-            }
+            RHS [i + 1] = Matrix->SMPkluMatrix->KLUmatrixIntermediate [i] ;
         }
     } else {
         spSolve (Matrix->SPmatrix, RHS, RHS, NULL, NULL) ;
@@ -1366,6 +1396,53 @@ SMPmatSize (SMPmatrix *Matrix)
 }
 
 /*
+ * SMPsizeHint() -- F8 (2026-09-06): the circuit has `n` unknowns (node numbers
+ * 1..n).  Both solvers size themselves from the entries they receive, so a
+ * node nothing stamps was outside the matrix; CKTsetup and CKTpzSetup call
+ * this once the count is final.  KLU consumes the hint in SMPconvertCOOtoCSC;
+ * Sparse maps every index up to n (Translate() without an element).
+ */
+void
+SMPsizeHint (SMPmatrix *Matrix, int n)
+{
+    if (n <= 0)
+        return ;
+    if (Matrix->CKTkluMODE) {
+        if ((unsigned int) n > Matrix->SMPkluMatrix->KLUmatrixN)
+            Matrix->SMPkluMatrix->KLUmatrixN = (unsigned int) n ;
+    } else {
+        int e ;
+        for (e = 1 ; e <= n ; e++)
+            spEnsureNode (Matrix->SPmatrix, e) ;
+    }
+}
+
+/*
+ * SMPmarkOccupied() -- F1/F8: set occupied[e] = 1 for every unknown e in 1..n
+ * whose matrix COLUMN has at least one entry.  Called by CKTsetup before the
+ * KLU conversion, so the KLU side reads the COO list; the Sparse side reads
+ * the column heads of the indices that have been translated so far.
+ */
+void
+SMPmarkOccupied (SMPmatrix *Matrix, unsigned char *occupied, int n)
+{
+    if (Matrix->CKTkluMODE) {
+        KluLinkedListCOO *t ;
+        for (t = Matrix->SMPkluMatrix->KLUmatrixLinkedListCOO ; t != NULL ; t = t->next)
+            if ((int) t->col + 1 <= n)
+                occupied [t->col + 1] = 1 ;
+    } else {
+        MatrixPtr M = Matrix->SPmatrix ;
+        int e ;
+        for (e = 1 ; e <= n && e <= M->ExtSize ; e++) {
+            int ic = M->ExtToIntColMap [e] ;
+            if (ic > 0 && ic <= M->Size && M->FirstInCol [ic] != NULL)
+                occupied [e] = 1 ;
+        }
+    }
+}
+
+/*
  * SMPdiagNorm() -- Enhancement-153: the largest magnitude on the loaded matrix
  * diagonal, used as the scale-invariant reference for the trust-region
  * (Levenberg-Marquardt) damping mu = lambda * ||diag||. Must be called after
@@ -1424,6 +1501,8 @@ SMPnewMatrix (SMPmatrix *Matrix, int size)
 //        Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingOldToNew = NULL ;
         Matrix->SMPkluMatrix->KLUmatrixNodeCollapsingNewToOld = NULL ;
         Matrix->SMPkluMatrix->KLUmatrixDiag = NULL ;
+        Matrix->SMPkluMatrix->KLUmatrixRcondFactor = 0.0 ;          /* was left uninitialised */
+        Matrix->SMPkluMatrix->KLUmatrixRcondFactorComplex = 0.0 ;   /* F7 */
 
         /* Initialize the KLU Common Data Structure */
         klu_defaults (Matrix->SMPkluMatrix->KLUmatrixCommon) ;
@@ -1836,7 +1915,7 @@ spDeterminant_KLU (SMPmatrix *Matrix, int *pExponent, RealNumber *pDeterminant, 
 
 	    /* Scale Determinant. */
             Norm = NORM (cDeterminant) ;
-            if (Norm != 0.0)
+            if (Norm != 0.0 && isfinite (Norm))   /* F5: an Inf pivot would loop forever */
             {
 		while (Norm >= 1.0e12)
                 {
@@ -1858,7 +1937,7 @@ spDeterminant_KLU (SMPmatrix *Matrix, int *pExponent, RealNumber *pDeterminant, 
 
 	/* Scale Determinant again, this time to be between 1.0 <= x < 10.0. */
         Norm = NORM (cDeterminant) ;
-        if (Norm != 0.0)
+        if (Norm != 0.0 && isfinite (Norm))
         {
 	    while (Norm >= 10.0)
             {
@@ -1909,7 +1988,7 @@ spDeterminant_KLU (SMPmatrix *Matrix, int *pExponent, RealNumber *pDeterminant, 
             *pDeterminant *= (Ux [I] * Rs [I]) ;
 
 	    /* Scale Determinant. */
-            if (*pDeterminant != 0.0)
+            if (*pDeterminant != 0.0 && isfinite (*pDeterminant))   /* F5 */
             {
 		while (ABS(*pDeterminant) >= 1.0e12)
                 {
@@ -1927,7 +2006,7 @@ spDeterminant_KLU (SMPmatrix *Matrix, int *pExponent, RealNumber *pDeterminant, 
 
 	/* Scale Determinant again, this time to be between 1.0 <= x <
            10.0. */
-        if (*pDeterminant != 0.0)
+        if (*pDeterminant != 0.0 && isfinite (*pDeterminant))
         {
 	    while (ABS(*pDeterminant) >= 10.0)
             {
@@ -2143,6 +2222,9 @@ SMPfindElt (SMPmatrix *eMatrix, int Row, int Col, int CreateIfMissing)
 //            printf ("Information: Cannot find an element with row '%d' and column '%d' in the KLU matrix\n", Row, Col) ;
             return NULL ;
         }
+        /* F1 deck E: a column beyond N read Ap[Col+1] past the allocation */
+        if (Col >= (int) eMatrix->SMPkluMatrix->KLUmatrixN || eMatrix->SMPkluMatrix->KLUmatrixAp == NULL)
+            return NULL ;
         for (i = eMatrix->SMPkluMatrix->KLUmatrixAp [Col] ; i < eMatrix->SMPkluMatrix->KLUmatrixAp [Col + 1] ; i++) {
             if (eMatrix->SMPkluMatrix->KLUmatrixAi [i] == Row) {
                 if (eMatrix->SMPkluMatrix->KLUmatrixIsComplex == KLUmatrixReal) {

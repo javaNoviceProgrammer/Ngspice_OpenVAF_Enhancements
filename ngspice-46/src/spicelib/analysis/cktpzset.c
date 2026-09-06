@@ -92,6 +92,12 @@ CKTpzSetup(CKTcircuit *ckt, int type)
     job->PZsolution_col = solution_col;
     job->PZbalance_col = balance_col;
 
+    /* F8 (2026-09-06): CKTsetup tells the solver the true unknown count; the
+     * pole-zero matrix must NOT be told the same number.  PZ rebuilds a reduced
+     * matrix in which the independent sources have no branch equations (the
+     * input is driven through PZdrive_pptr instead), so CKTmaxEqNum-1 would add
+     * an empty column here and turn every pole-zero run into "the input signal
+     * is shorted on the way to the output". */
     job->PZnumswaps = 1;
 
 #ifdef KLU
