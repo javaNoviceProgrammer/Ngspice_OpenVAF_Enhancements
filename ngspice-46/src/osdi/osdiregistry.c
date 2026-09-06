@@ -640,6 +640,16 @@ extern OsdiObjectFile load_object_file(const char *input) {
   const char *const *param_ranges_base = (const char *const *)sym;
   uint32_t param_range_offset = 0;
 
+  /* Optional (Enhancement-565): the overloaded paramset family of each
+   * descriptor, and the literal default of every parameter */
+  sym = GET_SYM(handle, "OSDI_PARAMSET_FAMILIES");
+  const char *const *paramset_families = (const char *const *)sym;
+  sym = GET_SYM(handle, "OSDI_PARAM_DEFAULT_COUNTS");
+  const uint32_t *param_default_counts = (const uint32_t *)sym;
+  sym = GET_SYM(handle, "OSDI_PARAM_DEFAULTS");
+  const double *param_defaults_base = (const double *)sym;
+  uint32_t param_default_offset = 0;
+
   /* Nature / discipline / attribute tables. Every one is optional: a model
    * that declares no custom nature exports none, and an older .osdi exports
    * none either -- both simply fall back to the circuit-wide tolerances. */
@@ -842,6 +852,14 @@ extern OsdiObjectFile load_object_file(const char *input) {
         param_ranges_ptr = param_ranges_base + param_range_offset;
       param_range_offset += n;
     }
+    /* Enhancement-565: this descriptor's slice of the literal defaults */
+    const double *param_defaults_ptr = NULL;
+    if (param_default_counts && param_defaults_base) {
+      uint32_t n = param_default_counts[i];
+      if (n == descr->num_params)
+        param_defaults_ptr = param_defaults_base + param_default_offset;
+      param_default_offset += n;
+    }
 
     size_t inst_off = calc_osdi_instance_data_off(descr);
     size_t noise_off = calc_osdi_noise_off(descr);
@@ -899,6 +917,8 @@ extern OsdiObjectFile load_object_file(const char *input) {
         .stat_param_infos = stat_params_ptr,
         .param_given_fn = param_given_fns ? param_given_fns[i] : NULL, /* E-555 */
         .param_ranges = param_ranges_ptr,                               /* E-558 */
+        .paramset_family = paramset_families ? paramset_families[i] : NULL, /* E-565 */
+        .param_defaults = param_defaults_ptr,                           /* E-565 */
 
         .num_natures = n_natures,
         .natures = natures_base,

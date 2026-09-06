@@ -138,6 +138,19 @@ pub fn table_param_const_values(
         .collect()
 }
 
+/// Book audit (paramsets), LRM 6.4.2: the value of a parameter's default when
+/// it is a compile-time constant (a literal, arithmetic on literals, a
+/// `localparam`), `None` otherwise -- an overridable `parameter` included, and
+/// a default that reads one. The simulator judges a paramset's un-overridden
+/// parameters against their ranges with it.
+pub fn param_default_const(db: &dyn HirTyDB, param: ParamId) -> Option<f64> {
+    let owner = DefWithBodyId::ParamId(param);
+    let body = db.body(owner);
+    let infer = db.inference_result(owner);
+    let default = db.param_exprs(param).default;
+    const_num_in(db, &body, &infer, default, 0)
+}
+
 #[derive(Default)]
 struct Writes {
     /// One entry per straight-line assignment: its constant value, or `None`.

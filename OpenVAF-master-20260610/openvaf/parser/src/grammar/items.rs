@@ -30,6 +30,12 @@ pub(super) fn discipline(p: &mut Parser, m: Marker) {
 }
 
 const PARAMSET_RECOVERY_SET: TokenSet = ITEM_RECOVERY_SET.union(TokenSet::unique(ENDPARAMSET_KW));
+/// Book audit (paramsets): what a paramset item may start with -- a
+/// declaration keyword, an override's `.`, or a statement.
+const PARAMSET_ITEM_TS: TokenSet = TokenSet::new(&[
+    PARAMETER_KW, LOCALPARAM_KW, ALIASPARAM_KW, INTEGER_KW, REAL_KW, STRING_KW, T![.],
+])
+.union(crate::grammar::stmts::STMT_TS);
 
 /// Parses a Verilog-AMS `paramset` (Enhancement-21):
 ///
@@ -43,6 +49,12 @@ const PARAMSET_RECOVERY_SET: TokenSet = ITEM_RECOVERY_SET.union(TokenSet::unique
 /// A paramset defines an instantiable model `<name>` that behaves like
 /// `<target_module>` with the listed target parameters bound to the given
 /// expressions (which may reference the paramset's own parameters).
+///
+/// Book audit (paramsets), LRM 6.4 Syntax 6-4: the body may also declare
+/// `aliasparam`s and `integer`/`real` variables -- with `(* desc *)` an
+/// output variable of the paramset (6.4.3) -- and carry statements (6.4.1:
+/// the statements of an analog function), which compute those variables
+/// from the module's own through `.name` references.
 pub(super) fn paramset(p: &mut Parser, m: Marker) {
     p.bump(T![paramset]);
     // paramset name
@@ -52,13 +64,32 @@ pub(super) fn paramset(p: &mut Parser, m: Marker) {
     p.eat(T![;]);
     while !p.at_ts(PARAMSET_RECOVERY_SET) {
         let m = p.start();
+        // (the recovery set must not hold IDENT: an attribute's own name is one)
+        attrs(
+            p,
+            PARAMSET_RECOVERY_SET.union(TokenSet::new(&[
+                PARAMETER_KW, LOCALPARAM_KW, ALIASPARAM_KW, INTEGER_KW, REAL_KW, STRING_KW, T![.],
+            ])),
+        );
         match p.current() {
             PARAMETER_KW | LOCALPARAM_KW => parameter_decl(p, m),
+            ALIASPARAM_KW => module::alias_parameter_decl(p, m),
+            INTEGER_KW | REAL_KW | STRING_KW => var_decl(p, m),
             T![.] => paramset_override(p, m),
+            _ if p.at_ts(crate::grammar::stmts::STMT_TS) => {
+                stmt(p, m, crate::grammar::stmts::STMT_TS, PARAMSET_RECOVERY_SET)
+            }
             _ => {
-                let err = p.unexpected_tokens_msg(vec![PARAMETER_KW, LOCALPARAM_KW, T![.]]);
+                let err = p.unexpected_tokens_msg(vec![
+                    PARAMETER_KW,
+                    LOCALPARAM_KW,
+                    ALIASPARAM_KW,
+                    REAL_KW,
+                    INTEGER_KW,
+                    T![.],
+                ]);
                 m.abandon(p);
-                p.err_recover(err, PARAMSET_RECOVERY_SET.union(TokenSet::new(&[PARAMETER_KW, LOCALPARAM_KW, T![.]])));
+                p.err_recover(err, PARAMSET_RECOVERY_SET.union(PARAMSET_ITEM_TS));
             }
         }
     }

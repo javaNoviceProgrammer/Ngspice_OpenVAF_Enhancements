@@ -632,9 +632,20 @@ const GENERATE_BLOCK_RECOVER: TokenSet = TokenSet::new(&[END_KW, EOF, ENDMODULE_
 /// The `begin : label ... end` body of a `generate for` loop. Its items are
 /// ordinary `ModuleItem`s -- nets, instances, vars, params, and (since
 /// Enhancement-390) `analog` blocks -- not statements.
+///
+/// Book audit (generate names), LRM 6.6.2 / 1364-2005 A.4.2: a generate
+/// block may also be ONE item with no `begin`/`end` -- `if (c) electrical a;
+/// else electrical b;`, `for (...) if (1) electrical a;` -- the shape the
+/// LRM's own 6.6.3 example is written in. It used to parse as a block missing
+/// its `begin`, swallowing every following item up to the next `end`.
 fn generate_block(p: &mut Parser) {
     let m = p.start();
-    p.expect(BEGIN_KW);
+    if !p.at(BEGIN_KW) {
+        generate_block_item(p);
+        m.complete(p, GENERATE_BLOCK);
+        return;
+    }
+    p.bump(BEGIN_KW);
     // the `: label` is optional (Enhancement-67): anonymous generate blocks
     // are legal per 1364-2005; elaboration auto-names them.
     if p.eat(T![:]) {
@@ -642,6 +653,15 @@ fn generate_block(p: &mut Parser) {
     }
 
     while !p.at_ts(GENERATE_BLOCK_RECOVER) {
+        generate_block_item(p);
+    }
+    p.expect(END_KW);
+    m.complete(p, GENERATE_BLOCK);
+}
+
+/// One item of a generate block.
+fn generate_block_item(p: &mut Parser) {
+    {
         let m = p.start();
         attrs(p, MODULE_ITEM_RECOVERY);
         match p.current() {
@@ -713,6 +733,4 @@ fn generate_block(p: &mut Parser) {
             }
         }
     }
-    p.expect(END_KW);
-    m.complete(p, GENERATE_BLOCK);
 }

@@ -1,0 +1,67 @@
+// LRM 6.4.2's overloading example -- four paramsets named `nch` -- on a
+// conductance stand-in for the LRM's nmos3: I = kp (w/l) (u0/650) (nfs/0.8e12) V,
+// so the member an instance or a .model card selects is visible in the current
+// and in the output variable `uu`.
+`include "disciplines.vams"
+
+module nmos3(inout electrical d, g, s, b);
+parameter real l = 1u from (0:inf);
+parameter real w = 1u from (0:inf);
+parameter real ad = 0.0, as = 0.0;
+parameter real kp = 5e-5, tox = 3e-8, u0 = 650.0, nsub = 1.3e17;
+parameter real vmax = 0.0, tpg = 1.0, nfs = 0.8e12;
+(* desc="the u0 of the selected paramset" *) real uu;
+analog begin
+  uu = u0;
+  I(d,s) <+ V(d,s) * kp * (w/l) * (u0/650.0) * (nfs/0.8e12);
+end
+endmodule
+
+module semicoCMOS;
+localparam real tox = 3e-8;
+endmodule
+
+paramset nch nmos3; // default paramset
+  parameter real l=1u from [0.25u:inf);
+  parameter real w=1u from [0.2u:inf);
+  .l=l; .w=w; .ad=w*0.5u; .as=w*0.5u;
+  .kp=5e-5; .tox=3e-8; .u0=650; .nsub=1.3e17;
+  .vmax=0; .tpg=1; .nfs=0.8e12;
+endparamset
+
+paramset nch nmos3; // mismatch paramset
+  parameter real l=1u from [0.25u:inf);
+  parameter real w=1u from [0.2u:inf);
+  parameter integer mm=0 from (0:1];
+  .l=l; .w=w; .ad=w*0.5u; .as=w*0.5u;
+  .kp=5e-5; .u0=600; .nsub=1.3e17;
+  .vmax=0; .tpg=1; .nfs=0.8e12;
+  .tox = semicoCMOS.tox;
+endparamset
+
+paramset nch nmos3; // short-channel paramset
+  parameter real l=0.25u from [0.25u:1u);
+  parameter real w=1u from [0.2u:inf);
+  parameter real ad=0.5*w from (0:inf);
+  parameter real as=0.5*w from (0:inf);
+  .l=l; .w=w; .ad=ad; .as=as;
+  .kp=5e-5; .tox=3e-8; .u0=700; .nsub=1.3e17;
+  .vmax=0; .tpg=1; .nfs=0.8e12;
+endparamset
+
+paramset nch nmos3; // long-channel paramset
+  parameter real l=1u from [1u:inf);
+  parameter real w=1u from [0.2u:inf);
+  parameter real ad=0.4*w from (0:inf);
+  parameter real as=0.4*w from (0:inf);
+  .l=l; .w=w; .ad=ad; .as=as;
+  .kp=5e-5; .tox=3e-8; .u0=640; .nsub=1.3e17;
+  .vmax=0; .tpg=1; .nfs=0.7e12;
+endparamset
+
+// the LRM's instances m1, m3, m4 (m2 is m1 again), each on its own drain
+module top(inout electrical d1, d3, d4, g);
+nch #(.l(1u), .w(5u), .mm(1)) m1(.d(d1), .g(g), .s(g), .b(g));
+nch #(.l(1u), .w(10u)) m3(.d(d3), .g(g), .s(g), .b(g));
+nch #(.l(3u), .w(5u), .ad(1.2p), .as(1.3p)) m4(.d(d4), .g(g), .s(g), .b(g));
+endmodule

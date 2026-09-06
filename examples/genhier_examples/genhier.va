@@ -1,0 +1,54 @@
+// Hierarchical names into generate blocks (LRM 6.6.3 / 6.7): a named
+// if-block, an unlabelled one (`genblk<n>`), a for-loop's iterations, a
+// nested block, a case arm, and an instance inside a loop.
+`include "disciplines.vams"
+
+module leaf(inout electrical p, n);
+parameter real g = 1e-3;
+electrical mid;
+analog begin
+  V(mid) <+ 0.5 * V(p, n);
+  I(p, n) <+ g * V(p, n);
+end
+endmodule
+
+module genhier(inout electrical a, b);
+localparam integer sw = 1;
+localparam integer sel = 2;
+localparam integer genblk2 = 0;   // LRM 6.6.3: the second construct is then genblk02
+genvar i;
+
+// construct 1: named `blk`
+if (sw) begin : blk
+  electrical x;
+  analog V(x) <+ 1.0;
+end
+
+// construct 2: unlabelled -- `genblk02`, since `genblk2` is declared
+if (genblk2) electrical y; else electrical y;
+analog V(genblk02.y) <+ 2.0;
+
+// construct 3: `g1[0]`, `g1[1]`, each with a nested unlabelled block `genblk1`
+for (i = 0; i < 2; i = i + 1) begin : g1
+  electrical z;
+  analog V(z) <+ 4.0 * (i + 1);
+  if (1) begin
+    electrical w;
+    analog V(w) <+ 0.5 * (i + 1);
+  end
+  leaf #(.g(1e-3 * (i + 1))) r1(a, b);
+end
+
+// construct 4: a case arm `two`
+case (sel)
+  1: begin : one electrical q; analog V(q) <+ 100.0; end
+  2: begin : two electrical q; analog V(q) <+ 16.0; end
+  default: begin : dflt electrical q; analog V(q) <+ 1000.0; end
+endcase
+
+// 1 + 2 + (4 + 8) + (0.5 + 1.0) + 16 = 32.5 V, read back as 32.5 mA;
+// the leaves' internal nets read 0.5 V(a,b) each
+analog I(a, b) <+ 1e-3 * (V(blk.x) + V(genblk02.y) + V(g1[0].z) + V(g1[1].z)
+                        + V(g1[0].genblk1.w) + V(g1[1].genblk1.w) + V(two.q))
+                 + 1e-3 * (V(g1[0].r1.mid) + V(g1[1].r1.mid));
+endmodule

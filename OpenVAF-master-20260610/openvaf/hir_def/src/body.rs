@@ -10,7 +10,7 @@ use stdx::Ieee64;
 use syntax::{ast, AstNode, AstPtr};
 
 use crate::db::HirDefDB;
-use crate::item_tree::{DisciplineAttr, ItemTreeId, ItemTreeNode, NatureAttr};
+use crate::item_tree::{AnalogSourceKind, DisciplineAttr, ItemTreeId, ItemTreeNode, NatureAttr};
 use crate::nameres::{DefMapSource, LocalScopeId};
 use crate::{
     DefWithBodyId, DisciplineAttrLoc, DisciplineLoc, Expr, ExprId, FunctionLoc, Literal, Lookup,
@@ -41,6 +41,10 @@ pub struct Body {
     /// concatenation (LRM 4.1.13) knows its operands' widths. An unsized
     /// literal has no entry.
     pub literal_sizes: HashMap<ExprId, u32>,
+    /// Book audit (paramsets): the top-level statements of this body that a
+    /// `paramset` contributed (LRM 6.4.1's statements, and its `.var = expr;`
+    /// assignments), so validation can hold them to the clause's rules.
+    pub paramset_stmts: Vec<StmtId>,
 }
 
 #[derive(Default, Debug, Eq, PartialEq)]
@@ -95,12 +99,56 @@ impl Body {
                     ast_id_map: &ast_id_map,
                     curr_scope,
                     registry: &registry,
+                    renames: None,
+                    dot_renames: None,
                 };
-                body.entry_stmts = if initial {
-                    ast.analog_initial_behaviour().map(|stmt| ctx.collect_stmt(stmt)).collect()
+                if tree[item_tree].analog_sources.is_empty() {
+                    body.entry_stmts = if initial {
+                        ast.analog_initial_behaviour().map(|stmt| ctx.collect_stmt(stmt)).collect()
+                    } else {
+                        ast.analog_behaviour().map(|stmt| ctx.collect_stmt(stmt)).collect()
+                    };
                 } else {
-                    ast.analog_behaviour().map(|stmt| ctx.collect_stmt(stmt)).collect()
-                };
+                    // Book audit (paramsets): a twin's body is its target's analog blocks
+                    // (through the chain of paramsets), each read through the name map
+                    // of the level that wrote it, then each paramset's own statements.
+                    let root = db.parse(root_file).tree();
+                    let file = root.syntax();
+                    let mut stmts: Vec<StmtId> = Vec::new();
+                    let mut paramset_stmts: Vec<StmtId> = Vec::new();
+                    for src in &tree[item_tree].analog_sources {
+                        ctx.renames = src.renames.clone();
+                        ctx.dot_renames = src.dot_renames.clone();
+                        match src.kind {
+                            AnalogSourceKind::Module(module_ast) => {
+                                let module = ast_id_map.get(module_ast).to_node(file);
+                                let blocks: Vec<ast::Stmt> = if initial {
+                                    module.analog_initial_behaviour().collect()
+                                } else {
+                                    module.analog_behaviour().collect()
+                                };
+                                stmts.extend(blocks.into_iter().map(|stmt| ctx.collect_stmt(stmt)));
+                            }
+                            AnalogSourceKind::Paramset(_) if initial => {}
+                            AnalogSourceKind::Paramset(paramset_ast) => {
+                                let paramset = ast_id_map.get(paramset_ast).to_node(file);
+                                for &ov in &src.var_overrides {
+                                    let ov = ast_id_map.get(ov).to_node(file);
+                                    let id = ctx.collect_paramset_var_override(ov);
+                                    paramset_stmts.push(id);
+                                    stmts.push(id);
+                                }
+                                for stmt in paramset.stmts() {
+                                    let id = ctx.collect_stmt(stmt);
+                                    paramset_stmts.push(id);
+                                    stmts.push(id);
+                                }
+                            }
+                        }
+                    }
+                    body.entry_stmts = stmts.into_boxed_slice();
+                    body.paramset_stmts = paramset_stmts;
+                }
             }
 
             DefWithBodyId::FunctionId(id) => {
@@ -124,6 +172,8 @@ impl Body {
                     ast_id_map: &ast_id_map,
                     curr_scope,
                     registry: &registry,
+                    renames: tree[item_tree].renames.clone(),
+                    dot_renames: None,
                 };
                 body.entry_stmts = ast.body().map(|stmt| ctx.collect_stmt(stmt)).collect();
             }
@@ -146,6 +196,8 @@ impl Body {
                     ast_id_map: &ast_id_map,
                     curr_scope,
                     registry: &registry,
+                    renames: tree[item_tree].renames.clone(),
+                    dot_renames: None,
                 };
 
                 let expr = if let Some(expr) = var_ast.as_ref().and_then(|ast| ast.default()) {
@@ -198,6 +250,8 @@ impl Body {
                     ast_id_map: &ast_id_map,
                     curr_scope,
                     registry: &registry,
+                    renames: None,
+                    dot_renames: None,
                 };
                 let expr = ctx.collect_opt_expr(ast.val());
                 let stmt = ctx.alloc_stmt_desugared(Stmt::Expr(expr));
@@ -220,6 +274,8 @@ impl Body {
                     ast_id_map: &ast_id_map,
                     curr_scope,
                     registry: &registry,
+                    renames: None,
+                    dot_renames: None,
                 };
                 let expr = ctx.collect_opt_expr(ast.val());
                 let stmt = ctx.alloc_stmt_desugared(Stmt::Expr(expr));
@@ -253,6 +309,8 @@ impl Body {
             ast_id_map: &ast_id_map,
             curr_scope: (scope, ast_id.into()),
             registry: &registry,
+            renames: tree[item_tree].renames.clone(),
+            dot_renames: None,
         };
 
         // A `paramset`-bound target parameter (Enhancement-21) takes its value from the paramset's

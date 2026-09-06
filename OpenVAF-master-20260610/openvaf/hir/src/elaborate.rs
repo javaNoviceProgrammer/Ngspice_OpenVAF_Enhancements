@@ -1908,6 +1908,16 @@ fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<
     let base = module_ast.syntax().text_range().start();
     let full = module_ast.syntax().text().to_string();
     let mut repls: Vec<(Range<usize>, String)> = Vec::new();
+    // Book audit (generate names), LRM 6.6.3 / 6.7: every generate construct of
+    // the module is numbered in textual order; a block without a label is
+    // `genblk<n>` (leading zeroes added while that name is declared); what the
+    // blocks declare is recorded under its hierarchical path (`g1[0].z`,
+    // `blk.x`, `genblk1.y`) so references to it can be rewritten below.
+    let declared = declared_names_of_items(module_ast.module_items());
+    let mut taken: HashSet<String> = declared.clone();
+    let mut paths: GenPaths = HashMap::new();
+    let mut labels: HashSet<String> = HashSet::new();
+    let mut construct = 0usize;
     for item in module_ast.module_items() {
         let range = rel_range(base, item.syntax().text_range());
         match item {
@@ -1916,13 +1926,28 @@ fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<
                 repls.push((range, String::new()));
             }
             ast::ModuleItem::GenerateFor(gen_for) => {
-                repls.push((range, render_generate_for(&gen_for, &const_env, "", &Scope::default())?));
+                construct += 1;
+                let implicit = implicit_block_label(construct, &declared);
+                let mut gen =
+                    GenCtx { path: String::new(), implicit, paths: &mut paths, taken: &mut taken };
+                repls.push((range, render_generate_for(&gen_for, &const_env, "", &Scope::default(), &mut gen)?));
+                labels.extend(gen.top_labels());
             }
             ast::ModuleItem::GenerateIf(gen_if) => {
-                repls.push((range, render_generate_if(&gen_if, &const_env, "", &Scope::default())?));
+                construct += 1;
+                let implicit = implicit_block_label(construct, &declared);
+                let mut gen =
+                    GenCtx { path: String::new(), implicit, paths: &mut paths, taken: &mut taken };
+                repls.push((range, render_generate_if(&gen_if, &const_env, "", &Scope::default(), &mut gen)?));
+                labels.extend(gen.top_labels());
             }
             ast::ModuleItem::GenerateCase(gen_case) => {
-                repls.push((range, render_generate_case(&gen_case, &const_env, "", &Scope::default())?));
+                construct += 1;
+                let implicit = implicit_block_label(construct, &declared);
+                let mut gen =
+                    GenCtx { path: String::new(), implicit, paths: &mut paths, taken: &mut taken };
+                repls.push((range, render_generate_case(&gen_case, &const_env, "", &Scope::default(), &mut gen)?));
+                labels.extend(gen.top_labels());
             }
             // Enhancement-407: an `analog` block may drive a genvar `for` loop. Unlike a
             // module-level `generate for`, which repeats declarations, this one repeats
@@ -1944,6 +1969,165 @@ fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<
     for (range, text) in repls.into_iter().rev() {
         out.replace_range(range, &text);
     }
+    // the hierarchical names into the generate blocks, wherever the module's
+    // text spells them (analog blocks, connections, declarations)
+    let out = rewrite_generate_paths(&out, &paths, &labels)?;
+    Ok(out)
+}
+
+/// Book audit (generate names): the flat rendered name of everything a
+/// module's generate blocks declare, keyed by its LRM 6.7 hierarchical path
+/// relative to the module -- `blk.x` for `if (c) begin : blk electrical x;
+/// end`, `g1[0].z` for the first iteration of `for (...) begin : g1
+/// electrical z; end`, `genblk1.y` for an unlabelled block, nested paths
+/// such as `g1[0].genblk1.z` included.
+type GenPaths = HashMap<String, String>;
+
+/// The path bookkeeping threaded through one generate construct's rendering.
+struct GenCtx<'a> {
+    /// the enclosing blocks' path, `""` at module scope or `"g1[0]."`
+    path: String,
+    /// the label an unlabelled block of this construct takes (LRM 6.6.3)
+    implicit: String,
+    paths: &'a mut GenPaths,
+    /// the flat names already declared in the enclosing scope -- the module's
+    /// own and earlier generate blocks' -- so a second block declaring the same
+    /// name (the LRM 6.6.3 example: two unlabelled `if`s each declaring `b`)
+    /// renders it as `b_genblk02` instead of redeclaring `b`
+    taken: &'a mut HashSet<String>,
+}
+
+impl GenCtx<'_> {
+    /// The labels this construct's blocks are known by at module scope.
+    fn top_labels(&self) -> Vec<String> {
+        self.paths
+            .keys()
+            .filter_map(|k| k.split(['.', '[']).next().map(str::to_owned))
+            .collect()
+    }
+}
+
+/// LRM 6.6.3: `genblk<n>`, "if such a name would conflict with an explicitly
+/// declared name, then leading zeroes are added in front of the number until
+/// the name does not conflict".
+fn implicit_block_label(n: usize, declared: &HashSet<String>) -> String {
+    let mut digits = n.to_string();
+    while declared.contains(&format!("genblk{digits}")) {
+        digits.insert(0, '0');
+    }
+    format!("genblk{digits}")
+}
+
+/// Book audit (generate names): rewrites every hierarchical reference into a
+/// generate block -- a path whose first segment is one of the module's generate
+/// labels -- to the flat name the block's declaration was rendered under. The
+/// longest prefix of the path that names a generated declaration is replaced
+/// and the rest kept, so `g1[0].u1.x` (an instance inside a loop) becomes
+/// `u1_0.x` for the instantiation pass to resolve. A path that starts with a
+/// generate label and reaches nothing is an error, named.
+fn rewrite_generate_paths(
+    text: &str,
+    paths: &GenPaths,
+    labels: &HashSet<String>,
+) -> anyhow::Result<String> {
+    if paths.is_empty() {
+        return Ok(text.to_owned());
+    }
+    let spans = tok_spans(text);
+    let mut out = String::with_capacity(text.len());
+    let mut prev = 0usize;
+    let mut k = 0usize;
+    while k < spans.len() {
+        let t = &spans[k];
+        if t.kind != TokenKind::SimpleIdent || !labels.contains(&text[t.start..t.end]) {
+            k += 1;
+            continue;
+        }
+        // a member of another path (`u1.blk.x`) is not a reference into this module's blocks
+        let mut p = k;
+        let mut after_dot = false;
+        while p > 0 {
+            p -= 1;
+            if is_trivia(spans[p].kind) {
+                continue;
+            }
+            after_dot = &text[spans[p].start..spans[p].end] == ".";
+            break;
+        }
+        if after_dot {
+            k += 1;
+            continue;
+        }
+        // parse `label ( [int] )? ( . ident ( [int] )? )*`, remembering the
+        // longest prefix that names a generated declaration
+        let mut canon = text[t.start..t.end].to_owned();
+        let mut j = k + 1;
+        let mut best: Option<(usize, String)> = None; // (token index after the match, flat name)
+        let mut segments = 0usize;
+        loop {
+            // an optional constant index
+            let n = skip_trivia(&spans, j);
+            if n < spans.len() && &text[spans[n].start..spans[n].end] == "[" {
+                let i = skip_trivia(&spans, n + 1);
+                let c = if i < spans.len() { skip_trivia(&spans, i + 1) } else { spans.len() };
+                if i < spans.len()
+                    && c < spans.len()
+                    && &text[spans[c].start..spans[c].end] == "]"
+                {
+                    if let Ok(v) = text[spans[i].start..spans[i].end].parse::<i64>() {
+                        canon.push_str(&format!("[{v}]"));
+                        j = c + 1;
+                    }
+                }
+            }
+            if segments > 0 {
+                if let Some(flat) = paths.get(&canon) {
+                    best = Some((j, flat.clone()));
+                }
+            }
+            // a further `. ident`
+            let d = skip_trivia(&spans, j);
+            if d < spans.len() && &text[spans[d].start..spans[d].end] == "." {
+                let i = skip_trivia(&spans, d + 1);
+                if i < spans.len() && spans[i].kind == TokenKind::SimpleIdent {
+                    canon.push('.');
+                    canon.push_str(&text[spans[i].start..spans[i].end]);
+                    segments += 1;
+                    j = i + 1;
+                    continue;
+                }
+            }
+            break;
+        }
+        if segments == 0 {
+            // the bare label (a `disable` target, say): not a hierarchical reference
+            k += 1;
+            continue;
+        }
+        match best {
+            Some((end, flat)) => {
+                out.push_str(&text[prev..t.start]);
+                out.push_str(&flat);
+                prev = spans[end - 1].end;
+                k = end;
+            }
+            None => anyhow::bail!(
+                "'{canon}' names nothing declared in generate block '{}' -- the block declares: {}",
+                canon.split(['.', '[']).next().unwrap_or(""),
+                {
+                    let head = canon.split(['.', '[']).next().unwrap_or("").to_owned();
+                    let mut members: Vec<&str> = paths
+                        .keys()
+                        .filter(|p| p.split(['.', '[']).next() == Some(head.as_str()))
+                        .map(String::as_str)
+                        .collect();
+                    members.sort();
+                    if members.is_empty() { "nothing".to_owned() } else { members.join(", ") }
+                }
+            ),
+        }
+    }
+    out.push_str(&text[prev..]);
     Ok(out)
 }
 
@@ -2046,6 +2230,7 @@ fn render_generate_for(
     outer_env: &HashMap<String, i32>,
     outer_suffix: &str,
     outer_scope: &Scope,
+    gen: &mut GenCtx<'_>,
 ) -> anyhow::Result<String> {
     let init = gen_for
         .init()
@@ -2059,10 +2244,10 @@ fn render_generate_for(
     let body = gen_for
         .body()
         .ok_or_else(|| anyhow::anyhow!("generate for: missing 'begin : label ... end' body"))?;
-    // the label is optional since Enhancement-67 (anonymous blocks are
-    // legal 1364-2005); it only feeds the generated comment.
+    // the label is optional since Enhancement-67 (anonymous blocks are legal
+    // 1364-2005); an unlabelled block is `genblk<n>` (LRM 6.6.3)
     let label =
-        body.label().map(|l| l.syntax().text().to_string()).unwrap_or_else(|| "genblk".to_owned());
+        body.label().map(|l| l.syntax().text().to_string()).unwrap_or_else(|| gen.implicit.clone());
 
     let genvar_name = init.lval().map(|e| e.syntax().text().to_string().trim().to_owned());
     let genvar_name = genvar_name
@@ -2135,7 +2320,10 @@ fn render_generate_for(
         env.insert(genvar_name.clone(), value);
 
         out.push_str(&format!("// generate for {label}[{value}]\n"));
-        out.push_str(&render_generate_block(&body, &env, &iter_suffix, outer_scope)?);
+        let iter_path = format!("{}{label}[{value}].", gen.path);
+        out.push_str(&render_generate_block(
+            &body, &env, &iter_suffix, outer_scope, &iter_path, gen.paths, gen.taken,
+        )?);
         out.push('\n');
         value += step;
     }
@@ -2160,13 +2348,44 @@ fn render_generate_block(
     env: &HashMap<String, i32>,
     suffix: &str,
     outer_scope: &Scope,
+    path: &str,
+    paths: &mut GenPaths,
+    taken: &mut HashSet<String>,
 ) -> anyhow::Result<String> {
     let mut scope = outer_scope.clone();
-    if !suffix.is_empty() {
-        for name in collect_declared_names(block) {
-            scope.subst.insert(name.clone(), format!("{name}{suffix}"));
+    let declared = collect_declared_names(block);
+    // the block's label, as a suffix that keeps the name an identifier
+    let label: String = path
+        .trim_end_matches('.')
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect();
+    for name in &declared {
+        let base = format!("{name}{suffix}");
+        let mut flat = base.clone();
+        // Book audit (generate names): a flat name the module already holds --
+        // its own declaration, or an earlier generate block's anywhere in it
+        // (two unlabelled `if`s each declaring `b`; two loops whose iteration 0
+        // both declare `a`) -- moves aside under the block's label
+        let mut k = 1;
+        while !taken.insert(flat.clone()) {
+            k += 1;
+            flat = if k == 2 { format!("{base}_{label}") } else { format!("{base}_{label}_{k}") };
+        }
+        if flat != *name {
+            scope.subst.insert(name.clone(), flat);
         }
     }
+    // Book audit (generate names): what this block declares, by hierarchical path
+    for name in &declared {
+        let flat = scope.subst.get(name).cloned().unwrap_or_else(|| name.clone());
+        paths.insert(format!("{path}{name}"), flat);
+    }
+    let declared_set: HashSet<String> = declared.iter().cloned().collect();
+    let mut construct = 0usize;
 
     let mut out = String::new();
     for child in block.syntax().children() {
@@ -2187,13 +2406,34 @@ fn render_generate_block(
         match item {
             ast::ModuleItem::GenvarDecl(_) => {}
             ast::ModuleItem::GenerateFor(inner) => {
-                out.push_str(&render_generate_for(&inner, env, suffix, &scope)?);
+                construct += 1;
+                let mut gen = GenCtx {
+                    path: path.to_owned(),
+                    implicit: implicit_block_label(construct, &declared_set),
+                    paths: &mut *paths,
+                    taken: &mut *taken,
+                };
+                out.push_str(&render_generate_for(&inner, env, suffix, &scope, &mut gen)?);
             }
             ast::ModuleItem::GenerateIf(inner) => {
-                out.push_str(&render_generate_if(&inner, env, suffix, &scope)?);
+                construct += 1;
+                let mut gen = GenCtx {
+                    path: path.to_owned(),
+                    implicit: implicit_block_label(construct, &declared_set),
+                    paths: &mut *paths,
+                    taken: &mut *taken,
+                };
+                out.push_str(&render_generate_if(&inner, env, suffix, &scope, &mut gen)?);
             }
             ast::ModuleItem::GenerateCase(inner) => {
-                out.push_str(&render_generate_case(&inner, env, suffix, &scope)?);
+                construct += 1;
+                let mut gen = GenCtx {
+                    path: path.to_owned(),
+                    implicit: implicit_block_label(construct, &declared_set),
+                    paths: &mut *paths,
+                    taken: &mut *taken,
+                };
+                out.push_str(&render_generate_case(&inner, env, suffix, &scope, &mut gen)?);
             }
             other => {
                 out.push_str(&render_generate_item(other.syntax(), env, &scope));
@@ -2273,6 +2513,7 @@ fn render_generate_if(
     env: &HashMap<String, i32>,
     suffix: &str,
     scope: &Scope,
+    gen: &mut GenCtx<'_>,
 ) -> anyhow::Result<String> {
     let condition = gen_if
         .condition()
@@ -2288,15 +2529,26 @@ fn render_generate_if(
     let then_block = blocks
         .next()
         .ok_or_else(|| anyhow::anyhow!("generate if: missing 'begin ... end' branch body"))?;
+    // LRM 6.6.3: the chosen block's own label, or the construct's `genblk<n>`
+    let block_path = |gen: &GenCtx<'_>, block: &ast::GenerateBlock| {
+        let label = block
+            .label()
+            .map(|l| l.syntax().text().to_string())
+            .unwrap_or_else(|| gen.implicit.clone());
+        format!("{}{label}.", gen.path)
+    };
     if cond {
-        return render_generate_block(&then_block, env, suffix, scope);
+        let path = block_path(gen, &then_block);
+        return render_generate_block(&then_block, env, suffix, scope, &path, gen.paths, gen.taken);
     }
-    // else side: either a nested `else if` (a GENERATE_IF child) or a block
+    // else side: either a nested `else if` (a GENERATE_IF child) or a block;
+    // an `else if` chain is ONE construct and keeps its number
     if let Some(else_if) = support_child_generate_if(gen_if) {
-        return render_generate_if(&else_if, env, suffix, scope);
+        return render_generate_if(&else_if, env, suffix, scope, gen);
     }
     if let Some(else_block) = blocks.next() {
-        return render_generate_block(&else_block, env, suffix, scope);
+        let path = block_path(gen, &else_block);
+        return render_generate_block(&else_block, env, suffix, scope, &path, gen.paths, gen.taken);
     }
     Ok(String::new())
 }
@@ -2315,6 +2567,7 @@ fn render_generate_case(
     env: &HashMap<String, i32>,
     suffix: &str,
     scope: &Scope,
+    gen: &mut GenCtx<'_>,
 ) -> anyhow::Result<String> {
     let disc_expr = gen_case
         .discriminant()
@@ -2341,7 +2594,8 @@ fn render_generate_case(
                 let block = arm.block().ok_or_else(|| {
                     anyhow::anyhow!("generate case: arm is missing its 'begin ... end' block")
                 })?;
-                return render_generate_block(&block, env, suffix, scope);
+                let path = case_block_path(gen, &block);
+                return render_generate_block(&block, env, suffix, scope, &path, gen.paths, gen.taken);
             }
         }
     }
@@ -2349,9 +2603,18 @@ fn render_generate_case(
         let block = arm
             .block()
             .ok_or_else(|| anyhow::anyhow!("generate case: default arm is missing its block"))?;
-        return render_generate_block(&block, env, suffix, scope);
+        let path = case_block_path(gen, &block);
+        return render_generate_block(&block, env, suffix, scope, &path, gen.paths, gen.taken);
     }
     Ok(String::new())
+}
+
+/// LRM 6.6.3: a case arm's block is known by its own label, or by the
+/// construct's `genblk<n>`.
+fn case_block_path(gen: &GenCtx<'_>, block: &ast::GenerateBlock) -> String {
+    let label =
+        block.label().map(|l| l.syntax().text().to_string()).unwrap_or_else(|| gen.implicit.clone());
+    format!("{}{label}.", gen.path)
 }
 
 /// Evaluates a generate-time boolean condition: comparisons and logical
@@ -2404,8 +2667,52 @@ fn eval_cond_expr(expr: &ast::Expr, env: &HashMap<String, i32>) -> Option<bool> 
 /// nets/parameters used, but not declared, inside the block) are left
 /// alone.
 fn collect_declared_names(body: &ast::GenerateBlock) -> Vec<String> {
+    declared_names_of_item_list(body.items())
+}
+
+/// Book audit (generate names): the names a module's own item list declares,
+/// for LRM 6.6.3's `genblk<n>` collision rule -- the declarations plus the
+/// explicit labels of its generate blocks.
+fn declared_names_of_items(items: ast::AstChildren<ast::ModuleItem>) -> HashSet<String> {
+    let list: Vec<ast::ModuleItem> = items.collect();
+    let mut names: HashSet<String> = declared_names_of_item_list(list.clone().into_iter()).into_iter().collect();
+    for item in list {
+        let mut labels = Vec::new();
+        match item {
+            ast::ModuleItem::GenerateFor(g) => {
+                if let Some(l) = g.body().and_then(|b| b.label()) {
+                    labels.push(l.syntax().text().to_string());
+                }
+            }
+            ast::ModuleItem::GenerateIf(g) => {
+                for node in g.syntax().descendants() {
+                    if let Some(b) = ast::GenerateBlock::cast(node) {
+                        if let Some(l) = b.label() {
+                            labels.push(l.syntax().text().to_string());
+                        }
+                    }
+                }
+            }
+            ast::ModuleItem::GenerateCase(g) => {
+                for arm in g.arms() {
+                    if let Some(l) = arm.block().and_then(|b| b.label()) {
+                        labels.push(l.syntax().text().to_string());
+                    }
+                }
+            }
+            ast::ModuleItem::GenvarDecl(d) => {
+                labels.extend(d.names().map(|n| n.syntax().text().to_string()));
+            }
+            _ => {}
+        }
+        names.extend(labels);
+    }
+    names
+}
+
+fn declared_names_of_item_list(items: impl Iterator<Item = ast::ModuleItem>) -> Vec<String> {
     let mut names = Vec::new();
-    for item in body.items() {
+    for item in items {
         match item {
             ast::ModuleItem::NetDecl(decl) => {
                 names.extend(decl.names().map(|n| n.syntax().text().to_string()))
@@ -2468,6 +2775,190 @@ fn collect_block_labels(node: &syntax::SyntaxNode, names: &mut Vec<String>) {
             }
         }
     }
+}
+
+/// Book audit (paramsets), LRM 6.4.1: a paramset's expressions may hold
+/// "hierarchical out-of-module references to local parameters of a different
+/// module" -- the book's "constant module" idiom, `.RSH = fab.rsh_poly *
+/// fab.bias;` over a `module fab; localparam real rsh_poly = 120.0; ...`. Such a
+/// reference used to type-check (name resolution finds the module and its
+/// localparam) and then crash code generation, which has no value for another
+/// module's parameter. It is a compile-time constant, so it is substituted
+/// textually here, before the item tree is built: the localparam's default in
+/// parentheses, its own bare references to sibling localparams substituted in
+/// turn. A reference to a non-local `parameter` is refused, as the clause
+/// requires; a first segment that is not a module (an instance path, `$root`)
+/// is left to name resolution.
+///
+/// A MODULE's body may hold the same reference (LRM 6.7 -- the page-155
+/// `processinfo.rho` example reads a never-instantiated process-information
+/// module), and is served the same way, provided the module declares no
+/// instance of that name (an instance path is the instantiation pass's).
+pub(crate) fn elaborate_paramset_consts(db: &mut CompilationDB) -> anyhow::Result<()> {
+    let root_file = db.compilation_unit().root_file();
+    let parse = db.parse(root_file);
+    let tree = parse.tree();
+    let modules: HashMap<String, ast::ModuleDecl> = tree
+        .items()
+        .filter_map(|it| match it {
+            ast::Item::ModuleDecl(m) => Some((m.name()?.syntax().text().to_string(), m)),
+            _ => None,
+        })
+        .collect();
+    let mut holes: Vec<(Range<usize>, String)> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    for item in tree.items() {
+        let (node, instances): (syntax::SyntaxNode, HashSet<String>) = match item {
+            ast::Item::ParamsetDecl(ps) => (ps.syntax().clone(), HashSet::new()),
+            ast::Item::ModuleDecl(m) => {
+                let instances = m
+                    .module_items()
+                    .filter_map(|it| match it {
+                        ast::ModuleItem::Instantiation(inst) => Some(inst),
+                        _ => None,
+                    })
+                    .flat_map(|inst| {
+                        inst.instance_units()
+                            .filter_map(|u| u.name().map(|n| n.syntax().text().to_string()))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                (m.syntax().clone(), instances)
+            }
+            _ => continue,
+        };
+        for node in node.descendants() {
+            let Some(path) = ast::Path::cast(node) else { continue };
+            // only a whole path, not its qualifier
+            if path.parent_path().is_some() {
+                continue;
+            }
+            let segs: Vec<String> =
+                path.syntax().text().to_string().split('.').map(|s| s.trim().to_owned()).collect();
+            if segs.len() != 2 || instances.contains(&segs[0]) {
+                continue;
+            }
+            let Some(module) = modules.get(&segs[0]) else { continue };
+            match module_localparam_text(module, &segs[0], &segs[1], 0) {
+                Ok(text) => holes.push((
+                    rel_range(TextSize::from(0), path.syntax().text_range()),
+                    format!("({text})"),
+                )),
+                Err(msg) => errors.push(msg.to_string()),
+            }
+        }
+    }
+    if !errors.is_empty() {
+        anyhow::bail!("{}", errors.join("\n"));
+    }
+    if holes.is_empty() {
+        return Ok(());
+    }
+    holes.sort_by_key(|(r, _)| r.start);
+    let text = tree.syntax().text().to_string();
+    let mut out = String::with_capacity(text.len());
+    let mut pos = 0usize;
+    for (r, rep) in holes {
+        if r.start < pos {
+            continue;
+        }
+        out.push_str(&text[pos..r.start]);
+        out.push_str(&rep);
+        pos = r.end;
+    }
+    out.push_str(&text[pos..]);
+
+    let root_path = db.vfs().read().file_path(root_file).to_string();
+    let base_name =
+        root_path.rsplit(['/', '\\']).next().unwrap_or(root_path.as_str()).to_owned();
+    let synth_name = format!("/{}__paramset.va", base_name);
+    let file_id = db.vfs().write().add_virt_file(&synth_name, out.into());
+    let include_dirs = db.include_dirs(root_file);
+    db.set_include_dirs(file_id, include_dirs);
+    let macro_flags = db.macro_flags(root_file);
+    db.set_macro_flags(file_id, macro_flags);
+    let overwrites = db.global_lint_overwrites(root_file);
+    db.set_global_lint_overwrites(file_id, overwrites);
+    db.set_root_file(file_id);
+    Ok(())
+}
+
+/// The text of `module_name.name`, a `localparam` of `module`: its default with
+/// every bare reference to a sibling localparam substituted the same way.
+fn module_localparam_text(
+    module: &ast::ModuleDecl,
+    module_name: &str,
+    name: &str,
+    depth: u32,
+) -> anyhow::Result<String> {
+    if depth > 16 {
+        anyhow::bail!("`{module_name}.{name}`: the localparam chain is deeper than 16 levels");
+    }
+    for item in module.module_items() {
+        let ast::ModuleItem::ParamDecl(pd) = item else { continue };
+        for para in pd.paras() {
+            if para.name().map(|n| n.syntax().text().to_string()).as_deref() != Some(name) {
+                continue;
+            }
+            if pd.localparam_token().is_none() {
+                anyhow::bail!(
+                    "`{module_name}.{name}` refers to a parameter of module '{module_name}' that \
+                     is not a `localparam`: LRM 6.4.1 allows a paramset hierarchical out-of-module \
+                     references to LOCAL parameters only -- an overridable parameter has no value \
+                     until the model card is read"
+                );
+            }
+            let default = para
+                .default()
+                .map(|d| d.syntax().text().to_string())
+                .unwrap_or_else(|| "0".to_owned());
+            let spans = tok_spans(&default);
+            let mut out = String::with_capacity(default.len());
+            let mut prev = 0usize;
+            for (k, t) in spans.iter().enumerate() {
+                if t.kind != TokenKind::SimpleIdent {
+                    continue;
+                }
+                // a member of a hierarchical path is not a sibling
+                let mut p = k;
+                let mut after_dot = false;
+                while p > 0 {
+                    p -= 1;
+                    if is_trivia(spans[p].kind) {
+                        continue;
+                    }
+                    after_dot = &default[spans[p].start..spans[p].end] == ".";
+                    break;
+                }
+                if after_dot {
+                    continue;
+                }
+                let ident = &default[t.start..t.end];
+                if ident == name {
+                    continue;
+                }
+                let declared = module.module_items().any(|it| match it {
+                    ast::ModuleItem::ParamDecl(pd) => pd.paras().any(|p| {
+                        p.name().map(|n| n.syntax().text().to_string()).as_deref() == Some(ident)
+                    }),
+                    _ => false,
+                });
+                if !declared {
+                    continue;
+                }
+                let inner = module_localparam_text(module, module_name, ident, depth + 1)?;
+                out.push_str(&default[prev..t.start]);
+                out.push_str(&format!("({inner})"));
+                prev = t.end;
+            }
+            out.push_str(&default[prev..]);
+            return Ok(out);
+        }
+    }
+    anyhow::bail!(
+        "`{module_name}.{name}`: module '{module_name}' declares no parameter '{name}' (referenced \
+         from a paramset)"
+    )
 }
 
 /// Entry point, called once from [`CompilationDB::new`]. No-op (and cheap:
@@ -2635,6 +3126,216 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
 
     db.set_root_file(file_id);
     Ok(())
+}
+
+/// Book audit (paramsets), LRM 6.4.2: a literal's value -- a number with its
+/// SI suffix, an integer, `inf` -- or `None` for anything that is not one.
+fn const_real_of(e: &ast::Expr) -> Option<f64> {
+    match e.as_constexprval() {
+        Some(ConstExprValue::Float(f)) => Some(f.into_inner()),
+        Some(ConstExprValue::Int(i)) => Some(i as f64),
+        _ => match e {
+            ast::Expr::Literal(l) if matches!(l.kind(), ast::LiteralKind::Inf) => Some(f64::INFINITY),
+            ast::Expr::PrefixExpr(p) => {
+                let inner = p.expr()?;
+                match p.op_kind()? {
+                    ast::UnaryOp::Neg => const_real_of(&inner).map(|v| -v),
+                    ast::UnaryOp::Identity => const_real_of(&inner),
+                    _ => None,
+                }
+            }
+            ast::Expr::ParenExpr(p) => const_real_of(&p.expr()?),
+            _ => None,
+        },
+    }
+}
+
+/// Book audit (paramsets), LRM 6.4.2: does `value` violate one of `p`'s
+/// literal `from`/`exclude` constraints? Returns the offending constraint's
+/// text. A bound that is not a literal is taken as unbounded.
+fn constraints_reject(p: &ast::Param, value: f64) -> Option<String> {
+    let mut any_from = false;
+    let mut in_some_from = false;
+    for c in p.constraints() {
+        let (Some(kind), Some(cv)) = (c.kind(), c.val()) else { continue };
+        let text = || c.syntax().text().to_string().split_whitespace().collect::<Vec<_>>().join(" ");
+        match (kind, cv) {
+            (ast::ConstraintKind::From, ast::ConstraintValue::Range(r)) => {
+                any_from = true;
+                let lo = r.start().and_then(|e| const_real_of(&e)).unwrap_or(f64::NEG_INFINITY);
+                let hi = r.end().and_then(|e| const_real_of(&e)).unwrap_or(f64::INFINITY);
+                let above_lo = if r.start_inclusive() { value >= lo } else { value > lo };
+                let below_hi = if r.end_inclusive() { value <= hi } else { value < hi };
+                if above_lo && below_hi {
+                    in_some_from = true;
+                }
+            }
+            (ast::ConstraintKind::From, ast::ConstraintValue::Val(v)) => {
+                any_from = true;
+                if const_real_of(&v).map_or(true, |x| x == value) {
+                    in_some_from = true;
+                }
+            }
+            (ast::ConstraintKind::Exclude, ast::ConstraintValue::Range(r)) => {
+                let lo = r.start().and_then(|e| const_real_of(&e)).unwrap_or(f64::NEG_INFINITY);
+                let hi = r.end().and_then(|e| const_real_of(&e)).unwrap_or(f64::INFINITY);
+                let above_lo = if r.start_inclusive() { value >= lo } else { value > lo };
+                let below_hi = if r.end_inclusive() { value <= hi } else { value < hi };
+                if above_lo && below_hi {
+                    return Some(text());
+                }
+            }
+            (ast::ConstraintKind::Exclude, ast::ConstraintValue::Val(v)) => {
+                if const_real_of(&v) == Some(value) {
+                    return Some(text());
+                }
+            }
+        }
+    }
+    if any_from && !in_some_from {
+        let froms: Vec<String> = p
+            .constraints()
+            .filter(|c| c.kind() == Some(ast::ConstraintKind::From))
+            .map(|c| c.syntax().text().to_string().split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect();
+        return Some(froms.join(" "));
+    }
+    None
+}
+
+/// Book audit (paramsets): one paramset of an instantiated chain, composed.
+struct PsLevel {
+    decl: ast::ParamsetDecl,
+    /// the level's own parameters and localparams, name -> value text
+    values: HashMap<String, String>,
+    /// the level's own variables, in declaration order
+    var_names: Vec<String>,
+    /// `.var = e;` on the target's variables: (name, value text)
+    var_overrides: Vec<(String, String)>,
+}
+
+/// Book audit (paramsets): substitutes a paramset text's identifiers. A bare
+/// identifier in `own` is replaced by its text; a `.name` reference (a `.` not
+/// following an identifier or a closing bracket -- so a hierarchical path is
+/// left alone) is replaced by `dots[name]`, the dot dropped, or by the bare
+/// name when `dots` has no entry.
+fn substitute_paramset_text(
+    text: &str,
+    own: &HashMap<String, String>,
+    dots: &HashMap<String, String>,
+) -> String {
+    let spans = tok_spans(text);
+    let mut out = String::with_capacity(text.len());
+    let mut prev = 0usize;
+    let mut k = 0usize;
+    while k < spans.len() {
+        let t = &spans[k];
+        let raw = &text[t.start..t.end];
+        if raw == "." {
+            let n = skip_trivia(&spans, k + 1);
+            let member = n < spans.len() && spans[n].kind == TokenKind::SimpleIdent;
+            let mut p = k;
+            let after_name = loop {
+                if p == 0 {
+                    break false;
+                }
+                p -= 1;
+                if is_trivia(spans[p].kind) {
+                    continue;
+                }
+                let s = &text[spans[p].start..spans[p].end];
+                break spans[p].kind == TokenKind::SimpleIdent
+                    || spans[p].kind == TokenKind::EscapedIdent
+                    || s == ")"
+                    || s == "]";
+            };
+            if member && !after_name {
+                let name = &text[spans[n].start..spans[n].end];
+                out.push_str(&text[prev..t.start]);
+                out.push_str(dots.get(name).map(String::as_str).unwrap_or(name));
+                prev = spans[n].end;
+                k = n + 1;
+                continue;
+            }
+        } else if t.kind == TokenKind::SimpleIdent {
+            if let Some(v) = own.get(raw) {
+                out.push_str(&text[prev..t.start]);
+                out.push_str(v);
+                prev = t.end;
+            }
+        }
+        k += 1;
+    }
+    out.push_str(&text[prev..]);
+    out
+}
+
+/// Book audit (paramsets): the flattened name of every variable a paramset of
+/// the chain declares -- outermost level first, `{prefix}{name}`, an inner
+/// level's variable of a name an outer one also declares `{prefix}{name}__ps<k>`.
+fn paramset_level_names(levels: &[PsLevel], prefix: &str) -> Vec<HashMap<String, String>> {
+    let mut used: HashSet<String> = HashSet::new();
+    let mut out = Vec::with_capacity(levels.len());
+    for (k, level) in levels.iter().enumerate() {
+        let mut names = HashMap::new();
+        for v in &level.var_names {
+            let flat = if used.insert(v.clone()) {
+                format!("{prefix}{v}")
+            } else {
+                format!("{prefix}{v}__ps{k}")
+            };
+            names.insert(v.clone(), flat);
+        }
+        out.push(names);
+    }
+    out
+}
+
+/// Book audit (paramsets): renders the variables and statements of an
+/// instantiated paramset chain after the module's flattened body -- innermost
+/// level first, as the twin module orders them. Each level's own parameters
+/// are their composed values, its own variables their flattened names, and a
+/// `.name` reference resolves to the namespace of its target: the module's
+/// flattened declarations, extended by each inner level's own variables and
+/// parameter values (LRM 6.4.3).
+fn render_paramset_levels(
+    levels: &[PsLevel],
+    names: &[HashMap<String, String>],
+    scope: &Scope,
+) -> String {
+    if levels.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    // the module's declarations, as the innermost level sees them
+    let mut dots: HashMap<String, String> = scope.subst.clone();
+    for (level, own_names) in levels.iter().zip(names).rev() {
+        let mut own: HashMap<String, String> = level.values.clone();
+        own.extend(own_names.iter().map(|(k, v)| (k.clone(), v.clone())));
+        out.push_str("\n// paramset statements (LRM 6.4.1)\n");
+        for vd in level.decl.var_decls() {
+            let text = vd.syntax().text().to_string();
+            out.push_str(&substitute_paramset_text(&text, own_names, &HashMap::new()));
+            out.push('\n');
+        }
+        let mut stmts = String::new();
+        for (var, val) in &level.var_overrides {
+            let dst = dots.get(var).cloned().unwrap_or_else(|| var.clone());
+            stmts.push_str(&format!("{dst} = {val};\n"));
+        }
+        for st in level.decl.stmts() {
+            stmts.push_str(&substitute_paramset_text(&st.syntax().text().to_string(), &own, &dots));
+            stmts.push('\n');
+        }
+        if !stmts.is_empty() {
+            out.push_str("analog begin\n");
+            out.push_str(&stmts);
+            out.push_str("end\n");
+        }
+        // this level's namespace is what the next-outer level's `.name` sees
+        dots.extend(own);
+    }
+    out
 }
 
 struct ElabCtx<'a> {
@@ -4082,14 +4783,46 @@ impl ElabCtx<'_> {
         let mut sys_overrides: Vec<(ParamSysFun, String)> = Vec::new();
         let Some(overrides) = overrides else { return (result, sys_overrides) };
         let assigns: Vec<_> = overrides.param_assigns().collect();
+        // Book audit (paramsets): only an overridable parameter can be named --
+        // not a `localparam`, and not a paramset twin's internal declarations
+        // (its bound target parameters, and the `name$paramset` clones).
         let param_names: Vec<Name> = target
             .items
             .iter()
             .filter_map(|it| match it {
-                ModuleItem::Parameter(p) => Some(self.tree[*p].name.clone()),
+                ModuleItem::Parameter(p)
+                    if !self.tree[*p].is_local && !self.tree[*p].name.to_string().contains('$') =>
+                {
+                    Some(self.tree[*p].name.clone())
+                }
                 _ => None,
             })
             .collect();
+        // Book audit (paramsets), LRM 3.4.7: an `aliasparam` of the target may be
+        // named in the override list in place of the parameter it aliases -- for
+        // a module, and for a paramset (`rp #(.LL(3u))` with `aliasparam LL = LEN;`).
+        let alias_src: HashMap<Name, Name> = target
+            .items
+            .iter()
+            .filter_map(|it| match it {
+                ModuleItem::AliasParameter(a) => {
+                    let alias = &self.tree[*a];
+                    let src = alias.src.as_ref()?;
+                    (!src.is_root_path && src.segments.len() == 1)
+                        .then(|| (alias.name.clone(), src.segments[0].clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        let resolve_alias = |mut name: Name| {
+            for _ in 0..8 {
+                match alias_src.get(&name) {
+                    Some(src) => name = src.clone(),
+                    None => break,
+                }
+            }
+            name
+        };
 
         // Enhancement-392: an override naming a parameter the target does not have
         // used to be accepted and silently DROPPED, so `#(.vth0(0.7))` with a
@@ -4169,7 +4902,7 @@ impl ElabCtx<'_> {
                     continue;
                 }
                 if let Some(nm) = assign.name() {
-                    let pname = nm.as_name();
+                    let pname = resolve_alias(nm.as_name());
                     if seen_params.contains(&pname) {
                         self.hier_param_errors.push(format!(
                             "instance parameter '.{}' is overridden more than once",
@@ -4200,7 +4933,7 @@ impl ElabCtx<'_> {
                     continue;
                 }
                 if let (Some(name), Some(val)) = (assign.name(), assign.val()) {
-                    let pname = name.as_name();
+                    let pname = resolve_alias(name.as_name());
                     // LRM 3.4.4/3.4.8: a whole ARRAY parameter may be overridden at
                     // instantiation with an assignment pattern of matching size
                     // (`leaf #(.cf('{9.0, 8.0, 7.0})) ...`). The item tree splits an
@@ -4243,6 +4976,20 @@ impl ElabCtx<'_> {
                             }
                             continue;
                         }
+                        // Book audit (paramsets), LRM 6.4: a parameter the paramset
+                        // fixes is not the instance's to override
+                        if target.paramset.is_some()
+                            && target.items.iter().any(|it| matches!(it,
+                                ModuleItem::Parameter(p) if self.tree[*p].name == pname))
+                        {
+                            self.hier_param_errors.push(format!(
+                                "instance of paramset '{}' overrides '{}', which the paramset \
+                                 fixes with `.{} = ...`; an instance may override only the \
+                                 paramset's own parameters (LRM 6.4)",
+                                target.name, pname, pname,
+                            ));
+                            continue;
+                        }
                         self.hier_param_errors.push(format!(
                             "instance parameter override '.{}' names no parameter of module                              '{}'{}",
                             pname,
@@ -4267,6 +5014,276 @@ impl ElabCtx<'_> {
             }
         }
         (result, sys_overrides)
+    }
+
+    /// Book audit (paramsets), LRM 6.4.2: chooses, for one instance of an
+    /// overloaded paramset name, the member of the family. The clause's rules,
+    /// in order: every parameter the instance overrides is a parameter of the
+    /// paramset (an alias counts); the paramset's own parameters, overridden or
+    /// defaulted, lie within their declared ranges; its local parameters within
+    /// theirs; the underlying module has every port the instance connects by
+    /// name. Among the survivors: the fewest un-overridden parameters, then the
+    /// most ranged local parameters, then the fewest unconnected ports; more
+    /// than one left is an error, as is none. A value or a bound that is not a
+    /// literal cannot be judged here and is taken as satisfied.
+    fn select_paramset_overload(
+        &mut self,
+        members: &[ItemTreeId<TreeModule>],
+        inst: &ast::Instantiation,
+        _scope: &Scope,
+    ) -> Result<ItemTreeId<TreeModule>, String> {
+        let file = self.parse.tree();
+        let family = self.tree[members[0]].name.to_string();
+        // the instance's overrides: (name, folded value), positional as None names
+        let mut named: Vec<(String, Option<f64>)> = Vec::new();
+        let mut positional: Vec<Option<f64>> = Vec::new();
+        if let Some(ov) = inst.param_overrides() {
+            for a in ov.param_assigns() {
+                let val = a.val().and_then(|v| const_real_of(&v));
+                match a.name() {
+                    Some(n) if a.dot_token().is_some() => {
+                        if n.sysfun_token().is_some() {
+                            continue;
+                        }
+                        named.push((n.as_name().to_string(), val));
+                    }
+                    _ => positional.push(val),
+                }
+            }
+        }
+        let connected: Vec<String> = inst
+            .instance_units()
+            .next()
+            .and_then(|u| u.port_conns())
+            .map(|pc| pc.port_conns().filter_map(|c| c.name().map(|n| n.as_name().to_string())).collect())
+            .unwrap_or_default();
+        let n_connected = inst
+            .instance_units()
+            .next()
+            .and_then(|u| u.port_conns())
+            .map(|pc| pc.port_conns().count())
+            .unwrap_or(0);
+
+        struct Cand {
+            id: ItemTreeId<TreeModule>,
+            ordinal: usize,
+            unoverridden: usize,
+            ranged_locals: usize,
+            unconnected: usize,
+        }
+        let mut cands: Vec<Cand> = Vec::new();
+        let mut rejected: Vec<String> = Vec::new();
+        for (k, &id) in members.iter().enumerate() {
+            let ordinal = k + 1;
+            let Some(ps_ast) = self.tree[id].paramset else { continue };
+            let ps = self.ast_id_map.get(ps_ast).to_node(file.syntax());
+            // own parameters: (name, is_local, default, constraints)
+            let mut own: Vec<(String, bool, Option<f64>, ast::Param)> = Vec::new();
+            for pd in ps.param_decls() {
+                let is_local = pd.localparam_token().is_some();
+                for p in pd.paras() {
+                    let Some(n) = p.name() else { continue };
+                    let d = p.default().and_then(|e| const_real_of(&e));
+                    own.push((n.syntax().text().to_string(), is_local, d, p));
+                }
+            }
+            let alias: HashMap<String, String> = ps
+                .alias_params()
+                .filter_map(|a| {
+                    let name = a.name()?.syntax().text().to_string();
+                    let ast::ParamRef::Path(src) = a.src()? else { return None };
+                    Some((name, src.as_raw_ident()?.text().to_owned()))
+                })
+                .collect();
+            let resolve = |n: &str| alias.get(n).cloned().unwrap_or_else(|| n.to_owned());
+            // rule 1
+            let mut values: HashMap<String, Option<f64>> = HashMap::new();
+            let mut ok = true;
+            for (n, v) in &named {
+                let n = resolve(n);
+                if own.iter().any(|(o, local, ..)| *o == n && !local) {
+                    values.insert(n, *v);
+                } else {
+                    rejected.push(format!("{family} #{ordinal}: '{n}' is not one of its parameters"));
+                    ok = false;
+                }
+            }
+            let non_local: Vec<&(String, bool, Option<f64>, ast::Param)> =
+                own.iter().filter(|(_, local, ..)| !local).collect();
+            if positional.len() > non_local.len() {
+                rejected.push(format!(
+                    "{family} #{ordinal}: {} positional overrides for {} parameters",
+                    positional.len(),
+                    non_local.len()
+                ));
+                ok = false;
+            }
+            for (v, (n, ..)) in positional.iter().zip(non_local.iter()) {
+                values.insert(n.clone(), *v);
+            }
+            if !ok {
+                continue;
+            }
+            // rules 2 and 3: every own parameter and local, at its value, within its ranges
+            let mut ranged_locals = 0usize;
+            for (n, local, default, p) in &own {
+                if *local && p.constraints().next().is_some() {
+                    ranged_locals += 1;
+                }
+                let value = values.get(n).copied().flatten().or(*default);
+                let Some(value) = value else { continue };
+                if let Some(bad) = constraints_reject(p, value) {
+                    rejected.push(format!("{family} #{ordinal}: {n} = {value} is outside {bad}"));
+                    ok = false;
+                    break;
+                }
+            }
+            if !ok {
+                continue;
+            }
+            // rule 4: the module at the end of the chain has the connected ports
+            let mut end = id;
+            let mut guard = 0;
+            while let Some(a) = self.tree[end].paramset {
+                let decl = self.ast_id_map.get(a).to_node(file.syntax());
+                let Some(next) = decl.target().and_then(|t| self.by_name.get(&t.as_name()).copied())
+                else {
+                    break;
+                };
+                end = next;
+                guard += 1;
+                if guard > 32 {
+                    break;
+                }
+            }
+            let ports: Vec<String> = self.tree[end]
+                .nodes
+                .iter()
+                .filter(|n| n.is_port)
+                .map(|n| n.name.to_string())
+                .collect();
+            if let Some(missing) = connected.iter().find(|c| !ports.contains(c)) {
+                rejected.push(format!("{family} #{ordinal}: its module has no port '{missing}'"));
+                continue;
+            }
+            let unoverridden = non_local.iter().filter(|(n, ..)| !values.contains_key(n)).count();
+            let unconnected = ports.len().saturating_sub(n_connected);
+            cands.push(Cand { id, ordinal, unoverridden, ranged_locals, unconnected });
+        }
+        if cands.is_empty() {
+            return Err(format!(
+                "no paramset '{family}' applies to instance '{}' (LRM 6.4.2): {}",
+                inst.instance_units().next().and_then(|u| u.name()).map(|n| n.syntax().text().to_string()).unwrap_or_default(),
+                rejected.join("; ")
+            ));
+        }
+        let best_key = |c: &Cand| (c.unoverridden, usize::MAX - c.ranged_locals, c.unconnected);
+        let best = cands.iter().map(best_key).min().unwrap();
+        let winners: Vec<&Cand> = cands.iter().filter(|c| best_key(c) == best).collect();
+        if winners.len() > 1 {
+            return Err(format!(
+                "paramset '{family}' is ambiguous for instance '{}' (LRM 6.4.2): members {} all apply \
+                 with {} un-overridden parameter(s)",
+                inst.instance_units().next().and_then(|u| u.name()).map(|n| n.syntax().text().to_string()).unwrap_or_default(),
+                winners.iter().map(|c| format!("#{}", c.ordinal)).collect::<Vec<_>>().join(", "),
+                best.0
+            ));
+        }
+        Ok(winners[0].id)
+    }
+
+    /// Book audit (paramsets): composes one paramset level of an instantiated
+    /// chain. `env` holds the values arriving from outside -- the instance's
+    /// overrides for the outermost level, the outer paramset's `.x = e;` texts
+    /// for an inner one -- keyed by this level's names. Each own parameter takes
+    /// its `env` value or its default (a `localparam` always its default), earlier
+    /// own names substituted textually; each `.x = e;` then yields the next
+    /// level's value with this level's names substituted. An `env` entry this
+    /// level does not declare passes through to the next (Enhancement-21's
+    /// pass-through of an unbound module parameter), unless the level fixes that
+    /// name itself, which is an error (LRM 6.4: "an instance of the paramset that
+    /// attempts to override any of the other parameters of the underlying module
+    /// would generate an error").
+    fn compose_paramset_level(
+        &mut self,
+        ps: &ast::ParamsetDecl,
+        ps_name: &Name,
+        target_id: ItemTreeId<TreeModule>,
+        mut env: HashMap<Name, String>,
+    ) -> (PsLevel, HashMap<Name, String>, Vec<(ParamSysFun, String)>) {
+        let mut values: HashMap<String, String> = HashMap::new();
+        for pd in ps.param_decls() {
+            let is_local = pd.localparam_token().is_some();
+            for param in pd.paras() {
+                let Some(name) = param.name() else { continue };
+                let key = name.as_name();
+                let default = param
+                    .default()
+                    .map(|d| d.syntax().text().to_string())
+                    .unwrap_or_else(|| "0".to_owned());
+                let val = match if is_local { None } else { env.remove(&key) } {
+                    Some(v) => v,
+                    None => substitute_paramset_text(&default, &values, &HashMap::new()),
+                };
+                values.insert(key.to_string(), format!("({val})"));
+            }
+        }
+        // an alias of this level's own parameter, named by the instance
+        for al in ps.alias_params() {
+            let (Some(name), Some(ast::ParamRef::Path(src))) = (al.name(), al.src()) else {
+                continue;
+            };
+            if let (Some(v), Some(src)) = (env.remove(&name.as_name()), src.as_raw_ident()) {
+                values.insert(src.text().to_owned(), format!("({v})"));
+            }
+        }
+        let target_vars: HashSet<String> = self.tree[target_id]
+            .items
+            .iter()
+            .filter_map(|it| match it {
+                ModuleItem::Variable(v) => Some(self.tree[*v].name.to_string()),
+                _ => None,
+            })
+            .collect();
+        let mut next: HashMap<Name, String> = HashMap::new();
+        let mut level_sys: Vec<(ParamSysFun, String)> = Vec::new();
+        let mut var_overrides: Vec<(String, String)> = Vec::new();
+        for ov in ps.overrides() {
+            let Some(name_ref) = ov.name() else { continue };
+            let val = ov
+                .val()
+                .map(|v| substitute_paramset_text(&v.syntax().text().to_string(), &values, &HashMap::new()))
+                .unwrap_or_default();
+            if let Some(tok) = name_ref.sysfun_token() {
+                if let Some(sys) = ParamSysFun::from_sysfun_text(tok.text()) {
+                    level_sys.push((sys, val));
+                }
+                continue;
+            }
+            let name = name_ref.as_name();
+            if target_vars.contains(&name.to_string()) {
+                var_overrides.push((name.to_string(), val));
+            } else {
+                next.insert(name, format!("({val})"));
+            }
+        }
+        for (k, v) in env {
+            if next.contains_key(&k) {
+                self.hier_param_errors.push(format!(
+                    "instance of paramset '{ps_name}' overrides '{k}', which the paramset fixes \
+                     with `.{k} = ...`; an instance may override only the paramset's own \
+                     parameters (LRM 6.4)"
+                ));
+            } else {
+                next.insert(k, v);
+            }
+        }
+        let var_names: Vec<String> = ps
+            .var_decls()
+            .flat_map(|vd| vd.vars().filter_map(|v| v.name()).map(|n| n.syntax().text().to_string()).collect::<Vec<_>>())
+            .collect();
+        let level = PsLevel { decl: ps.clone(), values, var_names, var_overrides };
+        (level, next, level_sys)
     }
 
     /// Builds the "flatten this module's own declarations, in order,
@@ -4834,11 +5851,65 @@ impl ElabCtx<'_> {
             self.unknown_module_errors.push(msg);
             return String::new();
         };
+        // Book audit (paramsets): an instance of a paramset is an instance of the
+        // module at the end of its chain, with the module's parameters bound by
+        // the paramsets' `.x = e;` statements -- each level's own parameters
+        // taking the instance's override or their default -- and the paramsets'
+        // variables and statements appended to the flattened body (LRM 6.4,
+        // 6.4.1, 6.4.3). Enhancement-21's twin served the netlist route only:
+        // an instance rendered the target module's text, so the bindings were
+        // lost and the instance ran at the module's defaults.
+        let mut target_id = target_id;
+        // Book audit (paramsets), LRM 6.4.2: the name may head an overloaded
+        // family; select the member for this instance
+        if self.tree[target_id].paramset.is_some() {
+            let members: Vec<ItemTreeId<TreeModule>> = self
+                .tree
+                .data
+                .modules
+                .iter_enumerated()
+                .filter(|(id, m)| {
+                    *id == target_id || m.overload_family.as_ref() == Some(&module_name)
+                })
+                .map(|(id, _)| id)
+                .collect();
+            if members.len() > 1 {
+                match self.select_paramset_overload(&members, inst, scope) {
+                    Ok(id) => target_id = id,
+                    Err(msg) => {
+                        self.hier_param_errors.push(msg);
+                        return String::new();
+                    }
+                }
+            }
+        }
+        let mut ps_levels: Vec<PsLevel> = Vec::new();
+        let (param_raw, sys_raw) = if self.tree[target_id].paramset.is_some() {
+            let twin = self.tree[target_id].clone();
+            let (mut env, mut sys) = self.resolve_param_bindings(&twin, inst.param_overrides());
+            let file = self.parse.tree();
+            while let Some(ps_ast) = self.tree[target_id].paramset {
+                let ps = self.ast_id_map.get(ps_ast).to_node(file.syntax());
+                let ps_name = self.tree[target_id].name.clone();
+                let Some(next) = ps.target().and_then(|t| self.by_name.get(&t.as_name()).copied())
+                else {
+                    break;
+                };
+                let (level, next_env, level_sys) =
+                    self.compose_paramset_level(&ps, &ps_name, next, env);
+                sys = merge_sys_overrides(&sys, &level_sys);
+                ps_levels.push(level);
+                env = next_env;
+                target_id = next;
+            }
+            (env, sys)
+        } else {
+            self.resolve_param_bindings(&self.tree[target_id].clone(), inst.param_overrides())
+        };
         let target = self.tree[target_id].clone();
         let target_ast = self.module_ast(target.ast_id);
         let parent = self.tree[parent_id].clone();
 
-        let (param_raw, sys_raw) = self.resolve_param_bindings(&target, inst.param_overrides());
         let param_binding: HashMap<Name, String> =
             param_raw.into_iter().map(|(k, v)| (k, apply_rename(&v, scope))).collect();
         // The instance's own `.$mfactor(...)`-family overrides (rename-applied
@@ -4979,6 +6050,7 @@ impl ElabCtx<'_> {
                     &port_binding,
                     &param_binding,
                     &sys_binding,
+                    &ps_levels,
                 ));
                 out.push('\n');
             }
@@ -4998,6 +6070,7 @@ impl ElabCtx<'_> {
         port_binding: &HashMap<Name, PortBinding>,
         param_binding: &HashMap<Name, String>,
         sys_binding: &[(ParamSysFun, String)],
+        ps_levels: &[PsLevel],
     ) -> String {
         let target = self.tree[target_id].clone();
         let mut scope = Scope::default();
@@ -5168,6 +6241,17 @@ impl ElabCtx<'_> {
                 scope.subst.insert(name.to_string(), format!("{prefix}{name}"));
             }
         }
+        // Book audit (paramsets), LRM 6.4.3: a module variable a paramset of the
+        // chain redeclares steps aside -- the paramset's is the one reported (or,
+        // without a description, the one that hides the module's).
+        let ps_names = paramset_level_names(ps_levels, prefix);
+        for item in &target.items {
+            let ModuleItem::Variable(id) = item else { continue };
+            let name = self.tree[*id].name.to_string();
+            if ps_levels.iter().any(|l| l.var_names.contains(&name)) {
+                scope.subst.insert(name.clone(), format!("{prefix}{name}__ps"));
+            }
+        }
         // Enhancement-86: a child's own port-branch names alias the synthesized
         // ammeter (overriding the generic `{prefix}{name}` rename above); the
         // declaration itself is dropped by `render_items`.
@@ -5214,6 +6298,7 @@ impl ElabCtx<'_> {
             out.push('\n');
         }
         out.push_str(&body);
+        out.push_str(&render_paramset_levels(ps_levels, &ps_names, &scope));
         out
     }
 

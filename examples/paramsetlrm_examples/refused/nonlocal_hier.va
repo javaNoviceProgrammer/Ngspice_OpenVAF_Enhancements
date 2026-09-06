@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+module vres(inout electrical p, n);
+parameter real R = 1k;
+analog I(p,n) <+ V(p,n)/R;
+endmodule
+module fab;
+parameter real rsh = 120.0;
+endmodule
+paramset rp vres;
+.R = fab.rsh;
+endparamset

@@ -122,6 +122,14 @@ impl ModuleInfo {
                     if declarations.in_block() {
                         continue;
                     }
+                    // Book audit (paramsets), LRM 6.4.3: a module output variable a
+                    // paramset redeclares lives in the twin as `name$<paramset>`; the
+                    // paramset's own is "the value reported for any instance that
+                    // uses the paramset", and one without a description makes the
+                    // module's unavailable -- so the hidden one is not exported.
+                    if name.contains('$') {
+                        continue;
+                    }
                     let units = units
                         .and_then(|attr| {
                             let lit = attr.val().and_then(|e| e.as_str_literal());
@@ -415,6 +423,7 @@ impl ModuleInfo {
                             dynamic_bounds: false,
                             stat,
                             range_text: param.bounds_source(db),
+                            default_value: param.default_const(db),
                         },
                     );
                 }
@@ -968,6 +977,9 @@ pub struct ParamInfo {
     pub dynamic_bounds: bool,
     /// `(* std= / std_rel= / dist= *)` statistics for `.option osdimc`
     pub stat: Option<ParamStat>,
+    /// Book audit (paramsets), LRM 6.4.2: the default's value when it is a
+    /// compile-time constant, for the simulator's paramset selection.
+    pub default_value: Option<f64>,
     /// Enhancement-558: the declared range as the source spells it, for the
     /// simulator's out-of-bounds message; empty without a range
     pub range_text: String,

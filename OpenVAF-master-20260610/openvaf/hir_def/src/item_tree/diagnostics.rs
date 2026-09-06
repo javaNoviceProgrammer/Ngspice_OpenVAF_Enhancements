@@ -173,6 +173,11 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                     .with_message(format!(
                         "paramset assigns '{name}', which module '{target}' does not declare"
                     ))
+                    .with_notes(vec![
+                        "`.name = expr;` assigns a parameter of the target, or (LRM 6.4.1) one \
+                         of its variables; a hierarchical system parameter is written `.$mfactor`"
+                            .to_owned(),
+                    ])
                     .with_labels(vec![Label {
                         style: LabelStyle::Primary,
                         file_id: span.file,
@@ -440,6 +445,48 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                         "help: a paramset can bind target-module parameters (`.r = 2k;`) and the \
                          hierarchical system parameters $mfactor, $xposition, $yposition, \
                          $angle, $hflip and $vflip"
+                            .to_owned(),
+                    ])
+            }
+            ItemTreeDiagnostic::ParamsetNameClash { ast_id, name, what } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "paramset declares '{name}', the name of a {what} of its target"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("'{name}' is a {what} of the target module"),
+                    }])
+                    .with_notes(vec![
+                        "a paramset's parameters, aliases and variables may reuse the names of \
+                         its target's scalar parameters, variables and functions (LRM 6.4 keeps \
+                         the two namespaces apart); a net, a branch or an array of the target \
+                         cannot be shadowed -- rename the paramset's declaration"
+                            .to_owned(),
+                    ])
+            }
+            ItemTreeDiagnostic::ParamsetFixedParam { ast_id, name, target } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "paramset assigns '{name}', which is not a parameter of '{target}'"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("'{name}' is fixed in '{target}'"),
+                    }])
+                    .with_notes(vec![
+                        "LRM 6.4: `.name = expr;` assigns a parameter of the paramset's target -- \
+                         a `localparam`, or a parameter an earlier paramset of the chain already \
+                         assigned, is no longer one; assign it where it is a parameter, or make \
+                         it a parameter of the intermediate paramset"
                             .to_owned(),
                     ])
             }

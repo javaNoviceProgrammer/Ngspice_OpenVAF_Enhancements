@@ -4,13 +4,14 @@ use basedb::lints::LintRegistry;
 use basedb::{AstIdMap, ErasedAstId, LintAttrs};
 use syntax::ast::{self, ArgListOwner, AstToken, AttrIter, AttrsOwner, FunctionRef};
 use syntax::{AstNode, SyntaxKind};
-use syntax::name::AsName;
+use syntax::name::{AsName, Name};
 use syntax::AstPtr;
 
 // use tracing::debug;
 use super::{Body, BodySourceMap};
 use crate::db::HirDefDB;
 use crate::expr::{CaseCond, Event, GlobalEvent};
+use crate::item_tree::{apply_rename, RenameMap};
 use crate::nameres::DefMapSource;
 use crate::{BlockLoc, Case, CaseKind, CaseMask, Expr, ExprId, Intern, Literal, Path, ScopeId, Stmt, StmtId};
 
@@ -21,9 +22,37 @@ pub(super) struct LowerCtx<'a> {
     pub(super) ast_id_map: &'a AstIdMap,
     pub(super) curr_scope: (ScopeId, ErasedAstId),
     pub(super) registry: &'a LintRegistry,
+    /// Book audit (paramsets): the map every single-segment identifier of the
+    /// text is read through -- `None` outside a paramset's twin module.
+    pub(super) renames: Option<RenameMap>,
+    /// Book audit (paramsets): the map for `.name` references (LRM 6.4.3).
+    pub(super) dot_renames: Option<RenameMap>,
 }
 
 impl LowerCtx<'_> {
+    /// Book audit (paramsets): applies [`Self::renames`] to a bare identifier path.
+    fn rename_path(&self, path: &mut Path) {
+        if self.renames.is_some() && !path.is_root_path && path.segments.len() == 1 {
+            path.segments[0] = apply_rename(self.renames.as_ref(), &path.segments[0]);
+        }
+    }
+
+    /// Book audit (paramsets), LRM 6.4.1: a paramset's `.var = expr;` on one of
+    /// its target's variables, as the assignment statement it is.
+    pub fn collect_paramset_var_override(&mut self, ov: ast::ParamsetOverride) -> StmtId {
+        let name = match ov.name() {
+            Some(name) => apply_rename(self.dot_renames.as_ref(), &name.as_name()),
+            None => Name::resolve("<missing>"),
+        };
+        let dst = self.alloc_expr_desugared(Expr::Path { path: Path::new_ident(name), port: false });
+        let val = self.collect_opt_expr(ov.val());
+        self.alloc_stmt_desugared(Stmt::Assignment {
+            dst,
+            val,
+            assignment_kind: ast::AssignOp::Assign,
+        })
+    }
+
     pub fn collect_opt_expr(&mut self, expr: Option<ast::Expr>) -> ExprId {
         if let Some(expr) = expr {
             self.collect_expr(expr)
@@ -148,7 +177,10 @@ impl LowerCtx<'_> {
 
             ast::Expr::Call(call) => {
                 let fun = call.function_ref().and_then(|fun| match fun {
-                    FunctionRef::Path(path) => Path::resolve(path),
+                    FunctionRef::Path(path) => Path::resolve(path).map(|mut p| {
+                        self.rename_path(&mut p);
+                        p
+                    }),
                     FunctionRef::SysFun(fun) => Some(Path::new_ident(fun.as_name())),
                 });
 
@@ -171,12 +203,23 @@ impl LowerCtx<'_> {
             // TODO refactor with if let binding and default case is missing expression
             // BLOCK
             ast::Expr::PathExpr(path) => {
-                if let Some(path) = path.path().and_then(Path::resolve) {
+                if let Some(mut path) = path.path().and_then(Path::resolve) {
+                    self.rename_path(&mut path);
                     Expr::Path { path, port: false }
                 } else {
                     return self.missing_expr();
                 }
             }
+
+            // Book audit (paramsets), LRM 6.4.3: `.gm` in a paramset statement is
+            // the target's declaration of that name, read through the target map.
+            ast::Expr::ParamsetRef(dot) => match dot.name() {
+                Some(name) => {
+                    let name = apply_rename(self.dot_renames.as_ref(), &name.as_name());
+                    Expr::Path { path: Path::new_ident(name), port: false }
+                }
+                None => return self.missing_expr(),
+            },
 
             ast::Expr::PortFlow(port_flow) => {
                 if let Some(path) = port_flow.port().and_then(Path::resolve) {
@@ -187,7 +230,8 @@ impl LowerCtx<'_> {
             }
 
             ast::Expr::BitSelectExpr(bit_select) => {
-                if let Some(base) = bit_select.base().and_then(Path::resolve) {
+                if let Some(mut base) = bit_select.base().and_then(Path::resolve) {
+                    self.rename_path(&mut base);
                     let indices = bit_select.indices().map(|e| self.collect_expr(e)).collect();
                     let id = self
                         .alloc_expr(Expr::BitSelect { base, indices }, AstPtr::new(&expr));

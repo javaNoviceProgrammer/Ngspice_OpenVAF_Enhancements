@@ -227,6 +227,16 @@ pub enum ItemTreeDiagnostic {
     /// A `paramset` (Enhancement-21) named a target module that does not exist
     /// in this file. The paramset is dropped (contributes no OSDI module).
     UnknownParamsetTarget { ast_id: ErasedAstId, target: Name },
+    /// Book audit (paramsets): a paramset declaration reuses the name of
+    /// something of its target that cannot be shadowed -- a net, a branch, or
+    /// an array -- where a scalar parameter, variable, alias or function of
+    /// the same name is renamed out of the way (LRM 6.4: the two namespaces
+    /// are separate).
+    ParamsetNameClash { ast_id: ErasedAstId, name: Name, what: &'static str },
+    /// Book audit (paramsets): a `.x = e;` names a `localparam` of the target,
+    /// or a parameter an earlier paramset of the chain already fixed -- not a
+    /// parameter of the module_or_paramset the LRM 6.4 grammar allows.
+    ParamsetFixedParam { ast_id: ErasedAstId, name: Name, target: Name },
 }
 
 impl Default for ItemTree {
@@ -433,6 +443,21 @@ pub struct Module {
     pub num_ports: u32,
     pub items: Vec<ModuleItem>,
     pub ast_id: AstId<ast::ModuleDecl>,
+    /// Book audit (paramsets): for the twin module of a `paramset`, the
+    /// declaration it was lowered from (`ast_id` is the target module's, for
+    /// the ports and the body). `None` for a module written as one.
+    pub paramset: Option<AstId<ast::ParamsetDecl>>,
+    /// Book audit (paramsets): where a twin module's analog body comes from,
+    /// in order -- the target module's analog blocks (through however many
+    /// paramsets the chain has), then each paramset's own statements (LRM
+    /// 6.4.1) -- each with the name map its text is read through. Empty for
+    /// a module written as one, whose body is its own `ast_id`.
+    pub analog_sources: Vec<AnalogSource>,
+    /// Book audit (paramsets), LRM 6.4.2: for a paramset declared under a name
+    /// other paramsets share, that name -- the twins of the family are
+    /// `rp`, `rp__2`, `rp__3`, ... in declaration order, and an instance or a
+    /// `.model` card naming `rp` selects among them by the clause's rules.
+    pub overload_family: Option<Name>,
     /// Vectored-net ("bus") declarations in this module, used to resolve
     /// bit-select expressions (`bus[i]`) and to diagnose bare references to
     /// a bus without a bit-select.
@@ -553,6 +578,45 @@ impl BusDecl {
     }
 }
 
+/// Book audit (paramsets): `(from, to)` pairs applied to every single-segment
+/// identifier of a piece of source text when it is lowered into a paramset's
+/// twin module. A paramset's own declarations may reuse its target's names
+/// (LRM 6.4 keeps the two namespaces apart: `parameter real L = 3u; .L = L;`),
+/// so the target's colliding declarations live in the twin under `L$<paramset>`
+/// and the target-authored text is read through this map.
+pub type RenameMap = Arc<[(Name, Name)]>;
+
+/// Applies a rename map to one identifier.
+pub fn apply_rename(map: Option<&RenameMap>, name: &Name) -> Name {
+    match map.and_then(|m| m.iter().find(|(from, _)| from == name)) {
+        Some((_, to)) => to.clone(),
+        None => name.clone(),
+    }
+}
+
+/// Book audit (paramsets): one source of a twin module's analog body.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct AnalogSource {
+    pub kind: AnalogSourceKind,
+    /// The map for the text's bare identifiers.
+    pub renames: Option<RenameMap>,
+    /// The map for the text's `.name` references (LRM 6.4.3), which name the
+    /// declarations of the paramset's target.
+    pub dot_renames: Option<RenameMap>,
+    /// The `.name = expr;` statements of a paramset source that assign one of
+    /// the target's VARIABLES (LRM 6.4.1's output-variable assignment), in
+    /// textual order; they run before the source's other statements.
+    pub var_overrides: Vec<AstId<ast::ParamsetOverride>>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum AnalogSourceKind {
+    /// A module's analog blocks (`analog initial` ones for the initial body).
+    Module(AstId<ast::ModuleDecl>),
+    /// A paramset's statements (never part of the initial body).
+    Paramset(AstId<ast::ParamsetDecl>),
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum ModuleItem {
     Scope(AstId<BlockStmt>),
@@ -632,6 +696,9 @@ pub struct Var {
     pub name: Name,
     pub ty: Type,
     pub ast_id: AstId<ast::Var>,
+    /// Book audit (paramsets): the name map the initialiser is read through
+    /// when this is a target declaration cloned into a paramset's twin.
+    pub renames: Option<RenameMap>,
     /// For an element of an array variable (`real x[0:2] = '{...};`), this element's flat
     /// position in the array literal (declaration order, row-major), used to pick its
     /// per-element initializer leaf. `None` for an ordinary scalar variable — mirrors
@@ -645,6 +712,9 @@ pub struct Param {
     pub ty: Option<Type>,
     pub is_local: bool,
     pub ast_id: AstId<ast::Param>,
+    /// Book audit (paramsets): the name map the default (or override) text is
+    /// read through when this is a declaration cloned into a paramset's twin.
+    pub renames: Option<RenameMap>,
     /// For an element of an array-valued parameter (`parameter real [msb:lsb] c = '{...};`),
     /// this element's position in the array literal (declaration order, msb→lsb), used to pick
     /// its per-element default. `None` for an ordinary scalar parameter. See `lower_param`.
@@ -758,6 +828,9 @@ pub struct Function {
     pub args: TiVec<LocalFunctionArgId, FunctionArg>,
     pub items: Vec<FunctionItem>,
     pub ast_id: AstId<ast::Function>,
+    /// Book audit (paramsets): the name map the body is read through when
+    /// this is a target function cloned into a paramset's twin.
+    pub renames: Option<RenameMap>,
     /// Array-variable declarations local to this `analog function` (locals and array-typed
     /// arguments), used to resolve `x[i]` bit-selects inside the function body — the function-scope
     /// analogue of `Module::var_arrays` (Enhancement-18).

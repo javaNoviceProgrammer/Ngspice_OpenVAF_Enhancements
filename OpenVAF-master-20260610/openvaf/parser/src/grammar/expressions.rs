@@ -210,6 +210,16 @@ fn atom_expr_inner(p: &mut Parser) -> Option<CompletedMarker> {
             }
         }
         SYSFUN => sys_fun_call(p),
+        // Book audit (paramsets), LRM 6.4.3: `.gm` in a paramset statement is
+        // the module's output variable (or parameter) of that name.
+        T![.] if p.nth(1) == IDENT => {
+            let m = p.start();
+            p.bump(T![.]);
+            let n = p.start();
+            p.bump(IDENT);
+            n.complete(p, NAME_REF);
+            m.complete(p, PARAMSET_REF)
+        }
         T![<] => port_flow(p),
         INT_NUMBER => {
             let m = p.start();

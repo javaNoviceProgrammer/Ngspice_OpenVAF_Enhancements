@@ -142,6 +142,13 @@ impl Module {
         db.module_data(self.id).name.to_string()
     }
 
+    /// Book audit (paramsets), LRM 6.4.2: the shared name of the overloaded
+    /// paramset family this module belongs to (`rp` for the twins `rp`,
+    /// `rp__2`, ...), `None` for any other module.
+    pub fn overload_family(self, db: &CompilationDB) -> Option<String> {
+        db.module_data(self.id).overload_family.as_ref().map(|n| n.to_string())
+    }
+
     pub fn uuid(self, _db: &CompilationDB) -> u32 {
         self.id.as_intern_id().as_u32()
     }
@@ -641,6 +648,12 @@ impl Parameter {
     /// A `localparam` is never externally overridable.
     pub fn is_local(self, db: &CompilationDB) -> bool {
         db.param_data(self.id).is_local
+    }
+
+    /// Book audit (paramsets), LRM 6.4.2: the default's value when it is a
+    /// compile-time constant, `None` otherwise.
+    pub fn default_const(self, db: &CompilationDB) -> Option<f64> {
+        hir_ty::table_source::param_default_const(db, self.id)
     }
 
     /// LRM 4.7.1: a parameter declared INSIDE an analog function body. It is

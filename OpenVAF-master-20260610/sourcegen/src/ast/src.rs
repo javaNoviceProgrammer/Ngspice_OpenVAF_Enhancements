@@ -204,6 +204,7 @@ pub(crate) const KINDS_SRC: KindsSrc = KindsSrc {
         "PORT_FLOW",
         "PARAMSET_DECL",
         "PARAMSET_OVERRIDE",
+        "PARAMSET_REF",
         "SOURCE_FILE",
     ],
 };

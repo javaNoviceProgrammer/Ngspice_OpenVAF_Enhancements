@@ -296,6 +296,9 @@ pub struct ModuleData {
     pub name: Name,
     pub ports: Vec<NodeId>,
     pub internal_nodes: Vec<NodeId>,
+    /// Book audit (paramsets), LRM 6.4.2: the shared name of an overloaded
+    /// paramset family this module is a member of.
+    pub overload_family: Option<Name>,
 }
 
 impl ModuleData {
@@ -320,6 +323,11 @@ impl ModuleData {
             .filter(|(_, node)| !node.is_port)
             .map(|(id, _)| NodeLoc { module, id }.intern(db))
             .collect();
-        Arc::new(ModuleData { name: item_tree[loc.id].name.clone(), ports, internal_nodes })
+        Arc::new(ModuleData {
+            name: item_tree[loc.id].name.clone(),
+            ports,
+            internal_nodes,
+            overload_family: item_tree[loc.id].overload_family.clone(),
+        })
     }
 }

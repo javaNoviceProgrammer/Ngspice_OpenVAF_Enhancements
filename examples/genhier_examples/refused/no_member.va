@@ -1,0 +1,5 @@
+`include "disciplines.vams"
+module m(inout electrical a, b);
+if (1) begin : blk electrical x; analog V(x) <+ 1.0; end
+analog I(a, b) <+ V(blk.nosuch);
+endmodule

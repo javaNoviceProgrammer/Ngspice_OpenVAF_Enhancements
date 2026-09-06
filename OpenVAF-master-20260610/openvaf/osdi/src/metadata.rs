@@ -250,6 +250,29 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         res
     }
 
+    /// Book audit (paramsets), LRM 6.4.2: the literal default of every
+    /// parameter, in `param_opvar()` order (NaN for a builtin or a default that
+    /// is not a compile-time constant), for the `OSDI_PARAM_DEFAULTS` side-table.
+    pub fn param_defaults(&self) -> Vec<f64> {
+        let OsdiCompilationUnit { inst_data, model_data, module, .. } = self;
+        let mut res = Vec::new();
+        for param in inst_data.params.keys() {
+            res.push(match param {
+                OsdiInstanceParam::User(param) => {
+                    module.info.params[param].default_value.unwrap_or(f64::NAN)
+                }
+                OsdiInstanceParam::Builtin(_) => f64::NAN,
+            });
+        }
+        for param in model_data.params.keys() {
+            if module.info.params[param].is_instance {
+                continue;
+            }
+            res.push(module.info.params[param].default_value.unwrap_or(f64::NAN));
+        }
+        res
+    }
+
     pub fn stat_params(&self) -> Vec<(u32, u32, f64, f64)> {
         const DIST_UNIFORM: u32 = 1;
         const DIST_REL: u32 = 2;

@@ -210,6 +210,39 @@ paramset fast_nmos nmos_va;
 endparamset
 ```
 
+Enhancement-563 (the 2026-09-05 book audit) brought the clause's own
+idioms: a paramset's parameters, aliases and variables **reuse the
+module's names** (`parameter real l = 1u; .l = l;` — the LRM's own `nch`
+example), the two namespaces kept apart by renaming the module's
+declaration inside the compiled twin; a paramset may target **another
+paramset** and assign the parent's own parameters (LRM 6.4: "a chain of
+paramsets"); an **`aliasparam`** declared in the paramset names its
+parameter on the `.model` card and in an instance override (as does a
+module's alias, 3.4.7); **integer/real variables and statements** (6.4.1
+— assignments and conditional execution; a contribution, an event
+control, a named block or an access function is refused) compute the
+paramset's **output variables** (6.4.3) from the module's through
+`.name`, a same-named one replacing the module's and a description-less
+one hiding it, and `.var = expr;` assigns a module variable;
+**hierarchical out-of-module references to `localparam`s** of another
+module (`.tox = semicoCMOS.tox + …`, the "constant module" idiom) fold
+at compile time, a reference to a non-local parameter being refused as
+6.4.1 requires; and a paramset **instantiated inside a module** carries
+all of it — the chain's bindings, the alias, `.$mfactor` composed with
+the instance's, the variables and statements under the instance prefix
+(an instance used to render the module at its defaults, silently).
+Enhancement-565 added **overloading (6.4.2)**: a family of same-named
+paramsets compiles to the twins `nch`, `nch__2`, …; an instance inside a
+module is resolved at elaboration and a `.model nch …` card by ngspice as
+the card is materialised — every overridden parameter one of the member's
+own, the overridden values and the un-given defaults within the declared
+ranges, then the fewest un-overridden parameters, the most ranged local
+parameters, the fewest unconnected ports — the LRM's own four-`nch`
+example selecting exactly as the clause says; none applying, or several,
+is an error naming each member's reason. ⚠️ Still refused with a located
+error: a random draw in an override (E-545's documented statistics
+design).
+
 ### 3.3 Natures, disciplines, nets (LRM 3.5–3.7)
 
 ✅ Discipline/nature declarations with attribute access from expressions
@@ -1185,9 +1218,8 @@ Remaining §6 gaps, all **refused with targeted diagnostics** rather than
 silently misbehaving: several generate constructs in one
 `generate…endgenerate` region (separate regions work), descending or
 general genvar loops (`i>=0; i=i-1` — only `<`/`<=` with an ascending
-`+` step unroll), hierarchical references into generate-block instances
-(`g[2].gg`), `macromodule`, paramset overloading and paramset output
-variables, and hierarchical access to a child's *port* nets
+`+` step unroll), `macromodule`, and
+hierarchical access to a child's *port* nets
 (`V(u1.a, u1.b)`; child internal nets and `$root` paths work). Two
 behaviors are ⚠️ accepted extensions: named-block variables are
 readable *and writable* through hierarchical names (the LRM makes the
@@ -1500,7 +1532,7 @@ connected port.)*
 | casex/casez | ⚠️ extension beyond Annex C (C.7 excludes them from Verilog-A) | `casexz` |
 | 5.10 Events (steps with Table 5-1 exact per analysis, cross/above/timer, cross DC/t=0 gating, above init event, OR lists incl. comma, phase lists, placement rules enforced, invalid events rejected) | ✅ (cross/above tolerances ⚠️ warned not honored; strict out-of-range dir ⚠️ documented) | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
 | 4.7 Analog functions (arrays in/out/return incl. the LRM's Example 3 spelling; VAMS-2023 string return & args; function-local `parameter`s with shadowing; output-array zero-init; `return` statement) | ✅ (named blocks in bodies ⚠️ and const-context calls ⚠️ documented relaxations) | `funcarray`, `arrayout`, `arrayret` |
-| 6 Hierarchy (**9.18 Table 9-29 exact: `$angle` modulo 360 and the allowed-value bounds enforced on every route**, [E-541](../../enhancements_doc/Enhancement-541.md); instantiation, generate incl. the legacy analog-block form — obsolete per G.2.3/C.20, kept as a compat extension ⚠️ — defparam incl. inside/beside generate, `#(.$mfactor(n))`-family child overrides with the full multiplicity transform, `$param_given` through hierarchy overrides, connection-size and mixed-override checking, $root, part-select connections, hierarchical branch probes) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
+| 6 Hierarchy (**9.18 Table 9-29 exact: `$angle` modulo 360 and the allowed-value bounds enforced on every route**, [E-541](../../enhancements_doc/Enhancement-541.md); instantiation, generate incl. the legacy analog-block form — obsolete per G.2.3/C.20, kept as a compat extension ⚠️ — defparam incl. inside/beside generate, `#(.$mfactor(n))`-family child overrides with the full multiplicity transform, `$param_given` through hierarchy overrides, connection-size and mixed-override checking, $root, part-select connections, hierarchical branch probes; **paramsets per 6.4** — the module's names reused, chains, `aliasparam`, 6.4.1 statements and 6.4.3 output variables, out-of-module `localparam` references, instantiation inside a module, [E-563](../../enhancements_doc/Enhancement-563.md); **overloading per 6.4.2** on both routes, [E-565](../../enhancements_doc/Enhancement-565.md); **hierarchical names into generate blocks** per 6.6.3/6.7 — `blk.x`, `g1[0].z`, `g1[0].genblk1.w`, `two.q`, `g1[0].r1.mid`, implicit `genblk<n>` with the leading-zero rule, single-item generate branches — [E-564](../../enhancements_doc/Enhancement-564.md)) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
 | 9.4–9.8 Display, file/string I/O (incl. 9.4.6/9.5.9 accepted-iteration deferral, `$monitor` change detection, `%r`, 9.5.1.1 append, pre-opened fds; **`$write` composes one line, multichannel allocation stops at the reserved bit 31, and a mode-changing reopen really reopens** — [E-541](../../enhancements_doc/Enhancement-541.md)) | ✅ ([E-516](../../enhancements_doc/Enhancement-516.md) audit; one-hot MCDs, instance-naming `%m` and the `$fscanf`/reopen read rules from [E-539](../../enhancements_doc/Enhancement-539.md); `$fmonitor` change detection ⚠️, `%l`/`%L` ✖ not implemented — and, unlike the other ✖ entries, it emits the placeholder `__.__` rather than a diagnostic) | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt`, `lrmsysio` |
 | 9.13 Random/distributions (9.13.2 domain rules errors on the deck route too; `type_string` scoped to paramsets) | ✅ (deterministic seed ⚠️ documented) | `rng`, `montecarlo` |
 | 9.6–9.7 Simulation control; **9.7.3 severity tasks: the non-fatal three defer to the accepted iteration, `$error` in an `analog initial` block stops the run, and each message reports its time / swept value / initialization** ([E-541](../../enhancements_doc/Enhancement-541.md)) | ✅ | `simctrl`, `simparamdiag`, `lrmvoice` |

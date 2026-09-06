@@ -18,7 +18,7 @@ use super::{
 };
 // use tracing::trace;
 use crate::db::HirDefDB;
-use crate::item_tree::AliasParam;
+use crate::item_tree::{AliasParam, AnalogSource, AnalogSourceKind, RenameMap};
 use crate::types::AsType;
 use crate::{LocalFunctionArgId, LocalNodeId, Path, Type};
 use rustc_hash::FxHashMap;
@@ -162,15 +162,57 @@ impl Ctx {
     /// A `paramset <name> <target>;` defines an instantiable model `<name>` that behaves exactly
     /// like `<target>` (same terminals, same analog behaviour) but with the listed target
     /// parameters bound to the paramset's `.<param> = <expr>;` expressions. The twin module reuses
-    /// the target's ports/body/branches/functions verbatim by *sharing the target's `ast_id`*,
-    /// under the paramset's name; the paramset's own parameters are added as the twin's (card)
-    /// parameters, and each bound target parameter is replaced by a fresh `localparam` whose value
-    /// is the override expression (so it is no longer settable from the model card). Everything
-    /// downstream (name resolution, body lowering, OSDI descriptor emission) then treats the twin
-    /// as an ordinary module.
+    /// the target's ports/body/branches by *sharing the target's `ast_id`*, under the paramset's
+    /// name; the paramset's own parameters are added as the twin's (card) parameters, and each
+    /// bound target parameter is replaced by a fresh `localparam` whose value is the override
+    /// expression (so it is no longer settable from the model card). Everything downstream (name
+    /// resolution, body lowering, OSDI descriptor emission) then treats the twin as an ordinary
+    /// module.
+    ///
+    /// Book audit (paramsets), LRM 6.4: the paramset's namespace is its own. Its
+    /// parameters, aliases and variables may reuse the target's names -- every
+    /// paramset in the book and the LRM does (`parameter real L = 3u; .L = L;`) --
+    /// so a target declaration whose name the paramset redeclares is cloned into
+    /// the twin under `<name>$<paramset>`, and every piece of target-authored text
+    /// (the analog body, parameter defaults, variable initialisers, function
+    /// bodies) is read through a rename map when it is lowered. Every target
+    /// parameter, variable and function is cloned (not shared by id), which also
+    /// puts the twin's parameters in textual order, as the forward-reference check
+    /// requires, so a paramset may target another paramset (LRM 6.4: "a chain of
+    /// paramsets") and assign the parent's own parameters. A target parameter the
+    /// paramset does not assign but whose name it reuses becomes a localparam at
+    /// its default: the paramset's own declaration is what the card sets. The
+    /// paramset's variables (LRM 6.4.3 output variables) and statements (6.4.1)
+    /// join the twin's analog body after the target's, `.name` reading the target's
+    /// declarations through the same map; `.name = expr;` on a target variable is
+    /// such a statement.
     fn lower_paramset(&mut self, decl: ast::ParamsetDecl) -> Option<ItemTreeId<Module>> {
-        let name = decl.name()?.as_name();
+        let declared_name = decl.name()?.as_name();
         let ast_id = self.source_ast_id_map.ast_id(&decl);
+        // LRM 6.4.2: "paramset identifiers need not be unique". A second paramset
+        // of a name becomes the twin `<name>__2` (then `__3`, ...) and every member
+        // of the family, the first included, records the shared name.
+        let mut overload_family = None;
+        let same_name: Vec<ItemTreeId<Module>> = self
+            .tree
+            .data
+            .modules
+            .iter_enumerated()
+            .filter(|(_, m)| {
+                m.paramset.is_some()
+                    && (m.name == declared_name || m.overload_family.as_ref() == Some(&declared_name))
+            })
+            .map(|(id, _)| id)
+            .collect();
+        let name = if same_name.is_empty() {
+            declared_name.clone()
+        } else {
+            for &id in &same_name {
+                self.tree.data.modules[id].overload_family = Some(declared_name.clone());
+            }
+            overload_family = Some(declared_name.clone());
+            Name::resolve(&format!("{declared_name}__{}", same_name.len() + 1))
+        };
         let target_name = decl.target()?.as_name();
         // Enhancement-398: the syntax root, so a target parameter's declaration
         // (and therefore its constraints) can be reached while binding.
@@ -227,14 +269,38 @@ impl Ctx {
             overrides.push((nm, ov_id, ov.clone()));
         }
 
-        // Lower the paramset's own parameters (the twin's card parameters) first, so their item-
-        // tree ids precede the target's items -- a bound target parameter (now a localparam) may
-        // reference them in its override expression.
+        // The paramset's own declarations first, in textual order -- parameters
+        // (the twin's card parameters), aliases, variables -- so their item-tree
+        // ids precede the target's: a bound target parameter (now a localparam)
+        // may reference them in its override expression. Statements are walked
+        // for the block scopes they may (illegally, LRM 6.4.1) declare.
         let mut items: Vec<ModuleItem> = Vec::new();
         let mut param_arrays: Vec<BusDecl> = Vec::new();
+        let mut var_arrays: Vec<BusDecl> = Vec::new();
         for pd in decl.param_decls() {
             self.lower_param(pd, &mut items, Some(&mut param_arrays));
         }
+        for al in decl.alias_params() {
+            self.lower_alias_param(al, &mut items);
+        }
+        for vd in decl.var_decls() {
+            self.lower_var(vd, &mut items, Some(&mut var_arrays));
+        }
+        for st in decl.stmts() {
+            self.lower_stmt(st, &mut items);
+        }
+        let mut own_names: Vec<Name> = items
+            .iter()
+            .filter_map(|it| match *it {
+                ModuleItem::Parameter(p) => Some(self.tree.data.parameters[p].name.clone()),
+                ModuleItem::AliasParameter(a) => {
+                    Some(self.tree.data.alias_parameters[a].name.clone())
+                }
+                ModuleItem::Variable(v) => Some(self.tree.data.variables[v].name.clone()),
+                _ => None,
+            })
+            .collect();
+        own_names.extend(param_arrays.iter().chain(var_arrays.iter()).map(|b| b.base_name.clone()));
 
         // Each hierarchical system parameter override becomes a hidden real localparam named
         // `$paramset$<name>` (Enhancement-44). The `$`-spelling can collide with no user
@@ -246,55 +312,164 @@ impl Ctx {
         // localparam-with-override machinery, so it may reference the card parameters above.
         // The `ast_id` is a placeholder (there is no `ast::Param` node behind it); the
         // override-expression branch of `param_body_with_sourcemap` never dereferences it.
+        let mut own_hsp_names: Vec<Name> = Vec::new();
         for &(sys, ov) in &hsp_overrides {
+            let hsp_name = Name::resolve(&format!("$paramset${sys:?}"));
+            own_hsp_names.push(hsp_name.clone());
             let param = Param {
-                name: Name::resolve(&format!("$paramset${sys:?}")),
+                name: hsp_name,
                 ty: Some(Type::Real),
                 is_local: true,
                 ast_id: AstId::<ast::Param>::from_erased(ov.erased()),
                 array_index: None,
+                renames: None,
                 override_expr: Some(ov),
             };
             let id = self.tree.data.parameters.push_and_get_key(param);
             items.push(ModuleItem::Parameter(id));
         }
 
-        // Append the target's items, rebinding any overridden parameter to a fresh localparam.
         let target = self.tree.data.modules[target_id].clone();
+
+        // The rename map: every target declaration the paramset redeclares moves
+        // out of the way; a net, branch or array cannot, and is refused.
+        let mut child: Vec<(Name, Name)> = Vec::new();
+        let renamed = |n: &Name| Name::resolve(&format!("{n}${name}"));
+        for &item in &target.items {
+            let (n, what) = match item {
+                ModuleItem::Parameter(p) => (self.tree.data.parameters[p].name.clone(), ""),
+                ModuleItem::Variable(v) => (self.tree.data.variables[v].name.clone(), ""),
+                ModuleItem::AliasParameter(a) => {
+                    (self.tree.data.alias_parameters[a].name.clone(), "")
+                }
+                ModuleItem::Function(f) => (self.tree.data.functions[f].name.clone(), ""),
+                ModuleItem::Branch(b) => (self.tree.data.branches[b].name.clone(), "branch"),
+                ModuleItem::Node(id) => (target.nodes[id].name.clone(), "net"),
+                ModuleItem::Scope(_) | ModuleItem::Instantiation(_) => continue,
+            };
+            if !own_names.contains(&n) || child.iter().any(|(f, _)| *f == n) {
+                continue;
+            }
+            if what.is_empty() {
+                child.push((n.clone(), renamed(&n)));
+            } else {
+                self.tree.diagnostics.push(ItemTreeDiagnostic::ParamsetNameClash {
+                    ast_id: ast_id.into(),
+                    name: n,
+                    what,
+                });
+            }
+        }
+        for arr in target.buses.iter().chain(&target.var_arrays).chain(&target.param_arrays) {
+            if own_names.contains(&arr.base_name) {
+                self.tree.diagnostics.push(ItemTreeDiagnostic::ParamsetNameClash {
+                    ast_id: ast_id.into(),
+                    name: arr.base_name.clone(),
+                    what: "array",
+                });
+            }
+        }
+
+        // Append the target's items, cloned: a bound parameter becomes a localparam
+        // holding the override; every other parameter, variable and function keeps
+        // its role under its (possibly renamed) name, reading its own text through
+        // the composed map.
+        let target_vars: Vec<Name> = target
+            .items
+            .iter()
+            .filter_map(|it| match *it {
+                ModuleItem::Variable(v) => Some(self.tree.data.variables[v].name.clone()),
+                _ => None,
+            })
+            .collect();
         let mut bound_names: Vec<Name> = Vec::new();
         for &item in &target.items {
             match item {
                 ModuleItem::Parameter(pid) => {
-                    let param_name = self.tree.data.parameters[pid].name.clone();
-                    if let Some((_, ov, ov_node)) =
-                        overrides.iter().find(|(n, _, _)| *n == param_name).cloned()
-                    {
-                        bound_names.push(param_name.clone());
-                        // Enhancement-398: the bound parameter becomes a localparam and
-                        // `param_body_with_sourcemap` discards its constraints, so nothing
-                        // downstream ever range-checks it -- a paramset was the ONE way to
-                        // put a value the declaration forbids into a model. Check it here,
-                        // where both the override and the target's constraints are still
-                        // syntax.
-                        if let Some(pa) = self
-                            .source_ast_id_map
-                            .get(self.tree.data.parameters[pid].ast_id)
-                            .to_node(&root)
-                            .into()
-                        {
-                            let pa: ast::Param = pa;
-                            self.check_paramset_range(&param_name, &pa, &ov_node, ov);
-                        }
-                        let mut bound = self.tree.data.parameters[pid].clone();
-                        bound.is_local = true;
-                        bound.override_expr = Some(ov);
-                        let new_id = self.tree.data.parameters.push_and_get_key(bound);
-                        items.push(ModuleItem::Parameter(new_id));
-                    } else {
-                        items.push(ModuleItem::Parameter(pid));
+                    let orig = self.tree.data.parameters[pid].clone();
+                    // a `.$mfactor` of this paramset replaces the target paramset's
+                    if own_hsp_names.contains(&orig.name) {
+                        continue;
                     }
+                    let mut bound = orig.clone();
+                    bound.name = apply_rename_pairs(&child, &orig.name);
+                    bound.renames = compose_renames(orig.renames.as_ref(), &child);
+                    if let Some((_, ov, ov_node)) =
+                        overrides.iter().find(|(n, _, _)| *n == orig.name).cloned()
+                    {
+                        bound_names.push(orig.name.clone());
+                        if orig.is_local {
+                            self.tree.diagnostics.push(ItemTreeDiagnostic::ParamsetFixedParam {
+                                ast_id: ov.into(),
+                                name: orig.name.clone(),
+                                target: target_name.clone(),
+                            });
+                        } else {
+                            // Enhancement-398: the bound parameter becomes a localparam and
+                            // `param_body_with_sourcemap` discards its constraints, so nothing
+                            // downstream ever range-checks it -- a paramset was the ONE way to
+                            // put a value the declaration forbids into a model. Check it here,
+                            // where both the override and the target's constraints are still
+                            // syntax.
+                            if let Some(pa) = self
+                                .source_ast_id_map
+                                .get(orig.ast_id)
+                                .to_node(&root)
+                                .into()
+                            {
+                                let pa: ast::Param = pa;
+                                self.check_paramset_range(&orig.name, &pa, &ov_node, ov);
+                            }
+                            bound.is_local = true;
+                            bound.override_expr = Some(ov);
+                            // the override is this paramset's own text
+                            bound.renames = None;
+                        }
+                    } else if !orig.is_local && own_names.contains(&orig.name) {
+                        // LRM 6.4: an instance of the paramset cannot set the module's
+                        // parameter; the paramset's own declaration of the name is the
+                        // card parameter, and the module's keeps its default
+                        bound.is_local = true;
+                    }
+                    let new_id = self.tree.data.parameters.push_and_get_key(bound);
+                    items.push(ModuleItem::Parameter(new_id));
+                }
+                ModuleItem::Variable(vid) => {
+                    let mut var = self.tree.data.variables[vid].clone();
+                    var.name = apply_rename_pairs(&child, &var.name);
+                    var.renames = compose_renames(var.renames.as_ref(), &child);
+                    let new_id = self.tree.data.variables.push_and_get_key(var);
+                    items.push(ModuleItem::Variable(new_id));
+                }
+                ModuleItem::Function(fid) => {
+                    let mut fun = self.tree.data.functions[fid].clone();
+                    fun.name = apply_rename_pairs(&child, &fun.name);
+                    fun.renames = compose_renames(fun.renames.as_ref(), &child);
+                    let new_id = self.tree.data.functions.push_and_get_key(fun);
+                    items.push(ModuleItem::Function(new_id));
+                }
+                ModuleItem::AliasParameter(aid) => {
+                    let mut alias = self.tree.data.alias_parameters[aid].clone();
+                    alias.name = apply_rename_pairs(&child, &alias.name);
+                    if let Some(src) = alias.src.as_mut() {
+                        if !src.is_root_path && src.segments.len() == 1 {
+                            src.segments[0] = apply_rename_pairs(&child, &src.segments[0]);
+                        }
+                    }
+                    let new_id = self.tree.data.alias_parameters.push_and_get_key(alias);
+                    items.push(ModuleItem::AliasParameter(new_id));
                 }
                 other => items.push(other),
+            }
+        }
+
+        // `.x = e;` on a target VARIABLE is LRM 6.4.1's output-variable assignment:
+        // a statement of the paramset, run after the module's body.
+        let mut var_overrides: Vec<AstId<ast::ParamsetOverride>> = Vec::new();
+        for (n, ov, _) in &overrides {
+            if !bound_names.contains(n) && target_vars.contains(n) {
+                var_overrides.push(*ov);
+                bound_names.push(n.clone());
             }
         }
 
@@ -311,19 +486,52 @@ impl Ctx {
         }
 
         param_arrays.extend(target.param_arrays.iter().cloned());
+        var_arrays.extend(target.var_arrays.iter().cloned());
+
+        // The analog body: the target's sources through this level's map, then
+        // this paramset's own statements, whose bare names are its own and whose
+        // `.name` references are the target's.
+        let mut analog_sources: Vec<AnalogSource> = if target.analog_sources.is_empty() {
+            vec![AnalogSource {
+                kind: AnalogSourceKind::Module(target.ast_id),
+                renames: compose_renames(None, &child),
+                dot_renames: None,
+                var_overrides: Vec::new(),
+            }]
+        } else {
+            target
+                .analog_sources
+                .iter()
+                .map(|src| AnalogSource {
+                    kind: src.kind,
+                    renames: compose_renames(src.renames.as_ref(), &child),
+                    dot_renames: compose_renames(src.dot_renames.as_ref(), &child),
+                    var_overrides: src.var_overrides.clone(),
+                })
+                .collect()
+        };
+        analog_sources.push(AnalogSource {
+            kind: AnalogSourceKind::Paramset(ast_id),
+            renames: None,
+            dot_renames: compose_renames(None, &child),
+            var_overrides,
+        });
 
         let twin = Module {
             name,
             nodes: target.nodes.clone(),
             num_ports: target.num_ports,
             items,
-            // Share the target's declaration AST: the twin's ports and analog body are the
-            // target's, resolved through the twin's own scope.
+            // Share the target's declaration AST: the twin's ports are the target's;
+            // the body is assembled from `analog_sources`.
             ast_id: target.ast_id,
             buses: target.buses.clone(),
-            var_arrays: target.var_arrays.clone(),
+            var_arrays,
             param_arrays,
             genvars: target.genvars.clone(),
+            paramset: Some(ast_id),
+            analog_sources,
+            overload_family,
         };
         Some(self.tree.data.modules.push_and_get_key(twin))
     }
@@ -950,8 +1158,20 @@ impl Ctx {
         self.check_branch_bus_refs(&items, &buses);
         self.check_alias_cycles(decl.module_items());
 
-        let res =
-            Module { name, nodes, items, ast_id, num_ports, buses, var_arrays, param_arrays, genvars };
+        let res = Module {
+            name,
+            nodes,
+            items,
+            ast_id,
+            num_ports,
+            buses,
+            var_arrays,
+            param_arrays,
+            genvars,
+            paramset: None,
+            analog_sources: Vec::new(),
+            overload_family: None,
+        };
         Some(self.tree.data.modules.push_and_get_key(res))
     }
 
@@ -1299,6 +1519,7 @@ impl Ctx {
                                 // no `ast::Var` node behind it, so there is no initializer
                                 // literal to index into
                                 array_index: None,
+                                renames: None,
                             };
                             let id = self.tree.data.variables.push_and_get_key(var);
                             items.push(id.into());
@@ -1324,6 +1545,7 @@ impl Ctx {
                 ast_id: self.source_ast_id_map.ast_id(&fun),
                 var_arrays,
                 ret_dims,
+                renames: None,
             };
             let fun = self.tree.data.functions.push_and_get_key(fun);
             dst.push(fun.into())
@@ -1880,7 +2102,7 @@ impl Ctx {
 
             let mut push_scalar = |this: &mut Self| {
                 let var =
-                    Var { name: base_name.clone(), ast_id, ty: ty.clone(), array_index: None };
+                    Var { name: base_name.clone(), ast_id, ty: ty.clone(), array_index: None, renames: None };
                 let id = this.tree.data.variables.push_and_get_key(var);
                 dst.push(id.into());
             };
@@ -1945,6 +2167,7 @@ impl Ctx {
                             ast_id,
                             ty: ty.clone(),
                             array_index: Some(pos as u32),
+                            renames: None,
                         };
                         let id = self.tree.data.variables.push_and_get_key(var);
                         dst.push(id.into());
@@ -2002,6 +2225,7 @@ impl Ctx {
                     ty: ty.clone(),
                     ast_id,
                     array_index: None,
+                    renames: None,
                     override_expr: None,
                 };
                 let id = this.tree.data.parameters.push_and_get_key(param);
@@ -2057,6 +2281,7 @@ impl Ctx {
                             ty: ty.clone(),
                             ast_id,
                             array_index: Some(pos as u32),
+                            renames: None,
                             override_expr: None,
                         };
                         let id = self.tree.data.parameters.push_and_get_key(param);
@@ -2226,5 +2451,36 @@ impl Ival {
             }
         }
         end.le(cur)
+    }
+}
+
+/// Book audit (paramsets): [`crate::item_tree::apply_rename`] over a not-yet-shared
+/// pair list.
+fn apply_rename_pairs(map: &[(Name, Name)], name: &Name) -> Name {
+    match map.iter().find(|(from, _)| from == name) {
+        Some((_, to)) => to.clone(),
+        None => name.clone(),
+    }
+}
+
+/// Book audit (paramsets): the map a piece of text is read through one
+/// paramset level further out. `prev` is the map in force where the text was
+/// authored (its targets are names of the paramset being extended); `child`
+/// renames those names as the new paramset sees them. Every name `prev` maps
+/// goes through `child` afterwards, and a name `prev` leaves alone that `child`
+/// renames is added.
+fn compose_renames(prev: Option<&RenameMap>, child: &[(Name, Name)]) -> Option<RenameMap> {
+    let mut out: Vec<(Name, Name)> = prev
+        .map(|m| m.iter().map(|(from, to)| (from.clone(), apply_rename_pairs(child, to))).collect())
+        .unwrap_or_default();
+    for (from, to) in child {
+        if !out.iter().any(|(f, _)| f == from) {
+            out.push((from.clone(), to.clone()));
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out.into())
     }
 }

@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+module r(inout electrical p, n);
+parameter real g = 1e-3;
+analog I(p,n) <+ V(p,n)*g;
+endmodule
+paramset rr r;
+parameter real a = 1.0 from [0:2];
+.g = 1e-3*a;
+endparamset
+paramset rr r;
+parameter real a = 1.0 from [0:2];
+.g = 2e-3*a;
+endparamset
+module top(inout electrical p, n);
+rr #(.a(1.5)) u1(p, n);
+endmodule

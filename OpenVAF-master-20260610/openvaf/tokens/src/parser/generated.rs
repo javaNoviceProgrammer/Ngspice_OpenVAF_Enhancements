@@ -195,6 +195,7 @@ pub enum SyntaxKind {
     PORT_FLOW,
     PARAMSET_DECL,
     PARAMSET_OVERRIDE,
+    PARAMSET_REF,
     SOURCE_FILE,
     #[doc(hidden)]
     __LAST,

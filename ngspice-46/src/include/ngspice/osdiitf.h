@@ -58,6 +58,13 @@ typedef struct OsdiRegistryEntry {
   const char *const *param_ranges; /* E-558: the declared range of each parameter as
                                       text, param_opvar order, "" for none; NULL in an
                                       object without the symbol */
+  const char *paramset_family;     /* E-565 (LRM 6.4.2): the shared name of the
+                                      overloaded paramset family this module belongs
+                                      to (`nch` for the twins nch, nch__2, ...); NULL
+                                      for any other module */
+  const double *param_defaults;    /* E-565: the literal default of each parameter,
+                                      param_opvar order, NaN when it is not a literal;
+                                      NULL in an object without the symbol */
 
   /* Nature / discipline / attribute tables (OSDI_NATURES, OSDI_DISCIPLINES,
    * OSDI_ATTRIBUTES), filled at .osdi load time. The compiler has always
@@ -286,5 +293,11 @@ extern int  OSDIparamGivenByName(const char *knob, int op);
  * none), naming the library. */
 extern int osdi_shadowed_module(const char *type_name, const char **lib,
                                 const char **builtin);
+/* E-565 (LRM 6.4.2): for a `.model` card whose type heads an overloaded
+ * paramset family, the device type of the member the clause's rules select
+ * from the card's parameters; `type` itself when it heads no family. -1 with
+ * `*why` set when no member applies or more than one does. */
+extern int osdi_select_paramset_overload(int type, const char *card,
+                                         const char *modname, char **why);
 extern const char *osdi_shadowed_module_for(const char *devname,
                                             const char **lib);

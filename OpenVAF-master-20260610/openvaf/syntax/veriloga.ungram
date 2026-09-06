@@ -142,6 +142,7 @@ Expr =
 | PortFlow
 | ConcatExpr
 | ReplicationExpr
+| ParamsetRef
 
 
 PathExpr = Path // Required to allow
@@ -361,11 +362,22 @@ GenerateCaseArm =
 
 // `paramset <name> <module>; ... endparamset` -- a named parameter preset for a
 // module, selectable from the netlist.
+// Book audit (paramsets), LRM 6.4: the body also declares aliases and
+// integer/real variables (6.4.3 output variables) and carries statements
+// (6.4.1 `analog_function_statement`s), besides the `.x = e;` overrides.
 ParamsetDecl =
   AttrList* 'paramset' Name target:NameRef
     param_decls:ParamDecl*
+    alias_params:AliasParam*
+    var_decls:VarDecl*
     overrides:ParamsetOverride*
+    stmts:Stmt*
   'endparamset'
+
+// LRM 6.4.3: `.gm` in a paramset statement names the module's output
+// variable (or parameter) of that name.
+ParamsetRef =
+  '.' name:NameRef
 
 ParamsetOverride =
   name:NameRef '=' val:Expr ';'

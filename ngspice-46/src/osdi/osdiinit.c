@@ -21,6 +21,9 @@
 
 #include "osdi.h"
 #include "osdidefs.h"
+#include "ngspice/inpdefs.h"   /* E-565: INPgetTok, INPevaluate */
+#include "ngspice/osdiitf.h"
+#include <math.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -391,4 +394,278 @@ int osdi_devtype_is_osdi(int type)
 {
   return type >= 0 && type < DEVmaxnum && DEVices[type] &&
          DEVices[type]->DEVparam == OSDIparam;
+}
+
+
+/* ---- Enhancement-565: paramset overloading on the .model route (LRM 6.4.2) ----
+ *
+ * The compiler exports an overloaded paramset family as the twins `nch`,
+ * `nch__2`, `nch__3`, ... (declaration order), each naming the family, with the
+ * literal default of every parameter beside E-558's range texts. A `.model`
+ * card that names the family is resolved here by the clause's rules: every
+ * parameter the card gives is a parameter of the member; the member's
+ * parameters, given or defaulted, lie within their declared ranges; among the
+ * survivors the fewest un-overridden parameters win. More than one left, or
+ * none, is an error, as the clause says. A bound that is not a literal
+ * (`[lmin:inf)`) is unbounded here, as it is for the compiler's own selection
+ * of an instance inside a module. */
+
+/* one bound of a range text: a number with its SI suffix, or inf; `fallback`
+ * when it is anything else (an expression the card cannot judge) */
+static double osdi_range_bound(const char **pp, double fallback)
+{
+  const char *p = *pp;
+  while (*p == ' ' || *p == '\t')
+    p++;
+  const char *start = p;
+  while (*p && *p != ':' && *p != ']' && *p != ')' && *p != ' ' && *p != '\t')
+    p++;
+  size_t n = (size_t)(p - start);
+  *pp = p;
+  if (n == 0)
+    return fallback;
+  char buf[64];
+  if (n >= sizeof buf)
+    return fallback;
+  memcpy(buf, start, n);
+  buf[n] = '\0';
+  if (!strcmp(buf, "inf") || !strcmp(buf, "+inf"))
+    return HUGE_VAL;
+  if (!strcmp(buf, "-inf"))
+    return -HUGE_VAL;
+  char *bp = buf;
+  int err = 0;
+  double v = INPevaluate(&bp, &err, 1);
+  return err ? fallback : v;
+}
+
+/* does the E-558 range text -- `from [a:b) exclude c ...` -- accept v? */
+static int osdi_range_accepts(const char *text, double v)
+{
+  int any_from = 0, in_from = 0;
+  const char *p = text;
+  while (*p) {
+    int is_from;
+    if (!strncmp(p, "from", 4)) {
+      is_from = 1;
+      p += 4;
+    } else if (!strncmp(p, "exclude", 7)) {
+      is_from = 0;
+      p += 7;
+    } else {
+      p++;
+      continue;
+    }
+    while (*p == ' ' || *p == '\t')
+      p++;
+    int satisfied;
+    if (*p == '[' || *p == '(') {
+      int lo_inc = (*p == '[');
+      p++;
+      double lo = osdi_range_bound(&p, -HUGE_VAL);
+      while (*p == ' ' || *p == '\t')
+        p++;
+      if (*p == ':')
+        p++;
+      double hi = osdi_range_bound(&p, HUGE_VAL);
+      while (*p == ' ' || *p == '\t')
+        p++;
+      int hi_inc = 1;
+      if (*p == ']' || *p == ')') {
+        hi_inc = (*p == ']');
+        p++;
+      }
+      satisfied = (lo_inc ? v >= lo : v > lo) && (hi_inc ? v <= hi : v < hi);
+    } else {
+      double x = osdi_range_bound(&p, NAN);
+      satisfied = isnan(x) ? 1 : (v == x);
+    }
+    if (is_from) {
+      any_from = 1;
+      if (satisfied)
+        in_from = 1;
+    } else if (satisfied) {
+      return 0;
+    }
+  }
+  return !any_from || in_from;
+}
+
+/* the parameter id of `name` (an alias counts) in device type t, or -1. A
+ * parameter the paramset FIXED (a bound module parameter, PARA_FLAG_FIXED
+ * since Enhancement-93) is not one of the paramset's own and does not count. */
+static int osdi_member_param(int t, const char *name)
+{
+  const OsdiRegistryEntry *e =
+      (const OsdiRegistryEntry *)DEVices[t]->DEVpublic.registry_entry;
+  const OsdiDescriptor *d = e->descriptor;
+  for (uint32_t pid = 0; pid < d->num_params; pid++) {
+    const OsdiParamOpvar *po = &d->param_opvar[pid];
+    if (po->flags & PARA_FLAG_FIXED)
+      continue;
+    for (uint32_t k = 0; k <= po->num_alias; k++)
+      if (po->name[k] && !strcasecmp(po->name[k], name))
+        return (int)pid;
+  }
+  return -1;
+}
+
+int osdi_select_paramset_overload(int type, const char *card,
+                                  const char *modname, char **why)
+{
+  *why = NULL;
+  if (!osdi_devtype_is_osdi(type))
+    return type;
+  const OsdiRegistryEntry *head =
+      (const OsdiRegistryEntry *)DEVices[type]->DEVpublic.registry_entry;
+  if (!head || !head->paramset_family)
+    return type;
+  const char *family = head->paramset_family;
+  /* a card naming a member itself (`nch__2`) is taken at its word */
+  if (strcmp(DEVices[type]->DEVpublic.name, family) != 0)
+    return type;
+
+  enum { MAXM = 64, MAXP = 256 };
+  int members[MAXM];
+  int n_members = 0;
+  for (int t = 0; t < DEVmaxnum && n_members < MAXM; t++) {
+    if (!osdi_devtype_is_osdi(t))
+      continue;
+    const OsdiRegistryEntry *e =
+        (const OsdiRegistryEntry *)DEVices[t]->DEVpublic.registry_entry;
+    if (e && e->paramset_family && !strcmp(e->paramset_family, family))
+      members[n_members++] = t;
+  }
+  if (n_members < 2)
+    return type;
+
+  /* the card's parameters: name and value */
+  char *text = copy(card);
+  char *line = text;
+  char *tok = NULL;
+  INPgetTok(&line, &tok, 1);    /* .model */
+  tfree(tok);
+  INPgetNetTok(&line, &tok, 1); /* the model name */
+  tfree(tok);
+  INPgetTok(&line, &tok, 1);    /* the type */
+  tfree(tok);
+  char *names[MAXP];
+  double vals[MAXP];
+  int numeric[MAXP];
+  int n = 0;
+  /* `=`, `(` and `)` are token separators, so the card is name, value, name,
+   * value, ...; a name no member declares is kept, for rule 1 to refuse */
+  while (*line && n < MAXP) {
+    INPgetNetTok(&line, &tok, 1);
+    if (!tok)
+      break;
+    if (!*tok) {
+      tfree(tok);
+      continue;
+    }
+    names[n] = tok;
+    char *vt = NULL;
+    INPgetNetTok(&line, &vt, 1);
+    numeric[n] = 0;
+    vals[n] = 0.0;
+    if (vt && *vt) {
+      char *vp = vt;
+      int err = 0;
+      double v = INPevaluate(&vp, &err, 1);
+      numeric[n] = !err;
+      vals[n] = v;
+    }
+    if (vt)
+      tfree(vt);
+    n++;
+  }
+
+  int survivors[MAXM], unoverridden[MAXM];
+  int n_surv = 0;
+  char *reasons = NULL;
+  for (int k = 0; k < n_members; k++) {
+    int t = members[k];
+    const OsdiRegistryEntry *e =
+        (const OsdiRegistryEntry *)DEVices[t]->DEVpublic.registry_entry;
+    const OsdiDescriptor *d = e->descriptor;
+    const char *label = DEVices[t]->DEVpublic.name;
+    char *reason = NULL;
+    bool *given = TMALLOC(bool, d->num_params + 1);
+    memset(given, 0, (d->num_params + 1) * sizeof(bool));
+    for (int i = 0; i < n && !reason; i++) {
+      int pid = osdi_member_param(t, names[i]);
+      if (pid < 0) {
+        reason = tprintf("%s: '%s' is not one of its parameters", label, names[i]);
+        break;
+      }
+      given[pid] = TRUE;
+      const char *rt = e->param_ranges ? e->param_ranges[pid] : NULL;
+      if (numeric[i] && rt && *rt && !osdi_range_accepts(rt, vals[i]))
+        reason = tprintf("%s: %s = %g is outside %s", label, names[i], vals[i], rt);
+    }
+    if (!reason && e->param_defaults && e->param_ranges) {
+      for (uint32_t pid = 0; pid < d->num_params; pid++) {
+        if (given[pid] || (d->param_opvar[pid].flags & PARA_FLAG_FIXED))
+          continue;
+        double dv = e->param_defaults[pid];
+        const char *rt = e->param_ranges[pid];
+        if (isnan(dv) || !rt || !*rt)
+          continue;
+        if (!osdi_range_accepts(rt, dv)) {
+          reason = tprintf("%s: the default %s = %g is outside %s", label,
+                           d->param_opvar[pid].name[0], dv, rt);
+          break;
+        }
+      }
+    }
+    if (reason) {
+      char *joined = reasons ? tprintf("%s; %s", reasons, reason) : copy(reason);
+      tfree(reasons);
+      tfree(reason);
+      reasons = joined;
+    } else {
+      int un = 0;
+      for (uint32_t pid = 0; pid < d->num_params; pid++)
+        if (!given[pid] && !(d->param_opvar[pid].flags & PARA_FLAG_FIXED))
+          un++;
+      survivors[n_surv] = t;
+      unoverridden[n_surv] = un;
+      n_surv++;
+    }
+    tfree(given);
+  }
+  for (int i = 0; i < n; i++)
+    tfree(names[i]);
+  tfree(text);
+
+  if (n_surv == 0) {
+    *why = tprintf("no paramset '%s' applies to .model %s (LRM 6.4.2): %s\n",
+                   family, modname, reasons ? reasons : "none declared");
+    fprintf(stderr, "Error: %s", *why);
+    tfree(reasons);
+    return -1;
+  }
+  tfree(reasons);
+  int best = unoverridden[0], n_best = 1, winner = survivors[0];
+  for (int i = 1; i < n_surv; i++) {
+    if (unoverridden[i] < best) {
+      best = unoverridden[i];
+      winner = survivors[i];
+      n_best = 1;
+    } else if (unoverridden[i] == best) {
+      n_best++;
+    }
+  }
+  if (n_best > 1) {
+    *why = tprintf("paramset '%s' is ambiguous for .model %s (LRM 6.4.2): %d members apply "
+                   "with %d un-overridden parameter(s) each -- give a parameter only one "
+                   "of them declares\n",
+                   family, modname, n_best, best);
+    fprintf(stderr, "Error: %s", *why);
+    return -1;
+  }
+  if (winner != type)
+    fprintf(stderr, "Note: .model %s: paramset '%s' resolved to its member '%s' (LRM 6.4.2)\n",
+            modname, family, DEVices[winner]->DEVpublic.name);
+  return winner;
 }

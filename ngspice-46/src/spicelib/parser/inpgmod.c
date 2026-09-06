@@ -148,6 +148,23 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
     }
 #endif
 
+#ifdef OSDI
+    /* Enhancement-565 (LRM 6.4.2): a card naming an overloaded paramset
+     * family is bound to the member its parameters select. Done here, where
+     * the card is materialised: an `n` line reads the model's type after
+     * INPgetMod returns (INP2N), so the instance follows. */
+    if (modtmp->INPmodType >= 0 && osdi_devtype_is_osdi(modtmp->INPmodType)) {
+        char *why = NULL;
+        int sel = osdi_select_paramset_overload(modtmp->INPmodType, modtmp->INPmodLine->line,
+                                                modtmp->INPmodName, &why);
+        if (sel < 0) {
+            modtmp->INPmodLine->error = INPerrCat(modtmp->INPmodLine->error, why);
+            return E_PARMVAL;
+        }
+        modtmp->INPmodType = sel;
+    }
+#endif
+
     /* not already defined, so create & give parameters */
     error = ft_sim->newModel(ckt, modtmp->INPmodType, &(modtmp->INPmodfast), modtmp->INPmodName);
     if (error)

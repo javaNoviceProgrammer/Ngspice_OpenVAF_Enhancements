@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+module vres(inout electrical p, n);
+parameter real R = 1k;
+analog I(p,n) <+ V(p,n)/R;
+endmodule
+paramset rp vres;
+parameter real KOHM = 2.0;
+.R = KOHM*1000.0;
+endparamset
+module top(inout electrical a, b);
+rp #(.R(5k)) r1(a, b);
+endmodule

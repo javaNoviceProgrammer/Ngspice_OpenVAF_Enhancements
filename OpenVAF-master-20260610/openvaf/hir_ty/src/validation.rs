@@ -460,6 +460,42 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            // book audit (paramsets)
+            BodyValidationDiagnostic::ParamsetStatement { stmt, what } => {
+                let FileSpan { range, file } = self.stmt_src(stmt);
+                Report::error()
+                    .with_message(format!("{what} is not allowed in a paramset"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!("{what} in a paramset statement"),
+                    }])
+                    .with_notes(vec![
+                        "LRM 6.4.1: a paramset's statements are those of an analog function -- \
+                         assignments and conditional execution -- and \"shall not use \
+                         contribution statements or event control statements\" nor named \
+                         blocks; the behaviour belongs to the module the paramset targets"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::ParamsetAccessFunction { expr } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::error()
+                    .with_message("an access function is not allowed in a paramset")
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "access function in a paramset statement".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "LRM 6.4.1: a paramset \"shall not use access functions\"; a paramset \
+                         statement computes the paramset's output variables from the module's \
+                         (`.name`), its parameters and constants"
+                            .to_owned(),
+                    ])
+            }
             // book audit (lookup tables)
             BodyValidationDiagnostic::TableArrayNotConstant { expr, ref name, ref why } => {
                 let FileSpan { range, file } = self.expr_src(expr);

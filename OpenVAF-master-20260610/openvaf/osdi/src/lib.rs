@@ -341,6 +341,12 @@ pub fn compile<'a>(
         let mut param_ranges_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
         let mut any_range = false;
         let mut any_trunc = false;
+        // Book audit (paramsets), LRM 6.4.2: the overloaded paramset family of
+        // each descriptor, or NULL
+        let mut families_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
+        let mut any_family = false;
+        let mut param_default_counts: Vec<u32> = Vec::new();
+        let mut param_defaults_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
 
         let descriptors: Vec<_> = osdi_modules
             .iter()
@@ -459,6 +465,20 @@ pub fn compile<'a>(
                     }
                 }
 
+                // Book audit (paramsets), LRM 6.4.2: the family this twin belongs to
+                match module.info.module.overload_family(&db) {
+                    Some(family) => {
+                        any_family = true;
+                        families_ll.push(cx.const_str_uninterned(&family));
+                    }
+                    None => families_ll.push(cx.const_null_ptr()),
+                }
+                let defaults = cguint.param_defaults();
+                param_default_counts.push(defaults.len() as u32);
+                for v in defaults {
+                    param_defaults_ll.push(cx.const_real(v));
+                }
+
                 // Collect declared parameter statistics for this module
                 let stats = cguint.stat_params();
                 stat_param_counts.push(stats.len() as u32);
@@ -492,6 +512,20 @@ pub fn compile<'a>(
                 param_range_counts.iter().map(|&n| cx.const_unsigned_int(n)).collect();
             cx.export_array("OSDI_PARAM_RANGE_COUNTS", cx.ty_int(), &counts_ll, true, false);
             cx.export_array("OSDI_PARAM_RANGES", cx.ty_ptr(), &param_ranges_ll, true, false);
+        }
+        // Book audit (paramsets), LRM 6.4.2: one C string per descriptor -- the
+        // shared name of the overloaded paramset family it belongs to, NULL for
+        // any other module; only when the object holds a family at all, so an
+        // older simulator sees no new symbol
+        if any_family {
+            cx.export_array("OSDI_PARAMSET_FAMILIES", cx.ty_ptr(), &families_ll, true, false);
+            // ... with the literal default of every parameter (NaN otherwise), so
+            // the simulator can judge a member's un-overridden parameters against
+            // their ranges (the LRM's `mm=0 from (0:1]` case)
+            let counts_ll: Vec<_> =
+                param_default_counts.iter().map(|&n| cx.const_unsigned_int(n)).collect();
+            cx.export_array("OSDI_PARAM_DEFAULT_COUNTS", cx.ty_int(), &counts_ll, true, false);
+            cx.export_array("OSDI_PARAM_DEFAULTS", cx.ty_double(), &param_defaults_ll, true, false);
         }
         cx.export_val(
             "OSDI_NUM_DESCRIPTORS",

@@ -164,6 +164,13 @@ pub enum BodyValidationDiagnostic {
     /// string` may be replaced by the model card afterwards.
     TableStringNotConst { expr: ExprId, what: Box<str> },
 
+    /// Book audit (paramsets), LRM 6.4.1: a paramset statement is one of an
+    /// analog function's -- no contribution, no event control, no named block.
+    ParamsetStatement { stmt: StmtId, what: &'static str },
+    /// Book audit (paramsets), LRM 6.4.1: a paramset "shall not use access
+    /// functions".
+    ParamsetAccessFunction { expr: ExprId },
+
     /// Enhancement-390: `disable <name>` naming no enclosing named block.
     ///
     /// Lowering resolves the name against the enclosing named blocks and, on a
@@ -568,6 +575,7 @@ impl BodyValidationDiagnostic {
             ctx,
             loop_depth: 0,
             disable_scopes: Vec::new(),
+            in_paramset: false,
             non_const_dominator: Box::default(),
             non_trivial_branches: HashSet::default(),
             trivial_probes: HashMap::default(),
@@ -575,8 +583,10 @@ impl BodyValidationDiagnostic {
         };
 
         for stmt in &*body.entry_stmts {
+            validator.in_paramset = body.paramset_stmts.contains(stmt);
             validator.validate_stmt(*stmt)
         }
+        validator.in_paramset = false;
 
         // Enhancement-532 (bug-hunt H3): judge a parameter's default against the
         // parameter's own range, where both fold to compile-time constants.
@@ -815,6 +825,9 @@ struct BodyValidator<'a> {
     /// `hir_lower`'s `disable_scopes`, so a `disable` can be resolved here where
     /// diagnostics exist.
     disable_scopes: Vec<Name>,
+    /// Book audit (paramsets): `true` while validating a statement a `paramset`
+    /// contributed to a twin module's body (LRM 6.4.1 restrictions apply).
+    in_paramset: bool,
     non_const_dominator: Box<[ExprId]>,
     non_trivial_branches: HashSet<BranchWrite>,
     trivial_probes: HashMap<BranchWrite, Vec<(StmtId, ExprId)>>,
@@ -1091,6 +1104,11 @@ impl BodyValidator<'_> {
                 if assignment_kind == AssignOp::Contribute && !self.ctx.allow_contribute() {
                     self.diagnostics
                         .push(BodyValidationDiagnostic::IllegalContribute { stmt, ctx: self.ctx })
+                } else if assignment_kind != AssignOp::Assign && self.in_paramset {
+                    self.diagnostics.push(BodyValidationDiagnostic::ParamsetStatement {
+                        stmt,
+                        what: "a contribution",
+                    })
                 }
                 // LRM 5.6.7/5.6.5: an indirect branch assignment is stricter
                 // than `<+` -- illegal under any non-constant conditional, any
@@ -1118,6 +1136,12 @@ impl BodyValidator<'_> {
                 return;
             }
             Stmt::EventControl { ref event, body } => {
+                if self.in_paramset {
+                    self.diagnostics.push(BodyValidationDiagnostic::ParamsetStatement {
+                        stmt,
+                        what: "an event control",
+                    });
+                }
                 // LRM 5.2.1 / 4.7.1: neither an analog initial block nor an analog
                 // function may contain an event control statement. Checked on the
                 // STATEMENT rather than on what it guards, because the guarded body is
@@ -1193,6 +1217,12 @@ impl BodyValidator<'_> {
                 return;
             }
             Stmt::Block { ref name, ref body } => {
+                if name.is_some() && self.in_paramset {
+                    self.diagnostics.push(BodyValidationDiagnostic::ParamsetStatement {
+                        stmt,
+                        what: "a named block",
+                    });
+                }
                 if let Some(name) = name {
                     self.disable_scopes.push(name.clone());
                 }
@@ -2160,6 +2190,9 @@ impl ExprValidator<'_, '_> {
                 .parent
                 .diagnostics
                 .push(BodyValidationDiagnostic::UnsupportedFunction { expr, func: call }),
+            BuiltIn::potential | BuiltIn::flow if self.parent.in_paramset => {
+                self.parent.diagnostics.push(BodyValidationDiagnostic::ParamsetAccessFunction { expr })
+            }
             BuiltIn::potential | BuiltIn::flow => self.check_access(
                 |_| IllegalCtxAccessKind::NatureAccess,
                 expr,

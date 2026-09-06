@@ -1,0 +1,68 @@
+// Paramsets per LRM 6.4, the chapter-6 idiom of "A Practical Guide to
+// Verilog-A": one resistor module, a "constant module" of localparams, and a
+// family of paramsets that reuse the module's parameter names, chain, alias
+// their parameters, and compute output variables.
+`include "disciplines.vams"
+
+module vres(inout electrical p, n);
+parameter string MAT = "poly" from '{"poly", "metal"};
+parameter real W = 1.0u from (0.0:inf);
+parameter real L = 2.0u from (0.0:inf);
+parameter real RSH = 100.0;
+parameter real DW = 0.0;
+parameter real DL = 0.0;
+(* desc="effective resistance" *) real reff;
+(* desc="module-side figure" *) real fig;
+analog begin
+  reff = RSH * (L - DL) / (W - DW);
+  fig = -1.0;
+  I(p,n) <+ V(p,n) / reff;
+end
+endmodule
+
+// the "constant module": localparams read from paramset overrides (LRM 6.4.1)
+module fab;
+localparam real rsh_poly = 120.0;
+localparam real bias = 0.8;
+localparam real rsh_eff = rsh_poly * bias;
+endmodule
+
+// same names as the module: the paramset's L and W are the card parameters,
+// the module's L and W are what they bind (LRM 6.4)
+paramset rp vres;
+parameter real L = 3u from (0:inf);
+parameter real W = 1u from (0:inf);
+parameter string KIND = "poly";
+.MAT = KIND; .L = L; .W = W;
+.RSH = fab.rsh_eff;
+.DW = 20n; .DL = 30n;
+.$mfactor = 2;
+endparamset
+
+// a paramset of a paramset: assigns the parent's own parameters (KIND, L)
+paramset rmetal rp;
+parameter real LEN = 2u;
+aliasparam LL = LEN;
+.KIND = "metal"; .L = LEN;
+endparamset
+
+// output variables (LRM 6.4.3): `fig` replaces the module's, `pdis` is new,
+// `.reff` reads the module's; a `.var = expr;` assigns a module variable
+paramset rpd vres;
+parameter real WID = 1u;
+(* desc="dissipated power" *) real pdis;
+(* desc="paramset-side figure" *) real fig;
+real scratch;
+.W = WID; .RSH = 150.0;
+scratch = .reff * 1e-6;
+pdis = scratch * 2.0;
+fig = .reff / 100.0;
+endparamset
+
+// the paramsets instantiated inside a module (the book's divider)
+module divider(inout electrical in, out, gnd);
+parameter real WA = 2u, LA = 4u;
+rmetal #(.LL(LA)) ra (in, out);
+rp #(.W(WA), .L(LA), .$mfactor(3)) rb (out, gnd);
+rpd #(.WID(2u)) rc (out, gnd);
+endmodule
