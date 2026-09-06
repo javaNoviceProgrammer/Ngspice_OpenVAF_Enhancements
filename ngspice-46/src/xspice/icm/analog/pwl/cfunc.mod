@@ -60,6 +60,16 @@ NON-STANDARD FEATURES
 #define FRACTION 0.30
 #define EPSILON 1.0e-9
 
+/* Enhancement-568: the limiter's memory. STATIC_VAR(last_x_value) points at
+ * one of these; `last_x` is the value the 1991 code kept there, the rest is
+ * what the ping-pong detection below needs. */
+typedef struct {
+    double last_x;      /* limited input of the previous evaluation */
+    double last_step;   /* signed step the limiter imposed then; 0 = unlimited */
+    int    reversals;   /* consecutive limited steps that reversed direction */
+    double last_time;   /* TIME of the previous evaluation */
+} Pwl_Limiter_t;
+
 
 
 /*=== MACROS ===========================*/
@@ -246,6 +256,39 @@ cm_pwl_callback(ARGS, Mif_Callback_Reason_t reason)
     }
 }
 
+/*==============================================================================
+
+FUNCTION pwl_same_piece()
+
+    Enhancement-568. TRUE when no corner of the table lies between `a` and `b`,
+    i.e. both sit on the same linear piece of the smoothed curve (the pieces
+    are separated by the thresholds x[i] +- domain_i around each real
+    breakpoint x[1] .. x[size-2]; the x[0] / x[size-1] entries are the
+    extrapolation helpers and have no corner). On one piece the model IS the
+    line Newton linearised, so limiting the step there can only slow it down.
+
+==============================================================================*/
+
+static int pwl_same_piece(const double *x, int size, double input_domain,
+                          int fraction, double a, double b)
+{
+    double lo = (a < b) ? a : b;
+    double hi = (a < b) ? b : a;
+    int i;
+
+    for (i = 1; i <= size - 2; i++) {
+        double d = input_domain;
+        if (fraction) {
+            double lower_seg = x[i] - x[i - 1];
+            double upper_seg = x[i + 1] - x[i];
+            d *= (lower_seg <= upper_seg) ? lower_seg : upper_seg;
+        }
+        if (x[i] - d <= hi && x[i] + d >= lo)
+            return 0;
+    }
+    return 1;
+}
+
 /*=== CM_PWL ROUTINE ================*/
 
 void cm_pwl(ARGS)  /* structure holding parms,
@@ -272,6 +315,9 @@ void cm_pwl(ARGS)  /* structure holding parms,
     double test2;           /* debug testing value */
     double *last_x_value;   /* static variable for limiting */
     double test;            /* temp storage variable for limit testing */
+    Pwl_Limiter_t *lim;     /* Enhancement-568: limiter memory */
+    double raw_x;           /* Enhancement-568: Newton's value before limiting */
+    double prev_x;          /* Enhancement-568: last_x before this evaluation */
 
     Mif_Complex_t ac_gain;
 
@@ -336,9 +382,11 @@ void cm_pwl(ARGS)  /* structure holding parms,
     */
     if (INIT==1) {
 
-        /* Allocate storage for last_x_value */
-        STATIC_VAR(last_x_value) = (double *) malloc(sizeof(double));
-        last_x_value = (double *) STATIC_VAR(last_x_value);
+        /* Allocate storage for last_x_value (Enhancement-568: it now heads
+         * the limiter record, so the callback's free() is unchanged) */
+        STATIC_VAR(last_x_value) = calloc(1, sizeof(Pwl_Limiter_t));
+        lim = (Pwl_Limiter_t *) STATIC_VAR(last_x_value);
+        last_x_value = &lim->last_x;
 
         /* Allocate storage for breakpoint domain & range values */
         STATIC_VAR(x) = (double *) calloc((size_t) size, sizeof(double));
@@ -398,7 +446,8 @@ void cm_pwl(ARGS)  /* structure holding parms,
     }
     else {
 
-        last_x_value = (double *) STATIC_VAR(last_x_value);
+        lim = (Pwl_Limiter_t *) STATIC_VAR(last_x_value);
+        last_x_value = &lim->last_x;
 
         x = (double *) STATIC_VAR(x);
 
@@ -443,6 +492,40 @@ void cm_pwl(ARGS)  /* structure holding parms,
 
 
     /**** Add internal limiting to input value ****/
+
+    /* Enhancement-568: the limiter below moves the input at most FRACTION of a
+     * segment per iteration, so that Newton sees every piece of the table on
+     * its way. In a positive-feedback loop (an `E ... TABLE` comparator with
+     * hysteresis) that walk never ends: on the sloped piece Newton points one
+     * way, on the flat piece just past the corner it points the other, and the
+     * limiter hands the input back and forth across the corner forever --
+     * 38000 iterations across gmin, source stepping and optran for a
+     * two-resistor Schmitt trigger, on both solvers. Two rules end it:
+     *
+     *  (1) when the previous input and Newton's new one lie on the same linear
+     *      piece, the model IS the line Newton linearised, so the step is
+     *      taken in full -- there is nothing to protect against;
+     *  (2) when the limiter has just reversed direction twice in a row it is
+     *      fighting Newton, not guiding it, and Newton's value is accepted as
+     *      it stands; the ordinary convergence test then decides.
+     *
+     * The streak resets at each new timepoint: the limiter is a per-solve
+     * device and must not carry a reversal count across steps. */
+    if (INIT != 1 && ANALYSIS == MIF_TRAN && TIME != lim->last_time) {
+        lim->last_step = 0.0;
+        lim->reversals = 0;
+    }
+    lim->last_time = TIME;
+    raw_x = x_input;
+    prev_x = *last_x_value;
+
+    if (INIT != 1 && pwl_same_piece(x, size, PARAM(input_domain),
+                                     PARAM(fraction) == MIF_TRUE, prev_x, raw_x)) {
+        *last_x_value = x_input;
+        lim->last_step = 0.0;
+        lim->reversals = 0;
+    }
+    else {
 
     /* Determine region of input, and limit accordingly */
     if ( *last_x_value < x[0] ) { /** Non-limited input less than x[0] **/
@@ -523,6 +606,32 @@ void cm_pwl(ARGS)  /* structure holding parms,
             }
         }
     }
+
+    /* Enhancement-568 rule (2). `reversals` counts the direction changes of
+     * the limited steps since the limiter last stood idle; the forced stops at
+     * a breakpoint split one move into two same-direction steps, so a change
+     * is counted against the last NON-zero step, never reset by a repeat. Two
+     * changes are the corner ping-pong described above: from then on, until
+     * an evaluation needs no limiting, Newton's value is accepted in full --
+     * the first release lands on the flat piece, the next one carries the
+     * input across the high-gain region in one step, which is the jump the
+     * crawl could never make. */
+    if (x_input != raw_x) {
+        double step = x_input - prev_x;
+        if (lim->last_step != 0.0 && step * lim->last_step < 0.0)
+            lim->reversals++;
+        if (lim->reversals >= 2)
+            x_input = *last_x_value = raw_x;
+        step = x_input - prev_x;
+        if (step != 0.0)
+            lim->last_step = step;
+    }
+    else {
+        lim->last_step = 0.0;
+        lim->reversals = 0;
+    }
+
+    } /* end of the limited path */
 
     /* Assign new limited value back to the input for */
     /* use in the matrix calculations....             */

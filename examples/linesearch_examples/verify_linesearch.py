@@ -18,6 +18,15 @@ converged operating point must be identical. This suite pins exactly that:
       SPmatrix and must be correct regardless of which solver factorizes it;
   [3] each circuit still converges with the option ON (no regression).
 
+Enhancement-568: the bistable latch is the one deck exempt from [2]. Its
+`.nodeset` names two B-source outputs (a hold cannot move a voltage-defined
+node) and the plain Newton on the pair is a (5,0)/(0,5) two-cycle, so plain
+Newton never converged there: before E-568 the hold phase swallowed the whole
+budget in that cycle and both runs fell through to gmin stepping's (0,0) root;
+with the hold released after a tenth of the budget, ON finds the (2.5,2.5) root
+nearest the nodeset by damped Newton while OFF still reaches (0,0) through gmin
+stepping. The latch check therefore pins that each run lands on a root.
+
 Note: the line search only *backtracks* (takes a damped step) when the full
 Newton step increases ||F|| in the final MODEINITFLOAT phase -- which ngspice's
 multi-phase DC init makes rare, so these small circuits accept the full step.
@@ -26,6 +35,7 @@ by forcing lambda < 1 on every step and confirming the same roots are reached
 (down to lambda = 0.1); see Enhancement-111.md. linesearch is a simulator-side
 feature, so no Verilog-A model is involved.
 """
+import math
 import os
 import re
 import subprocess
@@ -121,10 +131,27 @@ def main():
             off, _, _ = run(body, nodes, False, sparse=sparse)
             on, _, _ = run(body, nodes, True, sparse=sparse)
             converged = all(on[n] is not None for n in nodes)
-            neutral = all(close(off[n], on[n]) for n in nodes)
             detail = ", ".join(f"{n}:{off[n]}~={on[n]}" for n in nodes)
             check(f"[{solver}] {name}: converges with linesearch ON", converged)
-            check(f"[{solver}] {name}: result-neutral (ON == OFF)", neutral, detail)
+            if name == "latch":
+                # Enhancement-568: the latch's `.nodeset` names two B-source outputs,
+                # which a hold cannot move, and the plain Newton on this pair is a
+                # (5,0)/(0,5) two-cycle. Before E-568 the hold phase swallowed the
+                # whole Newton budget in that cycle -- the line search only acts in
+                # the released phase, so it never ran, and BOTH runs fell through to
+                # gmin stepping and its (0,0) root. The hold is now released after a
+                # tenth of the budget: OFF still reaches (0,0) through gmin stepping,
+                # ON now finds the (2.5,2.5) root -- the one nearest the nodeset --
+                # by damped Newton. Neutrality holds where plain Newton converges;
+                # here it never did, so pin that each run lands on a true root.
+                def root(v):
+                    f = lambda x: 2.5 * (1 + math.tanh(6 * (x - 2.5)))
+                    return (v["q"] is not None and v["qb"] is not None
+                            and abs(v["q"] - f(v["qb"])) < 5e-3 and abs(v["qb"] - f(v["q"])) < 5e-3)
+                check(f"[{solver}] {name}: OFF and ON each land on a root of the latch", root(off) and root(on), detail)
+            else:
+                neutral = all(close(off[n], on[n]) for n in nodes)
+                check(f"[{solver}] {name}: result-neutral (ON == OFF)", neutral, detail)
 
     print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
     sys.exit(0 if passed == checks else 1)

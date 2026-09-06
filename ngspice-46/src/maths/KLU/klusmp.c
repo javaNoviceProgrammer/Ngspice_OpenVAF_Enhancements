@@ -2404,6 +2404,48 @@ SMPconstMult (SMPmatrix *Matrix, double constant)
 }
 
 /*
+ * SMPmultiplyAbs() -- Enhancement-568 (R1, operating-point robustness):
+ * Out[i] = sum_j |A_ij| * |X_j|, the magnitude of the terms that make up row i of
+ * A*X, in the external 1-based indexing SMPmultiply uses.  Enhancement-256's
+ * false-convergence guard normalises each row's KCL residual by |(A*X)_i|, which
+ * cancels to nothing on a high-gain branch equation (a VCVS of gain 1e6 in unity
+ * feedback), so the round-off of million-sized terms read as a hundred-fold
+ * tolerance violation and a converged operating point was declined into gmin
+ * stepping -- 127 iterations instead of 4 under KLU, and under Sparse too from
+ * gain 1e8.  NIiter uses this sum as the row's term traffic: a residual below one
+ * part per million of it is the solve's rounding, not a KCL violation, whatever
+ * the scale says.
+ * The real matrix only (the guard runs in the DC operating point).
+ */
+void
+SMPmultiplyAbs (SMPmatrix *Matrix, double *Out, double *X)
+{
+    if (Matrix->CKTkluMODE) {
+        int *Ap = Matrix->SMPkluMatrix->KLUmatrixAp ;
+        int *Ai = Matrix->SMPkluMatrix->KLUmatrixAi ;
+        double *Ax = Matrix->SMPkluMatrix->KLUmatrixAx ;
+        unsigned int j, n = Matrix->SMPkluMatrix->KLUmatrixN ;
+        int p ;
+        for (j = 0 ; j <= n ; j++)
+            Out [j] = 0.0 ;
+        if (Ap == NULL || Ai == NULL || Ax == NULL)
+            return ;
+        for (j = 0 ; j < n ; j++)
+            for (p = Ap [j] ; p < Ap [j + 1] ; p++)
+                Out [Ai [p] + 1] += fabs (Ax [p]) * fabs (X [j + 1]) ;
+    } else {
+        MatrixPtr M = Matrix->SPmatrix ;
+        ElementPtr e ;
+        int I, J ;
+        for (I = 0 ; I <= M->ExtSize ; I++)
+            Out [I] = 0.0 ;
+        for (J = 1 ; J <= M->Size ; J++)
+            for (e = M->FirstInCol [J] ; e != NULL ; e = e->NextInCol)
+                Out [M->IntToExtRowMap [e->Row]] += fabs (e->Real) * fabs (X [M->IntToExtColMap [J]]) ;
+    }
+}
+
+/*
  * SMPmultiply()
  */
 void

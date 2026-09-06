@@ -48,3 +48,10 @@ down to λ=0.1, including on the bistable latch (same basin); see
 [`../../enhancements_doc/Enhancement-111.md`](../../enhancements_doc/Enhancement-111.md)
 and the [implementation write-up](../../docs/internals/ngspice_internals/).
 linesearch is a simulator-side feature, so no Verilog-A model is involved.
+
+Since Enhancement-568 the bistable latch is exempt from the identity check: its
+`.nodeset` names two B-source outputs, which a hold cannot move, and plain Newton
+never converged on that pair (a two-cycle that used to swallow the whole hold
+phase, so both runs fell through to gmin stepping). With the hold released after
+a tenth of the budget the ON run finds the root nearest the nodeset by damped
+Newton, so the check pins that each run lands on a root of the latch.

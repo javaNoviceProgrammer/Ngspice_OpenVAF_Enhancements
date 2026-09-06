@@ -33,10 +33,37 @@ NIiter(CKTcircuit *ckt, int maxIter)
 
     int iterno = 0;
     int ipass = 0;
+    int fixpass = 0;   /* Enhancement-568: iterations spent in MODEINITFIX */
+    int fixmax;        /* Enhancement-568: the most it may spend there */
 
     /* some convergence issues that get resolved by increasing max iter */
     if (maxIter < 100)
         maxIter = 100;
+
+    /* Enhancement-568: a nodeset is HELD (MODEINITFIX) until the rest of the
+     * circuit has settled around it, and only then released. CKTload holds a
+     * node whose KCL row carries no branch current by REPLACING the row with
+     * v = nodeset (the CIDER form), so a device between that node and a stiff
+     * one may have no equilibrium to settle to at all: a diode clamp asked to
+     * sit 97 V forward-biased is limited upward by a quarter volt per pass,
+     * for ever. The hold then ate the whole Newton budget, the junction ran to
+     * exp() overflow, and both solvers finished the point 2000 iterations later
+     * through source stepping -- KLU announcing a singular matrix at the clamp
+     * source, Sparse saying nothing (same NaN, different pivot test). A tenth
+     * of the budget is the hold's share: every legitimate nodeset measured
+     * settles in 5 to 12 passes, and a hold that has not settled in ten is a
+     * nodeset the circuit cannot satisfy, so releasing it is the only move
+     * left. Scales with itl1 for the circuits that need a bigger budget.
+     * Plain Newton on a deck without nodesets is NOT subject to it: there
+     * MODEINITFIX is simply the phase in which Newton runs its whole course
+     * (the released phase then confirms the point), and cutting it at ten
+     * passes moved a diode ladder's answer by 51 uV -- one iteration's worth
+     * -- and twenty of the warmstart suite's samples across a spec edge. The
+     * E-111 line search and E-153 trust region, on the other hand, act only
+     * in the released phase, so a Newton that cycles never let them act at
+     * all: with either enabled the budget applies too, and the globalization
+     * the user asked for takes over after it. */
+    fixmax = MAX(10, maxIter / 10);
 
     if ((ckt->CKTmode & MODETRANOP) && (ckt->CKTmode & MODEUIC)) {
         SWAP(double *, ckt->CKTrhs, ckt->CKTrhsOld);
@@ -72,6 +99,7 @@ NIiter(CKTcircuit *ckt, int maxIter)
 
     for (;;) {
         double trGmin = ckt->CKTdiagGmin;   /* E-153: effective diagonal add */
+        double guard_merit = 0.0;           /* E-568 R1: the E-256 guard's merit, rows at round-off exempt */
 
         ckt->CKTnoncon = 0;
 
@@ -145,15 +173,48 @@ NIiter(CKTcircuit *ckt, int maxIter)
                 int sz = SMPmatSize(ckt->CKTmatrix);
                 int k;
                 double m = 0.0;
+                double *absterm = NULL;
                 SMPmultiply(ckt->CKTmatrix, ckt->CKTrhsSpare, ckt->CKTrhsOld,
                             NULL, NULL);
+                /* Enhancement-568 (R1): the guard below scales a row's residual by
+                 * |(G*x)_k|.  On a row with no independent source that is the
+                 * residual ITSELF (b_k = 0), and on a high-gain branch equation it
+                 * is the difference of million-sized terms and is supposed to be
+                 * zero -- either way the scale collapses to abstol and the solve's
+                 * own rounding reads as a KCL violation: a VCVS of gain 1e6 in
+                 * unity feedback converged in 4 Newton iterations and was declined
+                 * here (127 gmin iterations under KLU; under Sparse from gain 1e8,
+                 * where its output node's KCL row carries 2e-10 A of residual in
+                 * 2e-2 A of terms, one part in 1e8).  The scale is right for every
+                 * row whose net current is real: on a diode ladder it declines a
+                 * node whose residual is 19 % of its net current and the extra
+                 * Newton step moves the answer by a spec band, so it is kept.  A row
+                 * is exempt only while its residual is below one part per million
+                 * of its term traffic, sum_j |G_kj||x_j| + |b_k| -- three decades
+                 * finer than the reltol voltage test can resolve, two above the
+                 * worst rounding seen.  A non-finite residual still fires.  The
+                 * line-search / trust-region merit is untouched. */
+                if (ckt->CKTdcFirstTry && !ckt->CKTlinesearch && !ckt->CKTtrustregion) {
+                    absterm = TMALLOC(double, (size_t) sz + 1);
+                    SMPmultiplyAbs(ckt->CKTmatrix, absterm, ckt->CKTrhsOld);
+                }
                 for (k = 1; k <= sz; k++) {
                     double resid = ckt->CKTrhsSpare[k] - ckt->CKTrhs[k];
                     double w = fabs(resid) /
                         (ckt->CKTabstol + ckt->CKTreltol * fabs(ckt->CKTrhsSpare[k]));
                     if (w > m)
                         m = w;
+                    if (absterm) {
+                        double roundoff = 1.0e-6 *
+                            (absterm[k] + fabs(ckt->CKTrhs[k]));
+                        if (!finite(resid))
+                            guard_merit = resid;      /* NaN / Inf: !finite() below fires */
+                        else if (fabs(resid) > roundoff && w > guard_merit)
+                            guard_merit = w;
+                    }
                 }
+                if (absterm)
+                    FREE(absterm);
                 ckt->CKTlsMerit = m;
 
                 /* Enhancement-153: Levenberg-Marquardt trust-region Newton. When
@@ -389,7 +450,7 @@ NIiter(CKTcircuit *ckt, int maxIter)
             if ((ckt->CKTnoncon == 0) && (iterno > 1) && ckt->CKTdcFirstTry &&
                 (ckt->CKTmode & MODEINITFLOAT) &&
                 !ckt->CKTlinesearch && !ckt->CKTtrustregion &&
-                (!finite(ckt->CKTlsMerit) || ckt->CKTlsMerit > 100.0))
+                (!finite(guard_merit) || guard_merit > 100.0))   /* E-568 R1: rows at round-off exempt */
                 ckt->CKTnoncon = 1;
 
 #ifdef STEPDEBUG
@@ -598,7 +659,10 @@ NIiter(CKTcircuit *ckt, int maxIter)
             ckt->CKTmode = (ckt->CKTmode & ~INITF) | MODEINITFIX;
             ckt->CKTniState |= NISHOULDREORDER;
         } else if (ckt->CKTmode & MODEINITFIX) {
-            if (ckt->CKTnoncon == 0)
+            fixpass++;
+            if (ckt->CKTnoncon == 0 ||
+                ((ckt->CKThadNodeset || ckt->CKTlinesearch || ckt->CKTtrustregion) &&
+                 fixpass >= fixmax))                        /* Enhancement-568 */
                 ckt->CKTmode = (ckt->CKTmode & ~INITF) | MODEINITFLOAT;
             ipass = 1;
         } else if (ckt->CKTmode & MODEINITSMSIG) {

@@ -157,6 +157,33 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
         goto done;
     }
 
+    /* Enhancement-568: last resort -- one damped-Newton solve (the E-111 line
+     * search) from scratch. Every rung above is a CONTINUATION: gmin stepping
+     * shunts the nodes, source stepping scales the independent sources,
+     * pseudo-transient and optran add dynamics. None of them can soften a loop
+     * of ideal voltage-defined branches. Two behavioural voltage sources feeding
+     * each other -- `b1 q 0 v=f(v(qb))` / `b2 qb 0 v=g(v(q))`, a buffer and an
+     * inverter in a ring -- have no node a shunt can pull, no independent source
+     * to scale and no capacitor to integrate, so all four rungs failed (37673
+     * iterations) on a deck whose unique solution a damped Newton finds in 53.
+     * It runs LAST, so no deck that converges today can be handed a different
+     * root: only a point that would otherwise be abandoned reaches it. Skipped
+     * when the line search is already on -- the plain solve above was the damped
+     * one then. */
+    if (!ckt->CKTlinesearch) {
+        SPfrontEnd->IFerrorf(ERR_INFO, "Starting damped Newton (line search)");
+        ckt->CKTlinesearch = 1;
+        ckt->CKTmode = firstmode;
+        converged = NIiter(ckt, iterlim);
+        ckt->CKTlinesearch = ls_saved;
+        if (converged == 0) {
+            conv_aid = "damped Newton (line search)";
+            goto done;
+        }
+        if (converged == E_PANIC)
+            goto fatal;         /* Enhancement-378 */
+    }
+
 #ifdef XSPICE
     /* gtri - wbk - add convergence problem reporting flags */
     ckt->enh->conv_debug.last_NIiter_call = MIF_FALSE;
