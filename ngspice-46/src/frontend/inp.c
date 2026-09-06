@@ -2802,12 +2802,19 @@ com_source(wordlist *wl)
 
 void inp_source(const char *file)
 {
-    /* This wordlist is special in that nothing in it should be freed --
-     * the file name word is "borrowed" from the argument to file and
-     * the wordlist is allocated on the stack. */
+    /* The wordlist lives on the stack, but its one word must be a HEAP COPY:
+     * com_source() unquotes every word it is given by freeing the word and
+     * installing the unquoted copy (Enhancement-558).  This word used to be
+     * "borrowed" from the caller, so the caller's pointer was freed here and
+     * again by the caller -- read_initialisation_file() freed its tprintf'd
+     * path a second time and ngspice died at start-up, with no output, for
+     * any .spiceinit / spice.rc found in the deck's directory (finding F6 of
+     * the 2026-09-06 solver hunt, which first looked like an XSPICE fault).
+     * Free whatever word com_source() leaves behind; it is ours either way. */
     static struct wordlist wl = { NULL, NULL, NULL };
-    wl.wl_word = (char *) file;
+    wl.wl_word = copy(file);
     com_source(&wl);
+    tfree(wl.wl_word);
 }
 
 

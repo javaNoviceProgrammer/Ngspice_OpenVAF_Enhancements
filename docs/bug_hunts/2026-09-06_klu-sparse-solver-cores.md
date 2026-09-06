@@ -17,7 +17,8 @@ SuiteSparse kernels and Sparse 1.3's ordering were skimmed, not audited.
 
 **Result: six defects confirmed with plain decks — five on the KLU side and one,
 found at the very end, that Sparse and KLU share; one latent hang shared by both
-solvers; one side finding in XSPICE's batch teardown; and a handful of smaller
+solvers; one side finding that first looked like an XSPICE teardown fault and turned
+out to be a start-up double free for any `.spiceinit`; and a handful of smaller
 notes.** The first finding is a wrong-answer bug that two earlier
 audits had declared unreachable; the fifth, found in the second hour, is an AC accuracy
 loss that grows across a wide frequency sweep.
@@ -688,9 +689,10 @@ pole-zero calls the determinant, so the exposure is small, but the guard is one 
   element, which is the root under F1's trailing case as well.
 * **XSPICE code models** (loaded through the build's `_spicelib/scripts/spinit`): a
   `gain` stage and an `int` stage give the same op and AC under both solvers, so the
-  MIF complex binding works. Which surfaced F6 below.
+  MIF complex binding works. Which surfaced F6 below — by accident of where the
+  `.spiceinit` for the code models had been written.
 
-## F6 (side finding, not solver core) — a batch run with two XSPICE code models and an AC aborts on exit
+## F6 (side finding, not solver core) — any `.spiceinit` beside the deck, in the current directory or in `$HOME` kills the run at start-up (first seen as an XSPICE batch-exit abort)
 
 ```spice
 v1 in 0 dc 0.2 ac 1
@@ -709,15 +711,23 @@ print vm(out)
 .end
 ```
 
-`ngspice -b` exits with **134 (SIGABRT)** under both solvers and the buffered `print`
-output is lost; lldb shows `malloc: pointer being freed was not allocated` raised from
-`main` on the normal end-of-batch path, after the simulation completed. Add `quit` to
-the control block and the run exits 0 with the right numbers; drop the `op`, use an
-`.ac` card instead of the control-block `ac`, run `tran` instead, or remove either code
-model or the capacitor between them, and it does not happen. So it is a teardown
-double-free in the frontend/XSPICE path after op + AC on this topology, not a wrong
-answer, and it belongs to an XSPICE hunt; noted here because a CI script sees a
-failed exit code and no output.
+`ngspice -b` exited with **134 (SIGABRT)** under both solvers and no output. The first
+reading — a teardown double free after op + AC on this topology, since variants without
+`op`, with an `.ac` card, with `tran`, or with `quit` "worked" — was wrong: those
+variants had been written into a different scratch directory. With `main.o` rebuilt
+with debug information the debugger put the bad free at `read_initialisation_file()`
+in `main.c`, called at **start-up** for the `.spiceinit` that the failing decks'
+directory happened to contain (the one I had written to load the code models). The
+mechanism: `inp_source()` builds a stack wordlist whose word is *borrowed* from its
+caller ("nothing in it should be freed"), and Enhancement-558's unquoting in
+`com_source()` frees every word it is given and installs the unquoted copy — so the
+caller's `path` was freed inside the call and again by the caller. Before the fix, a
+`.spiceinit` with only `set foo=1` beside a trivial RC deck, or in the current
+directory, or in `$HOME`, ended every run with exit 134 before the first line of output;
+under `MallocStackLogging` the double free went unnoticed and the deck ran, which is why
+that experiment misled. `inp_source()` now passes a heap copy and frees whatever
+`com_source()` leaves behind; the three placements and the F6 deck itself are pinned by
+`examples/initfile_examples/` on both solvers.
 
 ## Status after the fixes (2026-09-06, build of 13:25)
 
@@ -733,7 +743,7 @@ solvers (17 checks per solver).
 | F4 | `CKTdoJob` rebinds the devices to the real arrays after any analysis returns while the matrix is flagged complex | `cktdojob.c` |
 | F5 | `isfinite` on the four normalisation loops | `sputils.c`, `klusmp.c` |
 | F7 | `SMPcLUfac` runs `klu_z_rcond` after every successful complex refactor and returns `E_SINGULAR` on a zero or a collapse relative to the last full complex factorization (recorded by `SMPcReorder` and the E-499 full-factor branch); `NIacIter` re-pivots silently on that code and warns only if the fresh factorization is singular too | `klusmp.c`, `niaciter.c`, `klu.h` |
-| F6 | **open** — the XSPICE batch-exit double free is outside the solver core; the file-name ownership path was ruled out and the writer was not found in the time box | — |
+| F6 | **fixed** (after E-566, in E-567): not XSPICE at all — `inp_source()` handed `com_source()` a borrowed word that Enhancement-558's unquoting frees, so every `.spiceinit`/`spice.rc` in the deck's directory, the current directory or `$HOME` was a double free at start-up; `inp_source()` now passes a heap copy. Suite `initfile_examples` | `frontend/inp.c` |
 
 After the fixes every deck in this report gives the same numbers under KLU and Sparse:
 the floating node reads I/gmin (2 mA into 1 pS is 2e9 V) with `singular matrix: check
