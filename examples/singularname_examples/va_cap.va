@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+module va_cap(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real c = 1e-12;
+  analog I(p, n) <+ ddt(c * V(p, n));
+endmodule

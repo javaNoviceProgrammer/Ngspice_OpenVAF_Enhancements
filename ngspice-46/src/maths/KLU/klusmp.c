@@ -1786,6 +1786,8 @@ SMPprintKLUforCIDER (SMPmatrix *Matrix, char *Filename)
 void
 SMPgetError (SMPmatrix *Matrix, int *Col, int *Row)
 {
+    int line ;
+
     if (Matrix->CKTkluMODE)
     {
         if (Matrix->SMPkluMatrix->KLUmatrixNZ == 0) {
@@ -1798,6 +1800,98 @@ SMPgetError (SMPmatrix *Matrix, int *Col, int *Row)
     } else {
         spWhereSingular (Matrix->SPmatrix, Row, Col) ;
     }
+
+    /* Enhancement-570: the index a factorization stops at is the column where
+     * ITS elimination order first ran out of pivots, which for a rank-deficient
+     * block is any of the block's columns -- a BSIM4 whose gate hangs on a
+     * capacitor was reported as "check node g" by Sparse and "check node d"
+     * by KLU, the same singular block met at a different pivot, and only the
+     * first name told the user anything.  When a row of the matrix is all
+     * zero the node's equation is vacuous -- nothing conducts to it in this
+     * analysis -- and THAT is the node to name, whatever the pivot order; an
+     * all-zero column (an unknown no equation mentions) is the same thing
+     * seen from the other side.  Both survive a failed factorization intact:
+     * a zero line stays zero under elimination, in KLU's untouched value
+     * arrays and in Sparse's in-place ones alike. */
+    line = SMPzeroLine (Matrix) ;
+    if (line > 0) {
+        *Row = line ;
+        *Col = line ;
+    }
+}
+
+/*
+ * SMPzeroLine() -- Enhancement-570: the 1-based external index of the first
+ * row of the loaded matrix whose values are all zero, else of the first such
+ * column, else 0.  Reads the complex values when the matrix is complex (the
+ * AC path reports singularity through the same SMPgetError).
+ */
+int
+SMPzeroLine (SMPmatrix *Matrix)
+{
+    unsigned char *rowhas, *colhas ;
+    int n, k, found = 0 ;
+
+    if (Matrix->CKTkluMODE) {
+        int *Ap = Matrix->SMPkluMatrix->KLUmatrixAp ;
+        int *Ai = Matrix->SMPkluMatrix->KLUmatrixAi ;
+        int j, p ;
+        n = (int) Matrix->SMPkluMatrix->KLUmatrixN ;
+        if (n <= 0 || Ap == NULL || Ai == NULL)
+            return 0 ;
+        rowhas = TMALLOC (unsigned char, (size_t) n + 1) ;
+        colhas = TMALLOC (unsigned char, (size_t) n + 1) ;
+        memset (rowhas, 0, (size_t) n + 1) ;
+        memset (colhas, 0, (size_t) n + 1) ;
+        for (j = 0 ; j < n ; j++) {
+            for (p = Ap [j] ; p < Ap [j + 1] ; p++) {
+                int nz ;
+                if (Matrix->SMPkluMatrix->KLUmatrixIsComplex) {
+                    double *Az = Matrix->SMPkluMatrix->KLUmatrixAxComplex ;
+                    nz = (Az != NULL) && (Az [2 * p] != 0.0 || Az [2 * p + 1] != 0.0) ;
+                } else {
+                    double *Ax = Matrix->SMPkluMatrix->KLUmatrixAx ;
+                    nz = (Ax != NULL) && (Ax [p] != 0.0) ;
+                }
+                if (nz) {
+                    rowhas [Ai [p] + 1] = 1 ;
+                    colhas [j + 1] = 1 ;
+                }
+            }
+        }
+    } else {
+        MatrixPtr M = Matrix->SPmatrix ;
+        int ic ;
+        n = M->ExtSize ;
+        if (n <= 0)
+            return 0 ;
+        rowhas = TMALLOC (unsigned char, (size_t) n + 1) ;
+        colhas = TMALLOC (unsigned char, (size_t) n + 1) ;
+        memset (rowhas, 0, (size_t) n + 1) ;
+        memset (colhas, 0, (size_t) n + 1) ;
+        for (ic = 1 ; ic <= M->Size ; ic++) {
+            ElementPtr e ;
+            int ec = M->IntToExtColMap [ic] ;
+            for (e = M->FirstInCol [ic] ; e != NULL ; e = e->NextInCol) {
+                int er = M->IntToExtRowMap [e->Row] ;
+                if (e->Real != 0.0 || (M->Complex && e->Imag != 0.0)) {
+                    if (er >= 1 && er <= n)
+                        rowhas [er] = 1 ;
+                    if (ec >= 1 && ec <= n)
+                        colhas [ec] = 1 ;
+                }
+            }
+        }
+    }
+    for (k = 1 ; k <= n && !found ; k++)
+        if (!rowhas [k])
+            found = k ;
+    for (k = 1 ; k <= n && !found ; k++)
+        if (!colhas [k])
+            found = k ;
+    FREE (rowhas) ;
+    FREE (colhas) ;
+    return found ;
 }
 
 /* Parity of the permutation vector perm[0..n-1]: 0 if even, 1 if odd.
