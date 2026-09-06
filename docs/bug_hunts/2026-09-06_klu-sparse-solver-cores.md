@@ -742,7 +742,7 @@ paused sweep records all its points, the wide-range ladder is within 0.05 dB of 
 70-digit reference with either `pivrel`, and guard-malloc is clean on all of them. The
 F7 guard forced one extra full factorization on the 31-point ladder sweep, two on the
 buffered chain and none on an ordinary common-emitter AC. The control decks, eleven
-solver-centric and OSDI suites are unchanged, and the full regression sweep is 464 of 464 (the first pass caught two things the fixes had to respect: E-492's single note for a circuit with no matrix at all, and pole-zero's reduced matrix).
+solver-centric and OSDI suites are unchanged, and the full regression sweep is 465 of 465 (the first pass caught two things the fixes had to respect: E-492's single note for a circuit with no matrix at all, and pole-zero's reduced matrix).
 
 ## Smaller notes (not pursued)
 

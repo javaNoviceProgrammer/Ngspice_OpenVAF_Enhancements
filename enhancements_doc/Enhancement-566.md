@@ -13,7 +13,7 @@ double free, is not a solver defect and stays open.
 **Suites:** new [`solvercore_examples`](../examples/solvercore_examples/) (17 checks per
 solver, both solvers, also clean under guard-malloc); `solverfix`, `klupz`, `klu_tuning`,
 `noisejw`, `linesearch`, `checkpoint`, `analyses`, `groundcontrib`, `hierbranch`,
-`ctrlnode`, `pzhb`, `portconnected`, `paramsetlrm` pass; full sweep 464 of 464 on both
+`ctrlnode`, `pzhb`, `portconnected`, `paramsetlrm` pass; full sweep 465 of 465 on both
 solvers. The bug-hunt write-up carries a "status after the fixes" section.
 
 ## What was wrong
@@ -99,4 +99,4 @@ small decks under both solvers:
 | `stop when frequency > 500` inside `sweep -analysis ac` and `sp`, device and `.param` knobs | all three points recorded under KLU (point 2 was NaN) |
 | the wide-range ladder, `ac dec 2 1m 1t`, default `pivrel` and `pivrel=1`; the buffered chain; S21 through two ports | within 0.05 dB of the 70-digit reference at 1 GHz and 1 THz (were −26 dB and +613 dB off; the chain 109 dB); Sparse unchanged |
 | controls: common-emitter noise and poles, a VCVS chain, HiCUM and BSIM4 stages over fifteen decades, line search, trust region, continuation, a switched network, a one-node matrix | unchanged and identical across solvers |
-| `solvercore_examples`; thirteen suites; full sweep; the new suite under guard-malloc | 17 / 17 both solvers; all pass; 464 of 464; clean on both |
+| `solvercore_examples`; thirteen suites; full sweep; the new suite under guard-malloc | 17 / 17 both solvers; all pass; 465 of 465; clean on both |
