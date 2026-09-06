@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module pcf(inout electrical a, b);
+electrical mid; integer i, k;
+analog begin
+  i = $port_connected(mid);
+  k = $port_connected(V(a));
+  I(a,b) <+ V(a,b);
+end
+endmodule

@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module leaf(inout electrical g, p, q);
+(* desc="p" *) integer cp; (* desc="q" *) integer cq;
+analog begin cp = $port_connected(p); cq = $port_connected(q); I(p,g) <+ V(p,g)*1e-3; I(q,g) <+ V(q,g)*1e-3; end
+endmodule
+module mid(inout electrical g, x);
+electrical dangling;
+leaf u1 (.g(g), .p(x), .q());
+leaf u2 (.g(g), .p(dangling), .q(x));
+endmodule
+module top3(inout electrical g, x);
+mid m1 (.g(g), .x(x));
+endmodule

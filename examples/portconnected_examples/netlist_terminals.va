@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+module netterm(inout electrical a, q, qb);
+(* desc="q connected" *) integer cq;
+(* desc="qb connected" *) integer cqb;
+analog begin
+  cq = $port_connected(q);
+  cqb = $port_connected(qb);
+  I(q, a) <+ V(q, a) * 1e-3;
+  I(qb, a) <+ V(qb, a) * 1e-3;
+end
+endmodule

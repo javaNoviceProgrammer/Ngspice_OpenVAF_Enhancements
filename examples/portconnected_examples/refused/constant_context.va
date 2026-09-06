@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+module pcg(inout electrical a, b);
+parameter integer guard = $port_connected(b);
+localparam integer lg = $port_connected(a);
+analog I(a,b) <+ V(a,b);
+endmodule

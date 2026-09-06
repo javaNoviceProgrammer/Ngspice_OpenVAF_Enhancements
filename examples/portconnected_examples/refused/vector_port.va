@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module pch(inout electrical g, inout electrical [0:1] p);
+integer w;
+analog begin
+  w = $port_connected(p);
+  I(p[0], g) <+ V(p[0], g) * 1e-3;
+end
+endmodule

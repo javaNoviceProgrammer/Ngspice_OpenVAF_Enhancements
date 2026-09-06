@@ -883,7 +883,14 @@ branch (<p>) pb;               // named port branch: I(pb) == I(<p>)  (E-84)
 `$port_connected` works on connected *and* unconnected ports of
 flattened instances (resolved per instance at elaboration time), and
 instantiating an undefined module is a hard error rather than a silent
-drop (both E-84). Bus actuals may be **part-selects** — positional,
+drop (both E-84). The clause-9.19 rules — the value is decided at the
+instance's own instantiation line whatever the enclosing level leaves
+open, a dangling net or ground counts as connected, an omitted trailing
+terminal or an open `.q()` reads 0, a vector port is asked bit by bit,
+and a call in a constant expression, in an analog function, or on
+anything but a port is refused — are pinned end-to-end on both solvers
+by `examples/portconnected_examples/`, including the LRM's own
+`myclk`/`twoclk`/`top` example. Bus actuals may be **part-selects** — positional,
 named, or width-1 onto a scalar port (E-85):
 
 ```verilog

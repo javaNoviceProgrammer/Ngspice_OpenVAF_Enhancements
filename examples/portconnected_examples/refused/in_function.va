@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module pci(inout electrical a, b);
+analog function integer f; input x; real x; begin f = $port_connected(a); end endfunction
+integer k;
+analog begin
+  @(initial_step) k = $port_connected(b);
+  I(a,b) <+ V(a,b) * (1 + f(1.0));
+end
+endmodule

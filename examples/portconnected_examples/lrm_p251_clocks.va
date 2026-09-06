@@ -1,0 +1,39 @@
+`include "disciplines.vams"
+module myclk(vout_q, vout_qbar);
+   output vout_q, vout_qbar;
+   electrical vout_q, vout_qbar;
+   parameter real tdel = 3u from [0:inf);
+   parameter real trise = 1u from (0:inf);
+   parameter real tfall = 1u from (0:inf);
+   parameter real period = 20u from (0:inf);
+   integer q;
+   (* desc="q connected" *) integer cq;
+   (* desc="qbar connected" *) integer cqb;
+   analog begin
+      cq = $port_connected(vout_q);
+      cqb = $port_connected(vout_qbar);
+      @ (timer(0, period))
+         q = 0;
+      @ (timer(period/2, period))
+         q = 1;
+      if ($port_connected(vout_q))
+         V(vout_q) <+ transition( q, tdel, trise, tfall);
+      else
+         V(vout_q) <+ 0.0;
+      if ($port_connected(vout_qbar))
+         V(vout_qbar) <+ transition( !q, tdel, trise, tfall);
+      else
+         V(vout_qbar) <+ 0.0;
+   end
+endmodule
+module twoclk(vout_q1, vout_q2);
+   output vout_q1, vout_q2;
+   electrical vout_q1, vout_q2;
+   myclk clk1(.vout_q(vout_q1));
+   myclk clk2(.vout_q(vout_q2));
+endmodule
+module top(vout_q1);
+   output vout_q1;
+   electrical vout_q1;
+   twoclk topclk1(.vout_q1(vout_q1));
+endmodule
