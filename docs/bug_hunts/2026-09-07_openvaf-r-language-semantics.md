@@ -28,7 +28,7 @@ is in "Coverage, honestly" at the end, because it is most of the hour.
 | # | finding | severity |
 |---|---|---|
 | [F1](#f1--hypot-has-a-nan-derivative-at-0-0-so-a-model-using-hypot-of-a-node-quantity-cannot-find-an-operating-point) | `hypot(x, y)` has a NaN derivative when both arguments are zero; a contribution `I(p,n) <+ k*hypot(V(p,n), 0)` at the V=0 DC initial guess makes every operating-point method fail. `abs`, `sqrt` and `pow` at zero are already guarded; `hypot` is not | **medium** — op failure for a legal model |
-| [F2](#f2--random-and-rdist_-never-write-the-seed-back-and-re-seeding-mid-sequence-is-ignored) | `$random(seed)` and the `$rdist_*` functions never update the seed variable, assigning the seed again does not restart the sequence, and — found in the last minutes — a call site draws **once per instance and returns the same number on every later evaluation**, so `$rdist_uniform` inside a transient is a constant instead of a new draw per time step | **medium-high** — LRM 9.13 deviation, silent; a per-step random model is silently deterministic |
+| [F2](#f2--random-and-rdist_-never-write-the-seed-back-and-re-seeding-mid-sequence-is-ignored) | `$random(seed)` and the `$rdist_*` functions never update the seed variable, assigning the seed again does not restart the sequence, and a call site draws **once per instance and returns the same number on every later evaluation** | **withdrawn** — the documented Enhancement-10 design, kept for convergence (see the status section) |
 | [F3](#f3--the-constant-folder-drops-the-sign-of-negative-zero) | `-0.0`, `0.0 * -1.0` and `1.0/(-0.0)` are folded with the sign of zero lost: `1/(-0.0)` gives +inf and `atan2(0, -0.0)` gives 0 instead of π. The runtime path and `-zero` (negating a parameter) are right | low-medium — IEEE deviation, rare in practice |
 | [F4](#f4--compile-time-is-quadratic-in-the-length-of-an-array) | compile time grows quadratically with the length of any array: a 10 000-entry real or integer array parameter takes 72 s (2 500 entries 5 s, 5 000 entries 19 s), a plain `real tab[0:9999]` module variable filled in a loop 68 s, and a 10 000-entry *instance* array parameter 375 s with a 5.8 MB object | **medium** — table-driven models with large arrays |
 | [F5](#f5--10--00-folds-to-nan-silently-while-the-same-expression-at-run-time-is-a-fatal) | `1.0 % 0.0` in a constant expression folds to NaN with no diagnostic; the same expression at run time is a `$fatal`, and `ln(0.0)`, `sqrt(-1.0)`, `asin(2.0)` constants are compile-time errors | low — inconsistent diagnostics |
@@ -283,7 +283,25 @@ functions, and `-O0` setup modules above 1024 parameters. A 10,000-entry model a
 parameter compiles in 4.2 s (was 71 s), an instance array in 5.9 s (was 375–410 s); a
 10,000-element local array rewritten in a loop each evaluation still takes 26 s (was
 68 s), which is LLVM optimising a 10,000-phi loop in the evaluation function.
-F1 (`hypot`) and F2 (`$random`) stand as written.
+
+F1 is closed by [Enhancement-580](../../enhancements_doc/Enhancement-580.md), pinned by
+`examples/hypotzero_examples` (15 checks per solver, 11 against the shipped compiler):
+the `hypot` and `atan2` derivative caches are regularised the way `sqrt`'s was, finite
+at the origin and below the ULP elsewhere. The `atan2` half had escaped the hunt because
+its probe used a literal 0, which folds away before the chain rule; two node voltages at
+zero fail the operating point exactly like `hypot`.
+
+**F2 is withdrawn as a defect.** All three observations are correct, and all three are
+the documented design: Enhancement-10 made every draw a pure function of the seed
+value and a call-site salt with no write-back, because a seed that advances in place
+returns a different number on every Newton iteration; Enhancement-395 wrote the LRM
+write-back fix, measured a body-level draw then failing every operating-point method,
+withdrew it and added lint L019 for draws inside loops; Enhancement-539 corrected an
+external audit that had reported the same behaviour. The hunt's probes were not in
+loops, so the lint had nothing to say. The LRM's inout seed describes a procedural
+language; a seed read inside a residual re-evaluated to convergence is a different
+problem, and the pure form is what makes Monte Carlo reproducible and per-instance
+variation independent. `examples/rng_examples/README.md` states the contract.
 
 ## Smaller notes (not pursued)
 

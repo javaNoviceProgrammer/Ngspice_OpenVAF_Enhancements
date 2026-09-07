@@ -466,8 +466,21 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
                 let sqrt_reg = self.ins().sqrt(x_reg);
                 self.ins().fmul(F_TWO, sqrt_reg)
             }
-            // hypot(x,y) -> (x*x' + y*y')/hypot(x,y): cache hypot(x,y) itself
-            Opcode::Hypot => res,
+            // hypot(x,y) -> (x*x' + y*y')/hypot(x,y). Enhancement-580 (bug-hunt
+            // 2026-09-07 F1): the natural cache hypot(x,y) itself is 0 at the
+            // (0,0) DC initial guess and the derivative is 0/0 = NaN, which
+            // poisons the Jacobian and fails every operating-point method for a
+            // model that takes hypot of node quantities that start at zero --
+            // while abs, sqrt and pow at zero were all guarded already (the sqrt
+            // regularisation above, E-261). Cache hypot(hypot(x,y), a) =
+            // sqrt(x^2+y^2+a^2) instead: FINITE at the origin (the derivative is
+            // 0 there, the value of the smooth |x|), and for any hypot above
+            // 1e-9 the perturbation a^2/(2 h^2) is below the ULP, so every
+            // derivative away from the origin is unchanged.
+            Opcode::Hypot => {
+                let a = self.func.dfg.f64const(1e-18);
+                self.ins().hypot(res, a)
+            }
             // ln(x) -> 1/x
             Opcode::Ln => arg0,
             // ln1p(x) -> 1/(1+x) -- the divide group caches the DENOMINATOR
@@ -520,6 +533,15 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
                 let lhs_squared = self.ins().fmul(arg0, arg0);
                 let rhs_squared = self.ins().fmul(arg1, arg1);
                 let bot = self.ins().fadd(lhs_squared, rhs_squared);
+                // Enhancement-580: the same singularity as hypot's, one step
+                // further: 1/(x^2+y^2) is +inf at the (0,0) initial guess and the
+                // chain below multiplies it by (x'*y - y'*x) = 0 -- NaN whenever
+                // both arguments are run-time values that start at zero (a
+                // constant zero argument folded away before it reached here,
+                // which is why atan2(V, 0.0) never showed it). Add a^2 = 1e-36:
+                // finite at the origin, below the ULP for any radius above 1e-10.
+                let a_sq = self.func.dfg.f64const(1e-36);
+                let bot = self.ins().fadd(bot, a_sq);
 
                 cache[2] = self.ins().fdiv(F_ONE, bot).into();
                 cache[1] = self.ins().fneg(arg0).into();
