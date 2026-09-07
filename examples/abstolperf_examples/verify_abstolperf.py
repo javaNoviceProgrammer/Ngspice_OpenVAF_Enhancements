@@ -114,9 +114,11 @@ if not compiled:
 # Anti-gaming: the path must actually be doing its job on this very deck.
 write("_ap_dbg.cir", deck(200, ctl=("set ngdebug", "op")))
 dbg = run("_ap_dbg.cir")
-stamped = len(re.findall(r"convergence abstol", dbg))
-check("the nature-abstol path is active on this deck (nodes are stamped)",
-      stamped > 0, f"{stamped} nodes reported; expected > 0")
+# E-585: one summary line per model type and tolerance, with the node count
+stamped = sum(int(n) for n in re.findall(r"convergence abstol = \S+ on (\d+) nodes?", dbg))
+check("the nature-abstol path is active on this deck (nodes are stamped; E-585 reports the count per model)",
+      stamped >= 200 and dbg.count("convergence abstol") <= 4,
+      f"{stamped} nodes reported in {dbg.count('convergence abstol')} line(s); expected >= 200 in a few lines")
 
 # ------------------------------------------------------------------- [3] -----
 # A ladder of n 1k devices plus a 1k terminator, driven by 1 V: the far node

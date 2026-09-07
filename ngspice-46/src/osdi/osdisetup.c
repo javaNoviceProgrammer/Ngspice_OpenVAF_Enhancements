@@ -397,9 +397,20 @@ static void note_node_abstol(uint32_t gnode, double tol) {
 
 /* One walk of the node list, applying everything collected so far. Re-running
  * it after a later model type has added more is harmless: tightest-wins makes
- * re-application idempotent. */
-static void flush_node_abstol(CKTcircuit *ckt) {
+ * re-application idempotent.
+ *
+ * Enhancement-585: under `ngdebug` the report is ONE line per model type and
+ * distinct tolerance -- "OSDI: mcdev2: convergence abstol = 1e-06 on 2000
+ * nodes (declared by its natures)" -- not one line per node. The per-node form
+ * (E-539) printed 2000 lines for a 1000-device ladder before the first sample
+ * of a Monte Carlo, which read as a flood of warnings and told nothing a count
+ * would not. A model with several natures (a voltage and a current, a thermal
+ * node) gets one line per tolerance. */
+#define ABSTOL_TALLY_MAX 8
+static void flush_node_abstol(CKTcircuit *ckt, const char *model) {
   CKTnode *n;
+  struct { double tol; int count; } tally[ABSTOL_TALLY_MAX];
+  int ntally = 0, more = 0, k;
 
   if (!ckt || !osdi_pending_abstol) {
     return;
@@ -416,11 +427,37 @@ static void flush_node_abstol(CKTcircuit *ckt) {
     }
     tol = osdi_pending_abstol[num];
     if (tol > 0.0 && (n->natabstol <= 0.0 || tol < n->natabstol)) {
-      if (ft_ngdebug) {
-        fprintf(stderr, "OSDI: node %u convergence abstol = %g "
-                        "(declared by its nature)\n", num, tol);
-      }
       n->natabstol = tol;
+      if (ft_ngdebug) {
+        for (k = 0; k < ntally; k++) {
+          if (tally[k].tol == tol) {
+            tally[k].count++;
+            break;
+          }
+        }
+        if (k == ntally) {
+          if (ntally < ABSTOL_TALLY_MAX) {
+            tally[ntally].tol = tol;
+            tally[ntally].count = 1;
+            ntally++;
+          } else {
+            more++;
+          }
+        }
+      }
+    }
+  }
+  if (ft_ngdebug) {
+    for (k = 0; k < ntally; k++) {
+      fprintf(stderr, "OSDI: %s: convergence abstol = %g on %d node%s "
+                      "(declared by its natures)\n",
+              model ? model : "?", tally[k].tol, tally[k].count,
+              tally[k].count == 1 ? "" : "s");
+    }
+    if (more) {
+      fprintf(stderr, "OSDI: %s: convergence abstol set on %d more node%s at "
+                      "further tolerances\n",
+              model ? model : "?", more, more == 1 ? "" : "s");
     }
   }
 }
@@ -1251,7 +1288,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
    * walk of the node list rather than a search per instance (see
    * apply_node_abstol). Every node exists by now, and tightest-wins makes the
    * re-application by a later model type idempotent. */
-  flush_node_abstol(ckt);
+  flush_node_abstol(ckt, descr->name);
 
   /* Enhancement-426: the FIRST failure, not whatever the last model happened to
    * return -- see the note at first_err's declaration. */

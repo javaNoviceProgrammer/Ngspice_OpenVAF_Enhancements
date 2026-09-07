@@ -158,7 +158,10 @@ OSDI: node 3 convergence abstol = 1e-12 (declared by its nature)
 ```
 
 — the `myvoltage` potential (`abstol = 1u`) and the `mycurrent` flow
-(`abstol = 1p`), each resolved through its discipline.
+(`abstol = 1p`), each resolved through its discipline. (Since
+[E-585](Enhancement-585.md) the report is one line per model type and tolerance —
+`OSDI: <model>: convergence abstol = 1e-06 on 1 node (declared by its natures)` —
+a 1000-device deck printed 2000 of the per-node lines.)
 
 Because the data was already in the file, this works for **models compiled
 before this change**: the same `.osdi` built by the previously shipped

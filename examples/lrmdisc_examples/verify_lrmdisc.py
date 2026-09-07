@@ -268,11 +268,12 @@ if rc == 0:
     # nothing at all, so the circuit-wide default applied.
     dbg = run("V1 1 0 DC 1\nV2 2 0 DC 1\nN2 1 2 mt\n.model mt tol",
               "set ngdebug\nop", "tol", ovr_osdi)
-    tols = [float(x) for x in
-            re.findall(r"convergence abstol = ([\d.eE+-]+)", dbg)]
+    # E-585: "OSDI: tol: convergence abstol = 1e-09 on 2 nodes (declared by its natures)"
+    tols = [(float(x), int(n)) for x, n in
+            re.findall(r"convergence abstol = ([\d.eE+-]+) on (\d+) node", dbg)]
     check("[9c] an overridden potential.abstol reaches the convergence test "
           "on both the direct and the derived-nature route",
-          len([x for x in tols if abs(x - 1e-9) < 1e-18]) == 2, f"{tols}")
+          sum(n for x, n in tols if abs(x - 1e-9) < 1e-18) == 2, f"{tols}")
 
 rc, out, _ = compile_src(HDR + """
 module vb(a,b); inout a,b;
