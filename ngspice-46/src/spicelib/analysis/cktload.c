@@ -117,6 +117,8 @@ CKTload(CKTcircuit *ckt)
     /* gtri - end - Put resistors to ground at all nodes */
 #endif
 
+    CKTdcpathStamp(ckt);                       /* Enhancement-575 */
+
     if (ckt->CKTmode & MODEDC) {
         /* consider doing nodeset & ic assignments */
         if (ckt->CKTmode & (MODEINITJCT | MODEINITFIX)) {

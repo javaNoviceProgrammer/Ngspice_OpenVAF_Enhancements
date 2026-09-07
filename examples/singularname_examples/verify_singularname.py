@@ -63,8 +63,13 @@ def scalars(out):
     return vals
 
 
+# Enhancement-575: the default `.option dcpath=gmin` now HOLDS every node
+# without a DC path at setup, so none of these decks is singular any more.
+# The naming this suite pins is what the solver says when nothing is
+# installed -- `.option dcpath=off`, Enhancement-566's run -- so every deck
+# carries it.
 def op_deck(title, body, prints, pre=""):
-    return f"* {title}\n{body}\n.control\n{pre}op\nprint {prints}\n.endc\n.end\n"
+    return f"* {title}\n.option dcpath=off\n{body}\n.control\n{pre}op\nprint {prints}\n.endc\n.end\n"
 
 
 MOS1 = ".model nm nmos(level=1 vto=0.7 kp=100u)\n.model pm pmos(level=1 vto=-0.7 kp=40u)"
@@ -124,7 +129,7 @@ def main():
           b and b <= {"l1#branch", "l2#branch"} and abs(scalars(out).get("v(b)", 9) - 0.5) < 1e-3, f"blamed={sorted(b)}")
 
     print("\n[AC goes through the same report]")
-    out = ngspice("* ac on a capacitor node\nv1 a 0 dc 1 ac 1\nr1 a b 1k\nc1 x 0 1p\n.control\nac dec 1 1 10\nprint v(x)\n.endc\n.end\n")
+    out = ngspice("* ac on a capacitor node\n.option dcpath=off\nv1 a 0 dc 1 ac 1\nr1 a b 1k\nc1 x 0 1p\n.control\nac dec 1 1 10\nprint v(x)\n.endc\n.end\n")
     check("AC on the capacitor-only deck: the operating point's reports name x, the AC itself runs",
           blamed(out) == {"x"} and "matrix is singular" not in out, f"blamed={sorted(blamed(out))}")
 

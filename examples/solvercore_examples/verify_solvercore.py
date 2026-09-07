@@ -137,7 +137,9 @@ def main():
         print(f"  {'PASS' if cond else 'FAIL'}  {label}   {detail}")
 
     print("[F1] a node nothing conducts to: the rest of the circuit stays right, the node is named")
-    out = ngspice("* floating middle node\nv1 n1 0 1\nr1 n1 n2 1k\ni1 0 nx 1m\nr2 n2 0 1k\nr3 n1 n3 1k\nr4 n3 0 1k\n"
+    # Enhancement-575: `.option dcpath=off` keeps this the E-566 run -- with the
+    # default the walk holds nx at setup and neither message below is printed
+    out = ngspice("* floating middle node\n.option dcpath=off\nv1 n1 0 1\nr1 n1 n2 1k\ni1 0 nx 1m\nr2 n2 0 1k\nr3 n1 n3 1k\nr4 n3 0 1k\n"
                   ".control\nop\nprint v(n1) v(n2) v(n3) v(nx) i(v1)\n.endc\n.end\n")
     v = scalars(out)
     check("op: v(n1)=1, v(n2)=v(n3)=0.5, i(v1)=-1mA", near(v.get("v(n1)"), 1, 1e-9) and near(v.get("v(n2)"), .5, 1e-9)

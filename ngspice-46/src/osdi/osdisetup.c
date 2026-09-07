@@ -367,7 +367,7 @@ static void write_node_mapping(const OsdiDescriptor *descr, void *inst,
  * every (instance, node) pair -- O(instances x nodes x circuit nodes) -- which
  * was written on the assumption that models declaring an abstol are rare. They
  * are not: `disciplines.vams` declares abstol on the STANDARD natures, so the
- * path runs for every OSDI node in every deck. On a 17-model photonic deck that
+ * path runs for every OSDI node in every deck. On a 17-model deck that
  * cost 4.1 s of a 6.2 s run, tripling it. Collecting is O(1) per pair and the
  * single flush is O(circuit nodes) per model type. */
 static double *osdi_pending_abstol;      /* indexed by global node number */
@@ -485,6 +485,161 @@ static int init_matrix(SMPmatrix *matrix, const OsdiDescriptor *descr,
     }
   }
   return (OK);
+}
+
+/* Enhancement-575: the DC-connectivity edges of every instance of an OSDI
+ * device type, for CKTsetup's `.option dcpath` walk. A Jacobian entry flagged
+ * RESIST or RESIST_CONST joins its equation node and its unknown node; an
+ * entry that is REACT-only (a ddt() contribution, a pure capacitance) joins
+ * nothing, and a port the module only probes has no entry at all -- so a
+ * `V(out) <+ gain*V(in)` module leaves `in` unconnected without a special
+ * case. By this point node_mapping holds GLOBAL node numbers (0 = ground) and
+ * UINT32_MAX for a collapsed-away node. */
+/* sort key for the transpose lookup below */
+static int dcpath_pair_cmp(const void *a, const void *b) {
+  const uint32_t *x = (const uint32_t *)a, *y = (const uint32_t *)b;
+  if (x[0] != y[0])
+    return x[0] < y[0] ? -1 : 1;
+  if (x[1] != y[1])
+    return x[1] < y[1] ? -1 : 1;
+  return 0;
+}
+
+void OSDIdcpathEdges(CKTcircuit *ckt, int type,
+                     void (*join)(void *, int, int), void *arg) {
+  GENmodel *gen_model = ckt->CKThead[type];
+  OsdiRegistryEntry *entry;
+  const OsdiDescriptor *descr;
+  uint32_t n, i, k;
+  unsigned char *sym, *toground;
+  uint32_t *pairs;
+
+  if (!gen_model)
+    return;
+  /* One descriptor per device TYPE: every .model card of the type shares it,
+   * so the pattern work below is done once here, not once per card. A
+   * deck with hundreds of cards per module spent seven seconds in
+   * a per-card quadratic scan before this was hoisted. */
+  entry = osdi_reg_entry_model(gen_model);
+  descr = entry->descriptor;
+  n = descr->num_jacobian_entries;
+  sym = TMALLOC(unsigned char, n ? n : 1);
+  toground = TMALLOC(unsigned char, descr->num_nodes ? descr->num_nodes : 1);
+  memset(toground, 0, descr->num_nodes ? descr->num_nodes : 1);
+  /* An entry (i, j) says equation i DEPENDS on unknown j; a DC PATH between
+   * the two nodes needs the current at BOTH ends to depend on both -- the
+   * symmetric pattern a conductance stamps. A controlled contribution
+   * `V(out) <+ k*V(in)` has (out, in) and no (in, out): `in` is probed, not
+   * connected, and Enhancement-569 already treats it so. RESIST is set only
+   * when the resistive part is NON-ZERO; RESIST_CONST says the part is
+   * constant and covers a constant zero, which is what a ddt()-only
+   * contribution carries (flags 9 = REACT|RESIST_CONST). The transpose is
+   * found by binary search over the sorted resistive pairs. */
+  pairs = TMALLOC(uint32_t, 2 * (n ? n : 1));
+  {
+    uint32_t np = 0;
+    for (i = 0; i < n; i++) {
+      const OsdiJacobianEntry *e = &descr->jacobian_entries[i];
+      if (e->flags & JACOBIAN_ENTRY_RESIST) {
+        pairs[2 * np] = e->nodes.node_1;
+        pairs[2 * np + 1] = e->nodes.node_2;
+        np++;
+      }
+    }
+    qsort(pairs, np, 2 * sizeof(uint32_t), dcpath_pair_cmp);
+    for (i = 0; i < n; i++) {
+      const OsdiJacobianEntry *e = &descr->jacobian_entries[i];
+      uint32_t key[2];
+      sym[i] = 0;
+      if (!(e->flags & JACOBIAN_ENTRY_RESIST))
+        continue;
+      if (e->nodes.node_1 == e->nodes.node_2) {
+        sym[i] = 1;                       /* a diagonal joins nothing new */
+        continue;
+      }
+      key[0] = e->nodes.node_2;
+      key[1] = e->nodes.node_1;
+      if (np && bsearch(key, pairs, np, 2 * sizeof(uint32_t), dcpath_pair_cmp))
+        sym[i] = 1;
+      if (ft_ngdebug)
+        fprintf(stderr, "OSDI: dcpath %s entry (%s, %s) flags %u%s\n", descr->name,
+                descr->nodes[e->nodes.node_1].name, descr->nodes[e->nodes.node_2].name,
+                e->flags, sym[i] ? " -- a path" : " -- a dependency only");
+    }
+  }
+  tfree(pairs);
+  /* A voltage contribution is a BRANCH: `V(x) <+ f(...)` adds a flow
+   * unknown br with the symmetric pair (x, br), (br, x), and its other end
+   * -- ground -- is implicit, appearing in no entry at all. Joining x to
+   * br alone leaves the pair adrift, and every port of a large deck driven
+   * that way came out "without a DC path" -- nearly all of its nodes. So: a
+   * flow node coupled symmetrically to exactly
+   * ONE voltage node is a branch to ground, and that node is joined to
+   * ground; coupled to two (`V(p,n) <+ ...`) it joins them to each other,
+   * which the symmetric rule already does, and the pair floats or not with
+   * the rest of the circuit. One pass over the entries, bucketed per flow
+   * node. */
+  {
+    uint32_t *partner = TMALLOC(uint32_t, descr->num_nodes ? descr->num_nodes : 1);
+    uint32_t *npart = TMALLOC(uint32_t, descr->num_nodes ? descr->num_nodes : 1);
+    for (k = 0; k < descr->num_nodes; k++) {
+      partner[k] = UINT32_MAX;
+      npart[k] = 0;
+    }
+    for (i = 0; i < n; i++) {
+      const OsdiJacobianEntry *e = &descr->jacobian_entries[i];
+      uint32_t a = e->nodes.node_1, b = e->nodes.node_2, fl, other;
+      if (!sym[i] || a == b)
+        continue;
+      /* count (br, v) once per pair: take the entry whose ROW is the flow node */
+      if (descr->nodes[a].is_flow && !descr->nodes[b].is_flow) {
+        fl = a; other = b;
+      } else
+        continue;
+      if (partner[fl] != other) {
+        npart[fl]++;
+        partner[fl] = other;
+      }
+    }
+    for (k = 0; k < descr->num_nodes; k++) {
+      if (!descr->nodes[k].is_flow)
+        continue;
+      if (npart[k] == 1)
+        toground[partner[k]] = 1;
+      if (ft_ngdebug)
+        fprintf(stderr, "OSDI: dcpath %s flow node %s couples %u voltage node%s%s\n",
+                descr->name, descr->nodes[k].name, npart[k], npart[k] == 1 ? "" : "s",
+                npart[k] == 1 ? " -- a branch to ground" : "");
+    }
+    tfree(partner);
+    tfree(npart);
+  }
+  for (; gen_model; gen_model = gen_model->GENnextModel) {
+    GENinstance *gen_inst;
+    for (gen_inst = gen_model->GENinstances; gen_inst;
+         gen_inst = gen_inst->GENnextInstance) {
+      void *inst = osdi_instance_data(entry, gen_inst);
+      uint32_t *node_mapping =
+          (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+      for (i = 0; i < n; i++) {
+        const OsdiJacobianEntry *e = &descr->jacobian_entries[i];
+        uint32_t a, b;
+        if (!sym[i] || e->nodes.node_1 == e->nodes.node_2)
+          continue;
+        a = node_mapping[e->nodes.node_1];
+        b = node_mapping[e->nodes.node_2];
+        if (a == UINT32_MAX || b == UINT32_MAX)
+          continue;
+        join(arg, (int)a, (int)b);
+      }
+      for (k = 0; k < descr->num_nodes; k++) {
+        if (toground[k] && node_mapping[k] != UINT32_MAX)
+          join(arg, (int)node_mapping[k], 0);
+      }
+    }
+  }
+  tfree(toground);
+  tfree(sym);
 }
 
 /* Enhancement-535: forward decls -- the osdimc statics and the extracted

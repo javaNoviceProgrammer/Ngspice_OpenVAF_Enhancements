@@ -1,0 +1,5 @@
+`include "disciplines.vams"
+module vddt(p, n);
+  inout p, n; electrical p, n;
+  analog I(p,n) <+ ddt(1p * V(p,n));
+endmodule

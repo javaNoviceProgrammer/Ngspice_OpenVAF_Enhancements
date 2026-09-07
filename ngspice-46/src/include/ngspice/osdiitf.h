@@ -191,6 +191,11 @@ extern int OSDIterminalNames(CKTcircuit *ckt, const char *name, char ***names,
  * src/osdi/osdiparam.c. */
 extern int OSDIcollapseChanged(GENinstance *instPtr);
 extern int OSDIanyCollapseChanged(CKTcircuit *ckt);   /* Enhancement-471 */
+/* Enhancement-575: call join(arg, a, b) for every pair of global node numbers
+   an OSDI instance of `type` joins through a RESISTIVE Jacobian entry -- the
+   DC-connectivity edges the setup's `.option dcpath` walk needs. */
+extern void OSDIdcpathEdges(CKTcircuit *ckt, int type,
+                            void (*join)(void *, int, int), void *arg);
 
 /* `.option osdimc` (alias `automc`) automatic Monte-Carlo: called by if_run
  * at the start of every run-class command (not `resume`). Advances the trial

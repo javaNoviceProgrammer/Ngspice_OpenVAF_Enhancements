@@ -74,6 +74,14 @@ def op_deck(title, body, prints, options=""):
 
 
 HELD = "connected to nothing that conducts; it is held only by gmin"
+# Enhancement-575: a node with no DC path to ground is now found by the
+# connectivity walk at setup and held by an INSTALLED gmin -- Spectre's message,
+# three iterations instead of a trip through the ladder. E-569's own message
+# is what `.option dcpath=off` still prints; the default is pinned here.
+def held(node):
+    return f"no DC path from node '{node}' to ground; gmin (1e-12 S) installed to provide one"
+def quiet(out):
+    return HELD not in out and "no DC path from node" not in out
 FAILED = "could not be simulated"
 OSDI = os.path.join(HERE, "va_vcvs.osdi")
 BSIM4 = os.path.join(os.path.dirname(HERE), "benchmark_examples", "bsim4va.osdi")
@@ -93,46 +101,48 @@ def main():
     check("B-source `v=2*v(x)`, nothing else on x: the point is found",
           FAILED not in out and near(s.get("v(b)"), 1.0, 1e-9) and near(s.get("v(c)"), 0.0, 1e-9) and near(s.get("v(x)"), 0.0, 1e-9),
           f"v(b)={s.get('v(b)')} v(c)={s.get('v(c)')} v(x)={s.get('v(x)')}")
-    check("...and x is named as held only by gmin", "node 'x' is " + HELD in out)
+    check("...and x is named as held only by gmin", held("x") in out)
     out = ngspice(op_deck("xspice input x", "vdd vdd 0 3\na1 %v(x) %v(y) gainm\n.model gainm gain(gain=2)\nrl y 0 1k", "v(y) v(x)"))
     s = scalars(out)
     check("XSPICE `gain` whose input port x touches nothing: the point is found",
           FAILED not in out and near(s.get("v(y)"), 0.0, 1e-9) and near(s.get("v(x)"), 0.0, 1e-9),
           f"v(y)={s.get('v(y)')} v(x)={s.get('v(x)')}")
-    check("...and x is named as held only by gmin", "node 'x' is " + HELD in out)
+    check("...and x is named as held only by gmin", held("x") in out)
 
     print("\n[empty-column nodes] -- Enhancement-566's cases, still caught")
     out = ngspice(op_deck("isrc only", "v1 a 0 1\nr1 a b 1k\ni1 0 x 1m", "v(b) v(x)"))
     s = scalars(out)
     check("a current source's only load: v(b)=1, v(x)=I/gmin=1e9, x named",
-          near(s.get("v(b)"), 1.0, 1e-9) and near(s.get("v(x)"), 1e9, 1e3) and "node 'x' is " + HELD in out,
+          near(s.get("v(b)"), 1.0, 1e-9) and near(s.get("v(x)"), 1e9, 1e3) and held("x") in out,
           f"v(b)={s.get('v(b)')} v(x)={s.get('v(x)')}")
     out = ngspice(op_deck("cccs output", "v1 a 0 1\nr1 a b 1k\nr2 b 0 1k\nf1 0 nx v1 1", "v(b) v(nx)"))
     s = scalars(out)
     check("a CCCS output: v(b)=0.5, v(nx)=i(v1)/gmin, nx named",
-          near(s.get("v(b)"), 0.5, 1e-9) and near(s.get("v(nx)"), -5e8, 1e3) and "node 'nx' is " + HELD in out,
+          near(s.get("v(b)"), 0.5, 1e-9) and near(s.get("v(nx)"), -5e8, 1e3) and held("nx") in out,
           f"v(b)={s.get('v(b)')} v(nx)={s.get('v(nx)')}")
 
     print("\n[not floating] -- ordinary shapes with a row and a column")
     out = ngspice(op_deck("read and driven", "v1 a 0 1\nr1 a x 1k\nb1 c 0 v=2*v(x)\nrc c 0 1k", "v(x) v(c)"))
     s = scalars(out)
     check("x read by a B-source AND reached through a resistor: v(x)=1, v(c)=2, no warning",
-          near(s.get("v(x)"), 1.0, 1e-9) and near(s.get("v(c)"), 2.0, 1e-9) and HELD not in out and iters(out) is not None and iters(out) <= 5,
+          near(s.get("v(x)"), 1.0, 1e-9) and near(s.get("v(c)"), 2.0, 1e-9) and quiet(out) and iters(out) is not None and iters(out) <= 5,
           f"v(x)={s.get('v(x)')} v(c)={s.get('v(c)')} iterations={iters(out)}")
     out = ngspice(op_deck("source only", "v1 a 0 1\nr1 a b 1k\nv2 q 0 2", "v(b) v(q)"))
     s = scalars(out)
     check("a node held only by a voltage source branch: v(q)=2, no warning",
-          near(s.get("v(q)"), 2.0, 1e-9) and HELD not in out, f"v(q)={s.get('v(q)')}")
+          near(s.get("v(q)"), 2.0, 1e-9) and quiet(out), f"v(q)={s.get('v(q)')}")
     out = ngspice(op_deck("inductor node", "v1 a 0 1\nl1 a m 1u\nl2 m b 1u\nr1 b 0 1k", "v(m) v(b)"))
     s = scalars(out)
     check("a node between two inductors: v(m)=1, no warning",
-          near(s.get("v(m)"), 1.0, 1e-9) and HELD not in out, f"v(m)={s.get('v(m)')}")
+          near(s.get("v(m)"), 1.0, 1e-9) and quiet(out), f"v(m)={s.get('v(m)')}")
 
     print("\n[the other floating shapes] -- solved through the ladder, unchanged")
     out = ngspice(op_deck("open gate", "vdd vdd 0 3\nrd vdd d 10k\nm1 d g 0 0 nm w=10u l=1u\n.model nm nmos(level=1 vto=0.7 kp=100u)", "v(d) v(g)"))
     s = scalars(out)
-    check("an open MOSFET gate: v(g)=0, v(d)=3 through optran, within 400 iterations",
-          near(s.get("v(g)"), 0.0, 1e-9) and near(s.get("v(d)"), 3.0, 1e-6) and "Transient op finished" in out and iters(out) is not None and iters(out) <= 400,
+    # Enhancement-575: the gate is held at setup now ("no DC path from node 'g'"),
+    # so the point is found in a few iterations instead of through optran
+    check("an open MOSFET gate: v(g)=0, v(d)=3, g held at setup, within 5 iterations (was optran, ~277)",
+          near(s.get("v(g)"), 0.0, 1e-9) and near(s.get("v(d)"), 3.0, 1e-6) and held("g") in out and iters(out) is not None and iters(out) <= 5,
           f"v(g)={s.get('v(g)')} iterations={iters(out)}")
     out = ngspice(op_deck("E control open", "vcc p 0 1\nrin p inn 1k\neamp out 0 inp inn 1e5\nrl out 0 1k", "v(out)"))
     check("an E-source controlling node that touches nothing is still refused (Enhancement-492)",
@@ -146,13 +156,13 @@ def main():
                               "").replace(".control\n", ".control\npre_osdi va_vcvs.osdi\n"))
         s = scalars(out)
         check("OSDI module whose probed port x touches nothing: the point is found, x named",
-              FAILED not in out and near(s.get("v(c)"), 0.0, 1e-9) and near(s.get("v(x)"), 0.0, 1e-9) and "node 'x' is " + HELD in out,
+              FAILED not in out and near(s.get("v(c)"), 0.0, 1e-9) and near(s.get("v(x)"), 0.0, 1e-9) and held("x") in out,
               f"v(c)={s.get('v(c)')} v(x)={s.get('v(x)')}")
         out = ngspice(op_deck("osdi driven", "v1 a 0 1\nr1 a b 1k\nnx1 a c vc\nrc c 0 1k\n.model vc va_vcvs()", "v(b) v(c)",
                               "").replace(".control\n", ".control\npre_osdi va_vcvs.osdi\n"))
         s = scalars(out)
         check("the same module with its port driven: v(c)=2 in 3 iterations, no warning",
-              near(s.get("v(c)"), 2.0, 1e-9) and HELD not in out and iters(out) is not None and iters(out) <= 4,
+              near(s.get("v(c)"), 2.0, 1e-9) and quiet(out) and iters(out) is not None and iters(out) <= 4,
               f"v(c)={s.get('v(c)')} iterations={iters(out)}")
     if os.path.isfile(BSIM4):
         out = ngspice(op_deck("bsim4 open gate", "vdd vdd 0 1.2\nrd vdd d 10k\nnm1 d g 0 0 nmv w=1u l=0.2u\n.model nmv bsim4va(type=1 w=1e-6 l=0.2e-6)",
@@ -166,7 +176,7 @@ def main():
     out = ngspice(op_deck("bsrc reads x, rshunt", "v1 a 0 1\nr1 a b 1k\nb1 c 0 v=2*v(x)\nrc c 0 1k", "v(b) v(c) v(x)", ".option rshunt=1e12\n"))
     s = scalars(out)
     check("the read-only deck with rshunt=1e12: 3 iterations, v(c)=0, no floating-node warning",
-          near(s.get("v(c)"), 0.0, 1e-9) and iters(out) is not None and iters(out) <= 4 and HELD not in out,
+          near(s.get("v(c)"), 0.0, 1e-9) and iters(out) is not None and iters(out) <= 4 and quiet(out),
           f"v(c)={s.get('v(c)')} iterations={iters(out)}")
 
     for f in ("_o.cir", os.path.basename(OSDI)):

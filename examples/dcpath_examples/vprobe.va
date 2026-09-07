@@ -1,0 +1,5 @@
+`include "disciplines.vams"
+module vprobe(in, out);
+  inout in, out; electrical in, out;
+  analog V(out) <+ 2.0 * V(in);
+endmodule

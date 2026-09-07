@@ -348,6 +348,14 @@ struct CKTcircuit {
        is what makes the decision observable instead of inferred from a clock. */
     int CKTreuseKept;
     int CKTreuseRebuilt;
+    /* Enhancement-575: the nodes with no DC path to ground, found by the
+       connectivity walk in CKTsetup (`.option dcpath`), and the conductance
+       installed on each of them by every load -- Spectre's "Gmin installed to
+       provide path". CKTdcpathG is 0 when nothing is installed (dcpath=warn or
+       off); the list is rebuilt by every setup and dropped by unsetup. */
+    int *CKTdcpathNodes;
+    int CKTdcpathCount;
+    double CKTdcpathG;
     /* Enhancement-365: set when an analysis has REPLACED ckt->CKTmatrix while
      * leaving CKTisSetup asserted, so every device's cached matrix-element
      * pointer now dangles. `pz` does exactly this (CKTpzSetup destroys and
@@ -552,6 +560,7 @@ extern int CKTsetBreak(CKTcircuit *, double);
 extern int CKTsetNodPm(CKTcircuit *, CKTnode *, int , IFvalue *, IFvalue *);
 extern int CKTsetOpt(CKTcircuit *, JOB *, int , IFvalue *);
 extern int CKTsetup(CKTcircuit *);
+extern void CKTdcpathStamp(CKTcircuit *);        /* Enhancement-575 */
 extern void CKTannounceSolver(int klu);   /* Enhancement-266: announce-on-change */
 extern int CKTunsetup(CKTcircuit *);
 extern int CKTtemp(CKTcircuit *);

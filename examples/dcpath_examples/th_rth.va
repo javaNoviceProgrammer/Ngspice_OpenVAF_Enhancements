@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module th_rth(p, n, dt);
+  inout p, n; electrical p, n;
+  inout dt; thermal dt;
+  parameter real r = 1k, rth = 100.0;
+  analog begin
+    I(p,n) <+ V(p,n) / (r * (1.0 + 0.004 * Temp(dt)));
+    Pwr(dt) <+ Temp(dt) / rth - V(p,n) * I(p,n);
+  end
+endmodule
