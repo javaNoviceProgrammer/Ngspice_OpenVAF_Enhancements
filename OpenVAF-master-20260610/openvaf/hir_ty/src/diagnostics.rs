@@ -857,7 +857,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                     ])
                     .with_message(format!("type mismatch: {} but found {}", &err, err.found_ty))
             }
-            InferenceDiagnostic::MissingFmtArg { fmt_lit, lit_range } => {
+            InferenceDiagnostic::MissingFmtArg { builtin, fmt_lit, lit_range } => {
                 let fmt_lit = self.expr_range(fmt_lit);
                 let lit_src = self
                     .parse
@@ -870,7 +870,9 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                         range: lit_src.range.into(),
                         message: "value for this fmt specifier is missing".to_owned(),
                     }])
-                    .with_message("$display system task is missing an argument")
+                    // Enhancement-578: name the task that was called; this said
+                    // `$display` for a `$strobe`, `$write` or `$fatal`.
+                    .with_message(format!("{builtin} system task is missing an argument"))
             }
             InferenceDiagnostic::InvalidFmtSpecifierChar {
                 fmt_lit,

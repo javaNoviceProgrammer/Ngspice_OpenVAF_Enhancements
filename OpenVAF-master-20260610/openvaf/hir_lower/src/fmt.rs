@@ -133,6 +133,23 @@ impl BodyLoweringCtx<'_, '_, '_> {
                                 fmt_lit.push('X');
                                 Type::Integer.into()
                             }
+                            // Enhancement-578: `%x`/`%X` are the IEEE 1364-2005 synonyms
+                            // of `%h`/`%H` (17.1.1.2) and map onto C's own `%x`/`%X`.
+                            'x' => {
+                                fmt_lit.push('x');
+                                Type::Integer.into()
+                            }
+                            'X' => {
+                                fmt_lit.push('X');
+                                Type::Integer.into()
+                            }
+                            // Enhancement-578: `%t` prints a time. Verilog-AMS analog
+                            // time is a real number of seconds with no `$timeformat`
+                            // scaling in this compiler, so it renders like `%g`.
+                            't' | 'T' => {
+                                fmt_lit.push('g');
+                                FmtArg { ty: Type::Real, kind: FmtArgKind::Other }
+                            }
                             'b' | 'B' => {
                                 // rendered via a pre-formatted binary string
                                 fmt_lit.push('s');

@@ -28,24 +28,26 @@ impl ParserState {
             ParserState::Flags => &[
                 '-', '+', ' ', '#', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '.',
                 'e', 'E', 'f', 'F', 'g', 'G', 'r', 'R', '%', 'm', 'M', 'l', 'L', 'd', 'D', 'h',
-                'H', 'o', 'O', 'b', 'B', 'c', 'C', 's', 'S',
+                'H', 'o', 'O', 'b', 'B', 'c', 'C', 's', 'S', 'x', 'X', 't', 'T',
             ],
             ParserState::FixedFmtLit => &[
                 '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', 'e', 'E', 'f', 'F', 'g',
-                'G', 'r', 'R', 'd', 'D', 'h', 'H', 'o', 'O', 'b', 'B', 'c', 'C', 's', 'S',
+                'G', 'r', 'R', 'd', 'D', 'h', 'H', 'o', 'O', 'b', 'B', 'c', 'C', 's', 'S', 'x',
+                'X', 't', 'T',
             ],
             ParserState::DynamicFmtLit => &[
                 '.', 'e', 'E', 'f', 'F', 'g', 'G', 'r', 'R', 'd', 'D', 'h', 'H', 'o', 'O', 'b',
-                'B', 'c', 'C', 's', 'S',
+                'B', 'c', 'C', 's', 'S', 'x', 'X', 't', 'T',
             ],
             ParserState::AnyPrecision => &['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*'],
             ParserState::FixedPrecision => &[
                 '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'e', 'E', 'f', 'F', 'g', 'G',
-                'r', 'R', 'd', 'D', 'h', 'H', 'o', 'O', 'b', 'B', 'c', 'C', 's', 'S',
+                'r', 'R', 'd', 'D', 'h', 'H', 'o', 'O', 'b', 'B', 'c', 'C', 's', 'S', 'x', 'X',
+                't', 'T',
             ],
             ParserState::DynamicPrecsion => &[
                 'e', 'E', 'f', 'F', 'g', 'G', 'r', 'R', 'd', 'D', 'h', 'H', 'o', 'O', 'b', 'B',
-                'c', 'C', 's', 'S',
+                'c', 'C', 's', 'S', 'x', 'X', 't', 'T',
             ],
         }
     }
@@ -101,8 +103,12 @@ pub fn parse_fmt_spec(
                 // Enhancement-71: every conversion terminates a specifier
                 // (integer d/h/o/b/c, string s, real e/f/g/r) -- flags,
                 // width and precision are legal for all of them.
-                'e'..='g' | 'E'..='G' | 'r' | 'R' | 'd' | 'D' | 'h' | 'H' | 'o' | 'O' | 'b'
-                | 'B' | 'c' | 'C' | 's' | 'S'
+                // Enhancement-578: `%x`/`%X` are IEEE 1364-2005 17.1.1.2's synonyms
+                // of `%h`/`%H`, and `%t`/`%T` is the time conversion (17.1.1.2 again);
+                // both were refused as "unexpected character" although the scanner
+                // side (`$sscanf`) already took `%x`.
+                'e'..='g' | 'E'..='G' | 'r' | 'R' | 'd' | 'D' | 'h' | 'H' | 'x' | 'X' | 'o'
+                | 'O' | 'b' | 'B' | 'c' | 'C' | 's' | 'S' | 't' | 'T'
                     if state != ParserState::AnyPrecision =>
                 {
                     conversion = c;

@@ -2051,6 +2051,29 @@ impl ExprValidator<'_, '_> {
                 }
             }
 
+            // Enhancement-578: `x % 0.0` with a constant zero divisor. The INTEGER
+            // form has been a compile error since Enhancement-333 (inference,
+            // `DivisionByZero`), and a deck-supplied zero on either path is a
+            // run-time `$fatal` naming LRM 4.2.4 (hir_lower `guard_rem_divisor`);
+            // the REAL form with a zero the compiler could see was the one gap --
+            // it folded to NaN and said nothing, the exact shape Enhancement-455
+            // closed for `ln(0.0)` and `sqrt(-1.0)`. Judged only when the divisor
+            // is a constant, like every domain check above: a `localparam` is
+            // folded, an overridable `parameter` is not (`const_num`).
+            Expr::BinaryOp { rhs, op: Some(BinaryOp::Remainder), .. }
+                if self.parent.infer.expr_types[expr].to_value() != Some(Type::Integer) =>
+            {
+                if self.const_num(rhs) == Some(0.0) {
+                    self.bad_arg(
+                        "%",
+                        "the second operand (the modulus divisor)",
+                        "is 0, which LRM 4.2.4 makes an error; the result would be NaN"
+                            .to_owned(),
+                        rhs,
+                    )
+                }
+            }
+
             Expr::Path { port: false, .. } => {
                 match self.parent.infer.expr_types[expr] {
                     Ty::FunctionVar { arg: Some(arg), fun, .. } => {
@@ -2702,12 +2725,26 @@ impl ExprValidator<'_, '_> {
                 // lead with an integer descriptor, which the String test below
                 // skips on its own.)
                 let first = usize::from(matches!(call, BuiltIn::sformat | BuiltIn::swrite));
-                for (i, &arg) in args.iter().enumerate().skip(first) {
-                    if i + 1 >= args.len() {
-                        break; // nothing follows: printing it is exactly right
+                // Enhancement-578: walk the arguments the way `hir_lower::fmt`
+                // does. A literal is a format and its conversions CONSUME the
+                // arguments after it -- `$strobe("name=%s k=%g", nm, k)` hands
+                // `nm` to the `%s` -- so those operands are never candidates.
+                // The first version of this check looked at every argument in
+                // turn and flagged the string operand of a `%s` whenever
+                // another argument followed it: a warning that the format "is
+                // not a literal" on a call whose format is a literal and whose
+                // output is right.
+                let mut i = first;
+                while i < args.len() {
+                    let arg = args[i];
+                    i += 1;
+                    if let Expr::Literal(Literal::String(ref lit)) = self.parent.body.exprs[arg] {
+                        // a literal IS read as a format; step over its operands
+                        i += fmt_operand_count(lit);
+                        continue;
                     }
-                    if self.const_str(arg).is_some() {
-                        continue; // a literal IS read as a format
+                    if i >= args.len() {
+                        break; // nothing follows: printing it is exactly right
                     }
                     if matches!(
                         self.parent.infer.expr_types[arg].to_value(),
@@ -4284,6 +4321,36 @@ fn scanf_format_problem(f: &str) -> Option<String> {
 
 /// Enhancement-507: the `$`-less name of a display-family builtin, for a
 /// diagnostic that has to name the call the author wrote.
+/// Enhancement-578: how many arguments the conversions of a literal format
+/// consume, by `hir_lower::fmt`'s own rules: `%%`, `%m`/`%M` and `%l`/`%L`
+/// take none; every `*` in a `[flags][width][.prec]` prefix takes one integer;
+/// every other conversion takes one operand. A format the parser has already
+/// rejected can end mid-specifier; that counts what it can and stops.
+fn fmt_operand_count(lit: &str) -> usize {
+    let mut n = 0;
+    let mut chars = lit.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            continue;
+        }
+        let Some(mut c) = chars.next() else { break };
+        if matches!(c, '%' | 'm' | 'M' | 'l' | 'L') {
+            continue;
+        }
+        while matches!(c, '-' | '+' | ' ' | '#' | '0'..='9' | '.' | '*') {
+            if c == '*' {
+                n += 1;
+            }
+            match chars.next() {
+                Some(next) => c = next,
+                None => return n,
+            }
+        }
+        n += 1;
+    }
+    n
+}
+
 fn display_builtin_name(call: BuiltIn) -> &'static str {
     match call {
         BuiltIn::display => "display",

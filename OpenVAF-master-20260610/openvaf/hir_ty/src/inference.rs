@@ -1356,7 +1356,7 @@ impl Ctx<'_> {
             | BuiltIn::fmonitor
             | BuiltIn::fdebug
             | BuiltIn::swrite
-            | BuiltIn::sformat => self.infere_display(stmt, args),
+            | BuiltIn::sformat => self.infere_display(stmt, builtin, args),
 
             _ => (),
         }
@@ -1364,11 +1364,18 @@ impl Ctx<'_> {
         (Some(ty), valid)
     }
 
-    fn check_display_dynamic_arg(&mut self, fmt_expr: ExprId, arg: Option<ExprId>, off: TextSize) {
+    fn check_display_dynamic_arg(
+        &mut self,
+        builtin: &'static str,
+        fmt_expr: ExprId,
+        arg: Option<ExprId>,
+        off: TextSize,
+    ) {
         let arg = if let Some(arg) = arg {
             arg
         } else {
             self.result.diagnostics.push(InferenceDiagnostic::MissingFmtArg {
+                builtin,
                 fmt_lit: fmt_expr,
                 lit_range: TextRange::at(off, 1u32.into()),
             });
@@ -1397,6 +1404,7 @@ impl Ctx<'_> {
     fn check_display_arg_val(
         &mut self,
         stmt: StmtId,
+        builtin: &'static str,
         fmt_expr: ExprId,
         arg: Option<ExprId>,
         lit_range: TextRange,
@@ -1405,9 +1413,11 @@ impl Ctx<'_> {
         let arg = if let Some(arg) = arg {
             arg
         } else {
-            self.result
-                .diagnostics
-                .push(InferenceDiagnostic::MissingFmtArg { fmt_lit: fmt_expr, lit_range });
+            self.result.diagnostics.push(InferenceDiagnostic::MissingFmtArg {
+                builtin,
+                fmt_lit: fmt_expr,
+                lit_range,
+            });
 
             return;
         };
@@ -1495,7 +1505,8 @@ impl Ctx<'_> {
         }
     }
 
-    fn infere_display(&mut self, stmt: StmtId, args: &[ExprId]) {
+    fn infere_display(&mut self, stmt: StmtId, builtin: BuiltIn, args: &[ExprId]) {
+        let task = display_task_name(builtin);
         let mut i = 0;
         while let Some(fmt_expr) = args.get(i) {
             i += 1;
@@ -1511,10 +1522,14 @@ impl Ctx<'_> {
                         let mut end: TextSize = (start + 2).try_into().unwrap();
                         let ty = match pos.map(|(_, c)| c) {
                             Some('%' | 'm' | 'M' | 'l' | 'L') => continue, // escape sequences, always correct
-                            Some('d' | 'D' | 'h' | 'H' | 'o' | 'O' | 'b' | 'B' | 'c' | 'C') => {
-                                Type::Integer
-                            }
+                            // Enhancement-578: `%x`/`%X` (hex synonyms) and `%t`/`%T`
+                            // (time, a real in analog context) join the bare forms.
+                            Some(
+                                'd' | 'D' | 'h' | 'H' | 'x' | 'X' | 'o' | 'O' | 'b' | 'B' | 'c'
+                                | 'C',
+                            ) => Type::Integer,
                             Some('s' | 'S') => Type::String,
+                            Some('t' | 'T') => Type::Real,
                             _ => {
                                 let res = parse_fmt_spec(start as u32, *fmt_expr, pos, &mut chars);
                                 if let Some(err) = res.err {
@@ -1525,6 +1540,7 @@ impl Ctx<'_> {
 
                                 for pos in res.dynamic_args {
                                     self.check_display_dynamic_arg(
+                                        task,
                                         *fmt_expr,
                                         args.get(i).copied(),
                                         pos,
@@ -1537,10 +1553,10 @@ impl Ctx<'_> {
                                 // legal for every conversion; the argument
                                 // type follows the conversion character.
                                 match res.conversion {
-                                    'd' | 'D' | 'h' | 'H' | 'o' | 'O' | 'b' | 'B' | 'c' | 'C' => {
-                                        Type::Integer
-                                    }
+                                    'd' | 'D' | 'h' | 'H' | 'x' | 'X' | 'o' | 'O' | 'b' | 'B'
+                                    | 'c' | 'C' => Type::Integer,
                                     's' | 'S' => Type::String,
+                                    // e/E/f/F/g/G/r/R and (Enhancement-578) t/T
                                     _ => Type::Real,
                                 }
                             }
@@ -1548,7 +1564,7 @@ impl Ctx<'_> {
 
                         let arg = args.get(i).copied();
                         let range = TextRange::new(start.try_into().unwrap(), end);
-                        self.check_display_arg_val(stmt, *fmt_expr, arg, range, ty);
+                        self.check_display_arg_val(stmt, task, *fmt_expr, arg, range, ty);
 
                         i += 1;
                     }
@@ -3747,6 +3763,9 @@ pub enum InferenceDiagnostic {
     },
 
     MissingFmtArg {
+        /// Enhancement-578: the task that was called (`$strobe`, `$write`, ...);
+        /// the report used to say `$display` whichever it was.
+        builtin: &'static str,
         fmt_lit: ExprId,
         lit_range: TextRange,
     },
@@ -3776,3 +3795,28 @@ pub enum InferenceDiagnostic {
 }
 
 impl_from!(TypeMismatch,SignatureMismatch, ArrayTypeMismatch for InferenceDiagnostic);
+
+/// Enhancement-578: the `$`-prefixed name of a `$display`-family task, for
+/// diagnostics that name the call. Every member routed through
+/// `infere_display` is listed; the fallback covers a future addition.
+fn display_task_name(builtin: BuiltIn) -> &'static str {
+    match builtin {
+        BuiltIn::display => "$display",
+        BuiltIn::strobe => "$strobe",
+        BuiltIn::write => "$write",
+        BuiltIn::monitor => "$monitor",
+        BuiltIn::debug => "$debug",
+        BuiltIn::warning => "$warning",
+        BuiltIn::error => "$error",
+        BuiltIn::info => "$info",
+        BuiltIn::fatal => "$fatal",
+        BuiltIn::fdisplay => "$fdisplay",
+        BuiltIn::fwrite => "$fwrite",
+        BuiltIn::fstrobe => "$fstrobe",
+        BuiltIn::fmonitor => "$fmonitor",
+        BuiltIn::fdebug => "$fdebug",
+        BuiltIn::swrite => "$swrite",
+        BuiltIn::sformat => "$sformat",
+        _ => "$display",
+    }
+}

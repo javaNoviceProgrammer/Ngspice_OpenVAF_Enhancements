@@ -85,7 +85,7 @@ error: failed to parse format specifier; unexpected character J
   |
   = help: expected '-', '+', ' ', '#', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', 
     '.', 'e', 'E', 'f', 'F', 'g', 'G', 'r', 'R', '%', 'm', 'M', 'l', 'L', 'd', 'D', 'h', 'H', 
-    'o', 'O', 'b', 'B', 'c', 'C', 's' or 'S'
+    'o', 'O', 'b', 'B', 'c', 'C', 's', 'S', 'x', 'X', 't' or 'T'
 
 error: $display system task is missing an argument
   --> /formatting.va:4:42
