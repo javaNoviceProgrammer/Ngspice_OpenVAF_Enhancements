@@ -130,6 +130,28 @@ variability moves them (measured ~2 % on a σ=25 resistance). Both answers are
 correct for their own sample; to compare the engines themselves, turn the
 option off or re-source between the two runs.
 
+### Where a condition holds: `track`
+
+`meas` returns one number. `track` (E-577) returns every place a condition holds, as
+a plot of its own:
+
+```spice
+track v(out) -spec localmax                        ; every maximum of v(out): track1
+track v(out) -spec v(out)==1.2 -edge rise          ; every rising crossing of 1.2 V
+track v(a) v(b) i(v1) -spec localmax(v(a))         ; three expressions read at v(a)'s maxima
+track v(b) -spec v(b)<=-1.0 -at mid                ; regions, with x_out and width
+track db(v(out)) -spec db(v(out))==-3 -analysis ac1  ; a corner, interpolated in log x
+print track1.time track1.value
+```
+
+The spec is a locator (`localmax`, `localmin`, `globalmax`, `globalmin`, bare or on an
+expression), a crossing `lhs==rhs`, a region `lhs<rhs`, or any boolean; `-range x0 x1`,
+`-which first|last|N|-N`, `-prominence p` (hysteresis against ripple), `-raw` (the sample
+rather than the parabola-refined extremum) and `-output name ...` shape the result. One
+expression gives `value`, several give `value1..valueN`. Zero hits prints `track failed!`
+and makes no plot. The locators are also `let` functions: `let pk = localmax(v(out))`
+returns the x positions. `examples/track_examples/`.
+
 ## 3.4 Analysis coverage
 
 All core analyses treat OSDI devices as full citizens. The audited status

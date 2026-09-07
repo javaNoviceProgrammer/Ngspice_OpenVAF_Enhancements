@@ -483,6 +483,13 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "(-param|-mparam|-dparam) name init lo hi ... -analysis <cmd> (-minimize <expr> | -target <expr> <val> [<w>] ...) [-method nm|lm] [-maxiter N] [-tol T] [-verbose] : parameter optimizer (Nelder-Mead / least-squares Levenberg-Marquardt; -param = alter device/instance, -mparam = @model[param] via altermod, -dparam = symbolic .param via re-source; multi-analysis)." },
+    { "track", com_track, TRUE, FALSE,           /* Enhancement-577 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "<expr> [<expr> ...] [-range x0 x1] [-spec <spec>] [-analysis <plot|type>] [-which all|first|last|N|-N] "
+      "[-edge rise|fall|both] [-at entry|exit|mid] [-prominence p] [-raw] [-output name ...] : every place a "
+      "condition holds, as a plot trackN -- a locator (localmax, localmin, globalmax, globalmin, bare or on an "
+      "expression), a crossing lhs==rhs, a region lhs<rhs, or any boolean; one spec, every expression read at the hits." },
     { "sweep", com_sweep, TRUE, FALSE,           /* Enhancement-146 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,

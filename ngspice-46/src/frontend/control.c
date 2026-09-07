@@ -61,7 +61,8 @@ int stackp = 0;
  */
 
 /* no redirection after the following commands (we may need more to add here!) */
-static char *noredirect[] = { "stop", "define", "circbyline", NULL};
+/* Enhancement-577: `track -spec v(b)<=-1.0` is an expression, not a redirection */
+static char *noredirect[] = { "stop", "define", "circbyline", "track", NULL};
 
 
 /* This function returns the (first) structure wit the label s */

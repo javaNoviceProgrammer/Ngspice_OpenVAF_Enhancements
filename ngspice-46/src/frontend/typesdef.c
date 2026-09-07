@@ -85,6 +85,10 @@ static struct plotab plotabs[NUMPLOTTYPES] = {
      * pac1 -- the same name .pac uses, and both can exist in one session. */
     { "qpac", "qpac", FALSE, FALSE },
     { "pac", "pac", FALSE, FALSE },
+    /* Enhancement-577: `track` plots. ABOVE the "ac" entries, whose pattern
+     * "ac" is a substring of "track" -- the first match wins, and the first
+     * track plot came out as ac1. */
+    { "track", "track", FALSE, FALSE },
     { "ac", "a.c.", FALSE, FALSE },
     { "ac", "ac", FALSE, FALSE },
     { "pz", "pz", FALSE, FALSE },

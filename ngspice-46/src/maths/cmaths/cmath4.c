@@ -1261,3 +1261,138 @@ cx_mtimeavg(void* data, short int type, int length, int* newlength, short int* n
     return ((void*)d);
 }
 
+
+
+/* ---- Enhancement-577: the extremum locators -------------------------------
+ *
+ * localmin(e), localmax(e), globalmin(e), globalmax(e) return the X POSITIONS
+ * of their hits as a real vector -- typed like the source scale by
+ * apply_func() -- of length equal to the number of hits. They are the
+ * building blocks of the `track` command (com_track.c) and are useful from
+ * `let` on their own.
+ *
+ * A local maximum at sample i is y[i-1] < y[i] >= y[i+1] with the PLATEAU
+ * rule: a run of equal samples bounded by strictly lower ones on both sides
+ * is ONE maximum, reported at the plateau's x midpoint. The first and last
+ * samples are never extrema. Minimum symmetric. global* report every sample
+ * tied for the extreme value, which is normally one.
+ *
+ * cx_extrema_walk() is the shared walk: it fills lo[]/hi[] (caller-allocated,
+ * n entries each) with the first and last sample of every hit (equal for a
+ * plain extremum, a range for a plateau) over samples i0..i1 inclusive and
+ * returns the count. Unary only, because the evaluator's function path is
+ * unary; prominence and refinement live in `track`. */
+
+int
+cx_extrema_walk(const double *y, int n, int i0, int i1, int want_max, int global,
+                int *lo, int *hi)
+{
+    int i, j, nh = 0;
+
+    if (n < 1 || i0 < 0 || i1 >= n || i0 > i1)
+        return 0;
+    if (global) {
+        double ext = y[i0];
+        for (i = i0 + 1; i <= i1; i++)
+            if (want_max ? y[i] > ext : y[i] < ext)
+                ext = y[i];
+        for (i = i0; i <= i1; i++)
+            if (y[i] == ext) {
+                lo[nh] = i;
+                hi[nh] = i;
+                nh++;
+            }
+        return nh;
+    }
+    for (i = i0 + 1; i < i1; i++) {
+        /* a run of equal samples starting at i */
+        j = i;
+        while (j + 1 <= i1 && y[j + 1] == y[i])
+            j++;
+        if (j >= i1)
+            break;                           /* the run reaches the last sample: never an extremum */
+        if (want_max ? (y[i - 1] < y[i] && y[j + 1] < y[i])
+                     : (y[i - 1] > y[i] && y[j + 1] > y[i])) {
+            lo[nh] = i;
+            hi[nh] = j;
+            nh++;
+        }
+        i = j;
+    }
+    return nh;
+}
+
+
+static void *
+cx_extrema_fn(void *data, short int type, int length, int *newlength, short int *newtype,
+              struct plot *pl, int want_max, int global, const char *name)
+{
+    double *y = (double *) data, *x, *out;
+    int *lo, *hi, nh, k;
+
+    *newlength = 0;
+    *newtype = VF_REAL;
+    if (type != VF_REAL) {
+        fprintf(cp_err, "Error: %s: the argument is complex-valued; wrap it in mag(), db(), ph() or real()\n", name);
+        return NULL;
+    }
+    if (!pl || !pl->pl_scale || !isreal(pl->pl_scale)) {
+        fprintf(cp_err, "Error: %s: the plot has no real scale to locate on\n", name);
+        return NULL;
+    }
+    if (pl->pl_scale->v_length != length) {
+        fprintf(cp_err, "Error: %s: the argument (%d samples) does not match the scale (%d)\n",
+                name, length, pl->pl_scale->v_length);
+        return NULL;
+    }
+    if (length < 3 && !global) {
+        fprintf(cp_err, "Error: %s: a local extremum needs at least three samples (got %d)\n", name, length);
+        return NULL;
+    }
+    x = pl->pl_scale->v_realdata;
+    lo = TMALLOC(int, length);
+    hi = TMALLOC(int, length);
+    nh = cx_extrema_walk(y, length, 0, length - 1, want_max, global, lo, hi);
+    out = TMALLOC(double, nh > 0 ? nh : 1);
+    for (k = 0; k < nh; k++)
+        out[k] = 0.5 * (x[lo[k]] + x[hi[k]]);
+    tfree(lo);
+    tfree(hi);
+    if (nh == 0)
+        fprintf(cp_err, "Note: %s found no %s in %d samples\n", name,
+                global ? "value" : (want_max ? "local maximum" : "local minimum"), length);
+    *newlength = nh;
+    return out;
+}
+
+void *
+cx_localmax(void *data, short int type, int length, int *newlength, short int *newtype,
+            struct plot *pl, struct plot *newpl, int grouping)
+{
+    NG_IGNORE(newpl); NG_IGNORE(grouping);
+    return cx_extrema_fn(data, type, length, newlength, newtype, pl, 1, 0, "localmax");
+}
+
+void *
+cx_localmin(void *data, short int type, int length, int *newlength, short int *newtype,
+            struct plot *pl, struct plot *newpl, int grouping)
+{
+    NG_IGNORE(newpl); NG_IGNORE(grouping);
+    return cx_extrema_fn(data, type, length, newlength, newtype, pl, 0, 0, "localmin");
+}
+
+void *
+cx_globalmax(void *data, short int type, int length, int *newlength, short int *newtype,
+             struct plot *pl, struct plot *newpl, int grouping)
+{
+    NG_IGNORE(newpl); NG_IGNORE(grouping);
+    return cx_extrema_fn(data, type, length, newlength, newtype, pl, 1, 1, "globalmax");
+}
+
+void *
+cx_globalmin(void *data, short int type, int length, int *newlength, short int *newtype,
+             struct plot *pl, struct plot *newpl, int grouping)
+{
+    NG_IGNORE(newpl); NG_IGNORE(grouping);
+    return cx_extrema_fn(data, type, length, newlength, newtype, pl, 0, 1, "globalmin");
+}

@@ -126,6 +126,12 @@ extern void *cx_not(void *, short int , int , int *, short int *);
 
 extern void *cx_interpolate(void *, short int , int , int *, short int *, struct plot *, struct plot *, int );
 extern void *cx_deriv(void *, short int , int , int *, short int *, struct plot *, struct plot *, int );
+/* Enhancement-577: the extremum locators and their shared walk (cmath4.c) */
+extern void *cx_localmax(void *, short int, int, int *, short int *, struct plot *, struct plot *, int);
+extern void *cx_localmin(void *, short int, int, int *, short int *, struct plot *, struct plot *, int);
+extern void *cx_globalmax(void *, short int, int, int *, short int *, struct plot *, struct plot *, int);
+extern void *cx_globalmin(void *, short int, int, int *, short int *, struct plot *, struct plot *, int);
+extern int cx_extrema_walk(const double *y, int n, int i0, int i1, int want_max, int global, int *lo, int *hi);
 extern void *cx_integ(void *, short int , int , int *, short int *, struct plot *, struct plot *, int );
 extern void *cx_group_delay(void *, short int , int , int *, short int *, struct plot *, struct plot *, int );
 extern void *cx_fft(void *, short int , int , int *, short int *, struct plot *, struct plot *, int );

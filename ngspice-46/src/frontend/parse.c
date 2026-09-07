@@ -405,6 +405,10 @@ struct func ft_funcs[] = {
     { "vecd",        cx_d },
     { "interpolate", (cx_function_t*)(void *) cx_interpolate },
     { "deriv",       (cx_function_t*)(void *) cx_deriv },
+    { "localmax",    (cx_function_t*)(void *) cx_localmax },    /* Enhancement-577 */
+    { "localmin",    (cx_function_t*)(void *) cx_localmin },
+    { "globalmax",   (cx_function_t*)(void *) cx_globalmax },
+    { "globalmin",   (cx_function_t*)(void *) cx_globalmin },
     { "integ",       (cx_function_t*)(void *) cx_integ },
     { "fft",         (cx_function_t*)(void *) cx_fft },
     { "ifft",        (cx_function_t*)(void *) cx_ifft },

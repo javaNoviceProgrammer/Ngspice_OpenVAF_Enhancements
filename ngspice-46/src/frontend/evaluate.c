@@ -1027,7 +1027,9 @@ apply_func_funcall(struct func *func, struct dvec *v, int *newlength, short int 
     /* Modified for passing necessary parameters to the derive function - A.Roldan */
 
     if (eq(func->fu_name, "interpolate") || eq(func->fu_name, "deriv") || eq(func->fu_name, "group_delay")
-        || eq(func->fu_name, "fft") || eq(func->fu_name, "ifft") || eq(func->fu_name, "integ") || eq(func->fu_name, "mtimeavg"))
+        || eq(func->fu_name, "fft") || eq(func->fu_name, "ifft") || eq(func->fu_name, "integ") || eq(func->fu_name, "mtimeavg")
+        || eq(func->fu_name, "localmax") || eq(func->fu_name, "localmin")        /* Enhancement-577 */
+        || eq(func->fu_name, "globalmax") || eq(func->fu_name, "globalmin"))
     {
         void * (*f) (void *data, short int type, int length,
                      int *newlength, short int *newtype,
@@ -1174,6 +1176,16 @@ apply_func(struct func *func, struct pnode *arg)
             t->v_type = SV_PHASE;
         else if (eq(func->fu_name, "db"))
             t->v_type = SV_DB;
+        else if (eq(func->fu_name, "localmax") || eq(func->fu_name, "localmin") ||
+                 eq(func->fu_name, "globalmax") || eq(func->fu_name, "globalmin")) {
+            /* Enhancement-577: a locator returns X POSITIONS -- typed like the
+               scale it located on, so plot and print label them as times or
+               frequencies, and with the scale link dropped: the result is not
+               one sample per scale point. */
+            if (v->v_plot && v->v_plot->pl_scale)
+                t->v_type = v->v_plot->pl_scale->v_type;
+            t->v_scale = NULL;
+        }
 
         if (end)
             end->v_link2 = t;
