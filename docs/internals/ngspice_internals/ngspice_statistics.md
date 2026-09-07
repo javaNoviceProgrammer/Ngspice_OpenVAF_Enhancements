@@ -215,12 +215,14 @@ sample).
 
 `montecarlo` packages the whole flow: run the samples, apply the pass/fail specs,
 report the yield with a confidence interval — or, since E-552, simply record a
-value per sample for later.
+value per sample for later, and since E-582 every place a condition holds in
+each sample, through `track`.
 
 ```
 montecarlo <N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>]
            (-spec <metric> -max <hi>|-min <lo>)...
            (-expr [name=]<expression>)...
+           (-track "<track arguments>")...
 ```
 
 A sample **passes** only if *every* spec's metric is within its `-max`/`-min`
@@ -295,6 +297,52 @@ Because `mvnorm` correlations feed straight into `montecarlo`, the yield of a
 correlation model wrong grossly misestimates the yield:
 
 ![Yield of a matched pair rises with parameter correlation](ngspice_statistics_figs/yield_vs_corr.png)
+
+### 6.2 Every place a condition holds, per sample — `-track`
+
+`-expr` records one value, or one waveform, per sample. `track` (E-577) answers a
+different question — *every* place a condition holds: each ringing peak, each
+crossing of a threshold, each region above a limit — and it is a command, not an
+expression, so `-expr` cannot reach it and `-analysis` cannot run it (that flag
+runs exactly one command, the analysis). Since E-582, `-track "<track arguments>"`
+runs `track <arguments>` after every sample's analysis, quietly, and records the
+result in the same `montecarlo<n>` plot:
+
+| vector | holds |
+|---|---|
+| `track_hits` | the hit count per sample: 0 a miss, `nan` a sample that never solved |
+| `track_<vector>` — one per vector of the track plot: the scale (`time`, `frequency`, …), `value` (or `value1..N`, or the `-output` names), `index`, and a region's `x_out` and `width` | an Lmax × N family, hit-major: row k (`track_time[k]`) is hit k of every sample on the `sample` scale, `nan` where a sample had fewer, Lmax being the largest count any sample had — a *varying* count per sample is the usual case here, and the one `-expr` refuses; when no sample ever has more than one hit (a `-which first` selection, a single crossing) they are plain N-long vectors instead |
+
+The argument is one quoted word, because `track`'s own options begin with `-`.
+Several `-track` flags record as `track1_*`, `track2_*`, …; `-track` combines with
+`-spec` and `-expr` in the same run. The per-sample track plots are destroyed as
+they are recorded (`$track_plot`/`$track_hits` are left holding the last sample's
+result). A miss is silent and records 0; a real error in the track arguments — an
+expression that does not evaluate, an unknown option — stops the run on its first
+sample with the message once, and records nothing.
+
+```spice
+.param rr = agauss(20, 30, 3)
+V1 in 0 pulse(0 1 0 1n 1n 1m 2m)
+R1 in a {rr}
+L1 a out 1m
+C1 out 0 1u
+.control
+  montecarlo 1000 -seed 3 -analysis "tran 2u 1m" -track "v(out) -spec localmax -prominence 20m" -expr r=@r1[resistance]
+  print mean(track_hits)                    ; ringing peaks per sample
+  plot track_value[0] vs r                  ; the first peak's height against the resistance
+  pyplot -hist track_time[1]                ; where the second peak lands (nan where there was none)
+.endc
+```
+
+`track_value[0]` is row 0 of the family — the first hit of every sample, N long —
+and `track_time[1]` the second, `nan` where a sample had fewer; `track_time[k][i]` is
+sample i's k-th hit. The orientation is the opposite of the `-expr` waveform
+families above, where `vo[k]` is sample k's curve, because the question about hits
+is "where did the second peak land across the samples", not "what did sample k do".
+`-expr` beside it keeps the per-sample cause, here the resistance, on the same
+`sample` scale, so a hit count or a peak position can be plotted against the
+parameter that drove it.
 
 ## 7. Corners, and combining everything
 

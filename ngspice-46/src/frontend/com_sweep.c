@@ -60,6 +60,7 @@ analyses is suppressed via `ft_optimizing`.
 #include "ngspice/devdefs.h"      /* Enhancement-320: DEVices[]/DEVmaxnum direct set */
 #include "com_sweep.h"
 #include "com_aging.h"      /* Enhancement-501: aging_replay() */
+#include "com_track.h"      /* Enhancement-582: montecarlo -track */
 #include "ngspice/osdiitf.h" /* Enhancement-535: osdimc trial policy */
 #include "variable.h"       /* struct variable: sw_read_knob reads a bare knob's principal value */
 
@@ -4443,6 +4444,31 @@ void com_montecarlo(wordlist *wl)
     int exprragged[MC_MAXSPEC];         /* a sample whose length differed */
     int exprragged_len[MC_MAXSPEC];
     int exprragged_at[MC_MAXSPEC];
+    /* Enhancement-582: `-track "<track arguments>"` -- after every sample's
+     * analysis, `track <arguments>` is run and its result recorded: the hit
+     * count per sample as `track_hits` (nan for a sample that never solved),
+     * and every vector of the track plot -- the scale, `value`, `x_out`,
+     * `width`, `index` -- as an Lmax x N family, `track_<vector>`: row k is
+     * hit k of every sample on the `sample` scale (`track_time[1]` is the
+     * second hit of each sample, plottable against an -expr), nan where a
+     * sample had fewer; `track_time[k][i]` is sample i's k-th hit. Lmax is the
+     * largest hit count seen, so a varying count (the usual case, and the one
+     * -expr refuses) is the point; when no sample has more than one hit they
+     * are plain N-long vectors. Several -track flags record as `track1_...`,
+     * `track2_...`. The per-sample track plots are destroyed as recorded. */
+#define MC_MAXTRACK 8
+#define MC_TRACKVEC 12
+    int ntrack = 0;
+    char *tracktext[MC_MAXTRACK];
+    struct {
+        int nvec;
+        char *vname[MC_TRACKVEC];
+        int vtype[MC_TRACKVEC];
+        double **rows[MC_TRACKVEC];      /* [sample] -> that sample's hits, or NULL */
+        int *hits;                       /* per sample: -1 never solved, 0 miss */
+        int lmax;
+    } trec[MC_MAXTRACK];
+    memset(trec, 0, sizeof trec);
     struct dvec *exprscale[MC_MAXSPEC]; /* a private copy of the waveform's scale */
     double *exprfirst[MC_MAXSPEC];      /* first sample's values, for the "same value" note */
     int exprvaried[MC_MAXSPEC];
@@ -4451,9 +4477,10 @@ void com_montecarlo(wordlist *wl)
     if (wl == NULL || wl->wl_word == NULL) {
         fprintf(cp_err, "Usage: montecarlo <N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>] "
                         "(-spec <metric> [-max <hi>] [-min <lo>])... "
-                        "(-expr [name=]<expression>)...\n"
+                        "(-expr [name=]<expression>)... (-track \"<track arguments>\")...\n"
                         "       a -spec with a -max/-min limit is judged for the yield; "
-                        "an -expr is recorded per sample into a montecarlo<n> plot\n");
+                        "an -expr is recorded per sample into a montecarlo<n> plot; "
+                        "a -track runs `track <arguments>` per sample and records its hits\n");
         return;
     }
     for (e = 0; e < MC_MAXSPEC; e++) {
@@ -4539,6 +4566,18 @@ void com_montecarlo(wordlist *wl)
             wl = wl->wl_next;
             if (!sw_boundarg(wl->wl_word, "montecarlo", "-min", &lo[nspec - 1])) return;   /* E-501 */
             hasmin[nspec - 1] = 1; wl = wl->wl_next;
+        } else if (eq(w, "-track")) {
+            /* Enhancement-582: one quoted word -- track's own options begin with
+             * '-', so the argument list cannot be collected up to the next flag */
+            if (ntrack >= MC_MAXTRACK) { fprintf(cp_err, "montecarlo: too many -track (max %d)\n", MC_MAXTRACK); return; }
+            if (!wl->wl_next) { fprintf(cp_err, "montecarlo: -track needs the track arguments, quoted: -track \"v(out) -spec localmax\"\n"); return; }
+            wl = wl->wl_next;
+            tracktext[ntrack] = cp_unquote(wl->wl_word);
+            if (!tracktext[ntrack][0]) { fprintf(cp_err, "montecarlo: -track needs the track arguments, quoted\n"); return; }
+            trec[ntrack].hits = TMALLOC(int, nsamp);
+            for (int q = 0; q < nsamp; q++) trec[ntrack].hits[q] = -1;
+            ntrack++;
+            wl = wl->wl_next;
         } else if (eq(w, "-expr")) {
             /* Enhancement-552: `-expr [name=]<expression>`. The name must be a
              * plain identifier so that `montecarlo1.<name>` can be spelled; a
@@ -4601,10 +4640,11 @@ void com_montecarlo(wordlist *wl)
     /* Enhancement-552: a yield is a judgement, so it needs a spec WITH a limit;
      * a value to keep without judging it is an -expr. Nothing to judge and
      * nothing to record is a run for no result, and is refused as such. */
-    if (nspec == 0 && nexpr == 0) {
+    if (nspec == 0 && nexpr == 0 && ntrack == 0) {
         fprintf(cp_err, "montecarlo: nothing to do -- give '-spec <metric> -max <hi>|-min <lo>' "
-                        "for a yield, and/or '-expr [name=]<expression>' to record a value "
-                        "per sample into a montecarlo<n> plot\n");
+                        "for a yield, '-expr [name=]<expression>' to record a value "
+                        "per sample into a montecarlo<n> plot, and/or '-track \"<track arguments>\"' "
+                        "to run track per sample and record its hits there\n");
         return;
     }
     for (s = 0; s < nspec; s++)
@@ -4737,6 +4777,7 @@ void com_montecarlo(wordlist *wl)
      * to know (the expression is the same for every sample). */
     int unresolved_spec = -1, unresolved_sample = 0;
     int unresolved_expr = -1;        /* Enhancement-552 */
+    int failed_track = -1, failed_track_sample = 0;   /* Enhancement-582 */
     const int nsamp_req = nsamp;     /* the buffers are sized for the request */
     outp_loop_begin("montecarlo", "sample", nsamp, sw_loopbar_mode());  /* Enhancement-477 */
 
@@ -4854,7 +4895,65 @@ void com_montecarlo(wordlist *wl)
             v->v_scale = NULL;          /* borrowed, not ours to free */
             vec_free(v);
         }
-        if (unresolved_expr >= 0)
+        /* Enhancement-582: run every -track on this sample and keep its plot's
+         * vectors; the plot itself is destroyed once copied */
+        for (int t = 0; t < ntrack; t++) {
+            char *cmd = tprintf("track %s", tracktext[t]);
+            int hits = 0;
+            char pname[80];
+            pname[0] = '\0';
+            track_quiet = 1;
+            sw_run_cmd(cmd);
+            track_quiet = 0;
+            tfree(cmd);
+            if (track_error) {          /* bad arguments, not a miss: say so once and stop */
+                failed_track = t;
+                failed_track_sample = i + 1;
+                break;
+            }
+            cp_getvar("track_hits", CP_NUM, &hits, sizeof hits);
+            cp_getvar("track_plot", CP_STRING, pname, sizeof pname);
+            trec[t].hits[i] = hits > 0 ? hits : 0;
+            if (hits > 0 && pname[0]) {
+                struct plot *tp = NULL, *q;
+                for (q = plot_list; q; q = q->pl_next)
+                    if (q->pl_typename && eq(q->pl_typename, pname)) { tp = q; break; }
+                if (tp) {
+                    struct dvec *d;
+                    int n;
+                    if (trec[t].nvec == 0) {
+                        /* the first hit sizes the record: the plot's vectors,
+                         * oldest first (the list is newest-first), scale first */
+                        struct dvec *rev[MC_TRACKVEC * 4];
+                        int nr = 0;
+                        for (d = tp->pl_dvecs; d && nr < MC_TRACKVEC * 4; d = d->v_next)
+                            rev[nr++] = d;
+                        for (n = nr - 1; n >= 0 && trec[t].nvec < MC_TRACKVEC; n--) {
+                            int k = trec[t].nvec++;
+                            trec[t].vname[k] = copy(rev[n]->v_name);
+                            trec[t].vtype[k] = rev[n]->v_type;
+                            trec[t].rows[k] = TMALLOC(double *, nsamp_req);
+                            memset(trec[t].rows[k], 0, sizeof(double *) * (size_t) nsamp_req);
+                        }
+                    }
+                    for (n = 0; n < trec[t].nvec; n++) {
+                        for (d = tp->pl_dvecs; d; d = d->v_next)
+                            if (eq(d->v_name, trec[t].vname[n]))
+                                break;
+                        if (d && isreal(d) && d->v_length >= hits) {
+                            trec[t].rows[n][i] = TMALLOC(double, hits);
+                            memcpy(trec[t].rows[n][i], d->v_realdata, sizeof(double) * (size_t) hits);
+                        }
+                    }
+                    if (hits > trec[t].lmax)
+                        trec[t].lmax = hits;
+                    cmd = tprintf("destroy %s", pname);
+                    sw_run_cmd(cmd);
+                    tfree(cmd);
+                }
+            }
+        }
+        if (unresolved_expr >= 0 || failed_track >= 0)
             break;
     }
     if (usewarm)
@@ -4894,6 +4993,13 @@ void com_montecarlo(wordlist *wl)
                 unresolved_sample, analysis);
         goto mc_free_exprs;
     }
+    if (failed_track >= 0) {                     /* Enhancement-582 */
+        fprintf(cp_err, "montecarlo: -track \"%s\" failed on sample %d (the message above); "
+                        "a miss is recorded as 0 hits, this is an error in the track arguments. "
+                        "Nothing is recorded.\n",
+                tracktext[failed_track], failed_track_sample);
+        goto mc_free_exprs;
+    }
 
     /* Enhancement-552: the recorded expressions go into a plot of their own,
      * `montecarlo<n>`, one per invocation, with `sample` (1..N) as its scale. A
@@ -4901,7 +5007,7 @@ void com_montecarlo(wordlist *wl)
      * sample (L points, the same L every sample) is an N x L two-dimensional
      * vector whose scale is a copy of the analysis scale, which `plot` draws
      * as a family of N curves. A sample that never solved is NaN. */
-    if (nexpr > 0) {
+    if (nexpr > 0 || ntrack > 0) {
         struct plot *pl = plot_alloc("montecarlo");
         struct dvec *sc;
         int nrec = 0;
@@ -4968,7 +5074,59 @@ void com_montecarlo(wordlist *wl)
                 fprintf(cp_out, "  NOTE   : -expr %s gave the SAME value in every sample; "
                                 "nothing this deck draws reaches it\n", exprname[e]);
         }
-        fprintf(cp_out, "montecarlo: %d expression%s over %d sample%s recorded into plot "
+        /* Enhancement-582: the -track records */
+        for (int t = 0; t < ntrack; t++) {
+            char pre[24];
+            struct dvec *h;
+            int nhit = 0, n;
+            if (ntrack == 1)
+                (void) snprintf(pre, sizeof pre, "track");
+            else
+                (void) snprintf(pre, sizeof pre, "track%d", t + 1);
+            h = dvec_alloc(tprintf("%s_hits", pre), SV_NOTYPE,
+                           (short) (VF_REAL | VF_PERMANENT), nsamp, NULL);
+            for (int i = 0; i < nsamp; i++) {
+                h->v_realdata[i] = trec[t].hits[i] < 0 ? NAN : (double) trec[t].hits[i];
+                if (trec[t].hits[i] > 0) nhit++;
+            }
+            vec_new(h);
+            for (n = 0; n < trec[t].nvec; n++) {
+                int lmax = trec[t].lmax;
+                struct dvec *v = dvec_alloc(tprintf("%s_%s", pre, trec[t].vname[n]),
+                                            trec[t].vtype[n],
+                                            (short) (VF_REAL | VF_PERMANENT),
+                                            nsamp * lmax, NULL);
+                for (int k = 0; k < nsamp * lmax; k++)
+                    v->v_realdata[k] = NAN;
+                for (int i = 0; i < nsamp; i++)
+                    if (trec[t].rows[n][i])
+                        for (int k = 0; k < trec[t].hits[i]; k++)   /* hit-major */
+                            v->v_realdata[(size_t) k * (size_t) nsamp + (size_t) i] =
+                                trec[t].rows[n][i][k];
+                if (lmax > 1) {         /* one hit per sample at most: a plain vector */
+                    v->v_numdims = 2;
+                    v->v_dims[0] = lmax;
+                    v->v_dims[1] = nsamp;
+                }
+                vec_new(v);
+            }
+            nrec++;
+            if (trec[t].lmax <= 1)
+                fprintf(cp_out, "montecarlo: -track \"%s\": a hit in %d of %d sample%s, never more than "
+                                "one -- %s_hits and %s_<vector> (%d vector%s, %d long, nan where a sample "
+                                "had no hit)\n",
+                        tracktext[t], nhit, nsamp, nsamp == 1 ? "" : "s", pre, pre,
+                        trec[t].nvec, trec[t].nvec == 1 ? "" : "s", nsamp);
+            else
+                fprintf(cp_out, "montecarlo: -track \"%s\": hits in %d of %d sample%s, at most %d per "
+                                "sample -- %s_hits and %s_<vector> (%d vector%s, [%d,%d] families: row k "
+                                "is hit k of every sample, nan where it had fewer)\n",
+                        tracktext[t], nhit, nsamp, nsamp == 1 ? "" : "s", trec[t].lmax, pre, pre,
+                        trec[t].nvec, trec[t].nvec == 1 ? "" : "s", trec[t].lmax, nsamp);
+            if (nhit == 0)
+                fprintf(cp_out, "  NOTE   : no sample had a hit for -track \"%s\"\n", tracktext[t]);
+        }
+        fprintf(cp_out, "montecarlo: %d record%s over %d sample%s recorded into plot "
                         "'%s' (now current)%s\n",
                 nrec, nrec == 1 ? "" : "s", nsamp, nsamp == 1 ? "" : "s", pl->pl_typename,
                 nfailed ? " -- a sample that failed to simulate is nan" : "");
@@ -5044,6 +5202,18 @@ mc_free_exprs:                                   /* Enhancement-552 */
         if (exprdata[e]) tfree(exprdata[e]);
         if (exprfirst[e]) tfree(exprfirst[e]);
         if (exprscale[e]) vec_free(exprscale[e]);
+    }
+    for (int t = 0; t < ntrack; t++) {           /* Enhancement-582 */
+        for (int n = 0; n < trec[t].nvec; n++) {
+            if (trec[t].rows[n]) {
+                for (int i = 0; i < nsamp_req; i++)
+                    if (trec[t].rows[n][i]) tfree(trec[t].rows[n][i]);
+                tfree(trec[t].rows[n]);
+            }
+            tfree(trec[t].vname[n]);
+        }
+        tfree(trec[t].hits);
+        tfree(tracktext[t]);
     }
 }
 

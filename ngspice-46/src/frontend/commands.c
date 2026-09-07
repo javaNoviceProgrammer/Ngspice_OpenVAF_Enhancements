@@ -246,11 +246,15 @@ struct comm spcp_coms[] = {
     { "montecarlo", com_montecarlo, FALSE, FALSE,  /* Enhancement-151 */
       { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
       NULL,
-      "<N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>] (-spec <metric> -max <hi>|-min <lo>)... (-expr [name=]<expression>)... : "
+      "<N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>] (-spec <metric> -max <hi>|-min <lo>)... (-expr [name=]<expression>)... (-track \"<track arguments>\")... : "
       "packaged Monte Carlo -- runs N samples. A -spec with a limit is judged: a sample passes only if every "
       "spec is within its limits, and the yield is reported with a Wilson 95%% CI and per-spec violations. "
       "An -expr is recorded per sample, unjudged, into a montecarlo<n> plot ($montecarlo_plot): a scalar as an "
-      "N-long vector on the `sample` scale, a waveform (a dc/ac sweep's output) as an N x L family; either or both "
+      "N-long vector on the `sample` scale, a waveform (a dc/ac sweep's output) as an N x L family. A -track runs "
+      "`track <arguments>` after every sample's analysis and records its hits there: track_hits per sample and each "
+      "vector of the track plot as track_<vector>, an Lmax x N family whose row k is hit k of every sample, nan where "
+      "a sample had fewer (plain vectors when no sample has more than one); several -track record as track1_*, "
+      "track2_*. Any of the three "
       "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib)." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
@@ -934,11 +938,15 @@ struct comm nutcp_coms[] = {
     { "montecarlo", com_montecarlo, FALSE, FALSE,  /* Enhancement-151 */
       { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
       NULL,
-      "<N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>] (-spec <metric> -max <hi>|-min <lo>)... (-expr [name=]<expression>)... : "
+      "<N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>] (-spec <metric> -max <hi>|-min <lo>)... (-expr [name=]<expression>)... (-track \"<track arguments>\")... : "
       "packaged Monte Carlo -- runs N samples. A -spec with a limit is judged: a sample passes only if every "
       "spec is within its limits, and the yield is reported with a Wilson 95%% CI and per-spec violations. "
       "An -expr is recorded per sample, unjudged, into a montecarlo<n> plot ($montecarlo_plot): a scalar as an "
-      "N-long vector on the `sample` scale, a waveform (a dc/ac sweep's output) as an N x L family; either or both "
+      "N-long vector on the `sample` scale, a waveform (a dc/ac sweep's output) as an N x L family. A -track runs "
+      "`track <arguments>` after every sample's analysis and records its hits there: track_hits per sample and each "
+      "vector of the track plot as track_<vector>, an Lmax x N family whose row k is hit k of every sample, nan where "
+      "a sample had fewer (plain vectors when no sample has more than one); several -track record as track1_*, "
+      "track2_*. Any of the three "
       "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib)." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,

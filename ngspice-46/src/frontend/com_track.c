@@ -69,6 +69,9 @@ struct hit {
 
 /* ---------------------------------------------------------------- helpers */
 
+int track_quiet = 0;                /* Enhancement-582 */
+int track_error = 0;
+
 static int
 is_option(const char *w)
 {
@@ -81,6 +84,7 @@ fail(const char *why)
     if (why)
         fprintf(cp_err, "Error: track: %s\n", why);
     fprintf(cp_out, "track failed!\n");
+    track_error = 1;
 }
 
 /* Evaluate `expr` in the current plot. Returns a REAL data copy of the scale's
@@ -255,6 +259,7 @@ com_track(wordlist *wl)
         int zero = 0;
         cp_vset("track_plot", CP_STRING, "");
         cp_vset("track_hits", CP_NUM, &zero);
+        track_error = 0;                     /* Enhancement-582 */
     }
     /* ---- arguments */
     char *exprs[TRACK_MAX_EXPR];
@@ -756,9 +761,12 @@ com_track(wordlist *wl)
         goto done;
     }
     if (nhits == 0) {
-        fprintf(cp_err, "Error: track: no hit of %s on %s%s\n", specname, pl->pl_typename,
-                have_range ? " in the range" : "");
-        fail(NULL);
+        if (!track_quiet) {              /* a miss is a normal outcome under montecarlo -track */
+            fprintf(cp_err, "Error: track: no hit of %s on %s%s\n", specname, pl->pl_typename,
+                    have_range ? " in the range" : "");
+            fail(NULL);
+            track_error = 0;
+        }
         goto done;
     }
 
@@ -844,6 +852,11 @@ com_track(wordlist *wl)
         plot_cur = keep;
     }
 
+    cp_vset("track_plot", CP_STRING, npl->pl_typename);   /* Enhancement-581 */
+    cp_vset("track_hits", CP_NUM, &nhits);
+    if (track_quiet)                                        /* Enhancement-582 */
+        goto quiet;
+
     /* ---- the summary */
     fprintf(cp_out, "%s: %d hit%s of %s on %s", npl->pl_typename, nhits, nhits == 1 ? "" : "s",
             specname, pl->pl_typename);
@@ -854,8 +867,6 @@ com_track(wordlist *wl)
     if (kind == SPEC_EXTREMUM && strcmp(locexpr, exprs[0]) == 0 && !strchr(spec, '('))
         fprintf(cp_out, " (applied to %s)", exprs[0]);
     fprintf(cp_out, "\n");
-    cp_vset("track_plot", CP_STRING, npl->pl_typename);   /* Enhancement-581 */
-    cp_vset("track_hits", CP_NUM, &nhits);
     if (nexpr > 1 || nout > 0) {
         fprintf(cp_out, "   ");
         for (e = 0; e < nexpr; e++) {
@@ -889,6 +900,7 @@ com_track(wordlist *wl)
             fprintf(cp_out, "  ... and %d more (print %s.%s)\n", nhits - 50, npl->pl_typename, scale->v_name);
         tfree(order);
     }
+quiet:
     ok = 1;
 
 done:

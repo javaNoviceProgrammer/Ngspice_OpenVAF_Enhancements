@@ -63,3 +63,8 @@ The suite's new section runs six seeded trials with a prominence that makes some
 a `track` plot and one without has an empty name and 0, the loop collects its counts
 through `$track_hits` with no "no such plot" error, and a refusal after the loop (every
 per-trial plot destroyed) leaves both cleared.
+
+*Follow-up:* [E-582](Enhancement-582.md) gives `montecarlo` a `-track "<track
+arguments>"` flag that runs `track` per sample inside the packaged command and records
+the hits as nan-padded families, so the loop above is needed only for a trial that runs
+more than one analysis per draw.
