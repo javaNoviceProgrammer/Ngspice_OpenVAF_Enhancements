@@ -59,19 +59,18 @@ BJTsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt, int *states)
         if(!model->BJTemissionCoeffFGiven) {
             model->BJTemissionCoeffF = 1;
         }
+        /* Enhancement-573: an `ise`/`isc` above 1e-4 is the SPICE2 c2/c4 form,
+           a multiplier of `is`. It used to be resolved HERE, in place, which
+           destroyed the given value: after any later change of `is` -- a
+           `sweep` (with or without the setup reused), an `altermod`, a `.dc`
+           over the model -- the leakage stayed scaled by the OLD is, because a
+           rebuilt setup saw a value already below 1e-4 and left it alone. The
+           given value is kept and BJTtemp resolves it every time it runs. */
         if(!model->BJTleakBEcurrentGiven) {
             model->BJTleakBEcurrent = 0;
-        } else {
-            if(model->BJTleakBEcurrent > 1e-04) {
-                model->BJTleakBEcurrent = model->BJTsatCur * model->BJTleakBEcurrent;
-            }
         }
         if(!model->BJTleakBCcurrentGiven) {
             model->BJTleakBCcurrent = 0;
-        } else {
-            if(model->BJTleakBCcurrent > 1e-04) {
-                model->BJTleakBCcurrent = model->BJTsatCur * model->BJTleakBCcurrent;
-            }
         }
         if(!model->BJTleakBEemissionCoeffGiven) {
             model->BJTleakBEemissionCoeff = 1.5;

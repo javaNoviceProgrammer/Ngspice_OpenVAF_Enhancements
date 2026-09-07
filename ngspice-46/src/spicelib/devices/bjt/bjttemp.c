@@ -42,6 +42,14 @@ BJTtemp(GENmodel *inModel, CKTcircuit *ckt)
 
         if(!model->BJTtnomGiven) model->BJTtnom = ckt->CKTnomTemp;
         vtnom = CONSTKoverQ * model->BJTtnom;
+        /* Enhancement-573: resolve the c2/c4 multiplier form from the values
+           as given (see bjtsetup.c), so a swept or altered `is` is honoured. */
+        model->BJTleakBEcurrentEff = (model->BJTleakBEcurrent > 1e-04)
+            ? model->BJTsatCur * model->BJTleakBEcurrent
+            : model->BJTleakBEcurrent;
+        model->BJTleakBCcurrentEff = (model->BJTleakBCcurrent > 1e-04)
+            ? model->BJTsatCur * model->BJTleakBCcurrent
+            : model->BJTleakBCcurrent;
         fact1 = model->BJTtnom/REFTEMP;
 
         if(!model->BJTminBaseResistGiven) {
@@ -243,13 +251,13 @@ BJTtemp(GENmodel *inModel, CKTcircuit *ckt)
                 here->BJTtBetaR = model->BJTbetaR * bfactor;
 
             if ((model->BJTtlev == 0) || (model->BJTtlev == 1)) {
-              here->BJTtBEleakCur = here->BJTarea * model->BJTleakBEcurrent *
+              here->BJTtBEleakCur = here->BJTarea * model->BJTleakBEcurrentEff *
                   exp(factlog/model->BJTleakBEemissionCoeff)/bfactor;
-              here->BJTtBCleakCur = model->BJTleakBCcurrent *
+              here->BJTtBCleakCur = model->BJTleakBCcurrentEff *
                   exp(factlog/model->BJTleakBCemissionCoeff)/bfactor;
             } else if (model->BJTtlev == 3) {
-              here->BJTtBEleakCur = here->BJTarea * pow(model->BJTleakBEcurrent,(1+model->BJTtise1*dt+model->BJTtise2*dt*dt));
-              here->BJTtBCleakCur = pow(model->BJTleakBCcurrent,(1+model->BJTtisc1*dt+model->BJTtisc2*dt*dt));
+              here->BJTtBEleakCur = here->BJTarea * pow(model->BJTleakBEcurrentEff,(1+model->BJTtise1*dt+model->BJTtise2*dt*dt));
+              here->BJTtBCleakCur = pow(model->BJTleakBCcurrentEff,(1+model->BJTtisc1*dt+model->BJTtisc2*dt*dt));
             }
             if (model->BJTsubs == VERTICAL) {
                 here->BJTtBCleakCur *= here->BJTareab;

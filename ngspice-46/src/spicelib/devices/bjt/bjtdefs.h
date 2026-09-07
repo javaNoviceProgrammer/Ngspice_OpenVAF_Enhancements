@@ -418,6 +418,12 @@ typedef struct sBJTmodel {          /* model structure for a bjt */
     double BJTrollOffR;
     double BJTleakBCcurrent;    /* input - don't use */
     double BJTleakBCemissionCoeff;
+    /* Enhancement-573: `ise`/`isc` as USED. An `ise` above 1e-4 is the SPICE2
+       c2 form, a multiplier of `is`; it is resolved in BJTtemp from the given
+       values so that a changed `is` is honoured, instead of being folded into
+       BJTleakBEcurrent once at setup. */
+    double BJTleakBEcurrentEff;
+    double BJTleakBCcurrentEff;
     double BJTbaseResist;
     double BJTbaseCurrentHalfResist;
     double BJTminBaseResist;

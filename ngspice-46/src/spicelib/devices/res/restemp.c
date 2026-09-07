@@ -80,6 +80,20 @@ RESupdate_conduct(RESinstance *here, bool spill_warnings)
         }
     }
 
+    /* Enhancement-573: the flicker-noise area used to be computed in RESsetup
+       ONLY. Every path that changes the geometry without a setup -- a `sweep`
+       with the setup reused (Enhancement-471), `alter`, a `.dc` over `l` or
+       `w` (Enhancement-534) -- then ran the noise analysis with the area of the
+       FIRST point: a noise sweep over @r1[l] rose where it should fall. This is
+       the per-instance parameter update every one of those paths runs, so the
+       area is recomputed here from the values as they stand. */
+    if (here->RESwidthGiven || here->RESlengthGiven)
+        here->RESeffNoiseArea =
+            pow(here->RESlength - 2 * model->RESshort, model->RESlf) *
+            pow(here->RESwidth - 2 * model->RESnarrow, model->RESwf);
+    else
+        here->RESeffNoiseArea = 1.0;
+
     difference = (here->REStemp + here->RESdtemp) - model->REStnom;
 
     /* instance parameters tc1,tc2 and tce will override

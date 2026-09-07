@@ -75,20 +75,108 @@ static int va_mtime(const char *p, time_t *t)
 }
 
 
-/* basename without directory or extension */
+/* The object's name: the source's basename without its extension -- and,
+ * Enhancement-573, with the source's DIRECTORY folded in when it has one.
+ * `pre_osdi -va a/m.va b/m.va` used to compile both onto osdi/m.osdi: the
+ * second overwrote the first's object while it was loaded, then was reported
+ * "already loaded" and never registered, and under `.option osdicache` the
+ * survivor was "up to date" for whichever source had been compiled last. A
+ * bare `m.va` still gives osdi/m.osdi; `a/m.va` gives osdi/a_m.osdi,
+ * `../lib/m.va` osdi/up_lib_m.osdi, so two sources can share a stem. */
 static void va_stem(const char *path, char *out, size_t outlen)
 {
-    const char *b = path, *p, *dot;
-    size_t n;
+    const char *p = path;
+    size_t n = 0;
+
+    if (p[0] && p[1] == ':')                 /* a Windows drive letter */
+        p += 2;
+    while (*p) {
+        const char *e = p;
+        size_t len;
+        while (*e && *e != '/' && *e != '\\')
+            e++;
+        len = (size_t) (e - p);
+        if (!*e) {                           /* the last component: the file */
+            const char *dot = strrchr(p, '.');
+            if (dot && dot > p)
+                len = (size_t) (dot - p);
+        }
+        if (len == 1 && p[0] == '.') {
+            /* "." adds nothing */
+        } else if (len == 2 && p[0] == '.' && p[1] == '.') {
+            if (n + 3 < outlen) {
+                if (n) out[n++] = '_';
+                out[n++] = 'u'; out[n++] = 'p';
+            }
+        } else if (len) {
+            if (n && n + 1 < outlen)
+                out[n++] = '_';
+            if (len >= outlen - n - 1)
+                len = outlen - n - 1;
+            memcpy(out + n, p, len);
+            n += len;
+        }
+        p = *e ? e + 1 : e;
+    }
+    out[n] = '\0';
+}
+
+
+/* Enhancement-573: the newest mtime among `path` and every file it `include`s,
+ * resolved the way openvaf-r resolves them -- relative to the including file's
+ * own directory first. A name found nowhere on that path (the compiler's own
+ * disciplines.vams and constants.vams) is skipped rather than counted as
+ * missing. Depth-limited so an include cycle terminates. Returns 0 only when
+ * `path` itself cannot be stat'ed. With the source alone in the staleness test,
+ * an edit to an included file -- a parameter list, a shared body -- left
+ * `.option osdicache` loading the object of the previous text. */
+static int va_newest_mtime(const char *path, int depth, time_t *newest)
+{
+    FILE *fp;
+    char line[1024], dir[1400];
+    const char *b = path, *p;
+    time_t t;
+
+    if (!va_mtime(path, &t))
+        return 0;
+    if (t > *newest)
+        *newest = t;
+    if (depth > 8)
+        return 1;
     for (p = path; *p; p++)
         if (*p == '/' || *p == '\\')
             b = p + 1;
-    dot = strrchr(b, '.');
-    n = dot ? (size_t) (dot - b) : strlen(b);
-    if (n >= outlen)
-        n = outlen - 1;
-    memcpy(out, b, n);
-    out[n] = '\0';
+    (void) snprintf(dir, sizeof dir, "%.*s", (int) (b - path), path);
+    fp = fopen(path, "r");
+    if (!fp)
+        return 1;
+    while (fgets(line, sizeof line, fp)) {
+        char *s = line, *e, inc[1600];
+        while (isspace_c(*s))
+            s++;
+        if (*s != '`')
+            continue;
+        s++;
+        if (strncmp(s, "include", 7) != 0)
+            continue;
+        s += 7;
+        while (isspace_c(*s))
+            s++;
+        if (*s != '"')
+            continue;
+        s++;
+        e = strchr(s, '"');
+        if (!e)
+            continue;
+        *e = '\0';
+        if (s[0] == '/' || s[0] == '\\' || (s[0] && s[1] == ':'))
+            (void) snprintf(inc, sizeof inc, "%s", s);
+        else
+            (void) snprintf(inc, sizeof inc, "%s%s", dir, s);
+        (void) va_newest_mtime(inc, depth + 1, newest);
+    }
+    fclose(fp);
+    return 1;
 }
 
 
@@ -144,14 +232,31 @@ static char *va_compile(const char *va, bool force)
        up without restarting ngspice; under `-va` the compile is part of that
        loop, so honouring `-f` for the load alone would reload the very object
        the user is trying to replace -- the one case the flag exists for. */
-    if (!force && osdi_va_cache && va_mtime(osdi, &tosdi) && va_mtime(src, &tva) &&
-        tosdi > tva) {
+    if (!force && osdi_va_cache && va_mtime(osdi, &tosdi)) {
         /* strictly newer, not `>=`: st_mtime has one-second granularity, so an
            edit and a re-run inside the same second would otherwise load the
            object built from the PREVIOUS text. A tie costs one needless
-           recompile; the other way costs a wrong answer. */
-        fprintf(cp_out, "pre_osdi: %s is up to date (.option osdicache)\n", osdi);
-        return copy(osdi);
+           recompile; the other way costs a wrong answer.
+           Enhancement-573: "the source" is the source AND its includes, and
+           the object must also be newer than the COMPILER. The note above
+           records why the cache was made opt-in -- a `.va` timestamp says
+           nothing about openvaf-r having changed -- and that is now checked
+           rather than left to the user: a compiler newer than the object
+           rebuilds, and says so. A compiler found on PATH by bare name cannot
+           be stat'ed and is not checked. */
+        time_t tnew = 0, tovf;
+        if (va_newest_mtime(src, 0, &tnew) && tosdi > tnew) {
+            char *ovf0 = osdi_find_openvaf();
+            int newer_compiler = ovf0 && va_mtime(ovf0, &tovf) && tovf >= tosdi;
+            if (!newer_compiler) {
+                tfree(ovf0);
+                fprintf(cp_out, "pre_osdi: %s is up to date (.option osdicache)\n", osdi);
+                return copy(osdi);
+            }
+            fprintf(cp_out, "pre_osdi: %s is older than the compiler %s; rebuilding\n",
+                    osdi, ovf0);
+            tfree(ovf0);
+        }
     }
 
     /* Say which file is missing rather than leaving the compiler to report it

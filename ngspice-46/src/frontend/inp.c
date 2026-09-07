@@ -1383,6 +1383,8 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                         continue;
                     if (cieq(word, "osdicache"))
                         osdi_va_cache = 1;
+                    else if (cieq(word, "noosdicache"))
+                        osdi_va_cache = 0;          /* Enhancement-573 */
                     else if (ciprefix("osdicache=", word)) {
                         const char *v = word + 10;
                         osdi_va_cache = !(cieq(v, "0") || cieq(v, "false") ||

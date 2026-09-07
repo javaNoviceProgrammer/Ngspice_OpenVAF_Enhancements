@@ -518,6 +518,7 @@ if_is_option(const char *name)
            honoured but reported as unknown, the defect E-511 removed for
            osdicache and seedinfo. */
         "nosaveused", "noautobus", "noautoadapt", "noautomc", "noosdimc",
+        "noosdicache",               /* Enhancement-573 */
         "noosdilim",          /* F1: OSDI Newton step limiting opt-out (osdiload.c) */
         "autoadapt", "adapter",      /* PROTOTYPE: autoadapt */
         /* Enhancement-445: the `.four` analysis controls. Each is read by
