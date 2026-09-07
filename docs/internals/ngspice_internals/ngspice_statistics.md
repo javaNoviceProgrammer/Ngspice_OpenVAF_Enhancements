@@ -313,6 +313,8 @@ result in the same `montecarlo<n>` plot:
 | `track_hits` | the hit count per sample: 0 a miss, `nan` a sample that never solved |
 | `track_<vector>` — one per vector of the track plot: the scale (`time`, `frequency`, …), `value` (or `value1..N`, or the `-output` names), `index`, and a region's `x_out` and `width` | an Lmax × N family, hit-major: row k (`track_time[k]`) is hit k of every sample on the `sample` scale, `nan` where a sample had fewer, Lmax being the largest count any sample had — a *varying* count per sample is the usual case here, and the one `-expr` refuses; when no sample ever has more than one hit (a `-which first` selection, a single crossing) they are plain N-long vectors instead |
 
+A dc sweep's scale, `v-sweep`, records as `track_v_sweep` (E-583) — a hyphen in a
+vector name would be subtraction in `let` and `print`.
 The argument is one quoted word, because `track`'s own options begin with `-`.
 Several `-track` flags record as `track1_*`, `track2_*`, …; `-track` combines with
 `-spec` and `-expr` in the same run. The per-sample track plots are destroyed as

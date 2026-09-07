@@ -2134,8 +2134,14 @@ void sw_fp_apply(char *const *sw, const double *vals, int nsw)
     /* refresh each touched device type's derived state once (mirrors the
      * .dc @inst[param] path, DCTsetInstParam): O(devices) per type, not per
      * instance. RES recomputes its conductance inside DEVparam already, but
-     * OSDI and other devices update derived state only in DEVtemperature. */
-    if (any_direct && touched && ckt)
+     * OSDI and other devices update derived state only in DEVtemperature.
+     * Enhancement-583: only on a circuit that HAS been set up. On the first
+     * sample of a fresh circuit the model defaults are not yet applied (MOS1
+     * gives phi its 0.6 in MOS1setup), so the pass hit MOS1temp with phi == 0
+     * and printed "Fatal error: <model>: Phi is not positive." for every MOS
+     * model without an explicit phi -- spurious, since CKTdoJob runs CKTsetup
+     * and then CKTtemp for the analysis either way. */
+    if (any_direct && touched && ckt && ckt->CKTisSetup)
         for (type = 0; type < DEVmaxnum; type++)
             if (touched[type] && DEVices[type] && DEVices[type]->DEVtemperature)
                 DEVices[type]->DEVtemperature(ckt->CKThead[type], ckt);
@@ -5092,10 +5098,15 @@ void com_montecarlo(wordlist *wl)
             vec_new(h);
             for (n = 0; n < trec[t].nvec; n++) {
                 int lmax = trec[t].lmax;
-                struct dvec *v = dvec_alloc(tprintf("%s_%s", pre, trec[t].vname[n]),
-                                            trec[t].vtype[n],
-                                            (short) (VF_REAL | VF_PERMANENT),
-                                            nsamp * lmax, NULL);
+                char *vn = copy(trec[t].vname[n]);
+                struct dvec *v;
+                for (char *q = vn; *q; q++)     /* a dc sweep's scale is `v-sweep`: keep the
+                                                 * record spellable, `track_v_sweep` */
+                    if (!isalnum_c(*q) && *q != '_')
+                        *q = '_';
+                v = dvec_alloc(tprintf("%s_%s", pre, vn), trec[t].vtype[n],
+                               (short) (VF_REAL | VF_PERMANENT), nsamp * lmax, NULL);
+                tfree(vn);
                 for (int k = 0; k < nsamp * lmax; k++)
                     v->v_realdata[k] = NAN;
                 for (int i = 0; i < nsamp; i++)

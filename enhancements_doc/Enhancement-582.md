@@ -34,6 +34,9 @@ sample's plot, quietly, and records the result into the `montecarlo<n>` plot bes
 | `track_hits` | the hit count per sample on the `sample` scale: 0 a miss, `nan` a sample that never solved |
 | `track_<vector>`, one per vector of the track plot — the scale (`time`, `frequency`, …), `value`/`value1..N`/the `-output` names, `index`, a region's `x_out` and `width` — each with the source vector's type | an Lmax × N family, *hit-major*: row k is hit k of every sample on the `sample` scale, `nan` where a sample had fewer, Lmax the largest count any sample had; plain N-long vectors when no sample ever has more than one hit |
 
+A dc sweep's scale `v-sweep` records as `track_v_sweep` ([E-583](Enhancement-583.md):
+a hyphen in a vector name is subtraction in `let` and `print`).
+
 The orientation is the opposite of E-552's waveform families (`vo[k]` there is sample
 k's curve) because the Monte Carlo question about hits is a different one: not "what did
 sample k do" but "where did the *second* peak land across the samples". So `track_time[1]`

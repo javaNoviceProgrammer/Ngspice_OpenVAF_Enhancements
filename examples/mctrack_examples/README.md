@@ -4,7 +4,7 @@
 python3 verify_mctrack.py
 ```
 
-17 checks, both solvers.
+20 checks, both solvers.
 
 ## The need
 
@@ -30,6 +30,15 @@ is the point of tracking under variation.
   `-spec` and `-expr`. The per-sample track plots are destroyed as they are
   recorded. A miss is silent; an error in the track arguments stops the run on
   sample 1 with the message once, recording nothing.
+- A dc sweep's scale is `v-sweep`; it records as `track_v_sweep` (E-583), since a
+  hyphen in a vector name is subtraction in `let` and `print`.
+
+```spice
+* a CMOS inverter's switching point and gain-region width under Vth variation
+montecarlo 1000 -seed 7 -analysis "dc vin 0 3 5m" -track "v(out) -spec 'v(out) == v(in)'" -track "v(out) -spec 'abs(deriv(v(out))) > 1'" -expr vtn=@nm[vto]
+plot track1_v_sweep vs vtn
+pyplot -hist track2_width
+```
 
 ```spice
 montecarlo 1000 -seed 3 -analysis "tran 2u 1m" -track "v(out) -spec localmax -prominence 20m" -expr r=@r1[resistance]

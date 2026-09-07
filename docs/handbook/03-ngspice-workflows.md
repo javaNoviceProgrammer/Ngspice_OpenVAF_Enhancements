@@ -298,7 +298,8 @@ vector of the track plot as `track_<vector>`, an Lmax × N family whose row k is
 k of every sample on the `sample` scale, `nan` where a sample had fewer, so a
 *varying* hit count is exactly what it records: `track_time[1]` is the second hit
 of every sample, `plot track_value[0] vs r` the first peak against a recorded
-parameter. `-track "... -which first"` and
+parameter; a dc sweep's `v-sweep` scale records as `track_v_sweep` (E-583). `-track
+"... -which first"` and
 other one-hit forms give plain N-long vectors. A hand-written `repeat` loop with
 `$track_plot`/`$track_hits` (§3.3) remains for a trial that runs several analyses
 per draw.

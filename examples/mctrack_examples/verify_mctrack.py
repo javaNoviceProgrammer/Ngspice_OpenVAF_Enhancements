@@ -39,6 +39,11 @@ Checks (both solvers):
   [7]  -track without its argument is refused; nothing to do names -track
   [8]  a limited -spec and a -track together: the yield AND the record; -lhs
   [9]  a single -track with -expr: the summary counts both as records
+  [10] E-583: a dc sweep -- the scale `v-sweep` records as track_v_sweep (a
+       hyphen would be subtraction in `let`); a CMOS inverter's switching point
+       per sample equals (vtn + vdd + vtp)/2 for a beta ratio of 1; a region's
+       x_out and width in volts; and no spurious "Phi is not positive" from the
+       fast path on MOS models without an explicit phi
 """
 import math
 import os
@@ -291,6 +296,38 @@ print track_hits""", "one")
 check("[9] a lone -track is a record on its own: 'recording' said, 1 record over 3 samples, no yield",
       "1 record over 3 samples recorded into plot 'montecarlo1'" in out and "no yield (no -spec)" in out
       and len(column(out, "track_hits")) == 3)
+
+# ------------------------------------------------- [10] a dc sweep (E-583) ---
+INV = """.param vtn = agauss(0.7, 0.1, 3)
+.param vtp = agauss(-0.7, 0.1, 3)
+.model nm nmos level=1 vto={vtn} kp=120u lambda=0.02
+.model pm pmos level=1 vto={vtp} kp=60u  lambda=0.02
+Vdd vdd 0 3
+Vin in  0 0
+M1 out in 0   0   nm w=2u l=1u
+M2 out in vdd vdd pm w=4u l=1u"""
+rc, out = run("""montecarlo 6 -seed 7 -analysis "dc vin 0 3 5m" -track "v(out) -spec 'v(out) == v(in)'" -track "v(out) -spec 'abs(deriv(v(out))) > 1'" -expr vtn=@nm[vto] -expr vtp=@pm[vto]
+display
+print track1_v_sweep vtn vtp
+print track2_v_sweep track2_x_out track2_width""", "dc", deck=INV)
+vsw = column(out, "track1_v_sweep")
+vtn = column(out, "vtn")
+vtp = column(out, "vtp")
+xin = column(out, "track2_v_sweep")
+xout = column(out, "track2_x_out")
+wid = column(out, "track2_width")
+check("[10] a dc sweep: the scale records as track1_v_sweep (voltage type) and prints; the switching point per sample "
+      "is (vtn + vdd + vtp)/2 within 20 mV (beta ratio 1) and moves with the drawn thresholds",
+      len(vsw) == 6 and "track1_v_sweep      : voltage" in out and "track1_v-sweep" not in out
+      and all(abs(v - (a + 3.0 + b) / 2) < 0.02 for v, a, b in zip(vsw, vtn, vtp)) and max(vsw) - min(vsw) > 0.02,
+      f"vsw={[round(v, 4) for v in vsw]}")
+check("[10] the gain region per sample: entry below and exit above the switching point, width == x_out - entry, in volts",
+      len(wid) == 6 and all(a < v < b for a, v, b in zip(xin, vsw, xout))
+      and all(abs(w - (b - a)) < 1e-9 for w, a, b in zip(wid, xin, xout)) and all(0.3 < w < 0.6 for w in wid)
+      and "track2_width        : voltage" in out)
+check("[10] no spurious 'Phi is not positive' from the fast path on the first sample (E-583: the temperature pass "
+      "waits for the circuit to be set up); the fast path still armed",
+      "Phi is not positive" not in out and "Fatal error" not in out and "fast path armed (2 random value bindings" in out)
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)
