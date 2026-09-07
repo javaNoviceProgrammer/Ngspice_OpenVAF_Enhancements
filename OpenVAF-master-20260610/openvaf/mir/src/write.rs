@@ -290,6 +290,7 @@ pub fn write_operands(w: &mut dyn Write, dfg: &DataFlowGraph, inst: Inst) -> fmt
     match dfg.insts[inst].clone() {
         InstructionData::Unary { arg, .. } => write!(w, " {}", arg),
         InstructionData::Binary { args, .. } => write!(w, " {}, {}", args[0], args[1]),
+        InstructionData::Select { args } => write!(w, " {}, {}, {}", args[0], args[1], args[2]),
         InstructionData::Jump { destination, .. } => {
             write!(w, " {}", destination)
         }

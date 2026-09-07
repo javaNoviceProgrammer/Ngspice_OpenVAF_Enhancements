@@ -1,13 +1,13 @@
 use std::f64::NEG_INFINITY;
 use std::mem::replace;
 
-use hir::{CompilationDB, ConstraintValue, ParamConstraint, Parameter, Type};
+use hir::{BodyRef, CompilationDB, ConstraintValue, Expr, ExprId, ParamConstraint, Parameter, Ref, Type};
 use lasso::Rodeo;
 use mir::builder::InstBuilder;
 use mir::{Block, FuncRef, Function, Opcode, Value, FALSE, GRAVESTONE, INFINITY};
 use mir_build::{FunctionBuilder, FunctionBuilderContext};
 use stdx::packed_option::ReservedValue;
-use syntax::ast::ConstraintKind;
+use syntax::ast::{BinaryOp, ConstraintKind, UnaryOp};
 
 use crate::body::BodyLoweringCtx;
 use crate::callbacks::ParamInfoKind;
@@ -113,6 +113,33 @@ impl HirInterner {
             let ops = CmpOps::from_ty(&ty);
             let invalid = ctx.dec_callback(CallBackKind::ParamInfo(ParamInfoKind::Invalid, param));
 
+            // Enhancement-579: a parameter with no `from`/`exclude` and a plain
+            // default -- a literal, another parameter, `+ - *` of those -- has
+            // nothing to check and nothing that must wait for "not given": both
+            // candidates can be computed up front and the choice made with one
+            // `select`. The `if` diamond below put three blocks and a phi into the
+            // setup function per parameter, and an array parameter is one
+            // parameter PER ELEMENT: 10,000 elements meant 30,000 blocks, on which
+            // LLVM's dominator, scheduling and register work went quadratic
+            // (72 s to compile, 375 s for an instance array). Anything else -- a
+            // range to check, a default with a call, a division or a conditional
+            // in it -- keeps the diamond, so a default is still only evaluated
+            // when the parameter is not given.
+            let plain = bounds.is_empty()
+                && default_is_plain(&body.borrow(), body.borrow().get_entry_expr(0), 0);
+            if plain {
+                let default_val = ctx.lower_expr_body(body.borrow(), 0);
+                ctx.ins().with_result(new_val).select(param_given, param_val, default_val);
+                // The optbarrier is the STORE site: `default_vals[i]` becomes the
+                // parameter's output, the value the setup writes back into its
+                // slot. In the diamond that write sits in the not-given arm and
+                // carries the default; here it runs unconditionally, so it must
+                // carry the SELECTED value -- storing the default would overwrite
+                // a given value (which is exactly what the first version did).
+                if build_stores {
+                    default_vals[i] = ctx.ins().optbarrier(new_val);
+                }
+            } else {
             let (then_src, else_src) = ctx.make_cond(param_given, |ctx, param_given| {
                 if param_given {
                     // Builds the if block for the case when param is given
@@ -193,6 +220,7 @@ impl HirInterner {
 
             // let last_inst = builder.func.layout.last_inst(else_src.0).unwrap();
             ctx.ins().with_result(new_val).phi(&[then_src, else_src]);
+            }
 
             // we purposfull insert these reversed here (new val into params and old val into
             // outputs). This ensures that the code generated for other parameters uses the
@@ -409,6 +437,32 @@ impl HirInterner {
             *val = replace(&mut self.outputs[&PlaceKind::Param(param)], Some(output_val).into())
                 .unwrap_unchecked();
         }
+    }
+}
+
+/// Enhancement-579: is this default expression made only of literals,
+/// parameter reads and `+ - *` (with unary `-`/`+`) over those? Such a default
+/// lowers to pure arithmetic -- no call, no branch, no guard -- so it can be
+/// evaluated whether or not the parameter is given and chosen with a `select`.
+/// Everything else (a function call, a division with its zero guard, a
+/// conditional, a system function) is evaluated only when the parameter is not
+/// given, as before.
+fn default_is_plain(body: &BodyRef, expr: ExprId, depth: u32) -> bool {
+    if depth > 64 {
+        return false;
+    }
+    match body.get_expr(expr) {
+        Expr::Literal(_) => true,
+        Expr::Read(Ref::Parameter(_)) => true,
+        Expr::UnaryOp { expr, op: UnaryOp::Neg | UnaryOp::Identity } => {
+            default_is_plain(body, expr, depth + 1)
+        }
+        Expr::BinaryOp {
+            lhs,
+            rhs,
+            op: BinaryOp::Addition | BinaryOp::Subtraction | BinaryOp::Multiplication,
+        } => default_is_plain(body, lhs, depth + 1) && default_is_plain(body, rhs, depth + 1),
+        _ => false,
     }
 }
 

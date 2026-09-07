@@ -9,6 +9,8 @@ ngspice-46/build-x86/
 # CI scratch
 _artifacts/
 out/
+# run_regression.py keeps a failing suite's output here (Enhancement-579)
+examples/_failures/
 
 # ----------------------------------------------------------------------------
 # ngspice: its own per-directory .gitignore files were removed so that source

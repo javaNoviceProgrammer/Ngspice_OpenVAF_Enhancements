@@ -772,6 +772,15 @@ impl<'a> Parser<'a> {
                 InstructionData::PhiNode(PhiNode { args, blocks })
             }
             InstructionFormat::Exit => InstructionData::Exit,
+            // select <COND>, <THEN>, <ELSE>
+            InstructionFormat::Select => {
+                let cond = self.match_value(ctx, "expected SSA value condition operand")?;
+                self.match_token(Token::Comma, "expected ',' between operands")?;
+                let then_val = self.match_value(ctx, "expected SSA value then operand")?;
+                self.match_token(Token::Comma, "expected ',' between operands")?;
+                let else_val = self.match_value(ctx, "expected SSA value else operand")?;
+                InstructionData::Select { args: [cond, then_val, else_val] }
+            }
         };
         Ok(idata)
     }

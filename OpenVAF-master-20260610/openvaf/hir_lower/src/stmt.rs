@@ -79,7 +79,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     let target = self.ctx.iconst(k as i32);
                     let is_k = self.ctx.ins().binary1(Opcode::Ieq, flat, target);
                     let cur = self.ctx.read_variable(var);
-                    let new = self.ctx.make_select(is_k, move |_ctx, branch| if branch { v } else { cur });
+                    // Enhancement-579: a branchless `select` per element -- see
+                    // `InstructionData::Select`.
+                    let new = self.ctx.ins().select(is_k, v, cur);
                     self.ctx.def_place(PlaceKind::Var(var), new);
                 }
             }

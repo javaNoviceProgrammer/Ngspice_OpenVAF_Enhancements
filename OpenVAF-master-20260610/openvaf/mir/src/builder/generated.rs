@@ -27,6 +27,13 @@ pub trait InstBuilder<'f>: InstBuilderBase<'f> {
         let (inst, dfg) = self.binary(opcode, arg1, arg2);
         dfg.first_result(inst)
     }
+    /// Enhancement-579: `select cond, then_val, else_val` -- a branchless
+    /// conditional value; both operands are evaluated.
+    fn select(self, cond: Value, then_val: Value, else_val: Value) -> Value {
+        let data = InstructionData::Select { args: [cond, then_val, else_val] };
+        let (inst, dfg) = self.build(data);
+        dfg.first_result(inst)
+    }
     fn branch(
         self,
         cond: Value,

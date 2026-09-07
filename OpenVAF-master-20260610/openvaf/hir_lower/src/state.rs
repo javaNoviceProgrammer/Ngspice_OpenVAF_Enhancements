@@ -43,8 +43,12 @@ impl HirInterner {
                 // rewrite it would create a self-referencing cycle.
                 let existing_uses: Vec<_> = ctx.dfg().values.uses(*param).collect();
 
-                let selected =
-                    ctx.make_select(is_initial, |_, branch| if branch { init_val } else { *param });
+                // Enhancement-579: both values are already computed, so this is a
+                // plain `select` -- one instruction per retained variable instead
+                // of a three-block diamond and a phi, which for an array of N
+                // elements (N hidden-state variables) put 3N blocks into the
+                // evaluation function before the body was even lowered.
+                let selected = ctx.ins().select(is_initial, init_val, *param);
 
                 for use_ in existing_uses {
                     ctx.dfg_mut().use_set_value(use_, selected);

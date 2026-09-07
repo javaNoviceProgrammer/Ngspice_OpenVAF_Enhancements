@@ -102,7 +102,11 @@ impl<'a, 'b> LiveDerivativeBuilder<'a, 'b> {
                 InstructionData::Binary { opcode: Opcode::Fdiv, args } => (args, true),
                 InstructionData::Unary { opcode: Opcode::OptBarrier | Opcode::Fneg, .. }
                 | InstructionData::Binary { opcode: Opcode::Fadd | Opcode::Fsub, .. } => continue,
-                InstructionData::Unary { .. } | InstructionData::Binary { .. } => {
+                // Enhancement-579: a select carries its operands' derivatives
+                // through like any other pure instruction.
+                InstructionData::Unary { .. }
+                | InstructionData::Binary { .. }
+                | InstructionData::Select { .. } => {
                     post_order.transverse_inst(inst);
                     continue;
                 }

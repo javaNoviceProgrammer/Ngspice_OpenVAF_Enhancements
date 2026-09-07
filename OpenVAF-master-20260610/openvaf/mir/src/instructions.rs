@@ -36,6 +36,16 @@ pub enum InstructionData {
     Jump { destination: Block },
     Call { func_ref: FuncRef, args: ValueList },
     Exit,
+    /// Enhancement-579: `select cond, then, else` -- the value of `then` when
+    /// `cond` is true, else `else`, with NO control flow. Both operands are
+    /// evaluated. `args` is `[cond, then_val, else_val]`. Introduced so that a
+    /// dynamic array index and a parameter's given/default choice lower to one
+    /// straight-line instruction per element instead of a three-block `if`
+    /// diamond and a phi, which made every later pass (SSA construction, the CFG
+    /// simplifier, LLVM's dominator and scheduling work) quadratic in the array
+    /// length: a 10,000-entry array took 72 s to compile, 375 s as an instance
+    /// parameter.
+    Select { args: [Value; 3] },
 }
 
 impl From<PhiNode> for InstructionData {
@@ -89,6 +99,7 @@ impl InstructionData {
                 core::slice::from_mut(arg)
             }
             InstructionData::Binary { args, .. } => &mut *args,
+            InstructionData::Select { args } => &mut *args,
             InstructionData::Call { args, .. } | InstructionData::PhiNode(PhiNode { args, .. }) => {
                 args.as_mut_slice(pool)
             }
@@ -106,6 +117,7 @@ impl InstructionData {
                 core::slice::from_ref(arg)
             }
             InstructionData::Binary { args, .. } => args,
+            InstructionData::Select { args } => args,
             InstructionData::Call { args, .. } | InstructionData::PhiNode(PhiNode { args, .. }) => {
                 args.as_slice(pool)
             }
@@ -124,6 +136,7 @@ impl InstructionData {
             InstructionData::PhiNode { .. } => Opcode::Phi,
             InstructionData::Branch { .. } => Opcode::Br,
             InstructionData::Exit { .. } => Opcode::Exit,
+            InstructionData::Select { .. } => Opcode::Select,
         }
     }
 
@@ -166,6 +179,7 @@ impl InstructionData {
             ) => l_func_ref == r_func_ref && l_args.as_slice(val_pool) == r_args.as_slice(val_pool),
 
             (Self::PhiNode(lnode), Self::PhiNode(rnode)) => lnode.eq(rnode, val_pool, forest),
+            (Self::Select { args: l_args }, Self::Select { args: r_args }) => l_args == r_args,
 
             _ => false,
         }
@@ -203,6 +217,9 @@ impl InstructionData {
             InstructionData::PhiNode(node) => node.hash(state, val_pool, forest),
             InstructionData::Exit => {
                 0.hash(state);
+            }
+            InstructionData::Select { args } => {
+                args.hash(state);
             }
         }
     }

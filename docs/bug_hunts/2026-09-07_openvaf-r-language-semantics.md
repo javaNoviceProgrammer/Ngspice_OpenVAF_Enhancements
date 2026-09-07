@@ -270,8 +270,20 @@ F5, F6 and F7 are closed by [Enhancement-578](../../enhancements_doc/Enhancement
 pinned by `examples/fmtdiag_examples` (40 checks, 16 of them passing against the shipped
 compiler): `%x`/`%X`/`%t`/`%T` are conversions, a missing format argument names its task,
 L026 steps over the operands a literal format consumes, and a constant zero real modulus
-divisor is a compile error naming LRM 4.2.4. F1 (`hypot`), F2 (`$random`), F3 (negative
-zero) and F4 (array compile time) stand as written.
+divisor is a compile error naming LRM 4.2.4.
+
+F3 and F4 are closed by [Enhancement-579](../../enhancements_doc/Enhancement-579.md),
+pinned by `examples/arrayscale_examples` (29 checks): the constant table no longer
+aliases −0.0 onto +0.0, and the quadratic compile time turned out to be a chain of
+per-element CFG blocks — a three-block `if` per element for dynamic reads and writes
+and for retained-variable init, one per parameter in the setup function, three and
+four per parameter in the OSDI access and given-query functions — replaced by a new
+branchless `select` instruction in MIR, table-driven access and given-query
+functions, and `-O0` setup modules above 1024 parameters. A 10,000-entry model array
+parameter compiles in 4.2 s (was 71 s), an instance array in 5.9 s (was 375–410 s); a
+10,000-element local array rewritten in a loop each evaluation still takes 26 s (was
+68 s), which is LLVM optimising a 10,000-phi loop in the evaluation function.
+F1 (`hypot`) and F2 (`$random`) stand as written.
 
 ## Smaller notes (not pursued)
 

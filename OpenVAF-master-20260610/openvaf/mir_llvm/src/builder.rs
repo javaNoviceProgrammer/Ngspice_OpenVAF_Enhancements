@@ -567,7 +567,23 @@ impl<'ll> Builder<'_, '_, 'll> {
         unsafe {
             let bb_ptr = NonNull::from(bb).as_ptr();
             let inst = llvm_sys::core::LLVMGetLastInstruction(bb_ptr);
-            llvm_sys::core::LLVMPositionBuilder(self.llbuilder as *const _ as *mut _, bb_ptr, inst);
+            // Enhancement-579: the exit block of a setup function has no
+            // terminator yet when the parameter stores are placed; positioning
+            // "before the last instruction" of such a block put the store BEFORE
+            // the value it stores (the branchless parameter init lives there),
+            // which the verifier rejects ("Instruction does not dominate all
+            // uses") and which, with an earlier value, stored the default over a
+            // given value. Position at the end unless the last instruction really
+            // is a terminator.
+            if !inst.is_null() && !llvm_sys::core::LLVMIsATerminatorInst(inst).is_null() {
+                llvm_sys::core::LLVMPositionBuilder(
+                    self.llbuilder as *const _ as *mut _,
+                    bb_ptr,
+                    inst,
+                );
+            } else {
+                llvm_sys::core::LLVMPositionBuilderAtEnd(self.llbuilder as *const _ as *mut _, bb_ptr);
+            }
         }
     }
     /// # Safety
@@ -632,6 +648,7 @@ impl<'ll> Builder<'_, '_, 'll> {
         let (opcode, args) = match self.func.dfg.insts[inst] {
             mir::InstructionData::Unary { opcode, ref arg } => (opcode, slice::from_ref(arg)),
             mir::InstructionData::Binary { opcode, ref args } => (opcode, args.as_slice()),
+            mir::InstructionData::Select { ref args } => (Opcode::Select, args.as_slice()),
             mir::InstructionData::Branch { cond, then_dst, else_dst, .. } => {
                 // Enhancement-317: the condition can still be `Undef` when a branch
                 // survives into a derived function (e.g. osdi::setup::setup_instance) whose
@@ -753,6 +770,13 @@ impl<'ll> Builder<'_, '_, 'll> {
         };
 
         let val = match opcode {
+            // Enhancement-579: a branchless conditional value; LLVM's own `select`
+            Opcode::Select => {
+                let cond = NonNull::from(self.values[args[0]].get(self)).as_ptr();
+                let then_val = NonNull::from(self.values[args[1]].get(self)).as_ptr();
+                let else_val = NonNull::from(self.values[args[2]].get(self)).as_ptr();
+                llvm_sys::core::LLVMBuildSelect(self.llbuilder, cond, then_val, else_val, UNNAMED)
+            }
             Opcode::Inot | Opcode::Bnot => {
                 let arg = NonNull::from(self.values[args[0]].get(self)).as_ptr();
                 llvm_sys::core::LLVMBuildNot(self.llbuilder, arg, UNNAMED)

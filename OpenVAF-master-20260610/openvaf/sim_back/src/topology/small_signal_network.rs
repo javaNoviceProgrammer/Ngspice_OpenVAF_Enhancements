@@ -163,6 +163,16 @@ impl Builder<'_> {
             InstructionData::Unary { opcode: Opcode::Fneg | Opcode::OptBarrier, arg } => {
                 self.analyze_value(arg, recurse)
             }
+            // Enhancement-579: like a phi over its two operands, unless the
+            // condition itself moves with the operating point.
+            InstructionData::Select { args: [cond, then_val, else_val] } => {
+                if is_op_dependent(cond) {
+                    return FlatSet::Top;
+                }
+                let a = self.analyze_value(then_val, recurse);
+                let b = self.analyze_value(else_val, recurse);
+                a.min(b)
+            }
             _ => FlatSet::Top,
         }
     }
@@ -254,6 +264,28 @@ impl Builder<'_> {
 
             InstructionData::Unary { opcode: Opcode::Fneg | Opcode::OptBarrier, arg } => {
                 self.analyze_dependency(recurse, arg, unknown)
+            }
+            // Enhancement-579: like a phi over its two operands; a condition that
+            // depends on the unknown makes the whole value non-linear in it.
+            InstructionData::Select { args: [cond, then_val, else_val] } => {
+                if self.analyze_dependency(recurse, cond, unknown) != Dependency::Independent {
+                    return Dependency::NonLinear;
+                }
+                let mut is_linear = true;
+                for arg in [then_val, else_val] {
+                    match self.analyze_dependency(recurse, arg, unknown) {
+                        Dependency::Linear => (),
+                        Dependency::NonZero | Dependency::Independent => {
+                            is_linear = false;
+                        }
+                        Dependency::NonLinear => return Dependency::NonLinear,
+                    }
+                }
+                if is_linear {
+                    Dependency::Linear
+                } else {
+                    Dependency::Independent
+                }
             }
             _ => Dependency::Independent,
         }
@@ -454,6 +486,14 @@ impl Builder<'_> {
                 | InstructionData::Unary { opcode: Opcode::Fneg | Opcode::OptBarrier, .. } => {}
                 InstructionData::Binary { opcode: Opcode::Fdiv, args } => {
                     if is_op_dependent(args[1]) {
+                        return None;
+                    }
+                }
+                // Enhancement-579: a select whose condition is fixed at the
+                // operating point is a pass-through like a phi; one that moves is
+                // not linear.
+                InstructionData::Select { args } => {
+                    if is_op_dependent(args[0]) {
                         return None;
                     }
                 }

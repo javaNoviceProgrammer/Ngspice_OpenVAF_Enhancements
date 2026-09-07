@@ -201,6 +201,23 @@ impl<'a> Builder<'a> {
                         res_react = Some(ins!().fdiv(num, denom));
                     }
                 }
+                // Enhancement-579: split a select the way a phi is split, part by
+                // part -- an operand with no share in a part contributes zero to it.
+                InstructionData::Select { args: [cond, then_val, else_val] } => {
+                    for (map, out) in [
+                        (&self.val_map, &mut res),
+                        (&self.val_map_react, &mut res_react),
+                    ] {
+                        *out = match (map.get(&then_val), map.get(&else_val)) {
+                            (None, None) => None,
+                            (t, e) => Some(ins!().select(
+                                cond,
+                                t.copied().unwrap_or(F_ZERO),
+                                e.copied().unwrap_or(F_ZERO),
+                            )),
+                        };
+                    }
+                }
                 InstructionData::PhiNode(_) => {
                     self.phis.push(inst);
                     // delay phi construction as there could be loops in the DFG

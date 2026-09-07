@@ -362,7 +362,8 @@ impl<'a> super::Builder<'a> {
                             }
                         }
                         InstructionData::Binary { .. }
-                        | InstructionData::Unary { .. } => {
+                        | InstructionData::Unary { .. }
+                        | InstructionData::Select { .. } => {
                             if any_arg_post {
                                 post_ddt.insert(func.dfg.first_result(inst));
                             }
@@ -484,6 +485,17 @@ impl<'a> super::Builder<'a> {
                         .is_none()
                     {
                         cov_mark::hit!(conditional_phi);
+                        return Evaluation::Equation;
+                    }
+                }
+                // Enhancement-579: a select is a phi without the control flow, and
+                // its condition IS the control dependence. When that condition moves
+                // with the operating point the value switches with it, which is the
+                // `conditional_phi` case above: an equation, not a linear term.
+                InstructionData::Select { args } => {
+                    let cond_moves =
+                        if noise { val_visisted(args[0]) } else { is_op_dependent(args[0]) };
+                    if cond_moves {
                         return Evaluation::Equation;
                     }
                 }

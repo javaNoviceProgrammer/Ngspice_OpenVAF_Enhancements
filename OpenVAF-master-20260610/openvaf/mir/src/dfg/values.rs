@@ -255,8 +255,15 @@ impl DfgValues {
         consts::init(&mut res);
         res.defs[GRAVESTONE].ty = ValueDataType::Invalid;
 
-        // normalize to plus zero for consts
-        res.real_consts.insert((-0f64).into(), F_ZERO);
+        // Enhancement-579 (bug-hunt 2026-09-07 F3): the constant table used to
+        // map -0.0 onto F_ZERO ("normalize to plus zero for consts"), so every
+        // fold that produced a negative zero -- `-0.0`, `0.0 * -1.0`, `fneg` of a
+        // zero constant -- came back as +0.0 and `1.0/(-0.0)` folded to +inf,
+        // `atan2(0.0, -0.0)` to 0, where IEEE 754 and the run-time path give -inf
+        // and pi. `Ieee64` is keyed on the bit pattern, so without the alias the
+        // two zeros are two constants, and the simplifier's `== F_ZERO` tests --
+        // `x * 0 -> 0`, `0 / x -> 0`, `x - 0 -> x` -- keep matching only the
+        // positive zero, which is exactly the one they are valid for.
 
         res
     }

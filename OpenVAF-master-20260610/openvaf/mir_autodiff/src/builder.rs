@@ -747,6 +747,18 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
                 // zero no need to store the derivative
                 => return,
 
+            // Enhancement-579: d select(c, a, b) = select(c, da, db); the condition
+            // is a boolean and carries no derivative of its own.
+            Opcode::Select => {
+                let dthen = arg_derivative(self, 1);
+                let delse = arg_derivative(self, 2);
+                if dthen == delse {
+                    dthen
+                } else {
+                    self.ins().select(arg0, dthen, delse)
+                }
+            }
+
             Opcode::Fneg  => {
                 let arg = arg_derivative(self, 0);
                 self.ins().fneg(arg)

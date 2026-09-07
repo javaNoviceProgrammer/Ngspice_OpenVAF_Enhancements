@@ -24,6 +24,10 @@ use hir_lower::{CallBackKind, HirInterner, ImplicitEquation, ParamKind};
 use lasso::Rodeo;
 use llvm_sys::target::{LLVMABISizeOfType, LLVMDisposeTargetData};
 use llvm_sys::target_machine::LLVMCodeGenOptLevel;
+
+/// Enhancement-579: parameter count above which a module's setup functions are
+/// generated at -O0. See the comment at the setup module creation.
+const SETUP_FAST_CODEGEN_PARAMS: usize = 1024;
 use mir_llvm::{CodegenCx, LLVMBackend};
 use ndatable::nda_arrays;
 use salsa::ParallelDatabase;
@@ -123,9 +127,27 @@ pub fn compile<'a>(
         })
         .collect();
 
-    let target_data = unsafe {
-        let src = CString::new(target.data_layout.clone()).unwrap();
-        &*llvm_sys::target::LLVMCreateTargetData(src.as_ptr())
+    let layout_c = CString::new(target.data_layout.clone()).unwrap();
+    let target_data = unsafe { &*llvm_sys::target::LLVMCreateTargetData(layout_c.as_ptr()) };
+
+    // Enhancement-579: LLVM's `DataLayout` memoises struct layouts in a cache that
+    // is NOT thread-safe, and every size/offset query (`LLVMABISizeOfType`,
+    // `LLVMOffsetOfElement`) on a struct type goes through it. The four codegen
+    // closures below run in parallel and each queried the ONE target-data object
+    // created above -- a latent race that surfaced once the table-driven access
+    // function added a query per parameter from its worker thread: random
+    // segfaults inside the compiler under a loaded machine (two or three suites of
+    // a parallel regression sweep, a different set each time). Each closure now
+    // creates its own target data from the layout string and drops it when done;
+    // the object above stays with the main thread for the descriptor.
+    struct OwnedTargetData(llvm_sys::target::LLVMTargetDataRef);
+    impl Drop for OwnedTargetData {
+        fn drop(&mut self) {
+            unsafe { LLVMDisposeTargetData(self.0) }
+        }
+    }
+    let own_target_data = |layout: &CString| unsafe {
+        OwnedTargetData(llvm_sys::target::LLVMCreateTargetData(layout.as_ptr()))
     };
 
     let compiled_modules = modules;
@@ -163,7 +185,8 @@ pub fn compile<'a>(
     codegen_pool.scope(|scope| {
         let db = db;
         let literals_ = &literals;
-        let target_data_ = target_data;
+        let layout_ = &layout_c;
+        let own_target_data = &own_target_data;
         let paths = &paths;
 
         for (i, module) in osdi_modules.iter().enumerate() {
@@ -175,10 +198,11 @@ pub fn compile<'a>(
                 let name1 = access.clone();
                 let llmod = unsafe { back.new_module(&access, opt_lvl).unwrap() };
                 let cx = new_codegen(back, &llmod, literals_);
-                let tys = OsdiTys::new(&cx, NonNull::from(target_data_).as_ptr());
+                let td = own_target_data(layout_);
+                let tys = OsdiTys::new(&cx, td.0);
                 let cguint = OsdiCompilationUnit::new(&_db, module, &cx, &tys, false);
 
-                cguint.access_function();
+                cguint.access_function(td.0);
                 cguint.param_given_function(); // Enhancement-555
                 if dump_unopt_ir {
                     let mut unoptirs = unoptirs_clone.lock().unwrap();
@@ -201,12 +225,31 @@ pub fn compile<'a>(
             let unoptirs_clone = Arc::clone(&unoptirs);
             let irs_clone = Arc::clone(&irs);
             let _db = db.snapshot();
+            // Enhancement-579: the two setup functions run once per model and once
+            // per instance, so their code quality is irrelevant, while their SIZE
+            // is proportional to the parameter count -- one select, one given-bit
+            // read and one store per parameter, in one straight-line block once the
+            // per-parameter `if` diamonds were removed. LLVM's instruction
+            // selection and register allocation are superlinear in a block's
+            // length, and a 10,000-entry array parameter is 10,000 parameters:
+            // at the eval function's level the setup modules took 29 s of a 29 s
+            // compile. Above SETUP_FAST_CODEGEN_PARAMS parameters the setup
+            // modules are built at -O0 (FastISel, no middle-end passes), which is
+            // linear; the eval, access and given functions keep the requested
+            // level. The threshold keeps every ordinary compact model exactly as
+            // it was (the largest CMC models have a few hundred parameters).
+            let setup_lvl = if module.info.params.len() > SETUP_FAST_CODEGEN_PARAMS {
+                LLVMCodeGenOptLevel::LLVMCodeGenLevelNone
+            } else {
+                opt_lvl
+            };
             scope.spawn(move |_| {
                 let name = format!("setup_model_{}", &module.sym);
                 let name1 = name.clone();
-                let llmod = unsafe { back.new_module(&name, opt_lvl).unwrap() };
+                let llmod = unsafe { back.new_module(&name, setup_lvl).unwrap() };
                 let cx = new_codegen(back, &llmod, literals_);
-                let tys = OsdiTys::new(&cx, NonNull::from(target_data_).as_ptr());
+                let td = own_target_data(layout_);
+                let tys = OsdiTys::new(&cx, td.0);
                 let cguint = OsdiCompilationUnit::new(&_db, module, &cx, &tys, false);
 
                 cguint.setup_model();
@@ -234,9 +277,10 @@ pub fn compile<'a>(
             scope.spawn(move |_| {
                 let name = format!("setup_instance_{}", &module.sym);
                 let name1 = name.clone();
-                let llmod = unsafe { back.new_module(&name, opt_lvl).unwrap() };
+                let llmod = unsafe { back.new_module(&name, setup_lvl).unwrap() };
                 let cx = new_codegen(back, &llmod, literals_);
-                let tys = OsdiTys::new(&cx, NonNull::from(target_data_).as_ptr());
+                let td = own_target_data(layout_);
+                let tys = OsdiTys::new(&cx, td.0);
                 let mut cguint = OsdiCompilationUnit::new(&_db, module, &cx, &tys, false);
 
                 cguint.setup_instance();
@@ -268,7 +312,8 @@ pub fn compile<'a>(
                 let name1 = access.clone();
                 let llmod = unsafe { back.new_module(&access, opt_lvl).unwrap() };
                 let cx = new_codegen(back, &llmod, literals_);
-                let tys = OsdiTys::new(&cx, NonNull::from(target_data_).as_ptr());
+                let td = own_target_data(layout_);
+                let tys = OsdiTys::new(&cx, td.0);
                 let cguint = OsdiCompilationUnit::new(&_db, module, &cx, &tys, true);
 
                 cguint.eval();

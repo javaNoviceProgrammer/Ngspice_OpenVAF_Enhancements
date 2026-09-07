@@ -2,8 +2,8 @@ use std::marker::PhantomData;
 use std::mem::swap;
 
 use mir::{
-    Function, Inst, InstructionData, Opcode, PhiNode, Value, ValueDef, F_N_ONE, F_ONE,
-    F_ZERO, N_ONE, ONE, ZERO,
+    Function, Inst, InstructionData, Opcode, PhiNode, Value, ValueDef, FALSE, F_N_ONE, F_ONE,
+    F_ZERO, N_ONE, ONE, TRUE, ZERO,
 };
 
 use crate::const_eval::{eval_binary, eval_unary};
@@ -84,7 +84,27 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
                 self.simplify_binop(opcode, args[0], args[1])
             }
             InstructionData::PhiNode(phi) => self.simplify_phi(phi),
+            InstructionData::Select { args: [cond, then_val, else_val] } => {
+                self.simplify_select(cond, then_val, else_val)
+            }
             _ => None,
+        }
+    }
+
+    /// Enhancement-579: `select c, a, b` with a constant condition is the chosen
+    /// operand; with equal operands it is that operand.
+    pub fn simplify_select(&mut self, cond: Value, then_val: Value, else_val: Value) -> Option<Value> {
+        let cond = self.map_val(cond);
+        let then_val = self.map_val(then_val);
+        let else_val = self.map_val(else_val);
+        if cond == TRUE {
+            Some(then_val)
+        } else if cond == FALSE {
+            Some(else_val)
+        } else if then_val == else_val {
+            Some(then_val)
+        } else {
+            None
         }
     }
 

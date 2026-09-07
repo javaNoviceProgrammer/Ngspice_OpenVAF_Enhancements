@@ -144,6 +144,18 @@ def run_one(script):
         ok = "ALL PASS" in out or (rc == 0 and "FAIL" not in out)
         status = "OK" if (rc == 0 and ok) else "FAILURE"
         detail = f"rc={rc}"
+    if status != "OK":
+        # Enhancement-579: keep a failing suite's output. A parallel sweep prints
+        # one line per suite and nothing else, so a failure that does not repeat
+        # standalone (this fold's compiler race showed up as two or three
+        # different suites failing on one solver per sweep) left nothing to read.
+        try:
+            fdir = os.path.join(HERE, "_failures")
+            os.makedirs(fdir, exist_ok=True)
+            with open(os.path.join(fdir, f"{stem}.log"), "w") as fh:
+                fh.write(out)
+        except OSError:
+            pass
     return stem, status, detail, dt
 
 
@@ -212,6 +224,7 @@ def main(argv):
         print("\nNOT OK:")
         for stem, status, detail in bad:
             print(f"  {status:8} {stem:28} {detail}")
+        print(f"\n  (each failing suite's full output is in {os.path.join(HERE, '_failures')}/<suite>.log)")
     else:
         print("ALL OK")
     return 1 if bad else 0

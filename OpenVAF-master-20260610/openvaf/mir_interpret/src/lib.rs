@@ -78,6 +78,7 @@ impl<'a> Interpreter<'a> {
         let (opcode, args) = match *inst_data {
             mir::InstructionData::Unary { opcode, ref arg } => (opcode, slice::from_ref(arg)),
             mir::InstructionData::Binary { opcode, ref args } => (opcode, args.as_slice()),
+            mir::InstructionData::Select { ref args } => (Opcode::Select, args.as_slice()),
             mir::InstructionData::Branch { cond, then_dst, else_dst, .. } => {
                 let dst = if self.state.vals[cond].into() { then_dst } else { else_dst };
                 self.jmp(inst, dst);
@@ -119,6 +120,14 @@ impl<'a> Interpreter<'a> {
             mir::Opcode::Bnot => (!args(0).bool()).into(),
             mir::Opcode::Fneg => (-args(0).f64()).into(),
             mir::Opcode::Ineg => (-args(0).i32()).into(),
+            // Enhancement-579: branchless conditional value
+            mir::Opcode::Select => {
+                if args(0).bool() {
+                    args(1)
+                } else {
+                    args(2)
+                }
+            }
             // FIcast is the implicit real->int cast, which per the LRM rounds to
             // nearest (ties away from zero) -- NOT truncation. Match the shipped
             // evaluators: mir_llvm uses llvm.lround, mir_opt/const_eval uses

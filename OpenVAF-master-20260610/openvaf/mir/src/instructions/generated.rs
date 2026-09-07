@@ -10,6 +10,8 @@ pub enum InstructionFormat {
     Exit,
     Call,
     PhiNode,
+    /// Enhancement-579: `select cond, a, b` -- a branchless conditional value.
+    Select,
 }
 #[repr(u8)]
 #[derive(Clone, PartialEq, Eq, Copy, Hash)]
@@ -86,8 +88,9 @@ pub enum Opcode {
     Exit = 70u8,
     Call = 71u8,
     Phi = 72u8,
+    Select = 73u8,
 }
-pub(super) const OPCODE_CONSTRAINTS: [OpcodeConstraints; 72usize + 1] = [
+pub(super) const OPCODE_CONSTRAINTS: [OpcodeConstraints; 73usize + 1] = [
     OpcodeConstraints::new(0, 0),
     OpcodeConstraints::new(1u8, 1u8),
     OpcodeConstraints::new(1u8, 1u8),
@@ -161,8 +164,9 @@ pub(super) const OPCODE_CONSTRAINTS: [OpcodeConstraints; 72usize + 1] = [
     OpcodeConstraints::new(0u8, 0u8),
     OpcodeConstraints::new(0u8, 0u8),
     OpcodeConstraints::new(0u8, 1u8),
+    OpcodeConstraints::new(3u8, 1u8),
 ];
-pub(super) const OPCODE_NAMES: [&str; 72usize + 1] = [
+pub(super) const OPCODE_NAMES: [&str; 73usize + 1] = [
     "",
     "inot",
     "bnot",
@@ -236,8 +240,9 @@ pub(super) const OPCODE_NAMES: [&str; 72usize + 1] = [
     "exit",
     "call",
     "phi",
+    "select",
 ];
-pub(super) const OPCODE_FORMAT: [InstructionFormat; 72usize + 1] = [
+pub(super) const OPCODE_FORMAT: [InstructionFormat; 73usize + 1] = [
     InstructionFormat::Binary,
     InstructionFormat::Unary,
     InstructionFormat::Unary,
@@ -311,6 +316,7 @@ pub(super) const OPCODE_FORMAT: [InstructionFormat; 72usize + 1] = [
     InstructionFormat::Exit,
     InstructionFormat::Call,
     InstructionFormat::PhiNode,
+    InstructionFormat::Select,
 ];
 impl std::str::FromStr for Opcode {
     type Err = &'static str;
@@ -388,6 +394,7 @@ impl std::str::FromStr for Opcode {
             "exit" => Ok(Opcode::Exit),
             "call" => Ok(Opcode::Call),
             "phi" => Ok(Opcode::Phi),
+            "select" => Ok(Opcode::Select),
             _ => Err("Unknown opcode"),
         }
     }

@@ -96,7 +96,13 @@ fn parameters() {
                     group: "foo",
                     is_instance: true,
                     instance_bounds: false,
+                    given_tested: false,
+                    dynamic_bounds: false,
                     stat: None,
+                    default_value: Some(
+                        2.0,
+                    ),
+                    range_text: "",
                 },
             ),
             (
@@ -109,7 +115,13 @@ fn parameters() {
                     group: "foo",
                     is_instance: true,
                     instance_bounds: false,
+                    given_tested: false,
+                    dynamic_bounds: false,
                     stat: None,
+                    default_value: Some(
+                        3.0,
+                    ),
+                    range_text: "",
                 },
             ),
             (
@@ -122,7 +134,13 @@ fn parameters() {
                     group: "",
                     is_instance: false,
                     instance_bounds: false,
+                    given_tested: false,
+                    dynamic_bounds: false,
                     stat: None,
+                    default_value: Some(
+                        3.0,
+                    ),
+                    range_text: "",
                 },
             ),
         ]

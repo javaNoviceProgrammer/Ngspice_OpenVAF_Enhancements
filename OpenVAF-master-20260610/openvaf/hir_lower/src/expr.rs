@@ -656,7 +656,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let target = self.ctx.iconst(k as i32);
             let is_k = self.ctx.ins().binary1(Opcode::Ieq, flat, target);
             let elem_val = self.ctx.use_param(ParamKind::Param(param));
-            res = self.ctx.make_select(is_k, move |_ctx, branch| if branch { elem_val } else { res });
+            // Enhancement-579: one `select` per element instead of a three-block
+            // `if` diamond and a phi -- see `InstructionData::Select`.
+            res = self.ctx.ins().select(is_k, elem_val, res);
         }
         res
     }
@@ -673,7 +675,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let target = self.ctx.iconst(k as i32);
             let is_k = self.ctx.ins().binary1(Opcode::Ieq, flat, target);
             let elem_val = self.ctx.read_variable(var);
-            res = self.ctx.make_select(is_k, move |_ctx, branch| if branch { elem_val } else { res });
+            // Enhancement-579: one `select` per element instead of a three-block
+            // `if` diamond and a phi -- see `InstructionData::Select`.
+            res = self.ctx.ins().select(is_k, elem_val, res);
         }
         res
     }

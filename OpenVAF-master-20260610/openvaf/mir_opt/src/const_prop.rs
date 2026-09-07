@@ -152,6 +152,9 @@ impl ConstSolver<'_> {
             InstructionData::Binary { opcode, args } => {
                 self.eval_binary(opcode, args[0], args[1], inst)
             }
+            InstructionData::Select { args: [cond, then_val, else_val] } => {
+                self.eval_select(cond, then_val, else_val, inst)
+            }
             InstructionData::Branch { cond, then_dst, else_dst, .. } => match self.vals[cond] {
                 FlatSet::Elem(TRUE) => self.mark_edge_feasible(bb, then_dst),
                 FlatSet::Elem(FALSE) => self.mark_edge_feasible(bb, else_dst),
@@ -285,6 +288,34 @@ impl ConstSolver<'_> {
 
         if overdef {
             self.mark_inst_overdefinied(inst)
+        }
+    }
+
+    /// Enhancement-579: the lattice of `select c, a, b`. A known condition picks
+    /// one operand and copies its lattice value; an unknown (overdefined)
+    /// condition makes the result overdefined unless both operands are the same
+    /// constant. `Bottom` (not yet evaluated) is left alone, as for a phi, so the
+    /// worklist revisits the instruction when an operand settles.
+    fn eval_select(&mut self, cond: Value, then_val: Value, else_val: Value, inst: Inst) {
+        let picked = match self.vals[cond] {
+            FlatSet::Bottom => return,
+            FlatSet::Elem(TRUE) => Some(then_val),
+            FlatSet::Elem(FALSE) => Some(else_val),
+            FlatSet::Elem(_) | FlatSet::Top => None,
+        };
+        match picked {
+            Some(val) => match self.vals[val] {
+                FlatSet::Bottom => (),
+                FlatSet::Elem(c) => self.mark_inst_const(inst, c),
+                FlatSet::Top => self.mark_inst_overdefinied(inst),
+            },
+            None => match (self.vals[then_val], self.vals[else_val]) {
+                (FlatSet::Elem(a), FlatSet::Elem(b)) if a == b => self.mark_inst_const(inst, a),
+                (FlatSet::Bottom, FlatSet::Bottom)
+                | (FlatSet::Bottom, FlatSet::Elem(_))
+                | (FlatSet::Elem(_), FlatSet::Bottom) => (),
+                _ => self.mark_inst_overdefinied(inst),
+            },
         }
     }
 
