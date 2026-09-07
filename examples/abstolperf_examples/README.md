@@ -17,7 +17,7 @@ the `CKTnode` list for every (instance, node) pair — O(instances × nodes ×
 circuit nodes). It was written believing the path was rare, "only models that
 declare custom natures". That is false: `disciplines.vams` declares `abstol` on
 the **standard** natures, so it runs for every OSDI node in every deck. On a
-17-model photonic deck it cost **4.1 s of a 6.2 s run**, tripling it.
+17-model deck it cost **4.1 s of a 6.2 s run**, tripling it.
 
 ## Why a ratio and not a stopwatch
 

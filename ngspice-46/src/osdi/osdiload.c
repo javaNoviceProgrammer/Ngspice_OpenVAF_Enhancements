@@ -272,7 +272,7 @@ static void absdelay_stamp_tran(CKTcircuit *ckt, GENinstance *gen_inst,
 
     /* Treat sub-femtosecond delays as zero: stamp as DC pass-through to avoid
      * forcing the timestep below the delay value (which would cause timestep-
-     * too-small failures).  Real photonic delays are >> 1 fs. */
+     * too-small failures).  Real delays are >> 1 fs. */
     if (td < 1e-15) {
       *(extra->delay_jac_y[k]) += 1.0;
       *(extra->delay_jac_z[k]) += -1.0;

@@ -7,7 +7,7 @@ The first implementation searched the CKTnode list for every (instance, node)
 pair -- O(instances x nodes x circuit nodes). It was written believing the path
 was rare ("only models that declare custom natures"), which is false:
 `disciplines.vams` declares abstol on the STANDARD natures, so it runs for every
-OSDI node in every deck. On a 17-model photonic deck it cost 4.1 s of a 6.2 s
+OSDI node in every deck. On a 17-model deck it cost 4.1 s of a 6.2 s
 run. The fix collects tolerances into an array indexed by node number and
 applies them in one node-list walk per model type.
 

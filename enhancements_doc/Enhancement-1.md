@@ -167,7 +167,7 @@ New static helpers + hooks in `OSDIload`:
 - `absdelay_stamp_tran` — transient: initialize history on the first step, then
   stamp the interpolated delayed value into `eq_z`. **Sub-femtosecond delays
   (`td < 1e-15`) are treated as DC pass-through** so the epsilon delays that
-  appear in photonic S11/S22 terms don't collapse the timestep.
+  appear in S-parameter S11/S22 terms don't collapse the timestep.
 - `OSDIload` calls `absdelay_stamp_tran` (transient) or `absdelay_stamp_dc`
   (DC) after the normal device load.
 
