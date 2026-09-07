@@ -119,7 +119,16 @@ def main():
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # all 6 terminals connected with COBCNODE=0: the model $finish-rejects
         # the configuration in eval; before E-56 the noise run then CRASHED on
-        # an assert (unfactored singular AC matrix in the adjoint solve)
+        # an assert (unfactored singular AC matrix in the adjoint solve).
+        # E-56 made that a clean abort ("aborting the noise analysis"). Since
+        # Enhancement-571 the deck no longer reaches it: the rejected device
+        # contributes nothing, so its nodes are held only by gmin in the
+        # operating point -- which succeeds through optran -- and CKTacLoad now
+        # holds them the same way in the small-signal matrix, so the noise
+        # completes with the device absent, exactly as the operating point
+        # already had. The model's own Fatal line stays the signal. E-56's
+        # clean-abort path remains in the code for a matrix that is singular
+        # without an all-zero row or column; no corpus deck reaches it today.
         d = ("* hisimsoi singular noise\nV0 s0 0 DC 0.1 AC 1\nR0 s0 t0 100\n"
              + "".join(f"V{i} s{i} 0 DC {0.1+0.02*i}\nR{i} s{i} t{i} 100\n"
                        for i in range(1, 5))
@@ -133,8 +142,8 @@ def main():
         out, rc = r.stdout + r.stderr, r.returncode
         check("ngspice did not crash (was SIGABRT)",
               "STILL_ALIVE" in out and rc in (0, 1) and "Assertion" not in out)
-        check("noise aborted cleanly with the new diagnostic",
-              "aborting the noise analysis" in out)
+        check("the model's rejection is printed and the noise completes with the device absent (E-571)",
+              "Fatal(HiSIM_SOI)" in out and "No. of Data Rows" in out and "aborting the noise analysis" not in out)
     else:
         print("  SKIP  VA_TEST corpus not found")
 

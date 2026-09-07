@@ -1821,29 +1821,36 @@ SMPgetError (SMPmatrix *Matrix, int *Col, int *Row)
 }
 
 /*
- * SMPzeroLine() -- Enhancement-570: the 1-based external index of the first
- * row of the loaded matrix whose values are all zero, else of the first such
- * column, else 0.  Reads the complex values when the matrix is complex (the
- * AC path reports singularity through the same SMPgetError).
+ * SMPzeroLines() -- Enhancement-570 / 571: for every unknown e in 1..n set
+ * rowzero[e] = 1 if row e of the loaded matrix holds no nonzero value and
+ * colzero[e] = 1 if column e holds none (either array may be NULL).  Reads
+ * the complex values when the matrix is complex.  Returns n, or 0 when the
+ * matrix has no values to read.
  */
 int
-SMPzeroLine (SMPmatrix *Matrix)
+SMPzeroLines (SMPmatrix *Matrix, unsigned char *rowzero, unsigned char *colzero, int n)
 {
     unsigned char *rowhas, *colhas ;
-    int n, k, found = 0 ;
+    int k ;
+
+    if (n <= 0)
+        return 0 ;
+    rowhas = TMALLOC (unsigned char, (size_t) n + 1) ;
+    colhas = TMALLOC (unsigned char, (size_t) n + 1) ;
+    memset (rowhas, 0, (size_t) n + 1) ;
+    memset (colhas, 0, (size_t) n + 1) ;
 
     if (Matrix->CKTkluMODE) {
         int *Ap = Matrix->SMPkluMatrix->KLUmatrixAp ;
         int *Ai = Matrix->SMPkluMatrix->KLUmatrixAi ;
+        int nk = (int) Matrix->SMPkluMatrix->KLUmatrixN ;
         int j, p ;
-        n = (int) Matrix->SMPkluMatrix->KLUmatrixN ;
-        if (n <= 0 || Ap == NULL || Ai == NULL)
+        if (Ap == NULL || Ai == NULL || nk <= 0) {
+            FREE (rowhas) ;
+            FREE (colhas) ;
             return 0 ;
-        rowhas = TMALLOC (unsigned char, (size_t) n + 1) ;
-        colhas = TMALLOC (unsigned char, (size_t) n + 1) ;
-        memset (rowhas, 0, (size_t) n + 1) ;
-        memset (colhas, 0, (size_t) n + 1) ;
-        for (j = 0 ; j < n ; j++) {
+        }
+        for (j = 0 ; j < nk ; j++) {
             for (p = Ap [j] ; p < Ap [j + 1] ; p++) {
                 int nz ;
                 if (Matrix->SMPkluMatrix->KLUmatrixIsComplex) {
@@ -1854,21 +1861,16 @@ SMPzeroLine (SMPmatrix *Matrix)
                     nz = (Ax != NULL) && (Ax [p] != 0.0) ;
                 }
                 if (nz) {
-                    rowhas [Ai [p] + 1] = 1 ;
-                    colhas [j + 1] = 1 ;
+                    if (Ai [p] + 1 <= n)
+                        rowhas [Ai [p] + 1] = 1 ;
+                    if (j + 1 <= n)
+                        colhas [j + 1] = 1 ;
                 }
             }
         }
     } else {
         MatrixPtr M = Matrix->SPmatrix ;
         int ic ;
-        n = M->ExtSize ;
-        if (n <= 0)
-            return 0 ;
-        rowhas = TMALLOC (unsigned char, (size_t) n + 1) ;
-        colhas = TMALLOC (unsigned char, (size_t) n + 1) ;
-        memset (rowhas, 0, (size_t) n + 1) ;
-        memset (colhas, 0, (size_t) n + 1) ;
         for (ic = 1 ; ic <= M->Size ; ic++) {
             ElementPtr e ;
             int ec = M->IntToExtColMap [ic] ;
@@ -1883,14 +1885,43 @@ SMPzeroLine (SMPmatrix *Matrix)
             }
         }
     }
-    for (k = 1 ; k <= n && !found ; k++)
-        if (!rowhas [k])
-            found = k ;
-    for (k = 1 ; k <= n && !found ; k++)
-        if (!colhas [k])
-            found = k ;
+    for (k = 1 ; k <= n ; k++) {
+        if (rowzero)
+            rowzero [k] = !rowhas [k] ;
+        if (colzero)
+            colzero [k] = !colhas [k] ;
+    }
     FREE (rowhas) ;
     FREE (colhas) ;
+    return n ;
+}
+
+/*
+ * SMPzeroLine() -- Enhancement-570: the 1-based external index of the first
+ * row of the loaded matrix whose values are all zero, else of the first such
+ * column, else 0.
+ */
+int
+SMPzeroLine (SMPmatrix *Matrix)
+{
+    unsigned char *rowzero, *colzero ;
+    int n, k, found = 0 ;
+
+    n = Matrix->CKTkluMODE ? (int) Matrix->SMPkluMatrix->KLUmatrixN : Matrix->SPmatrix->ExtSize ;
+    if (n <= 0)
+        return 0 ;
+    rowzero = TMALLOC (unsigned char, (size_t) n + 1) ;
+    colzero = TMALLOC (unsigned char, (size_t) n + 1) ;
+    if (SMPzeroLines (Matrix, rowzero, colzero, n) > 0) {
+        for (k = 1 ; k <= n && !found ; k++)
+            if (rowzero [k])
+                found = k ;
+        for (k = 1 ; k <= n && !found ; k++)
+            if (colzero [k])
+                found = k ;
+    }
+    FREE (rowzero) ;
+    FREE (colzero) ;
     return found ;
 }
 

@@ -493,6 +493,43 @@ CKTacLoad(CKTcircuit* ckt)
 
     /* gtri - end - Put resistors to ground at all nodes */
 
+    /* Enhancement-571: a node the operating point holds only by gmin has to be
+     * held in the small-signal matrix too.  The DC point of such a node -- one
+     * nothing conducts to (Enhancements 566 and 569), or an open MOSFET gate
+     * with no capacitance -- is the solution with CKTgmin on every diagonal:
+     * the ladder leaves CKTdiagGmin at gmin and optran solves with it.  The AC
+     * load adds nothing to any diagonal, so the same node's AC row came out
+     * all zero and every AC-family analysis on the deck ended in "matrix is
+     * singular" under both solvers, after an operating point that had just
+     * succeeded.  Hold exactly the nodes whose AC row is all zero -- or whose
+     * AC column is, the current-source output nothing depends on (E-566's
+     * case) -- with the conductance the DC hold used (gshunt when set, else
+     * gmin), and nothing else: a node with any admittance at all is untouched,
+     * so no AC result that exists today changes.  Once per load, one pass
+     * over the values. */
+    {
+        int nunk = SMPmatSize(ckt->CKTmatrix);
+        if (nunk > 0) {
+            unsigned char *rowzero = TMALLOC(unsigned char, (size_t) nunk + 1);
+            unsigned char *colzero = TMALLOC(unsigned char, (size_t) nunk + 1);
+            if (SMPzeroLines(ckt->CKTmatrix, rowzero, colzero, nunk) > 0) {
+                double hold = (ckt->CKTgshunt == 0) ? ckt->CKTgmin : ckt->CKTgshunt;
+                CKTnode *node;
+                for (node = ckt->CKTnodes; node; node = node->next) {
+                    if (node->type == SP_VOLTAGE && node->number > 0 &&
+                        node->number <= nunk &&
+                        (rowzero[node->number] || colzero[node->number])) {
+                        double *d = (double *) SMPfindElt(ckt->CKTmatrix, node->number, node->number, 0);
+                        if (d)
+                            *d += hold;
+                    }
+                }
+            }
+            FREE(rowzero);
+            FREE(colzero);
+        }
+    }
+
 
 
     /* gtri - add - wbk - 11/26/90 - reset the MIF init flags */
