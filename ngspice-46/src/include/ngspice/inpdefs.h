@@ -11,6 +11,7 @@ Modified: 2000 AlansFixes
 
 #include "ngspice/gendefs.h"
 #include "ngspice/ifsim.h"
+#include "ngspice/wordlist.h"
 #include "ngspice/inpptree.h"
 
 typedef struct INPtables INPtables;
@@ -173,6 +174,11 @@ int CKTnodePhantom(CKTnode *node);
    connect to this?" answerable. */
 void INPnoteCtrlNode(const char *inst, const char *nodename, CKTnode *node);
 int  INPreportCtrlNodes(void);
+/* Enhancement-572: a bus base `.option autobus` expanded that the deck also uses
+   as a plain node (reported in pass 3); a node `.option autoadapt` split that
+   the control block or a dot card still refers to. */
+int  INPreportBusBases(CKTcircuit *ckt);
+int  INPadaptCheckControls(wordlist *controls, wordlist *dotcards);
 void INPpas3(
         CKTcircuit *, struct card *, INPtables *, TSKtask *, IFparm *, int);
 void INPpas4(CKTcircuit *, INPtables *);

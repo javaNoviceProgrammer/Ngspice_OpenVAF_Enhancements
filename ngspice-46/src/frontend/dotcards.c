@@ -443,6 +443,25 @@ void ft_saveused(wordlist *controls)
         e469_scan_refs(l, &saves);
     }
 
+    /* Enhancement-572: the deck's own output cards read vectors too, after
+     * the control block has run -- `.meas`, `.print`, `.plot`, `.four` -- and
+     * nothing above sees them: a `.meas tran vmax max v(out)` beside a control
+     * block that printed only v(in) failed with "no such vector as 'v(out)'",
+     * and a `.print tran v(out)` printed an empty table, under an option
+     * whose one promise is that the deck still works. Collect the references
+     * those cards make (the v(), i() and @dev[param] forms; a card's analysis
+     * keyword is not a vector). They add to the set and never decide whether
+     * the option acts: a deck whose only output is a dot card is left alone,
+     * as before, which errs toward saving everything. */
+    if (ft_curckt) {
+        for (w = ft_curckt->ci_commands; w; w = w->wl_next) {
+            const char *c = w->wl_word;
+            if (c && (ciprefix(".meas", c) || ciprefix(".print", c) ||
+                      ciprefix(".plot", c) || ciprefix(".four", c)))
+                e469_scan_refs(c, &saves);
+        }
+    }
+
     if (saw_all || !any_out || !saves) {
         wl_free(saves);
         return;

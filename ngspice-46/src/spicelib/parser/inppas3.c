@@ -220,6 +220,7 @@ quit:
        is the detect-announce-then-use-it-anyway shape Enhancement-485 had to undo
        eight times in one round, and a typo'd control node has no reading under
        which the deck is what the user wrote. */
+    INPreportBusBases(ckt);     /* Enhancement-572 */
     if (INPreportCtrlNodes() > 0 && data)
         data->error = INPerrCat(data->error,
                                 INPmkTemp("a controlling node does not exist; "

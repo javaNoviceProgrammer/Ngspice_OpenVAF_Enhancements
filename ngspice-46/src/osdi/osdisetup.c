@@ -496,6 +496,39 @@ static unsigned long osdimc_current_trial(void);
 static bool osdimc_apply_is_pending(void);
 static bool osdimc_walk_active(void);       /* MC hunt F3 */
 
+
+/* Enhancement-572: the one reader of `.option mcseed`. It was probed as CP_NUM
+ * at three sites, so `mcseed=1.5` (published as a real) and `mcseed=abc` (a
+ * string) both failed the probe and silently became seed 1 -- an ensemble the
+ * user never asked for, indistinguishable from the one they did. A real is
+ * truncated and said so; anything else is refused and said so; each once. */
+static int osdimc_seed(void)
+{
+    static bool warned = FALSE;
+    int s;
+    double d;
+    char buf[64];
+
+    /* the REAL probe first: since E-467 cp_getvar coerces a published real
+     * to CP_NUM, so `mcseed=1.5` would answer 1 there in silence */
+    if (cp_getvar("mcseed", CP_REAL, &d, 0)) {
+        if (d != (double) (int) d) {
+            if (!warned)
+                fprintf(stderr, "Warning: .option mcseed=%g is not an integer; using %d\n", d, (int) d);
+            warned = TRUE;
+        }
+        return (int) d;
+    }
+    if (cp_getvar("mcseed", CP_NUM, &s, 0))
+        return s;
+    if (cp_getvar("mcseed", CP_STRING, buf, sizeof buf)) {
+        if (!warned)
+            fprintf(stderr, "Warning: .option mcseed=%s is not a number; using the default seed 1\n", buf);
+        warned = TRUE;
+        return 1;
+    }
+    return 1;
+}
 int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
               int *states) {
   OsdiInitInfo init_info;
@@ -1054,9 +1087,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
       (osdimc_current_trial() >= 2 || osdimc_walk_active()) &&
       ckt->CKThead[inModel->GENmodType] &&
       osdi_devtype_is_osdi(inModel->GENmodType)) {
-    int seed535 = 1;
-    if (!cp_getvar("mcseed", CP_NUM, &seed535, 0))
-      seed535 = 1;
+    int seed535 = osdimc_seed();     /* Enhancement-572 */
     osdimc_apply_type(ckt, inModel->GENmodType, seed535,
                       cp_getvar("osdimc_verbose", CP_BOOL, NULL, 0));
   }
@@ -2509,9 +2540,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
   } else {
     osdimc_trial++;
   }
-  if (!cp_getvar("mcseed", CP_NUM, &seed, 0)) {
-    seed = 1;
-  }
+  seed = osdimc_seed();               /* Enhancement-572 */
   verbose = cp_getvar("osdimc_verbose", CP_BOOL, NULL, 0);
 
   /* E-535 fix (hunt bug 15): the baseline NEVER draws -- explicitly, not by
@@ -2907,8 +2936,7 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
 
   if (!ckt || osdimc_scale == 1.0 || osdimc_trial < 2 || !osdimc_enabled())
     return 0.0;
-  if (!cp_getvar("mcseed", CP_NUM, &seed, 0))
-    seed = 1;
+  seed = osdimc_seed();               /* Enhancement-572 */
 
   uint64_t kbase = osdimc_kbase(seed);    /* E-537 (hunt P) */
 

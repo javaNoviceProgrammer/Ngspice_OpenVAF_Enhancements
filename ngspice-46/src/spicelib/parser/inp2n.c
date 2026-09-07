@@ -12,6 +12,7 @@ Modified: 2001 Paolo Nenzi (Cider Integration)
 #include "ngspice/inpdefs.h"
 #include "ngspice/inpmacs.h"
 #include "ngspice/dstring.h"
+#include "ngspice/wordlist.h"   /* Enhancement-572: INPadaptCheckControls */
 #ifdef OSDI
 #include "ngspice/osdiitf.h"
 #endif
@@ -331,6 +332,151 @@ static bool autobus_token_ok(const char *tok, const char *instname,
 
 /* Group terminals into ports. Returns the port count, or -1 if the table is
    unusable. start[p] is the first terminal of port p, cnt[p] its width. */
+/* Enhancement-572: a bus token the shorthand expanded, remembered so that pass
+ * 3 can say when the deck ALSO uses that name as a plain node.
+ *
+ *     N1 a b busdev          expands `a` to a[0] .. a[4]
+ *     Rx a 0 1k              connects to a node called `a` -- not any bit
+ *
+ * Nothing said so: `a` and `a[0]` are simply two nodes, the resistor sat on one
+ * nothing else touched, and the bus ran unloaded. Under E-569 the plain `a`
+ * is at least held and named as floating, but that names the symptom. The
+ * base is noted here, at expansion; the check waits for pass 3, when every
+ * node the deck names exists. */
+struct busbase {
+    struct busbase *next;
+    char *inst;                 /* owned */
+    char *base;                 /* owned: the token as written */
+    char *first;                /* owned: the first bit's spelling */
+    int bits;
+};
+static struct busbase *busbases;
+
+static void autobus_note_base(const char *inst, const char *tok,
+                              const char *firstterm, int bits, bool kicad)
+{
+    struct busbase *b = TMALLOC(struct busbase, 1);
+    const char *lb = firstterm ? strchr(firstterm, '[') : NULL;
+    DS_CREATE(f, 64);
+    if (!b)
+        return;
+    ds_cat_str(&f, tok);
+    if (lb)
+        autobus_cat_index(&f, lb, kicad);
+    b->inst = copy(inst ? inst : "?");
+    b->base = copy(tok);
+    b->first = copy(ds_get_buf(&f));
+    b->bits = bits;
+    b->next = busbases;
+    busbases = b;
+    ds_free(&f);
+}
+
+int INPreportBusBases(CKTcircuit *ckt)
+{
+    struct busbase *b, *nx;
+    int n = 0;
+
+    for (b = busbases; b; b = nx) {
+        CKTnode *nd;
+        bool seen = FALSE;
+        struct busbase *o;
+        nx = b->next;
+        for (o = nx; o && !seen; o = o->next)   /* report each base once */
+            if (strcmp(o->base, b->base) == 0)
+                seen = TRUE;
+        if (!seen && ckt)
+            for (nd = ckt->CKTnodes; nd; nd = nd->next)
+                if (nd->number != 0 && nd->name && strcmp(nd->name, b->base) == 0) {
+                    fprintf(stderr,
+                            "Warning: instance %s: '%s' was expanded to the %d bus bits %s .., but the deck\n"
+                            "         also uses '%s' as a plain node -- a different node from every bit.\n"
+                            "         Write %s to reach a bit, or rename the plain node.\n",
+                            b->inst, b->base, b->bits, b->first, b->base, b->first);
+                    n++;
+                    break;
+                }
+        tfree(b->inst);
+        tfree(b->base);
+        tfree(b->first);
+        tfree(b);
+    }
+    busbases = NULL;
+    return n;
+}
+
+/* Enhancement-572: a node `.option autoadapt` split, remembered so that the
+ * control block can be checked once it is known: `print v(b[0])` after `b`
+ * became `b_f` / `b_r` fails as "vector b is not available", which names
+ * neither the split nor the cure. */
+struct adaptsplit {
+    struct adaptsplit *next;
+    char *node, *nf, *nr;       /* owned */
+};
+static struct adaptsplit *adaptsplits;
+
+static void adapt_note_split(const char *node, const char *nf, const char *nr)
+{
+    struct adaptsplit *a = TMALLOC(struct adaptsplit, 1);
+    if (!a)
+        return;
+    a->node = copy(node);
+    a->nf = copy(nf);
+    a->nr = copy(nr);
+    a->next = adaptsplits;
+    adaptsplits = a;
+}
+
+/* does `line` refer to a bit of bus `base` -- base[..] or, KiCad-spelled,
+ * base_<digit> -- as a whole word? */
+static bool adapt_line_mentions(const char *line, const char *base)
+{
+    size_t n = strlen(base);
+    const char *p = line;
+    while ((p = strstr(p, base)) != NULL) {
+        bool before = (p == line) || (!isalnum_c(p[-1]) && p[-1] != '_' && p[-1] != '.');
+        const char *q = p + n;
+        bool after = (*q == '[') || (*q == '_' && isdigit_c(q[1]));
+        if (before && after)
+            return TRUE;
+        p += 1;
+    }
+    return FALSE;
+}
+
+int INPadaptCheckControls(wordlist *controls, wordlist *dotcards)
+{
+    struct adaptsplit *a, *nx;
+    int n = 0;
+
+    for (a = adaptsplits; a; a = nx) {
+        wordlist *w;
+        const char *hit = NULL;
+        nx = a->next;
+        for (w = controls; w && !hit; w = w->wl_next)
+            if (w->wl_word && adapt_line_mentions(w->wl_word, a->node))
+                hit = w->wl_word;
+        for (w = dotcards; w && !hit; w = w->wl_next)
+            if (w->wl_word && adapt_line_mentions(w->wl_word, a->node))
+                hit = w->wl_word;
+        if (hit) {
+            fprintf(stderr,
+                    "Warning: autoadapt split node '%s' into '%s' and '%s', so its bits no longer exist,\n"
+                    "         yet this line refers to them and will find no such vector:\n"
+                    "           %s\n"
+                    "         refer to %s or %s instead.\n",
+                    a->node, a->nf, a->nr, hit, a->nf, a->nr);
+            n++;
+        }
+        tfree(a->node);
+        tfree(a->nf);
+        tfree(a->nr);
+        tfree(a);
+    }
+    adaptsplits = NULL;
+    return n;
+}
+
 int INPbusPorts(IFdevice *dev, int *start, int *cnt, int maxp)
 {
     int t, np = 0;
@@ -556,6 +702,8 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
           if (lb)                       /* copy the model's own index */
             autobus_cat_index(&nl, lb, kicad);   /* Enhancement-462 */
         }
+        if (pcnt[p] > 1)                /* Enhancement-572 */
+          autobus_note_base(name, tok, dev->termNames[pstart[p]], pcnt[p], kicad);
         tfree(tok);
       }
       if (p == np && !badtok) {         /* every port got a usable token */
@@ -637,6 +785,7 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
             shortport = dev->termNames[pstart[p]];
             shortbits = pcnt[p];
           }
+          autobus_note_base(name, tok, dev->termNames[pstart[p]], pcnt[p], kicad);  /* E-572 */
           used++;
           expanded++;
           tfree(tok);
@@ -715,6 +864,53 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
       } else {
         ds_free(&nl);                   /* nothing in shorthand: unchanged */
       }
+    }
+  }
+  /* Enhancement-572: a ONE-BIT bus port has as many terminals as ports, so a
+     line in shorthand for it has numnodes == terms and never reaches the block
+     above -- `N1 a b bus1` for `inout [0:0] a` bound the token `a` as the node
+     `a`, a different node from `a[0]`, and the device sat on a floating node in
+     silence while every other bus width expanded. The token you write is what
+     gets indexed (E-444), so index it here too: a bracket-free token on a
+     one-bit bus port takes the model's own index. An already-indexed token
+     (`a[0]`, `a_0_`) and ground are left alone -- those are the spelled-out
+     forms, and a line of nothing but those is unaffected, as E-444 promises. */
+  else if (numnodes == *dev->terms && numnodes > 0 && autobus_enabled()) {
+    int pstart[AUTOBUS_MAXPORT], pcnt[AUTOBUS_MAXPORT];
+    int np = INPbusPorts(dev, pstart, pcnt, AUTOBUS_MAXPORT);
+
+    if (np == numnodes) {
+      DS_CREATE(nl, 128);
+      char *scan = line;
+      int p;
+      bool changed = FALSE;
+      bool kicad = INPbusKicadStyle();
+
+      for (p = 0; p < np; p++) {
+        char *tok = gettok_instance(&scan);
+        const char *tn = dev->termNames[pstart[p]];
+        const char *lb = tn ? strchr(tn, '[') : NULL;
+        if (!tok)
+          break;
+        if (p)
+          ds_cat_char(&nl, ' ');
+        ds_cat_str(&nl, tok);
+        if (pcnt[p] == 1 && lb && strcmp(tok, "0") != 0 &&
+            strcasecmp(tok, "gnd") != 0 &&
+            !INPbusTokenIndexed(tok, strlen(tok), kicad)) {
+          autobus_cat_index(&nl, lb, kicad);
+          autobus_note_base(name, tok, tn, 1, kicad);
+          changed = TRUE;
+        }
+        tfree(tok);
+      }
+      if (p == np && changed) {
+        ds_cat_char(&nl, ' ');
+        ds_cat_str(&nl, scan);          /* the model name and any parameters */
+        autobus_line = copy(ds_get_buf(&nl));
+        line = autobus_line;
+      }
+      ds_free(&nl);
     }
   }
 
@@ -1211,6 +1407,7 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
             }
         }
         aline = tprintf("n_adapt%d_ %s %s %s", ++made, nf, nr, amodel);
+        adapt_note_split(k->node, nf, nr);      /* Enhancement-572 */
         insert_new_line(f->card, aline, 0, f->card->linenum_orig,
                         f->card->linesource);
         if (verbose)

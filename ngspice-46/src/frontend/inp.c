@@ -1945,6 +1945,10 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
            save list is complete before any analysis runs. */
         ft_saveused(controls);
 
+        /* Enhancement-572: a node autoadapt split no longer has bits; say so
+           now if the control block or a dot card still names them. */
+        INPadaptCheckControls(controls, ft_curckt ? ft_curckt->ci_commands : NULL);
+
         /* Now that the deck is loaded, do the commands, if there are any */
         controls = wl_reverse(controls);
 
