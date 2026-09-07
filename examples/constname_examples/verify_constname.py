@@ -20,9 +20,14 @@ fixed here, each pinned against a control that must NOT move:
 import os, re, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-NGSPICE = os.environ.get(
-    "NGSPICE_BIN",
-    os.path.join(HERE, "..", "..", "ngspice-46", "build", "src", "ngspice"))
+# Enhancement-574: resolve both binaries through _setup.py like every other
+# suite. This script used to find ngspice by its own path and the compiler by
+# the bare name `openvaf-r`, so on a machine with no openvaf-r on PATH it was
+# the one suite that failed; _setup.py also settles the terminal (TERM=dumb,
+# NO_COLOR) for the diagnostics this script parses as text, and hands ngspice
+# the same compiler through $OPENVAF.
+sys.path.insert(0, os.path.dirname(HERE))          # the examples/ dir (holds _setup.py)
+from _setup import NG as NGSPICE, VAF as _VAF      # noqa: E402
 CONSTS = ("c", "e", "i", "pi", "kelvin", "boltz", "echarge", "planck",
           "TRUE", "FALSE", "yes", "no")
 
@@ -156,7 +161,7 @@ check("[E-448] ...and the ambiguity is reported, not silent",
 # unreadable while the circuit solved correctly around it. The same deck with
 # the bus called `a` is the reference -- the two must agree bit for bit.
 print("\n.option autobus with a bus named after a constant (Enhancement-444)")
-OPENVAF = os.environ.get("OPENVAF_BIN", "openvaf-r")
+OPENVAF = _VAF                                      # Enhancement-574: the harness's compiler
 osdi_ok = subprocess.run([OPENVAF, "constbus.va", "-o", "constbus.osdi"],
                          cwd=HERE, capture_output=True, text=True).returncode == 0
 check("[E-448] the bus model compiles", osdi_ok)

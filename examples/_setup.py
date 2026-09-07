@@ -101,6 +101,17 @@ VAF = _resolve(("OpenVAF-master-20260610", "target", "opt", "openvaf-r"),
                "openvaf-r", "OPENVAF_BIN")
 NG = _resolve(("ngspice-46", "build", "src", "ngspice"), "ngspice", "NGSPICE_BIN")
 
+# Enhancement-574: ngspice's own compiles -- `pre_osdi -va`, `pre_snp` -- find
+# the compiler through osdi_find_openvaf(): the `openvaf` variable, $OPENVAF,
+# $SPICE_LIB_DIR/openvaf-r, then a bare `openvaf-r` on PATH. A `set openvaf=`
+# in a deck's control block runs AFTER the pre_ commands it would have to
+# precede, so a suite that pinned the compiler that way was in fact using
+# whatever PATH held -- and on a machine with no openvaf-r on PATH it failed
+# outright. Hand every child the compiler this harness resolved, so ngspice
+# compiles with the same binary the scripts do. A suite that tests the lookup
+# itself (reusecache_examples) removes it per call.
+os.environ["OPENVAF"] = VAF
+
 
 # ---------------------------------------------------------------------------
 # XSPICE code models (SPICE_LIB_DIR)
@@ -168,6 +179,21 @@ def _local_codemodel_lib():
         return None
     return libdir
 
+
+# Enhancement-574: every verify script reads the compiler's diagnostics as
+# TEXT, so no child of the harness may colour them. openvaf-r chose its colours
+# with termcolor's ColorChoice::Auto, which consults TERM and NO_COLOR and never
+# asks whether the stream is a terminal: from a colour terminal every
+# diagnostic written into a pipe carried escape codes, and five suites that
+# parse them (lrmdisc, lrmfuncs, natureref, vafdeterminism, vafice) failed in
+# a sweep run from an ordinary shell while a harness with TERM unset passed.
+# The compiler now checks the stream; a prebuilt or older binary may not, so
+# the harness settles it here for every subprocess a verify script spawns, on
+# every platform: a dumb terminal and NO_COLOR, the two switches termcolor
+# honours on any version. A suite that wants colour for its own test
+# (vafcolor_examples) sets both per call.
+os.environ["TERM"] = "dumb"
+os.environ["NO_COLOR"] = "1"
 
 _LOCAL_LIB = _local_codemodel_lib()
 if _LOCAL_LIB:

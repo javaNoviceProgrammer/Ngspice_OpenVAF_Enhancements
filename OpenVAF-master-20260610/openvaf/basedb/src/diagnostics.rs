@@ -1,4 +1,7 @@
-pub use sink::{is_elaboration_buffer_name, print_all, ConsoleSink, DiagnosticSink};
+pub use sink::{
+    is_elaboration_buffer_name, print_all, stderr_color_choice, stdout_color_choice, ConsoleSink,
+    DiagnosticSink,
+};
 
 use crate::lints::{Lint, LintData, LintLevel, LintSrc};
 use crate::{BaseDB, FileId};

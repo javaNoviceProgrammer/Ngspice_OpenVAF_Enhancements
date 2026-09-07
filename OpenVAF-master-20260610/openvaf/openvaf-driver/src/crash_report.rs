@@ -12,7 +12,7 @@ use std::{env, io, mem, panic};
 
 use backtrace::Backtrace;
 use backtrace_ext::short_frames_strict;
-use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
+use termcolor::{Color, ColorSpec, StandardStream, WriteColor};
 
 // Utility function which will handle dumping information to disk
 pub fn handle_dump(panic_info: &PanicHookInfo) -> Option<PathBuf> {
@@ -67,7 +67,7 @@ pub fn install_panic_handler() {
 pub fn print_msg<P: AsRef<Path>>(file_path: Option<P>) -> io::Result<()> {
     use std::io::Write as _;
 
-    let mut stderr = StandardStream::stderr(ColorChoice::Auto);
+    let mut stderr = StandardStream::stderr(basedb::diagnostics::stderr_color_choice()); // Enhancement-574
     stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true))?;
     writeln!(stderr, "OpenVAF encountered a problem and has crashed!")?;
     stderr.set_color(ColorSpec::new().set_reset(true))?;

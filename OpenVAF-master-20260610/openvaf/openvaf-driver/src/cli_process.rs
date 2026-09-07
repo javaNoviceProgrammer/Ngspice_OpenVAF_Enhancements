@@ -7,7 +7,7 @@ use clap::ArgMatches;
 use openvaf::{
     builtin_lints, get_target_names, host_triple, AbsPathBuf, LLVMCodeGenOptLevel, LintLevel,
 };
-use termcolor::{Color, ColorChoice, ColorSpec, WriteColor};
+use termcolor::{Color, ColorSpec, WriteColor};
 
 use crate::cli_def::{
     ALLOW, BATCHMODE, CACHE_DIR, CODEGEN, DEFINE, DENY, DRYRUN, DUMPIR, DUMPMIR, DUMPUNOPTIR,
@@ -213,7 +213,7 @@ pub fn matches_to_opts(matches: ArgMatches) -> Result<Opts> {
 }
 
 fn print_lints() {
-    let mut stdout = termcolor::StandardStream::stdout(ColorChoice::Auto);
+    let mut stdout = termcolor::StandardStream::stdout(basedb::diagnostics::stdout_color_choice()); // Enhancement-574
 
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::Red))).unwrap();
     writeln!(&mut stdout, "ERRORS:").unwrap();
@@ -246,7 +246,7 @@ fn print_lints() {
 }
 
 fn print_targets() {
-    let mut stdout = termcolor::StandardStream::stdout(ColorChoice::Auto);
+    let mut stdout = termcolor::StandardStream::stdout(basedb::diagnostics::stdout_color_choice()); // Enhancement-574
 
     stdout.set_color(ColorSpec::new().set_fg(Some(Color::Yellow))).unwrap();
     writeln!(&mut stdout, "TARGETS:").unwrap();

@@ -102,9 +102,14 @@ def main(argv):
         try:
             # stdin=DEVNULL so no test can inherit a live stdin and leave an
             # ngspice spinning at the interactive prompt (see _setup.py).
+            # Enhancement-574: a dumb terminal and NO_COLOR for every suite, so
+            # no compiler or simulator colours the output a script parses
+            # (_setup.py sets the same for its own children; this covers a
+            # script that does not import it).
             r = subprocess.run([sys.executable, os.path.basename(s)], cwd=d,
                                capture_output=True, text=True,
-                               stdin=subprocess.DEVNULL, timeout=1200)
+                               stdin=subprocess.DEVNULL, timeout=1200,
+                               env=dict(os.environ, TERM="dumb", NO_COLOR="1"))
             out, rc = r.stdout + r.stderr, r.returncode
         except subprocess.TimeoutExpired as e:
             out = (e.stdout or "") if isinstance(e.stdout, str) else ""

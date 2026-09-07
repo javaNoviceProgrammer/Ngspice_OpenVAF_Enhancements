@@ -21,6 +21,7 @@ llvm21 = ["openvaf/llvm21"]
 [dependencies]
 
 openvaf = { version = "0.1.2", path = "../openvaf", default-features = false }
+basedb = { path = "../basedb" }
 
 clap = "=4.3"
 directories-next = "2"

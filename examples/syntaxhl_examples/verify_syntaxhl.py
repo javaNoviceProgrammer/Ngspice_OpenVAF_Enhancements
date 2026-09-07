@@ -113,6 +113,12 @@ def type_live(keys, env_extra=None, settle=0.7):
     import pty, time, select
     pid, fd = pty.fork()
     if pid == 0:
+        # Enhancement-574: this suite is ABOUT colour on a real terminal, and
+        # _setup.py now hands every child a dumb TERM and NO_COLOR so that no
+        # parsed diagnostic is coloured. Ask for a colour terminal here, then
+        # let a check's own env_extra (NO_COLOR=1) override it.
+        os.environ.pop("NO_COLOR", None)
+        os.environ["TERM"] = "xterm-256color"
         if env_extra:
             os.environ.update(env_extra)
         os.execv(NGSPICE, [NGSPICE])
@@ -201,6 +207,8 @@ else:
         import pty, time, select
         pid, fd = pty.fork()
         if pid == 0:
+            os.environ.pop("NO_COLOR", None)          # Enhancement-574, as above
+            os.environ["TERM"] = "xterm-256color"
             if env_extra:
                 os.environ.update(env_extra)
             os.execv(NGSPICE, [NGSPICE])

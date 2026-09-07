@@ -25,7 +25,7 @@ pub use paths::AbsPathBuf;
 use sim_back::{collect_modules, print_intern, print_module};
 pub use target::host_triple;
 pub use target::spec::{get_target_names, Target};
-use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
+use termcolor::{Color, ColorSpec, StandardStream, WriteColor};
 
 mod cache;
 
@@ -154,7 +154,7 @@ pub fn expand(opts: &Opts) -> Result<CompilationTermination> {
     }
 
     let seconds = Instant::elapsed(&start).as_secs_f64();
-    let mut stderr = StandardStream::stderr(ColorChoice::Auto);
+    let mut stderr = StandardStream::stderr(basedb::diagnostics::stderr_color_choice()); // Enhancement-574
     stderr.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true))?;
     write!(&mut stderr, "Finished")?;
     stderr.set_color(&ColorSpec::new())?;
@@ -342,7 +342,7 @@ pub fn compile(opts: &Opts) -> Result<CompilationTermination> {
     }
 
     let seconds = Instant::elapsed(&start).as_secs_f64();
-    let mut stderr = StandardStream::stderr(ColorChoice::Auto);
+    let mut stderr = StandardStream::stderr(basedb::diagnostics::stderr_color_choice()); // Enhancement-574
     stderr.set_color(ColorSpec::new().set_fg(Some(Color::Green)).set_bold(true))?;
     write!(&mut stderr, "Finished")?;
     stderr.set_color(&ColorSpec::new())?;

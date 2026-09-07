@@ -91,9 +91,27 @@ pub struct ConsoleSink<'a> {
     saw_elaborated_buffer: bool,
 }
 
+
+/// Enhancement-574: colour only when the stream IS a terminal. termcolor's
+/// `ColorChoice::Auto` consults `TERM` and `NO_COLOR` alone and never the
+/// stream, so from any colour terminal every diagnostic written into a pipe --
+/// a build log, a harness, ngspice's own `pre_osdi -va` capture -- carried
+/// escape codes, and the line that starts with "error:" on the screen started
+/// with `\x1b[0m\x1b[1m\x1b[38;5;9m` in the file. `Auto` still decides the
+/// terminal case, so `NO_COLOR` and a dumb `TERM` keep their meaning there.
+pub fn stderr_color_choice() -> ColorChoice {
+    use std::io::IsTerminal;
+    if std::io::stderr().is_terminal() { ColorChoice::Auto } else { ColorChoice::Never }
+}
+
+pub fn stdout_color_choice() -> ColorChoice {
+    use std::io::IsTerminal;
+    if std::io::stdout().is_terminal() { ColorChoice::Auto } else { ColorChoice::Never }
+}
+
 impl<'a> ConsoleSink<'a> {
     pub fn new(db: &'a dyn BaseDB) -> ConsoleSink<'a> {
-        ConsoleSink::new_with(db, Box::new(StandardStream::stderr(ColorChoice::Auto)))
+        ConsoleSink::new_with(db, Box::new(StandardStream::stderr(stderr_color_choice())))
     }
 
     pub fn buffer(db: &'a dyn BaseDB, buffer: &'a mut Buffer) -> ConsoleSink<'a> {

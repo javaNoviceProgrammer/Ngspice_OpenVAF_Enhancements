@@ -8,7 +8,7 @@ use clap::ArgMatches;
 use cli_def::{main_command, INPUT};
 use mimalloc::MiMalloc;
 use openvaf::{compile, expand, CompilationDestination, CompilationTermination, Opts};
-use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
+use termcolor::{Color, ColorSpec, StandardStream, WriteColor};
 
 use crate::cli_def::{DUMP_JSON, PRINT_EXPANSION};
 use crate::cli_process::matches_to_opts;
@@ -35,7 +35,7 @@ pub fn main() {
     match wrapped_main(matches) {
         Ok(err_code) => exit(err_code),
         Err(err) => {
-            let mut stderr = StandardStream::stderr(ColorChoice::Auto);
+            let mut stderr = StandardStream::stderr(basedb::diagnostics::stderr_color_choice()); // Enhancement-574
 
             for cause in err.chain() {
                 stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true)).unwrap();

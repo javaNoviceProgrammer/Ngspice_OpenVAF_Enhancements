@@ -34,6 +34,7 @@ import atexit
 import os
 import re
 import shutil
+import time
 import subprocess
 import sys
 
@@ -90,6 +91,11 @@ def fresh():
 
 # The deck pins the compiler explicitly so the suite tests THIS tree's openvaf-r
 # rather than whatever a developer happens to have on PATH.
+# Enhancement-574: this `set` runs AFTER the pre_ commands it would have to
+# precede, so on its own it never reached the compile -- the suite was using
+# PATH all along, and failed on a machine with no openvaf-r there. The
+# compiler now reaches ngspice through $OPENVAF, which _setup.py sets to the
+# same binary; the line is kept so the decks read as intended.
 PIN = f"set openvaf={OPENVAF}\n"
 
 DIVIDER = ("V1 a 0 dc 1\n"
@@ -201,7 +207,7 @@ touch(osdi, 1_700_000_000)
 touch(va, 1_700_003_600)                       # source an hour newer
 check("[10] a newer .va rebuilds", built(run(d)[1]) == "built")
 
-touch(osdi, 1_700_007_200)                     # object newer again
+touch(osdi, time.time())                     # object newer again
 check("[11] an older .va is skipped", built(run(d)[1]) == "cached")
 
 touch(osdi, 1_700_000_000)
@@ -232,14 +238,16 @@ fresh()
 d = deck("run.cir", "pre_osdi -va rmod.va", opts=".option osdicache\n")
 run(d)
 osdi = os.path.join(WORK, "osdi", "rmod.osdi")
-touch(osdi, 1_700_007_200)
+# Enhancement-574: the object must be newer than the source AND the compiler
+# (E-573 rebuilds an object older than openvaf-r), so it is stamped now
+touch(osdi, time.time())
 touch(os.path.join(WORK, "rmod.va"), 1_700_000_000)
 check("[16] (control) without -f an up-to-date object is skipped",
       built(run(d)[1]) == "cached")
 
 for pre in ("pre_osdi -f -va rmod.va", "pre_osdi -va -f rmod.va"):
     df = deck("f.cir", pre, opts=".option osdicache\n")
-    touch(osdi, 1_700_007_200)
+    touch(osdi, time.time())
     check(f"[17] `{pre}` rebuilds despite the cache", built(run(df)[1]) == "built")
 
 # the reason the flag has to reach the compile: an edit must be picked up
@@ -253,12 +261,12 @@ with open(src) as f:
     txt = f.read()
 with open(src, "w") as f:
     f.write(txt.replace("g0 * V(a,b)", "2.0 * g0 * V(a,b)"))
-touch(os.path.join(WORK, "osdi", "gmod.osdi"), 1_700_007_200)
+touch(os.path.join(WORK, "osdi", "gmod.osdi"), time.time())
 touch(src, 1_700_000_000)                      # object looks up to date
 stale = vn(run(d)[1])
 df = deck("f.cir", "pre_osdi -f -va gmod.va", opts=".option osdicache\n",
           body="V1 a 0 dc 1\nR1 a n 1k\nN2 n 0 gm\n.model gm gmod g0=1m\n")
-touch(os.path.join(WORK, "osdi", "gmod.osdi"), 1_700_007_200)
+touch(os.path.join(WORK, "osdi", "gmod.osdi"), time.time())
 fixed = vn(run(df)[1])
 check("[18] an EDITED .va is picked up by -f and not without it",
       first == "5.0000000000e-01" and stale == first and

@@ -1054,6 +1054,7 @@ dependencies = [
  "anyhow",
  "backtrace",
  "backtrace-ext",
+ "basedb",
  "camino",
  "clap",
  "directories-next",

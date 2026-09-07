@@ -180,6 +180,53 @@ static int va_newest_mtime(const char *path, int depth, time_t *newest)
 }
 
 
+/* Enhancement-574: a compiler named without a directory -- the PATH fallback
+ * of osdi_find_openvaf() -- is located on PATH the way system() will locate
+ * it, so that its timestamp can be read for the staleness test above. Without
+ * this the compiler check of Enhancement-573 was silently inert for exactly
+ * the users it was written for: a `set openvaf=` or $OPENVAF names a path, a
+ * bare `openvaf-r` on PATH could not be stat'ed and was not checked, and the
+ * same deck cached or rebuilt depending on how the compiler had been named.
+ * Returns 0 when the name is nowhere on PATH; the compile then fails and says
+ * so itself. */
+static int va_resolve_on_path(const char *name, char *out, size_t outlen)
+{
+    const char *path, *p;
+#ifdef _WIN32
+    const char sep = ';';
+#else
+    const char sep = ':';
+#endif
+
+    if (strchr(name, '/') || strchr(name, '\\') || (name[0] && name[1] == ':')) {
+        (void) snprintf(out, outlen, "%s", name);
+        return 1;
+    }
+    path = getenv("PATH");
+    if (!path)
+        return 0;
+    for (p = path;;) {
+        const char *e = strchr(p, sep);
+        size_t n = e ? (size_t) (e - p) : strlen(p);
+        struct stat st;
+        if (n) {
+            (void) snprintf(out, outlen, "%.*s/%s", (int) n, p, name);
+            if (stat(out, &st) == 0)
+                return 1;
+#ifdef _WIN32
+            (void) snprintf(out, outlen, "%.*s/%s.exe", (int) n, p, name);
+            if (stat(out, &st) == 0)
+                return 1;
+#endif
+        }
+        if (!e)
+            break;
+        p = e + 1;
+    }
+    return 0;
+}
+
+
 /* Compile `va` into <netlist dir>/osdi/<stem>.osdi. Returns a malloc'd path to
  * load, or NULL if the compile failed (already reported). */
 static char *va_compile(const char *va, bool force)
@@ -242,19 +289,22 @@ static char *va_compile(const char *va, bool force)
            records why the cache was made opt-in -- a `.va` timestamp says
            nothing about openvaf-r having changed -- and that is now checked
            rather than left to the user: a compiler newer than the object
-           rebuilds, and says so. A compiler found on PATH by bare name cannot
-           be stat'ed and is not checked. */
+           rebuilds, and says so. A compiler named by bare name is located on
+           PATH first (Enhancement-574), so the rule does not depend on how
+           the compiler was named. */
         time_t tnew = 0, tovf;
         if (va_newest_mtime(src, 0, &tnew) && tosdi > tnew) {
             char *ovf0 = osdi_find_openvaf();
-            int newer_compiler = ovf0 && va_mtime(ovf0, &tovf) && tovf >= tosdi;
+            char ovfpath[1400];
+            int newer_compiler = ovf0 && va_resolve_on_path(ovf0, ovfpath, sizeof ovfpath)
+                                 && va_mtime(ovfpath, &tovf) && tovf >= tosdi;
             if (!newer_compiler) {
                 tfree(ovf0);
                 fprintf(cp_out, "pre_osdi: %s is up to date (.option osdicache)\n", osdi);
                 return copy(osdi);
             }
             fprintf(cp_out, "pre_osdi: %s is older than the compiler %s; rebuilding\n",
-                    osdi, ovf0);
+                    osdi, ovfpath);
             tfree(ovf0);
         }
     }
