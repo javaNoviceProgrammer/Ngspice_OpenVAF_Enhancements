@@ -305,21 +305,24 @@ different question — *every* place a condition holds: each ringing peak, each
 crossing of a threshold, each region above a limit — and it is a command, not an
 expression, so `-expr` cannot reach it and `-analysis` cannot run it (that flag
 runs exactly one command, the analysis). Since E-582, `-track "<track arguments>"`
-runs `track <arguments>` after every sample's analysis, quietly, and records the
-result in the same `montecarlo<n>` plot:
+runs `track <arguments>` after every sample's analysis, quietly, and since E-584
+records the result into **a plot of its own, `track<k>`** — the shape of a `track`
+plot, stacked over the samples:
 
-| vector | holds |
+| vector in `track<k>` | holds |
 |---|---|
-| `track_hits` | the hit count per sample: 0 a miss, `nan` a sample that never solved |
-| `track_<vector>` — one per vector of the track plot: the scale (`time`, `frequency`, …), `value` (or `value1..N`, or the `-output` names), `index`, and a region's `x_out` and `width` | an Lmax × N family, hit-major: row k (`track_time[k]`) is hit k of every sample on the `sample` scale, `nan` where a sample had fewer, Lmax being the largest count any sample had — a *varying* count per sample is the usual case here, and the one `-expr` refuses; when no sample ever has more than one hit (a `-which first` selection, a single crossing) they are plain N-long vectors instead |
+| `sample` (the scale) | 1 … N |
+| `hits` | the hit count per sample: 0 a miss, `nan` a sample that never solved |
+| the scale of the analysis (`time`, `frequency`, `v_sweep` for a dc sweep), `value` (or `value1..N`, or the `-output` names), `index`, and a region's `x_out` and `width` — each with its type | an Lmax × N family, hit-major: row k (`time[k]`) is hit k of every sample on the `sample` scale, `nan` where a sample had fewer, Lmax being the largest count any sample had — a *varying* count per sample is the usual case here, and the one `-expr` refuses; when no sample ever has more than one hit (a `-which first` selection, a single crossing) they are plain N-long vectors instead |
 
-A dc sweep's scale, `v-sweep`, records as `track_v_sweep` (E-583) — a hyphen in a
-vector name would be subtraction in `let` and `print`.
-The argument is one quoted word, because `track`'s own options begin with `-`.
-Several `-track` flags record as `track1_*`, `track2_*`, …; `-track` combines with
-`-spec` and `-expr` in the same run. The per-sample track plots are destroyed as
-they are recorded (`$track_plot`/`$track_hits` are left holding the last sample's
-result). A miss is silent and records 0; a real error in the track arguments — an
+The argument is one quoted word, because `track`'s own options begin with `-`; it
+is repeatable, and every `-track` gets its own plot, numbered from the first free
+`track<k>` name. `montecarlo<n>` stays the current plot afterwards — it holds the
+run's counts and the `-expr` vectors — so a record is reached as `track1.value`
+from there, or with `setplot $track_plot`; `$track_plot` names the last record made
+and `$track_hits` counts the samples that had a hit. `-track` combines with `-spec`
+and `-expr` in the same run. The per-sample track plots are destroyed as they are
+copied. A miss is silent and records 0; a real error in the track arguments — an
 expression that does not evaluate, an unknown option — stops the run on its first
 sample with the message once, and records nothing.
 
@@ -331,20 +334,21 @@ L1 a out 1m
 C1 out 0 1u
 .control
   montecarlo 1000 -seed 3 -analysis "tran 2u 1m" -track "v(out) -spec localmax -prominence 20m" -expr r=@r1[resistance]
-  print mean(track_hits)                    ; ringing peaks per sample
-  plot track_value[0] vs r                  ; the first peak's height against the resistance
-  pyplot -hist track_time[1]                ; where the second peak lands (nan where there was none)
+  print mean(track1.hits)                   ; ringing peaks per sample
+  plot track1.value[0] vs r                 ; the first peak's height against the resistance
+  setplot $track_plot
+  pyplot -hist time[1]                      ; where the second peak lands (nan where there was none)
 .endc
 ```
 
-`track_value[0]` is row 0 of the family — the first hit of every sample, N long —
-and `track_time[1]` the second, `nan` where a sample had fewer; `track_time[k][i]` is
-sample i's k-th hit. The orientation is the opposite of the `-expr` waveform
-families above, where `vo[k]` is sample k's curve, because the question about hits
-is "where did the second peak land across the samples", not "what did sample k do".
-`-expr` beside it keeps the per-sample cause, here the resistance, on the same
-`sample` scale, so a hit count or a peak position can be plotted against the
-parameter that drove it.
+`value[0]` is row 0 of the family — the first hit of every sample, N long — and
+`time[1]` the second, `nan` where a sample had fewer; `time[k][i]` is sample i's
+k-th hit; `plot time` draws Lmax curves against `sample`. The orientation is the
+opposite of the `-expr` waveform families above, where `vo[k]` is sample k's curve,
+because the question about hits is "where did the second peak land across the
+samples", not "what did sample k do". `-expr` beside it keeps the per-sample cause,
+here the resistance, on the same `sample` scale in `montecarlo<n>`, so a hit count
+or a peak position can be plotted against the parameter that drove it.
 
 ## 7. Corners, and combining everything
 

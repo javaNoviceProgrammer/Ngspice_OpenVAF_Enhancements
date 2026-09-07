@@ -285,7 +285,7 @@ com_track(wordlist *wl)
     /* ---- the hits */
     struct hit *hits = NULL;
     int nhits = 0, kind = SPEC_ALL, midpoints = 0;
-    char *specname = NULL, *lhs = NULL, *rhs = NULL, *locexpr = NULL;
+    char *specname = NULL, *lhs = NULL, *rhs = NULL, *locexpr = NULL, *sname = NULL;
     const char *op = NULL;
     int oplen = 0, want_max = 0, global = 0;
     int ok = 0;
@@ -791,8 +791,15 @@ com_track(wordlist *wl)
     plot_new(npl);
     npl->pl_title = copy(pl->pl_title ? pl->pl_title : "track");
     npl->pl_name = tprintf("Track: %s on %s", specname, pl->pl_typename);
+    /* Enhancement-584: a dc sweep's scale is `v-sweep`, a name no expression can
+     * spell (`print track1.v-sweep` is a subtraction). The track plot's copy is
+     * `v_sweep`; every other scale name (time, frequency) is already plain. */
+    sname = copy(scale->v_name);
+    for (char *q = sname; *q; q++)
+        if (!isalnum_c(*q) && *q != '_')
+            *q = '_';
     {
-        struct dvec *sv = dvec_alloc(copy(scale->v_name), (int) scale->v_type,
+        struct dvec *sv = dvec_alloc(copy(sname), (int) scale->v_type,
                                      VF_REAL | VF_PERMANENT, nhits, NULL);
         struct dvec *iv, *xo = NULL, *wv = NULL, *ev = NULL;
         struct plot *keep = plot_cur;
@@ -890,14 +897,14 @@ com_track(wordlist *wl)
         for (vv = npl->pl_dvecs, i = nv - 1; vv; vv = vv->v_next, i--)
             order[i] = vv;
         for (k = 0; k < nhits && k < 50; k++) {
-            fprintf(cp_out, "  %s=%.6g", scale->v_name, hits[k].x);
+            fprintf(cp_out, "  %s=%.6g", sname, hits[k].x);
             for (i = 0; i < nv; i++)
                 if (order[i] != npl->pl_scale)
                     fprintf(cp_out, " %s=%.6g", order[i]->v_name, order[i]->v_realdata[k]);
             fprintf(cp_out, "\n");
         }
         if (nhits > 50)
-            fprintf(cp_out, "  ... and %d more (print %s.%s)\n", nhits - 50, npl->pl_typename, scale->v_name);
+            fprintf(cp_out, "  ... and %d more (print %s.%s)\n", nhits - 50, npl->pl_typename, sname);
         tfree(order);
     }
 quiet:
@@ -913,6 +920,6 @@ done:
         tfree(outnames[e]);
     tfree(vals);
     tfree(spec); tfree(analysis); tfree(d); tfree(loc); tfree(hits); tfree(xown);
-    tfree(specname); tfree(lhs); tfree(rhs); tfree(locexpr);
+    tfree(specname); tfree(lhs); tfree(rhs); tfree(locexpr); tfree(sname);
     NG_IGNORE(ok);
 }

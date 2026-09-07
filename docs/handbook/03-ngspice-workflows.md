@@ -179,8 +179,9 @@ in the `montecarlo1` plot (§3.6); a vector-valued locator is recorded as a fami
 when every sample has the same number of hits. And since E-582 it runs `track` itself
 per sample: `montecarlo 1000 -analysis "tran 2u 1m" -track "v(out) -spec localmax
 -prominence 20m"` is the loop above in one line, with the hits per sample and every
-tracked vector recorded as nan-padded families (§3.6). The loop remains the form for
-a trial that does more than one analysis per draw.
+tracked vector stacked into a plot of its own, `track1` (§3.6). The loop remains the
+form for a trial that does more than one analysis per draw. In every track plot a dc
+sweep's scale is spelled `v_sweep` (E-584): `v-sweep` is a subtraction to `print`.
 
 ## 3.4 Analysis coverage
 
@@ -290,19 +291,21 @@ waveform an N × L family that `plot` draws as N curves. No `-spec`, no yield;
 a `-spec` without a limit is refused with a pointer to `-expr`. The `track`
 locators are ordinary expressions here — `-expr npk=length(localmax(v(out)))`,
 `-expr tpk=globalmax(v(out))` — so a peak count or a peak position per sample
-needs no loop. `track` itself is a command, so it has its own flag (E-582):
+needs no loop. `track` itself is a command, so it has its own flag (E-582, E-584):
 `-track "<track arguments>"` (one quoted word, repeatable) runs `track <arguments>`
-after every sample's analysis and records the result beside the `-expr` vectors —
-`track_hits` per sample (0 a miss, `nan` a sample that never solved) and every
-vector of the track plot as `track_<vector>`, an Lmax × N family whose row k is hit
-k of every sample on the `sample` scale, `nan` where a sample had fewer, so a
-*varying* hit count is exactly what it records: `track_time[1]` is the second hit
-of every sample, `plot track_value[0] vs r` the first peak against a recorded
-parameter; a dc sweep's `v-sweep` scale records as `track_v_sweep` (E-583). `-track
-"... -which first"` and
-other one-hit forms give plain N-long vectors. A hand-written `repeat` loop with
-`$track_plot`/`$track_hits` (§3.3) remains for a trial that runs several analyses
-per draw.
+after every sample's analysis and records the result into a plot of its own,
+`track1`, `track2`, … (`$track_plot`) — the shape of a `track` plot stacked over the
+samples: `sample` as its scale, `hits` per sample (0 a miss, `nan` a sample that
+never solved) and every vector of the track plot under its own name (`time` or
+`frequency` or `v_sweep`, `value`, `index`, a region's `x_out` and `width`) as an
+Lmax × N family whose row k is hit k of every sample, `nan` where a sample had
+fewer, so a *varying* hit count is exactly what it records: `track1.time[1]` is the
+second hit of every sample, `plot track1.value[0] vs r` the first peak against a
+recorded parameter. `-track "... -which first"` and other one-hit forms give plain
+N-long vectors. `montecarlo<n>` stays current, holding the counts and the `-expr`
+vectors; `setplot $track_plot` moves to the record. A hand-written `repeat` loop
+with `$track_plot`/`$track_hits` (§3.3) remains for a trial that runs several
+analyses per draw.
 
 **Automatic MC from the model's own statistics — `.option osdimc`.** A
 Verilog-A parameter can *declare* its variability with attributes, and the

@@ -1252,6 +1252,25 @@ struct dvec *vec_copy(struct dvec *v) {
  * the ccom struct.
  */
 
+/* Enhancement-584: forget the last number handed out for a plot type, so the
+ * next plot of that type takes the first FREE name instead of continuing a
+ * count whose plots have all been destroyed. `montecarlo -track` makes and
+ * destroys one track plot per sample and then wants its records named
+ * track1, track2 -- not track1001. */
+void plot_typenum_forget(const char *name)
+{
+    char *s, *k;
+    if (!plot_type_num)
+        return;
+    if ((s = ft_plotabbrev((char *) name)) == NULL)
+        s = "unknown";
+    k = plot_name_key(s);
+    if (nghash_find(plot_type_num, k))
+        nghash_delete(plot_type_num, k);
+    tfree(k);
+}
+
+
 struct plot * plot_alloc(char *name)
 {
     struct plot *pl = TMALLOC(struct plot, 1);

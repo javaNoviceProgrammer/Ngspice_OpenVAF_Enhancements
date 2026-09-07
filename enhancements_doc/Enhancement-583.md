@@ -1,5 +1,9 @@
 # Enhancement-583: `montecarlo -track` on a dc sweep — the scale records as `track_v_sweep`, and the fast path no longer runs the temperature pass on a circuit not yet set up
 
+> **Note:** since [E-584](Enhancement-584.md) the record is a plot of its own, so the
+> spelling below is `v_sweep` inside `track<k>` (and in `track`'s own plot), not
+> `track1_v_sweep`. The fast-path fix stands as described.
+
 **Scope:** `src/frontend/com_sweep.c` (the record's vector names in `com_montecarlo`;
 the `DEVtemperature` pass in `sw_fp_apply`), `examples/mctrack_examples/` (a dc-sweep
 section, 20 checks per solver). **ngspice only.**

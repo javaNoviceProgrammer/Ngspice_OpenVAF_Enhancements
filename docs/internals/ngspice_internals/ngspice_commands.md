@@ -592,7 +592,7 @@ montecarlo 500 -analysis ac -spec 'vdb(out)' -min -3.5 -max -2.5
 | Command | Purpose |
 |---|---|
 | *strings* | `r"…"` keeps its case and spaces through the deck reader; `f"… {expr:.3f} …"` is evaluated when the command runs; `rf"…"` both (E-553) |
-| `montecarlo` | packaged yield: N samples, per-spec pass/fail, yield + 95% CI; `-expr [name=]<expression>` records a value per sample, unjudged, into a `montecarlo<n>` plot (a scalar as an N-long vector, a waveform as an N × L family) with no yield unless a limited `-spec` is given (E-552); `-track "<track arguments>"` runs `track` after every sample's analysis and records its hits there, `track_hits` per sample and each track-plot vector as a `track_<vector>` Lmax × N family whose row k is hit k of every sample, nan where a sample had fewer (E-582) |
+| `montecarlo` | packaged yield: N samples, per-spec pass/fail, yield + 95% CI; `-expr [name=]<expression>` records a value per sample, unjudged, into a `montecarlo<n>` plot (a scalar as an N-long vector, a waveform as an N × L family) with no yield unless a limited `-spec` is given (E-552); `-track "<track arguments>"` runs `track` after every sample's analysis and records its hits into a plot of its own, `track<k>` (`$track_plot`): `sample` as its scale, `hits` per sample, and each track-plot vector under its own name (`time`/`frequency`/`v_sweep`, `value`, `index`, `x_out`, `width`) as an Lmax × N family whose row k is hit k of every sample, nan where a sample had fewer (E-582, E-584) |
 | `mcsample` | Latin-Hypercube sampling of the `.param` random draws (lower variance) |
 | `highsigma` | rare-event / high-sigma failure probability by scaled-sigma importance sampling |
 | `mccorr` | register a correlation matrix; draw with `mvnorm()` in `.param` |

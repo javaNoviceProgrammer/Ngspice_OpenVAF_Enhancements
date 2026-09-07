@@ -251,10 +251,10 @@ struct comm spcp_coms[] = {
       "spec is within its limits, and the yield is reported with a Wilson 95%% CI and per-spec violations. "
       "An -expr is recorded per sample, unjudged, into a montecarlo<n> plot ($montecarlo_plot): a scalar as an "
       "N-long vector on the `sample` scale, a waveform (a dc/ac sweep's output) as an N x L family. A -track runs "
-      "`track <arguments>` after every sample's analysis and records its hits there: track_hits per sample and each "
-      "vector of the track plot as track_<vector>, an Lmax x N family whose row k is hit k of every sample, nan where "
-      "a sample had fewer (plain vectors when no sample has more than one); several -track record as track1_*, "
-      "track2_*. Any of the three "
+      "`track <arguments>` after every sample's analysis and records its hits into a plot of its own, track<k> "
+      "($track_plot): sample as its scale, hits per sample, and every vector of the track plot under its own name "
+      "(time/frequency/v_sweep, value, index, x_out, width) as an Lmax x N family whose row k is hit k of every "
+      "sample, nan where a sample had fewer (plain vectors when no sample has more than one). Any of the three "
       "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib)." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
@@ -943,10 +943,10 @@ struct comm nutcp_coms[] = {
       "spec is within its limits, and the yield is reported with a Wilson 95%% CI and per-spec violations. "
       "An -expr is recorded per sample, unjudged, into a montecarlo<n> plot ($montecarlo_plot): a scalar as an "
       "N-long vector on the `sample` scale, a waveform (a dc/ac sweep's output) as an N x L family. A -track runs "
-      "`track <arguments>` after every sample's analysis and records its hits there: track_hits per sample and each "
-      "vector of the track plot as track_<vector>, an Lmax x N family whose row k is hit k of every sample, nan where "
-      "a sample had fewer (plain vectors when no sample has more than one); several -track record as track1_*, "
-      "track2_*. Any of the three "
+      "`track <arguments>` after every sample's analysis and records its hits into a plot of its own, track<k> "
+      "($track_plot): sample as its scale, hits per sample, and every vector of the track plot under its own name "
+      "(time/frequency/v_sweep, value, index, x_out, width) as an Lmax x N family whose row k is hit k of every "
+      "sample, nan where a sample had fewer (plain vectors when no sample has more than one). Any of the three "
       "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib)." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,

@@ -1,5 +1,11 @@
 # Enhancement-582: `montecarlo -track "<track arguments>"` — `track` runs after every sample's analysis and its hits are recorded per sample
 
+> **Superseded in part by [E-584](Enhancement-584.md).** The record is now a plot of
+> its own, `track<k>`, holding `sample`, `hits`, `time`, `value`, … under their own
+> names; the prefixed `track_*` vectors inside `montecarlo<n>` described below no
+> longer exist. The flag, the per-sample run, the hit-major layout and the quiet and
+> error hooks are as described here.
+
 **Scope:** `src/frontend/com_sweep.c` (the flag, the per-sample run, the record),
 `src/frontend/com_track.c`/`com_track.h` (a quiet mode and an error flag for the
 caller), `src/frontend/commands.c` (help), statistics guide §6.2, the commands table,

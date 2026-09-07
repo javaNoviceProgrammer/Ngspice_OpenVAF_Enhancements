@@ -383,6 +383,7 @@ extern struct dvec *vec_get(const char *word);
 extern struct dvec *vec_mkfamily(struct dvec *v);
 extern struct plot *plot_cur;
 extern struct plot *plot_alloc(char *name);
+extern void plot_typenum_forget(const char *name);   /* Enhancement-584 */
 extern struct plot *plot_list;
 extern int plotl_changed;
 extern void plot_add(struct plot *pl);

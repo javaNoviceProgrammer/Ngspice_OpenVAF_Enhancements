@@ -207,8 +207,10 @@ def main():
           "-analysis nosuch matches no plot; there are:" in out and "tran1" in out.split("there are:")[1].splitlines()[0], "")
     check("plot_cur is unchanged: the current plot is still ac1", re.search(r"^Current ac1", out, re.M) is not None, "")
     r3 = rows(out, "track3"); r4 = rows(out, "track4")          # the failed -analysis made no plot
-    check("a descending dc sweep, -range 2 0 and 0 2 alike: one hit at v-sweep = 1",
-          len(r3) == 1 and len(r4) == 1 and near(r3[0]["v-sweep"], 1.0, 1e-9) and r3 == r4, f"{r3} {r4}")
+    check("a descending dc sweep, -range 2 0 and 0 2 alike: one hit at v_sweep = 1 (E-584: the track "
+          "plot spells the dc scale v_sweep, a name print can reach)",
+          len(r3) == 1 and len(r4) == 1 and near(r3[0]["v_sweep"], 1.0, 1e-9) and r3 == r4
+          and "v-sweep=" not in out, f"{r3} {r4}")
 
     print("[8] refusals and parsing")
     out = ngspice(deck(SINE, "tran 1u 5m\ntrack v(a) -spec v(a)==5\nsetplot\ntrack v(a) -spec localmax -which 9\n"

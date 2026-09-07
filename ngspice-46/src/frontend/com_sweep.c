@@ -5080,34 +5080,52 @@ void com_montecarlo(wordlist *wl)
                 fprintf(cp_out, "  NOTE   : -expr %s gave the SAME value in every sample; "
                                 "nothing this deck draws reaches it\n", exprname[e]);
         }
-        /* Enhancement-582: the -track records */
+        /* Enhancement-584 (was E-582's prefixed vectors): each -track is a plot
+         * of its own, `track<k>`, with `sample` as its scale, `hits` per sample
+         * (0 a miss, nan a sample that never solved) and every vector of the
+         * per-sample track plots under its own name -- time/frequency/v_sweep,
+         * value, index, x_out, width, edge -- stacked hit-major: row k is hit k
+         * of every sample, nan where a sample had fewer; plain N-long vectors
+         * when no sample had more than one hit. The per-sample plots were
+         * destroyed as they were copied; their numbers are forgotten here so
+         * the records take the first free track<k> names. montecarlo<n> stays
+         * the current plot; $track_plot names the last record made. */
+        if (ntrack > 0)
+            plot_typenum_forget("track");
         for (int t = 0; t < ntrack; t++) {
-            char pre[24];
-            struct dvec *h;
-            int nhit = 0, n;
-            if (ntrack == 1)
-                (void) snprintf(pre, sizeof pre, "track");
-            else
-                (void) snprintf(pre, sizeof pre, "track%d", t + 1);
-            h = dvec_alloc(tprintf("%s_hits", pre), SV_NOTYPE,
-                           (short) (VF_REAL | VF_PERMANENT), nsamp, NULL);
+            struct plot *tp = plot_alloc("track");
+            struct dvec *h, *ts;
+            int nhit = 0, n, lmax = trec[t].lmax;
+            char names[512];
+            size_t nl = 0;
+            tp->pl_name = tprintf("Monte Carlo track: %s", tracktext[t]);
+            tp->pl_title = copy(analysis);
+            plot_new(tp);
+            plot_cur = tp;                       /* vec_new() files into plot_cur */
+            ts = dvec_alloc(copy("sample"), SV_NOTYPE, (short) (VF_REAL | VF_PERMANENT),
+                            nsamp, NULL);
+            for (int i = 0; i < nsamp; i++)
+                ts->v_realdata[i] = (double) (i + 1);
+            vec_new(ts);                         /* first permanent -> scale */
+            h = dvec_alloc(copy("hits"), SV_NOTYPE, (short) (VF_REAL | VF_PERMANENT),
+                           nsamp, NULL);
             for (int i = 0; i < nsamp; i++) {
                 h->v_realdata[i] = trec[t].hits[i] < 0 ? NAN : (double) trec[t].hits[i];
                 if (trec[t].hits[i] > 0) nhit++;
             }
             vec_new(h);
+            names[0] = '\0';
             for (n = 0; n < trec[t].nvec; n++) {
-                int lmax = trec[t].lmax;
                 char *vn = copy(trec[t].vname[n]);
                 struct dvec *v;
-                for (char *q = vn; *q; q++)     /* a dc sweep's scale is `v-sweep`: keep the
-                                                 * record spellable, `track_v_sweep` */
+                for (char *q = vn; *q; q++)     /* a dc sweep's scale is `v-sweep`, which no
+                                                 * expression can name: record it as v_sweep */
                     if (!isalnum_c(*q) && *q != '_')
                         *q = '_';
-                v = dvec_alloc(tprintf("%s_%s", pre, vn), trec[t].vtype[n],
-                               (short) (VF_REAL | VF_PERMANENT), nsamp * lmax, NULL);
-                tfree(vn);
-                for (int k = 0; k < nsamp * lmax; k++)
+                v = dvec_alloc(copy(vn), trec[t].vtype[n],
+                               (short) (VF_REAL | VF_PERMANENT),
+                               nsamp * (lmax > 0 ? lmax : 1), NULL);
+                for (int k = 0; k < v->v_length; k++)
                     v->v_realdata[k] = NAN;
                 for (int i = 0; i < nsamp; i++)
                     if (trec[t].rows[n][i])
@@ -5120,27 +5138,40 @@ void com_montecarlo(wordlist *wl)
                     v->v_dims[1] = nsamp;
                 }
                 vec_new(v);
+                if (nl + strlen(vn) + 3 < sizeof names) {
+                    (void) snprintf(names + nl, sizeof names - nl, "%s%s", nl ? ", " : "", vn);
+                    nl = strlen(names);
+                }
+                tfree(vn);
             }
-            nrec++;
-            if (trec[t].lmax <= 1)
+            plot_cur = pl;                       /* montecarlo<n> stays current */
+            cp_vset("track_plot", CP_STRING, tp->pl_typename);
+            cp_vset("track_hits", CP_NUM, &nhit);
+            if (nhit == 0)
+                fprintf(cp_out, "montecarlo: -track \"%s\": no sample had a hit -- plot %s: "
+                                "sample, hits (all 0)\n", tracktext[t], tp->pl_typename);
+            else if (lmax <= 1)
                 fprintf(cp_out, "montecarlo: -track \"%s\": a hit in %d of %d sample%s, never more than "
-                                "one -- %s_hits and %s_<vector> (%d vector%s, %d long, nan where a sample "
-                                "had no hit)\n",
-                        tracktext[t], nhit, nsamp, nsamp == 1 ? "" : "s", pre, pre,
-                        trec[t].nvec, trec[t].nvec == 1 ? "" : "s", nsamp);
+                                "one -- plot %s: sample, hits, %s (%d long, nan where a sample had "
+                                "no hit)\n",
+                        tracktext[t], nhit, nsamp, nsamp == 1 ? "" : "s", tp->pl_typename, names,
+                        nsamp);
             else
                 fprintf(cp_out, "montecarlo: -track \"%s\": hits in %d of %d sample%s, at most %d per "
-                                "sample -- %s_hits and %s_<vector> (%d vector%s, [%d,%d] families: row k "
-                                "is hit k of every sample, nan where it had fewer)\n",
-                        tracktext[t], nhit, nsamp, nsamp == 1 ? "" : "s", trec[t].lmax, pre, pre,
-                        trec[t].nvec, trec[t].nvec == 1 ? "" : "s", trec[t].lmax, nsamp);
-            if (nhit == 0)
-                fprintf(cp_out, "  NOTE   : no sample had a hit for -track \"%s\"\n", tracktext[t]);
+                                "sample -- plot %s: sample, hits, %s ([%d,%d] families: row k is hit k "
+                                "of every sample, nan where it had fewer)\n",
+                        tracktext[t], nhit, nsamp, nsamp == 1 ? "" : "s", lmax, tp->pl_typename,
+                        names, lmax, nsamp);
         }
-        fprintf(cp_out, "montecarlo: %d record%s over %d sample%s recorded into plot "
-                        "'%s' (now current)%s\n",
-                nrec, nrec == 1 ? "" : "s", nsamp, nsamp == 1 ? "" : "s", pl->pl_typename,
-                nfailed ? " -- a sample that failed to simulate is nan" : "");
+        if (nexpr > 0)
+            fprintf(cp_out, "montecarlo: %d expression%s over %d sample%s recorded into plot "
+                            "'%s' (now current)%s\n",
+                    nrec, nrec == 1 ? "" : "s", nsamp, nsamp == 1 ? "" : "s", pl->pl_typename,
+                    nfailed ? " -- a sample that failed to simulate is nan" : "");
+        else
+            fprintf(cp_out, "montecarlo: the run's counts are in plot '%s' (now current); the -track "
+                            "record%s reached as $track_plot or track<k>.<vector>\n",
+                    pl->pl_typename, ntrack == 1 ? " is" : "s are");
         cp_vset("montecarlo_plot", CP_STRING, pl->pl_typename);
     }
 
