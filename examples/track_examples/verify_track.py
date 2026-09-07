@@ -231,6 +231,27 @@ def main():
     n_fail = out.count("track failed!")
     check("every refusal ended in `track failed!`: 8 of them", n_fail == 8, f"{n_fail}")
 
+    # ---- Enhancement-581: $track_plot / $track_hits for a per-trial loop
+    print("[9] $track_plot and $track_hits")
+    body = "V1 in 0 pulse(0 1 0 1n 1n 1m 2m)\nR1 in a {rr}\nL1 a out 1m\nC1 out 0 1u\n.param rr = agauss(20, 30, 3)\n"
+    ctl = ("setseed 5\nlet n = 0\nlet npk = vector(6)\nrepeat 6\n  reset\n  tran 2u 1m\n  set tp = $curplot\n"
+           "  track v(out) -spec localmax -prominence 0.4\n  echo trial $&n hits=$track_hits plot=$track_plot\n"
+           "  if $track_hits gt 0\n    setplot $track_plot\n    let npk[n] = $track_hits\n    destroy $track_plot\n"
+           "  else\n    let npk[n] = 0\n  end\n  destroy $tp\n  let n = n + 1\nend\nprint npk\n"
+           "track v(out) -spec localmax\necho after-a-refusal hits=$track_hits plot=[$track_plot]\n")
+    out = ngspice(deck(body, ctl))
+    trials = re.findall(r"^trial (\d+) hits=(\d+) plot=(\S*)$", out, re.M)
+    check("$track_hits and $track_plot follow every trial of a loop (6 trials reported)", len(trials) == 6, f"{len(trials)}")
+    hit = [t for t in trials if int(t[1]) > 0]
+    miss = [t for t in trials if int(t[1]) == 0]
+    check("a trial with hits names the plot it made, one with none has an empty $track_plot and 0 hits",
+          hit and all(t[2].startswith("track") for t in hit) and miss and all(t[2] == "" for t in miss),
+          f"hits={len(hit)} misses={len(miss)}")
+    check("the loop collected the counts through $track_hits, not by plot number",
+          re.search(r"^Index\s+npk", out, re.M) is not None and "no such plot" not in out, "")
+    check("a refusal after the loop clears both (no track plot exists after the destroys)",
+          "after-a-refusal hits=0 plot=[]" in out, "")
+
     print("\nALL PASSED" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)
 

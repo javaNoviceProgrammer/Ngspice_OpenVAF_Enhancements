@@ -26,6 +26,7 @@ after the source scale. The locators are also `let` functions returning the posi
 | [6] ac | `db(v(out))==-3.01` at the RC corner within 0.1 % through log-x interpolation; a complex spec refused with the `mag()` hint |
 | [7] analysis and sweeps | `-analysis tran1` and `-analysis tran` while `ac1` is current, a wrong name listing the plots, `plot_cur` unchanged, a descending dc sweep with `-range` either way |
 | [8] refusals | zero hits (no plot, `track failed!`), `-which` out of range, an unknown option, a locator on two samples, `-edge`/`-at`/`-prominence` on the wrong spec kind, a nested dc sweep; `define` composing; an unquoted `<=` spec parsing |
+| [9] `$track_plot` and `$track_hits` (E-581) | six seeded trials of a ringing RLC with a prominence that makes some miss: both variables follow every trial, a hit names its `track` plot and a miss leaves an empty name and 0, the loop collects its counts through `$track_hits` with no plot-number drift, and a refusal after the loop leaves both cleared |
 
 ## Run
 
@@ -33,4 +34,4 @@ after the source scale. The locators are also `let` functions returning the posi
 python3 verify_track.py
 ```
 
-36 checks per solver, all PASS.
+40 checks per solver, all PASS.

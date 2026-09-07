@@ -152,6 +152,32 @@ expression gives `value`, several give `value1..valueN`. Zero hits prints `track
 and makes no plot. The locators are also `let` functions: `let pk = localmax(v(out))`
 returns the x positions. `examples/track_examples/`.
 
+After every `track`, `$track_plot` names the plot it made and `$track_hits` holds the
+hit count (E-581); a refusal or a miss leaves them empty and 0, so a per-trial loop can
+reach its result without naming `trackN` by number — the number advances only on a
+hit, so `track$&n` drifts as soon as one trial has none:
+
+```spice
+repeat 1000
+  reset
+  tran 2u 1m
+  set tp = $curplot
+  track v(out) -spec localmax -prominence 20m
+  if $track_hits gt 0
+    setplot $track_plot
+    let npk[n] = $track_hits                  ; collect what the trial needs ...
+    destroy $track_plot                       ; ... and free the trial's plots
+  end
+  destroy $tp
+  let n = n + 1
+end
+```
+
+The `montecarlo` command records the locators directly, without a loop: `-expr
+npk=length(localmax(v(out)))` or `-expr tpk=globalmax(v(out))` is a scalar per sample
+in the `montecarlo1` plot (§3.6); a vector-valued locator is recorded as a family only
+when every sample has the same number of hits.
+
 ## 3.4 Analysis coverage
 
 All core analyses treat OSDI devices as full citizens. The audited status
@@ -257,7 +283,11 @@ a value from each: `-expr [name=]<expression>` records the expression per sample
 into a plot of its own, `montecarlo1`, `montecarlo2`, … (`$montecarlo_plot`),
 with `sample` as its scale; a scalar becomes an N-long vector, a sweep's
 waveform an N × L family that `plot` draws as N curves. No `-spec`, no yield;
-a `-spec` without a limit is refused with a pointer to `-expr`.
+a `-spec` without a limit is refused with a pointer to `-expr`. The `track`
+locators are ordinary expressions here — `-expr npk=length(localmax(v(out)))`,
+`-expr tpk=globalmax(v(out))` — so a peak count or a peak position per sample
+needs no loop; `track` itself is a command and goes in a `repeat` loop with
+`$track_plot`/`$track_hits` (§3.3).
 
 **Automatic MC from the model's own statistics — `.option osdimc`.** A
 Verilog-A parameter can *declare* its variability with attributes, and the

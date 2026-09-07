@@ -43,6 +43,7 @@
 #include "ngspice/grid.h"
 #include "ngspice/stringutil.h"
 #include "ngspice/wordlist.h"
+#include "ngspice/cpextern.h"
 #include "com_track.h"
 
 #include <math.h>
@@ -244,6 +245,17 @@ find_plot(const char *name)
 void
 com_track(wordlist *wl)
 {
+    /* Enhancement-581: `$track_plot` and `$track_hits` -- the plot the last
+     * `track` made and how many hits it holds -- so a loop can reach the
+     * result without naming `trackN` by number, which slips as soon as one
+     * trial has no hits (a miss makes no plot and does not advance the count).
+     * Cleared here so a refusal never leaves the previous call's answer;
+     * `montecarlo` does the same with `$montecarlo_plot`. */
+    {
+        int zero = 0;
+        cp_vset("track_plot", CP_STRING, "");
+        cp_vset("track_hits", CP_NUM, &zero);
+    }
     /* ---- arguments */
     char *exprs[TRACK_MAX_EXPR];
     char *outnames[TRACK_MAX_EXPR];
@@ -842,6 +854,8 @@ com_track(wordlist *wl)
     if (kind == SPEC_EXTREMUM && strcmp(locexpr, exprs[0]) == 0 && !strchr(spec, '('))
         fprintf(cp_out, " (applied to %s)", exprs[0]);
     fprintf(cp_out, "\n");
+    cp_vset("track_plot", CP_STRING, npl->pl_typename);   /* Enhancement-581 */
+    cp_vset("track_hits", CP_NUM, &nhits);
     if (nexpr > 1 || nout > 0) {
         fprintf(cp_out, "   ");
         for (e = 0; e < nexpr; e++) {
