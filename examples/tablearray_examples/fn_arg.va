@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+module fn_arg(p, n);
+  inout p, n; electrical p, n;
+  parameter real scale = 1.0;
+  analog function real interp;
+    input x, xa, ya; real x; real xa[0:3]; real ya[0:3];
+    interp = $table_model(x, xa, ya, "1L");
+  endfunction
+  real xs[0:3], ys[0:3]; integer i;
+  analog begin
+    for (i = 0; i < 4; i = i + 1) begin xs[i] = i; ys[i] = scale*i*i; end
+    I(p,n) <+ 1e-3 * interp(V(p,n), xs, ys);
+  end
+endmodule

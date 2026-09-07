@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module fn_loc(p, n);
+  inout p, n; electrical p, n;
+  analog function real sq_tab;
+    input x, s; real x, s;
+    real xa[0:3], ya[0:3]; integer i;
+    begin
+      for (i = 0; i < 4; i = i + 1) begin xa[i] = i; ya[i] = s*i*i; end
+      sq_tab = $table_model(x, xa, ya, "3L");
+    end
+  endfunction
+  analog I(p,n) <+ 1e-3 * sq_tab(V(p,n), 1.0);
+endmodule

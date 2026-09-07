@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module rt_cub(p, n);
+  inout p, n; electrical p, n;
+  parameter real scale = 1.0;
+  real xs[0:3]; real ys[0:3]; integer i;
+  analog begin
+    for (i = 0; i < 4; i = i + 1) begin xs[i] = i; ys[i] = scale * i * i; end
+    I(p,n) <+ 1e-3 * $table_model(V(p,n), xs, ys, "3L");
+  end
+endmodule

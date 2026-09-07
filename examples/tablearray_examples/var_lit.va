@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+module var_lit(p, n);
+  inout p, n; electrical p, n;
+  (* desc="interpolated value" *) real y;
+  real xs[0:3], ys[0:3]; integer i; real y2;
+  analog begin
+    y = $table_model(V(p,n), '{0.0,1.0,2.0,3.0}, '{0.0,1.0,4.0,9.0}, "1L");
+    for (i = 0; i < 4; i = i + 1) begin xs[i] = i; ys[i] = i*i; end
+    y2 = $table_model(V(p,n), xs, ys, "3L");
+    I(p,n) <+ 1e-3 * y + 1e-6 * y2;
+  end
+endmodule

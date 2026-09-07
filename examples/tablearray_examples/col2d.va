@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module col2d(p, n, c);
+  inout p, n, c; electrical p, n, c;
+  localparam real xc[0:8] = '{0,0,0, 1,1,1, 2,2,2};
+  localparam real yc[0:8] = '{0,1,2, 0,1,2, 0,1,2};
+  localparam real zc[0:8] = '{0,0,0, 0,1,2, 0,2,4};
+  analog I(p,n) <+ 1e-3 * $table_model(V(p,n), V(c,n), xc, yc, zc, "1L,1L");
+endmodule

@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module fn_lit(p, n);
+  inout p, n; electrical p, n;
+  analog function real sq_tab;
+    input x; real x;
+    sq_tab = $table_model(x, '{0.0,1.0,2.0,3.0}, '{0.0,1.0,4.0,9.0}, "1L");
+  endfunction
+  analog I(p,n) <+ 1e-3 * sq_tab(V(p,n));
+endmodule
