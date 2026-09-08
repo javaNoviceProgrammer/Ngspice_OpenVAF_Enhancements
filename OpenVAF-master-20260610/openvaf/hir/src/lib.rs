@@ -617,18 +617,28 @@ impl Parameter {
                 .map(|ptr| ptr.to_node(&root).syntax().text().to_string())
                 .unwrap_or_else(|| "?".to_owned())
         };
+        // Enhancement-589 (hunt F7 of 2026-09-07): a discrete set `from {1, 2, 4}`
+        // is lowered to one Value bound per member, and the text read "from 1
+        // from 2 from 4" -- ngspice's out-of-bounds message then said "range
+        // from 1 from 2 from 4!". The members are gathered back into the set
+        // they were written as; ranges keep their interval form.
         let mut out = String::new();
+        let mut from_vals: Vec<String> = Vec::new();
+        let mut exclude_vals: Vec<String> = Vec::new();
         for bound in bounds.iter() {
-            if !out.is_empty() {
-                out.push(' ');
-            }
-            out.push_str(match bound.kind {
-                ConstraintKind::From => "from ",
-                ConstraintKind::Exclude => "exclude ",
-            });
             match bound.val {
-                ConstraintValue::Value(expr) => out.push_str(&text(expr)),
+                ConstraintValue::Value(expr) => match bound.kind {
+                    ConstraintKind::From => from_vals.push(text(expr)),
+                    ConstraintKind::Exclude => exclude_vals.push(text(expr)),
+                },
                 ConstraintValue::Range(range) => {
+                    if !out.is_empty() {
+                        out.push(' ');
+                    }
+                    out.push_str(match bound.kind {
+                        ConstraintKind::From => "from ",
+                        ConstraintKind::Exclude => "exclude ",
+                    });
                     out.push(if range.start_inclusive { '[' } else { '(' });
                     out.push_str(&text(range.start));
                     out.push(':');
@@ -636,6 +646,18 @@ impl Parameter {
                     out.push(if range.end_inclusive { ']' } else { ')' });
                 }
             }
+        }
+        for (kw, vals) in [("from", from_vals), ("exclude", exclude_vals)] {
+            if vals.is_empty() {
+                continue;
+            }
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(kw);
+            out.push_str(" {");
+            out.push_str(&vals.join(", "));
+            out.push('}');
         }
         out
     }

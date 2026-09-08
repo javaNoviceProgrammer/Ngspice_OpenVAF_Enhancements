@@ -223,6 +223,19 @@ answers *ERROR: can not handle string value of 'o_s' in vec_get … Ignoring…*
 operating-point variable (the LRM's output variables are real or integer) or ngspice
 should hand the string to `print`/`echo` as it does for string parameters.
 
+## Status after the fixes (2026-09-08)
+
+| # | resolution |
+|---|---|
+| F1 | fixed by [E-586](../../enhancements_doc/Enhancement-586.md): every pair applies, for OSDI and built-in devices; `altermulti_examples` |
+| F2 | fixed by [E-587](../../enhancements_doc/Enhancement-587.md): the tracking loop's reactive residual is zeroed for the ac and noise evaluations, so `transition`/`slew` are exactly unity in small-signal; a `td` delay is still honoured |
+| F3 | fixed by E-587: strict on the previous side, inclusive on the current; `above` gated at t = 0 of a transient except for its initialization event |
+| F4 | **withdrawn.** `@(final_step)` does fire in `ac` and `noise` — a `$strobe` in the block prints — but E-412 snapshots the instance around that evaluation and puts it back, since `CKTrhsOld` there is a small-signal solution, so every write the block makes to a variable or an operating-point variable is rolled back by design. The probe read a counter, which is exactly what the snapshot discards |
+| F5 | fixed by [E-588](../../enhancements_doc/Enhancement-588.md): `I(<a[1]>)` in expressions and branch declarations |
+| F6 | fixed by E-588: lint L029 `reserved_parameter_name` |
+| F7 | the discrete-set wording, the bare-word string `altermod`, the `$fatal` aftermath, the duplicated `noise_table` frequency and the empty `case` are fixed (E-586, E-588). `m=0` silently removing a device is E-426's documented "disable this instance" idiom, the same as for the built-ins; a `timer` period ≤ 0 firing once is LRM 5.10.3.3's rule (the check that refused it was removed for that reason); `$discontinuity(-1)` is the LRM's limiting-discontinuity form inside `$limit`. Those three are withdrawn |
+| F8 | **withdrawn.** A string operating-point variable is the documented `opvar` design: `show <inst>` displays its text and only the vector path (`print`, `$&`) refuses it, with the very message the hunt quoted, which `opvar_examples` pins as the intended clear error |
+
 ## Smaller notes (not pursued)
 
 - **Run-time integer division by zero is 0.** `k = 0` computed at run time, `7 / k`

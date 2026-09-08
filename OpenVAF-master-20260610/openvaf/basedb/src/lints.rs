@@ -215,5 +215,14 @@ pub mod builtin {
         // silently, and an untyped `localparam` -- where nothing settable changes
         // -- is promoted without a word.
         pub const instance_dependent_parameter = LintData{default_lvl: Warn, documentation_id: 28};
+        // Enhancement-589 (hunt F6 of 2026-09-07): a module parameter named like
+        // one of ngspice's reserved instance parameters -- `m`, `temp`, `dtemp`,
+        // `dt`. The netlist's `m=4` or `temp=100` then lands in the module's
+        // parameter and ngspice's own meaning is gone without a word: the
+        // multiplier no longer multiplies ($mfactor stays 1) and the instance
+        // temperature no longer reaches $temperature. Warn, not deny: a model
+        // that declares `m` usually applies it itself, and nothing in the
+        // Verilog-A is wrong -- the collision is with the netlist syntax.
+        pub const reserved_parameter_name = LintData{default_lvl: Warn, documentation_id: 29};
     }
 }

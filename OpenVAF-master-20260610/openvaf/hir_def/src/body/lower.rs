@@ -14,6 +14,7 @@ use crate::expr::{CaseCond, Event, GlobalEvent};
 use crate::item_tree::{apply_rename, RenameMap};
 use crate::nameres::DefMapSource;
 use crate::{BlockLoc, Case, CaseKind, CaseMask, Expr, ExprId, Intern, Literal, Path, ScopeId, Stmt, StmtId};
+use syntax::name::AsIdent;
 
 pub(super) struct LowerCtx<'a> {
     pub(super) db: &'a dyn HirDefDB,
@@ -223,6 +224,14 @@ impl LowerCtx<'_> {
 
             ast::Expr::PortFlow(port_flow) => {
                 if let Some(path) = port_flow.port().and_then(Path::resolve) {
+                    // Enhancement-589: `<a[1]>` names the bus element the way
+                    // every other bit-select does -- the synthesized `a[1]` node
+                    let path = match (port_flow.bus_index(), path.as_ident()) {
+                        (Some(idx), Some(base)) => {
+                            Path::new_ident(crate::item_tree::bus_bit_name(&base, idx))
+                        }
+                        _ => path,
+                    };
                     Expr::Path { path, port: true }
                 } else {
                     return self.missing_expr();

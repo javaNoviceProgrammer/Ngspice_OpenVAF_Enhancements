@@ -28,6 +28,10 @@ pub enum SyntaxError {
     CommaExpr {
         span: TextRange,
     },
+    /// Enhancement-589: a case statement without a single item
+    EmptyCase {
+        span: TextRange,
+    },
     /// Enhancement-425: a real literal whose value does not fit in a double and
     /// silently became an infinity.
     RealLiteralOverflow {
@@ -169,6 +173,7 @@ impl_display! {
         SurplusToken {found,..} => "unexpected token {}", found;
         ExprTooDeep{..} => "expression nests too deeply";
         CommaExpr{..} => "a parenthesised list is not an expression";
+        EmptyCase{..} => "case statement has no items; a case needs at least one `value: statement` or `default:` item";
         RealLiteralOverflow{..} => "real literal is too large to represent";
         ZeroWidthLiteral{..} => "a sized literal must have a non-zero size";
         InvalidBasedLiteral{..} => "based literal has no valid digits for its base";

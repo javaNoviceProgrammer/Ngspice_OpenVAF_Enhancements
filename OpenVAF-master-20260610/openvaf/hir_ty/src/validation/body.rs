@@ -2868,6 +2868,26 @@ impl ExprValidator<'_, '_> {
                              so the count must be even", elems.len(),
                             if elems.len() == 1 { "y" } else { "ies" }), args[0]);
                     } else {
+                        // Enhancement-589 (hunt F7 of 2026-09-07): two entries at
+                        // the SAME frequency give the interpolation two values for
+                        // one point; the runtime took the first and held it
+                        // everywhere, silently. An unsorted table is fine (the
+                        // runtime orders it), a duplicated frequency is not.
+                        let freqs: Vec<(usize, f64)> = elems
+                            .iter()
+                            .step_by(2)
+                            .enumerate()
+                            .filter_map(|(k, e)| self.const_num(*e).map(|f| (k, f)))
+                            .collect();
+                        for (i, &(_, f)) in freqs.iter().enumerate() {
+                            if freqs[..i].iter().any(|&(_, g)| g == f) {
+                                self.bad_arg(name, "table", format!(
+                                    "lists the frequency {f} twice; each frequency may \
+                                     appear once (the table is a function of frequency)"),
+                                    elems[freqs[i].0 * 2]);
+                                break;
+                            }
+                        }
                         // Enhancement-506: `noise_table_log` interpolates in
                         // log-log space, so ZERO is as unrepresentable as a
                         // negative -- log10(0) is -inf and the whole spectrum came

@@ -91,6 +91,11 @@ pub enum DefDiagnostic {
         builtin: &'static str,
         keyword: bool,
     },
+    /// Enhancement-589: a module parameter named like one of ngspice's
+    /// reserved instance parameters (`m`, `temp`, `dtemp`, `dt`); the
+    /// netlist's value goes to the module's parameter and ngspice's meaning
+    /// of the name is lost silently. Lint `reserved_parameter_name`.
+    ReservedParamName { ast_id: ErasedAstId, param: Name, meaning: &'static str },
 }
 
 pub struct DefDiagnosticWrapped<'a> {
@@ -218,6 +223,29 @@ impl Diagnostic for DefDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            DefDiagnostic::ReservedParamName { ast_id, param, meaning } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::warning()
+                    .with_message(format!(
+                        "parameter name '{param}' is ngspice's reserved instance parameter for \
+                         {meaning}"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("'{param}' shadows ngspice's own '{param}='"),
+                    }])
+                    .with_notes(vec![format!(
+                        "help: `{param}=` on an instance line (or `alter`) now sets THIS \
+                         parameter and ngspice's meaning of it is lost without a message -- \
+                         for `m` the multiplier no longer applies and $mfactor stays 1, for \
+                         `temp`/`dtemp`/`dt` the instance temperature no longer reaches \
+                         $temperature. Rename the parameter, or, for `m`, apply it yourself \
+                         everywhere the multiplier would have"
+                    )])
+            }
             DefDiagnostic::ReservedModuleName { ast_id, module, builtin, keyword } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();
                 let span = self.parse.to_file_span(range, self.sm);
@@ -263,6 +291,9 @@ impl Diagnostic for DefDiagnosticWrapped<'_> {
         match *self.diag {
             DefDiagnostic::ReservedModuleName { ast_id, .. } => {
                 Some((lints::builtin::reserved_module_name, LintSrc::item(ast_id)))
+            }
+            DefDiagnostic::ReservedParamName { ast_id, .. } => {
+                Some((lints::builtin::reserved_parameter_name, LintSrc::item(ast_id)))
             }
             _ => None,
         }

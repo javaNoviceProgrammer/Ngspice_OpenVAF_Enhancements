@@ -288,6 +288,20 @@ fn port_flow(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
     p.bump(T![<]);
     path(p);
+    // Enhancement-589 (hunt F5 of 2026-09-07): a port-branch probe on a BUS
+    // ELEMENT, `I(<a[1]>)`, was "unexpected token '[' expected '>'" while
+    // `I(a[1], c)` and `$port_connected(a[1])` took the bit-select. The index
+    // is a (signed) integer literal, as for every other bus bit-select; the
+    // tokens stay inside the PORT_FLOW node and `ast::PortFlow::bus_index`
+    // reads them back.
+    if p.at(T!['[']) {
+        p.bump(T!['[']);
+        if p.at(T![-]) {
+            p.bump(T![-]);
+        }
+        p.expect(INT_NUMBER);
+        p.expect(T![']']);
+    }
     p.expect(T![>]);
     m.complete(p, PORT_FLOW)
 }

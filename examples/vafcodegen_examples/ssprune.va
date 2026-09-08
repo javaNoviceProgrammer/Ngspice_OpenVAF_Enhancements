@@ -22,6 +22,7 @@ module ssprune(a, b);
             begin
             end
         case ((q % 'h7fffffff))
+            default: ;   // Enhancement-588: a case needs an item; an empty one is a syntax error
         endcase
         V(a, b) <+ laplace_nd(laplace_nd(flicker_noise(idt(-1e308), idt(-1e308)), {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}, {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}), {laplace_nd(flicker_noise(idt(-1e308), idt(-1e308)), {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}, {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}),laplace_nd(flicker_noise(idt(-1e308), idt(-1e308)), {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}, {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))})}, {laplace_nd(flicker_noise(idt(-1e308), idt(-1e308)), {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}, {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}),laplace_nd(flicker_noise(idt(-1e308), idt(-1e308)), {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))}, {flicker_noise(idt(-1e308), idt(-1e308)),flicker_noise(idt(-1e308), idt(-1e308))})});
     end

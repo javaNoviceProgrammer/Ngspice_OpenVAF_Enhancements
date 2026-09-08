@@ -291,6 +291,27 @@ impl BranchEndpoint {
     }
 }
 
+impl ast::PortFlow {
+    /// Enhancement-589: the bit-select of a bus-element port probe `<a[1]>`
+    /// (`None` for a scalar port). The parser keeps the `[`, optional `-`,
+    /// integer and `]` tokens inside the PORT_FLOW node.
+    pub fn bus_index(&self) -> Option<i32> {
+        let mut neg = false;
+        for child in self.syntax.children_with_tokens() {
+            let Some(tok) = child.into_token() else { continue };
+            match tok.kind() {
+                T![-] => neg = true,
+                crate::SyntaxKind::INT_NUMBER => {
+                    let v: i32 = tok.text().parse().ok()?;
+                    return Some(if neg { -v } else { v });
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BranchKind {
     PortFlow(PortFlow),

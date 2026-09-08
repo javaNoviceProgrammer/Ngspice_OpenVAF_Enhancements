@@ -46,6 +46,10 @@ pub enum SyntaxError {
     /// something the author did not write. Enhancement-387 made the same call
     /// for `ExprTooDeep`.
     CommaExpr,
+    /// Enhancement-589: `case (s) endcase` with no case item at all. The
+    /// grammar requires at least one; the source is well-formed token by
+    /// token, so it is reported in its own right like the two above.
+    EmptyCase,
     // ExtraToken { span: Span, token: Token },
     //
     // #[error("Unexpected Token!")]

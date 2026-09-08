@@ -13,7 +13,7 @@ use crate::builtin::insert_module_builtin_scope;
 use crate::db::HirDefDB;
 use crate::item_tree::{
     BlockScopeItem, Function, FunctionItem, Instantiation, ItemTree, ItemTreeId, ItemTreeNode,
-    Module, ModuleItem, RootItem,
+    Module, ModuleItem, Param, RootItem,
 };
 use crate::{
     BlockId, BlockLoc, DisciplineLoc, FunctionArgLoc, FunctionId, FunctionLoc, Intern, ItemLoc,
@@ -343,6 +343,28 @@ impl DefCollector<'_> {
         (module_id, scope)
     }
 
+    /// Enhancement-589: warns (lint `reserved_parameter_name`) when a MODULE
+    /// parameter is named like one of ngspice's reserved instance parameters,
+    /// case-insensitively -- SPICE netlists are case-insensitive, so `M=` and
+    /// `Temp=` reach the same slot.
+    fn check_reserved_param_name(&mut self, id: ItemTreeId<Param>) {
+        const RESERVED: &[(&str, &str)] = &[
+            ("m", "the multiplier (m=)"),
+            ("temp", "the instance temperature (temp=)"),
+            ("dtemp", "the instance temperature offset (dtemp=)"),
+            ("dt", "the instance temperature offset (dt=)"),
+        ];
+        let param = &self.tree[id];
+        let name = param.name.to_string();
+        if let Some(&(_, meaning)) = RESERVED.iter().find(|(r, _)| r.eq_ignore_ascii_case(&name)) {
+            self.map.diagnostics.push(DefDiagnostic::ReservedParamName {
+                ast_id: param.ast_id.into(),
+                param: param.name.clone(),
+                meaning,
+            });
+        }
+    }
+
     /// Warns (via the `reserved_module_name` lint, on by default) when a
     /// module's name collides case-insensitively with one of ngspice's
     /// built-in native SPICE device type names -- `.model <name>
@@ -459,6 +481,7 @@ impl DefCollector<'_> {
                     self.insert_item_decl(scope, self.tree[id].name.clone(), id)
                 }
                 ModuleItem::Parameter(id) => {
+                    self.check_reserved_param_name(id);
                     self.insert_item_decl(scope, self.tree[id].name.clone(), id)
                 }
                 ModuleItem::Variable(id) => {

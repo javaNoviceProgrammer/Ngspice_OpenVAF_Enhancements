@@ -202,8 +202,15 @@ fn case_stmt(p: &mut Parser, m: Marker) {
     expr(p);
     p.expect(T![')']);
 
+    let mut nitems = 0;
     while !p.at_ts(CASE_ITEM_RECOVERY) {
-        case_item(p)
+        case_item(p);
+        nitems += 1;
+    }
+    // Enhancement-589 (hunt F7 of 2026-09-07): `case (s) endcase` compiled. The
+    // grammar (IEEE 1364 A.6.7, Verilog-AMS 2.4) requires at least one case item.
+    if nitems == 0 {
+        p.error(crate::SyntaxError::EmptyCase);
     }
 
     p.expect(ENDCASE_KW);

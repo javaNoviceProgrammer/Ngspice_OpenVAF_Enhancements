@@ -1589,7 +1589,15 @@ impl Ctx {
             .and_then(|kind| {
                 let res = match kind {
                     ast::BranchKind::PortFlow(flow) => {
-                        BranchKind::PortFlow(Path::resolve(flow.port()?)?)
+                        let path = Path::resolve(flow.port()?)?;
+                        // Enhancement-589: `branch (<a[1]>) b;` on a bus element
+                        let path = match (flow.bus_index(), path.as_ident()) {
+                            (Some(idx), Some(base)) => {
+                                Path::new_ident(super::bus_bit_name(&base, idx))
+                            }
+                            _ => path,
+                        };
+                        BranchKind::PortFlow(path)
                     }
                     ast::BranchKind::NodeGnd(node) => {
                         BranchKind::NodeGnd(self.resolve_branch_endpoint(node, ast_id.into())?)

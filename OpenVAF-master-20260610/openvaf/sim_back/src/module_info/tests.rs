@@ -226,6 +226,18 @@ fn instance_dependent_parameters() {
         super::collect_modules(&db, false, &mut sink)
     };
     expect_test::expect![[r#"
+        warning[L029]: parameter name 'm' is ngspice's reserved instance parameter for the multiplier (m=)
+          --> /root.va:8:20
+          |
+        8 |     parameter real m = 1.0;
+          |                    ^^^^^^^ 'm' shadows ngspice's own 'm='
+          |
+          = help: `m=` on an instance line (or `alter`) now sets THIS parameter and ngspice's meaning of it is lost without a message -- for `m` the multiplier no longer applies and $mfactor stays 1, for `temp`/`dtemp`/`dt` the instance temperature no longer reaches $temperature. Rename the parameter, or, for `m`, apply it yourself everywhere the multiplier would have
+          = reserved_parameter_name is set to warn by default
+            use a CLI argument or an attribute to overwrite
+
+        warning: `root.va` generated 1 warning
+
         warning[L028]: parameter 'l3' is declared (* type="model" *) but depends on instance parameter 'w'; it is treated as an instance parameter
           --> /root.va:5:39
           |

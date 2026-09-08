@@ -455,6 +455,22 @@ impl Diagnostic for SyntaxError {
                             .to_owned(),
                     ])
             }
+            SyntaxError::EmptyCase { span } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "no case item before this `endcase`".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: a case statement needs at least one `value: statement` or \
+                         `default: statement` item; an empty case never assigns anything, \
+                         which is rarely what was meant"
+                            .to_owned(),
+                    ])
+            }
             SyntaxError::ExprTooDeep { span } => {
                 let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
                 Report::error()
