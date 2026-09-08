@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+// Enhancement-586: two instance and two model parameters, and a string one
+module ip(p, n);
+  inout p, n; electrical p, n;
+  (* type="instance" *) parameter real ga = 1e-3 from (0:inf);
+  (* type="instance" *) parameter real gb = 2e-3 from (0:inf);
+  parameter real ma = 1.0;
+  parameter real mb = 1.0;
+  parameter string mode = "lin" from {"lin", "quad"};
+  (* desc="ga" *) real o_ga; (* desc="gb" *) real o_gb; (* desc="ma" *) real o_ma; (* desc="mb" *) real o_mb;
+  (* desc="mode is quad" *) integer o_q;
+  analog begin
+    o_q = (mode == "quad");
+    I(p,n) <+ (o_q ? 2.0 : 1.0) * (ga*ma + gb*mb) * V(p,n);
+    if (V(p,n) > 5.0) $fatal(1, "V above 5 (fatal)");
+    o_ga = ga; o_gb = gb; o_ma = ma; o_mb = mb;
+  end
+endmodule

@@ -421,7 +421,13 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
 
         ft_curckt->ci_curOpt = ft_curckt->ci_defOpt;
         if ((err = ft_sim->doAnalyses (ckt, 1, ft_curckt->ci_curTask)) != OK) {
-            ft_sperror(err, "doAnalyses");
+            /* Enhancement-590 (hunt F7 of 2026-09-07): a Verilog-A $fatal
+             * during the operating point is reported in full by CKTop and
+             * returns E_PANIC, whose stock text is "impossible error - can't
+             * occur" -- which then followed the real message. Say nothing
+             * more when the cause has already been named. */
+            if (!(err == E_PANIC && CKTvaFatalRaised))
+                ft_sperror(err, "doAnalyses");
             /* wrd_end(); */
             if (err == E_PAUSE)
                 return (1);

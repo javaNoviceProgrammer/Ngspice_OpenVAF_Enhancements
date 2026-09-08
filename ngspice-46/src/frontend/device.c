@@ -1405,10 +1405,98 @@ alter_set(char *dev, char *param, struct dvec *dv, int do_model)
  * taken before the worker splits its words in place; the worker stages the
  * value it is about to write, and the journal records the pair only when the
  * command came from the user (control.c armed it) and something was written. */
+/* Enhancement-586 (hunt F1 of 2026-09-07): `alter n1 ga=5m gb=6m` and
+ * `altermod mm ma=3 mb=4` applied the FIRST pair and dropped the rest without
+ * a word -- the worker splits the first word carrying '=' and treats whatever
+ * follows the value as more value. The worker stays a one-pair engine; this
+ * front end counts the assignments and, when there are several, hands it one
+ * `<target> name = value...` list per pair, each with its own journal bracket.
+ * A target is the leading word(s) before the first name (a device or model
+ * name) and is repeated for every pair; a pair whose name is written in the
+ * `@dev[param]` form carries its own target and gets none. One pair, the
+ * `alter dev = value` form and the legacy `=`-less form go to the worker
+ * untouched. */
+static int
+alter_is_assignment_word(const char *w)
+{
+    const char *e;
+    if (!w || w[0] == '=' || w[0] == '[')
+        return 0;
+    e = strchr(w, '=');
+    if (!e || e == w)
+        return 0;
+    return e[1] != '=';                 /* `a==b` is a comparison, not a pair */
+}
+
+/* append `w` to `l`, split at its '=' when it is a `name=value` word: the
+ * worker's own splitter (wl_splice) FREES the node it splits, so a pair list
+ * whose head is such a word could not be freed afterwards -- pre-split, the
+ * worker finds only a bare '=' and splits nothing */
+static wordlist *
+alter_append_split(wordlist *l, const char *w)
+{
+    if (alter_is_assignment_word(w)) {
+        const char *e = strchr(w, '=');
+        l = wl_append(l, wl_cons(copy_substring(w, e), NULL));
+        l = wl_append(l, wl_cons(copy("="), NULL));
+        if (e[1])
+            l = wl_append(l, wl_cons(copy(e + 1), NULL));
+        return l;
+    }
+    return wl_append(l, wl_cons(copy(w), NULL));
+}
+
 static void
 com_alter_common(wordlist *wl, int do_model)
 {
-    char *orig = wl ? wl_flatten(wl) : NULL;
+    char *orig;
+    int npairs = 0;
+    wordlist *w;
+
+    /* count the assignments: a word `name=value`/`name=`, or a bare `=`
+     * that follows a name */
+    for (w = wl; w; w = w->wl_next) {
+        if (alter_is_assignment_word(w->wl_word))
+            npairs++;
+        else if (eq(w->wl_word, "=") && w->wl_prev && !eq(w->wl_prev->wl_word, "="))
+            npairs++;
+    }
+
+    if (npairs > 1) {
+        /* the target: every leading word up to the first name */
+        wordlist *target = NULL, *first_name = NULL;
+        for (w = wl; w; w = w->wl_next) {
+            if (alter_is_assignment_word(w->wl_word)) { first_name = w; break; }
+            if (w->wl_next && eq(w->wl_next->wl_word, "=")) { first_name = w; break; }
+        }
+        for (w = wl; w && w != first_name; w = w->wl_next)
+            target = wl_append(target, wl_cons(copy(w->wl_word), NULL));
+
+        w = first_name;
+        while (w) {
+            /* one pair: the name (and its glued or separate '=' and value)
+             * up to the word before the next name */
+            wordlist *pair = NULL, *next_name = NULL, *q;
+            int own_target = (w->wl_word[0] == '@' || w->wl_word[0] == '#');
+            for (q = w->wl_next; q; q = q->wl_next) {
+                if (alter_is_assignment_word(q->wl_word)) { next_name = q; break; }
+                if (q->wl_next && eq(q->wl_next->wl_word, "=") && !eq(q->wl_word, "=")
+                    && q != w) { next_name = q; break; }
+            }
+            if (!own_target)
+                for (q = target; q; q = q->wl_next)
+                    pair = wl_append(pair, wl_cons(copy(q->wl_word), NULL));
+            for (q = w; q && q != next_name; q = q->wl_next)
+                pair = alter_append_split(pair, q->wl_word);
+            com_alter_common(pair, do_model);   /* one pair: the plain path below */
+            wl_free(pair);
+            w = next_name;
+        }
+        wl_free(target);
+        return;
+    }
+
+    orig = wl ? wl_flatten(wl) : NULL;
     alter_journal_begin();
     com_alter_common_impl(wl, do_model);
     alter_journal_end(do_model, orig);
@@ -1612,6 +1700,21 @@ com_alter_common_impl(wordlist *wl, int do_model)
         fprintf(cp_err, "Error: parameter '%s' is not string-typed; a quoted "
                 "value cannot be assigned to it.\n", param);
         return;
+    }
+    /* Enhancement-586 (hunt F7 of 2026-09-07): `altermod mm mode=quad` -- a
+     * bare word for a STRING parameter -- went down the numeric path, which
+     * evaluated `quad` as a vector name and said "no such vector quad". A bare
+     * identifier is tried on the string setter first; it reports 0 when the
+     * parameter is not string-typed and the numeric path then runs exactly as
+     * before (a numeric parameter given a vector name still evaluates it). */
+    if (param && dev && dev[0] != '*' && dev[0] != '#' && !words->wl_next &&
+        (isalpha_c(words->wl_word[0]) || words->wl_word[0] == '_')) {
+        int r = if_setparam_string(ft_curckt->ci_ckt, &dev, param, words->wl_word,
+                                   do_model);
+        if (r == 1) {
+            alter_journal_stage_string(words->wl_word);   /* Enhancement-544 */
+            return;
+        }
     }
     if (words->wl_word[0] != '[')
         names = ft_getpnames_quotes(words, FALSE);
