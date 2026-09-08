@@ -334,9 +334,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let is_initial = self.ctx.use_param(ParamKind::IsInitialStep);
         let prev = self.ctx.make_select(is_initial, |_, branch| if branch { current } else { raw_prev });
 
-        let was_below = self.ctx.ins().fle(prev, F_ZERO);
+        // Enhancement-587 (hunt F3 of 2026-09-07): a crossing needs a previous
+        // sample on the OTHER side. `prev <= 0 && cur > 0` counted an expression
+        // that STARTS exactly at zero (a sine whose offset equals the threshold)
+        // as crossing on the first step after t = 0 -- prev was the seeded 0.
+        // Strict on the previous side, inclusive on the current side: a sample
+        // that lands exactly on zero coming from below fires once, at that
+        // sample, and not again when the next one is positive.
+        let was_below = self.ctx.ins().flt(prev, F_ZERO);
+        let is_at_or_above = self.ctx.ins().fge(current, F_ZERO);
+        let fired = bool_and(self.ctx, was_below, is_at_or_above);
         let is_above = self.ctx.ins().fgt(current, F_ZERO);
-        let fired = bool_and(self.ctx, was_below, is_above);
 
         // LRM 5.10.3.2 (events audit): "If the expression is positive at the
         // conclusion of the initial condition analysis that precedes a
@@ -346,6 +354,31 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // never produced the mandated initialization event -- it only fired
         // when the Newton trajectory happened to cross the threshold while
         // converging from the 0 initial guess (solver luck, not the rule).
+        // Enhancement-587: at t = 0 of a TRANSIENT the only rule is the
+        // initialization one above. The Newton iterations of that operating
+        // point start from the zero guess and walk the expression through the
+        // threshold, and the evaluation-to-evaluation edge fired on that walk
+        // -- so an expression that is exactly zero at t = 0 (a sine whose
+        // offset is the threshold) was counted once too often. `cross` has
+        // gated its edge on `tran && t > 0` since the events audit; `above`
+        // keeps its edges in dc sweeps, where every point is a real solution.
+        let name = self.ctx.sconst("tran");
+        let tran_hit = self.ctx.call1(CallBackKind::Analysis, &[name]);
+        let zero = self.ctx.iconst(0);
+        let is_tran = self.ctx.ins().ine(tran_hit, zero);
+        let abstime = self.ctx.use_param(ParamKind::Abstime);
+        let t_pos = self.ctx.ins().fgt(abstime, F_ZERO);
+        let not_tran = self.ctx.ins().inot(is_tran);
+        let edge_ok = bool_or(self.ctx, not_tran, t_pos);
+        // ... except that the LRM's initialization event is judged on the
+        // CONVERGED value ("positive at the conclusion of the initial condition
+        // analysis"), which no single evaluation can see. An edge on the t = 0
+        // walk therefore still counts when the value it lands on is strictly
+        // positive -- that is the initialization event -- and is dropped when
+        // it lands exactly on zero, which is the case that was over-counted.
+        let edge_ok = bool_or(self.ctx, edge_ok, is_above);
+        let fired = bool_and(self.ctx, fired, edge_ok);
+
         let init_pos = bool_and(self.ctx, is_initial, is_above);
         let fired = bool_or(self.ctx, fired, init_pos);
 
@@ -400,13 +433,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let is_initial = self.ctx.use_param(ParamKind::IsInitialStep);
         let prev = self.ctx.make_select(is_initial, |_, branch| if branch { current } else { raw_prev });
 
-        let prev_le = self.ctx.ins().fle(prev, F_ZERO);
-        let cur_gt = self.ctx.ins().fgt(current, F_ZERO);
-        let rising = bool_and(self.ctx, prev_le, cur_gt);
+        // Enhancement-587: strict on the previous side, inclusive on the
+        // current side -- see `lower_above`. An expression that starts exactly
+        // at zero and rises is not a crossing; one that lands exactly on zero
+        // from the other side is, once.
+        let prev_lt = self.ctx.ins().flt(prev, F_ZERO);
+        let cur_ge = self.ctx.ins().fge(current, F_ZERO);
+        let rising = bool_and(self.ctx, prev_lt, cur_ge);
 
-        let prev_ge = self.ctx.ins().fge(prev, F_ZERO);
-        let cur_lt = self.ctx.ins().flt(current, F_ZERO);
-        let falling = bool_and(self.ctx, prev_ge, cur_lt);
+        let prev_gt = self.ctx.ins().fgt(prev, F_ZERO);
+        let cur_le = self.ctx.ins().fle(current, F_ZERO);
+        let falling = bool_and(self.ctx, prev_gt, cur_le);
 
         let either = bool_or(self.ctx, rising, falling);
 

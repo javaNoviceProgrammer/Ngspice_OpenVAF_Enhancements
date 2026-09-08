@@ -4326,7 +4326,29 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // Every sibling that gets this right -- `laplace_*`'s state-space
         // realization, and a hand-written `ddt(V(o,c))` -- defines its react
         // residual unconditionally.
-        self.ctx.def_react_residual(y, eq);
+        //
+        // Enhancement-588 (hunt F2 of 2026-09-07): unconditionally in DC and
+        // TRANSIENT. In a SMALL-SIGNAL analysis the loop's linearisation is a
+        // first-order lag with tau = 1/gain -- trise/TRACK_C, i.e. 1 ns for the
+        // default 1 us transition and 1 ns again for an instantaneous one
+        // through TRACK_GAIN_INF -- so `V(o) <+ transition(V(in))` showed
+        // -0.036 deg at 100 kHz and -3.6 deg at 10 MHz, a phantom delay the
+        // LRM does not have: the small-signal transfer of transition() and of
+        // a slew() that is not slewing is unity. The reactive residual is
+        // zeroed for the ac and noise evaluations only, which turns the
+        // equation into `gain*(y - x) = 0`, exactly `y = x`. The op preceding
+        // an ac run is a DC evaluation and keeps the stored charge as before;
+        // a transient never sees these flags.
+        let ac_name = self.ctx.sconst("ac");
+        let ac_hit = self.ctx.call1(CallBackKind::Analysis, &[ac_name]);
+        let noise_name = self.ctx.sconst("noise");
+        let noise_hit = self.ctx.call1(CallBackKind::Analysis, &[noise_name]);
+        let zero_i = self.ctx.iconst(0);
+        let is_ac = self.ctx.ins().ine(ac_hit, zero_i);
+        let is_noise = self.ctx.ins().ine(noise_hit, zero_i);
+        let small_signal = crate::stmt::bool_or(self.ctx, is_ac, is_noise);
+        let react = self.lower_select_with(small_signal, |_| F_ZERO, |_| y);
+        self.ctx.def_react_residual(react, eq);
 
         y
     }

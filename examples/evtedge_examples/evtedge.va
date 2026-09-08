@@ -1,0 +1,24 @@
+`include "disciplines.vams"
+// Enhancement-587: cross/above edges and the small-signal transfer of transition/slew
+module evtedge(p, n, o1, o2, o3, o4, gnd);
+  inout p, n, o1, o2, o3, o4, gnd; electrical p, n, o1, o2, o3, o4, gnd;
+  parameter real thr = 0.5;
+  integer nup, ndn, nany, nabove;
+  (* desc="rising crossings" *) integer o_up;
+  (* desc="falling crossings" *) integer o_dn;
+  (* desc="either" *) integer o_any;
+  (* desc="above events" *) integer o_above;
+  analog begin
+    @(initial_step) begin nup = 0; ndn = 0; nany = 0; nabove = 0; end
+    @(cross(V(p,n) - thr, +1)) nup = nup + 1;
+    @(cross(V(p,n) - thr, -1)) ndn = ndn + 1;
+    @(cross(V(p,n) - thr, 0)) nany = nany + 1;
+    @(above(V(p,n) - thr)) nabove = nabove + 1;
+    I(p,n) <+ V(p,n) / 1e3;
+    V(o1, gnd) <+ transition(V(p,n));                       // no arguments
+    V(o2, gnd) <+ transition(V(p,n), 0.0, 0.0, 0.0);        // explicit zeros
+    V(o3, gnd) <+ transition(V(p,n), 5e-6, 1e-6, 1e-6);     // a real delay
+    V(o4, gnd) <+ slew(V(p,n), 1e6, -1e6);
+    o_up = nup; o_dn = ndn; o_any = nany; o_above = nabove;
+  end
+endmodule

@@ -81,11 +81,17 @@ def main():
     check("outer.inner.w + 2*$root form = 3.75", run(deck, "v(out)")["v(out)"], 3.75)
 
     print("[3] LRM comparator: transition() with a real input (was type error)")
-    deck = ("* comparator\nVp inp 0 DC 0 SIN(0 1 1meg)\nVm inm 0 DC 0\n"
+    # Enhancement-587: a crossing needs a previous sample on the OTHER side, so
+    # a sine that starts exactly on the threshold (SIN(0 1 1meg) at t = 0) no
+    # longer fires at its first step -- the comparator's first event is then
+    # the falling crossing at 0.5 us. The source starts at -1 (phase -90 deg),
+    # rises through zero at 0.25 us and falls through it at 0.75 us; the two
+    # levels are read in the middle of the halves that follow those crossings.
+    deck = ("* comparator\nVp inp 0 DC 0 SIN(0 1 1meg 0 0 -90)\nVm inm 0 DC 0\n"
             "NDUT cout inp inm nm\nRL cout 0 1k\n.model nm comparator\n"
             ".tran 1n 2u\n.control\npre_osdi hiername_demo.osdi\nrun\n"
-            "meas tran vhi FIND v(cout) AT=0.25u\n"
-            "meas tran vlo FIND v(cout) AT=0.75u\n.endc\n.end\n")
+            "meas tran vhi FIND v(cout) AT=0.5u\n"
+            "meas tran vlo FIND v(cout) AT=1.0u\n.endc\n.end\n")
     v = run(deck, "vhi", "vlo")
     # Enhancement-512: this deck asks for a 1 ns timestep on a 1 ns transition
     # edge, so the edge is deliberately unresolved -- it is testing hierarchical

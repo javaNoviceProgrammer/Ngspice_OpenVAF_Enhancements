@@ -21,6 +21,7 @@ already worked; E-43 completes the feature:
 Checks:
   1. scalar/param-dep/string inits read exactly; `y = 2*p+1` tracks p override
   2. init-once: `integer cnt = 10` + @(cross) counts 10 -> 10+N, never resets
+     (N = 3 since E-587: a start exactly on the threshold is not a crossing)
   3. arrays: 1-D real + integer, 2-D, 3-D, param-dependent leaves = 66 + 4*s,
      tracking an `s` override; array element init + event update starts at 100
   4. function-local scalar + array initializers and an untyped `input v`
@@ -89,7 +90,11 @@ def main():
             "print v(out)[0]\nmeas tran vfin FIND v(out) AT=31.5u\n.endc\n.end\n")
     v = run(deck, "v(out)[0]", "vfin")
     check("t=0 reads the initializer", v["v(out)[0]"], 10.0)
-    check("counts from 10 (10+4 crossings)", v["vfin"], 14.0, 0.5)
+    # Enhancement-587: the source starts exactly on the threshold (SIN(0 ...)
+    # at t = 0), which is not a crossing -- the previous sample must be on the
+    # other side -- so the rising crossings by 31.5 us are the three at 10,
+    # 20 and 30 us; the fourth the old count included was the seeded start.
+    check("counts from 10 (10+3 crossings; the start on the threshold is not one)", v["vfin"], 13.0, 0.5)
 
     print("[3] array initializers: 1-D/2-D/3-D + param-dependent leaves")
     v = run(op_deck("varray"), "v(out)")
