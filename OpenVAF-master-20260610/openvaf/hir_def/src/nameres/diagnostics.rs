@@ -18,6 +18,9 @@ pub enum PathResolveError {
     ExpectedScope { name: Name, found: ScopeDefItem },
     ExpectedItemKind { name: Name, expected: &'static str, found: ResolvedPath },
     ExpectedNatureAttributeIdent { found: Box<[Name]> },
+    /// Enhancement-590: the name exists in the enclosing module but is out of
+    /// reach inside an analog function (LRM 4.7.1); `kind` is what it is there.
+    NotAccessibleInFunction { name: Name, kind: &'static str },
 }
 
 impl_display! {
@@ -27,6 +30,7 @@ impl_display! {
         PathResolveError::ExpectedScope {name, found} => "expected a scope but found {} '{}'", found.item_kind(), name;
         PathResolveError::ExpectedItemKind{name, expected, found} => "expected {} but found {} '{}'", expected, found, name;
         PathResolveError::ExpectedNatureAttributeIdent{found} => "expected a nature attribute identifier found path {}",  pretty::List::path(found.deref());
+        PathResolveError::NotAccessibleInFunction{name, kind} => "'{}' cannot be used inside an analog function: it is a {} of the enclosing module", name, kind;
     }
 }
 
@@ -41,6 +45,41 @@ impl PathResolveError {
                 "failed to resolve path".to_owned()
             }
             PathResolveError::ExpectedItemKind { expected, .. } => format!("expected {}", expected),
+            PathResolveError::NotAccessibleInFunction { .. } => {
+                "not accessible in an analog function".to_owned()
+            }
+        }
+    }
+
+    /// Enhancement-590: notes that say what to do instead, where the message
+    /// alone reads as "no such name".
+    pub fn notes(&self) -> Vec<String> {
+        match self {
+            PathResolveError::NotAccessibleInFunction { kind, .. } => {
+                let instead = if kind.contains("nature access") {
+                    "a branch probe such as V(p,n) is evaluated by the caller and passed \
+                     in as an argument"
+                } else if *kind == "node" || *kind == "branch" {
+                    "nets and branches belong to the module; pass the probe value in as \
+                     an argument"
+                } else {
+                    "pass the value in as an argument, or return it from the function"
+                };
+                vec![format!(
+                    "LRM 4.7.1: an analog function sees only its arguments, its own \
+                     variables and the module's parameters; {instead}"
+                )]
+            }
+            PathResolveError::ExpectedItemKind {
+                expected: "discipline",
+                found: ResolvedPath::ScopeDefItem(ScopeDefItem::ModuleId(_)),
+                name,
+            } => vec![format!(
+                "a module instance needs a port connection list, `{name} <instance>(<ports>);` \
+                 -- without one the line reads as a net declaration with '{name}' as its \
+                 discipline"
+            )],
+            _ => Vec::new(),
         }
     }
 }

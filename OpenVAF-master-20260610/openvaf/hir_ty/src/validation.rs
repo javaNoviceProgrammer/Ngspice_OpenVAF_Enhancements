@@ -1,6 +1,7 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
 use basedb::lints::builtin::{
-    const_simparam, param_default_out_of_range, rng_in_loop, runtime_format_string,
+    const_simparam, lossy_integer_constant, param_default_out_of_range, rng_in_loop,
+    runtime_format_string,
     trivial_probe, unknown_analysis_name, unknown_limit_function, unknown_simparam,
     variant_const_simparam,
 };
@@ -179,6 +180,12 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             BodyValidationDiagnostic::ParamDefaultOutOfRange { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, param_default_out_of_range);
                 Some((param_default_out_of_range, src))
+            }
+            // Enhancement-590
+            BodyValidationDiagnostic::IntLiteralOverflow { stmt, .. }
+            | BodyValidationDiagnostic::LossyIntegerDefault { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, lossy_integer_constant);
+                Some((lossy_integer_constant, src))
             }
             _ => None,
         }
@@ -626,6 +633,81 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                          declaration; otherwise pick a default inside the range"
                             .to_owned(),
                     ])
+            }
+            // Enhancement-590: the surplus sub-strings never applied to anything.
+            BodyValidationDiagnostic::TableControlExtraAxes { expr, ref code, axes, ndim } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::warning()
+                    .with_message(format!(
+                        "$table_model control string \"{code}\" names {axes} axes but the \
+                         table has {ndim} input{}",
+                        if ndim == 1 { "" } else { "s" }
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!("the sub-strings after the first {ndim} are ignored"),
+                    }])
+                    .with_notes(vec![
+                        "LRM 9.21: one comma-separated sub-string per independent variable; \
+                         an 'I' sub-string names a data column to ignore and does not count"
+                            .to_owned(),
+                    ])
+            }
+            // Enhancement-590: the literal was read as a real and, stored into an
+            // integer, saturates -- silently, until now.
+            BodyValidationDiagnostic::IntLiteralOverflow {
+                expr, ref value, ref sci, clipped, ..
+            } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::warning()
+                    .with_message(format!(
+                        "integer literal {value} does not fit a 32-bit integer"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!(
+                            "read as the real {sci}; stored into an `integer` it \
+                             saturates to {clipped}"
+                        ),
+                    }])
+                    .with_notes(vec![
+                        "Verilog-A's `integer` holds -2147483648 to 2147483647 (LRM 3.2); \
+                         spell the number as a real, `3e9` or `3000000000.0`, where a real \
+                         is meant"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::LossyIntegerDefault {
+                param, expr, ref value, ref verdict, fraction, ..
+            } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let name = self.db.param_data(param).name.clone();
+                let what = verdict.to_string();
+                let note = if fraction {
+                    "declare the parameter `real`, or give it an integer default; the \
+                     same value on a model card is warned as rounded"
+                        .to_owned()
+                } else {
+                    "the same value on a model card is refused as out of range; the \
+                     default escapes that check"
+                        .to_owned()
+                };
+                Report::warning()
+                    .with_message(format!(
+                        "integer parameter '{name}' has the default {value}, which an \
+                         integer cannot hold"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: what,
+                    }])
+                    .with_notes(vec![note])
             }
             BodyValidationDiagnostic::PotentialOfPortFlow { expr, branch } => {
                 let FileSpan { range, file } = self.expr_src(expr);
@@ -1770,6 +1852,7 @@ impl Diagnostic for TypeValidationDiagnosticWrapped<'_> {
                         message: err.message(),
                     }])
                     .with_message(err.to_string())
+                    .with_notes(err.notes()) // Enhancement-590
             }
             TypeValidationDiagnostic::UnresolvedNatureRef {
                 ref owner,

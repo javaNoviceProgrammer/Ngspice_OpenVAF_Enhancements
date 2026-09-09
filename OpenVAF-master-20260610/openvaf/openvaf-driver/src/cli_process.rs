@@ -114,6 +114,16 @@ pub fn matches_to_opts(matches: ArgMatches) -> Result<Opts> {
     if let Some(deny) = matches.get_many::<String>(DENY) {
         lints.extend(deny.map(|lint| (lint.to_owned(), LintLevel::Deny)));
     }
+    // Enhancement-590: `L022` names `discarded_contribution`, the way the
+    // diagnostic printed it
+    for (name, _) in lints.iter_mut() {
+        if let Some(lint) = builtin_lints::ALL
+            .iter()
+            .find(|l| format!("L{:03}", l.documentation_id) == *name)
+        {
+            *name = lint.name.to_owned();
+        }
+    }
 
     let output = if matches.get_flag(BATCHMODE) {
         let cache_dir = if let Some(val) = matches.get_one::<Utf8PathBuf>(CACHE_DIR) {
@@ -220,7 +230,7 @@ fn print_lints() {
     stdout.set_color(&ColorSpec::new()).unwrap();
     for lint in builtin_lints::ALL {
         if lint.default_lvl == LintLevel::Deny {
-            writeln!(&mut stdout, "    {}", lint.name).unwrap();
+            writeln!(&mut stdout, "    {:<34} L{:03}", lint.name, lint.documentation_id).unwrap();
         }
     }
 
@@ -230,7 +240,7 @@ fn print_lints() {
 
     for lint in builtin_lints::ALL {
         if lint.default_lvl == LintLevel::Warn {
-            writeln!(&mut stdout, "    {}", lint.name).unwrap();
+            writeln!(&mut stdout, "    {:<34} L{:03}", lint.name, lint.documentation_id).unwrap();
         }
     }
 
@@ -240,7 +250,7 @@ fn print_lints() {
 
     for lint in builtin_lints::ALL {
         if lint.default_lvl == LintLevel::Allow {
-            writeln!(&mut stdout, "    {}", lint.name).unwrap();
+            writeln!(&mut stdout, "    {:<34} L{:03}", lint.name, lint.documentation_id).unwrap();
         }
     }
 }

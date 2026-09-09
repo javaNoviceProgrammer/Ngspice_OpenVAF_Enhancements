@@ -263,6 +263,11 @@ impl LowerCtx<'_> {
                 // items; track every such literal -- collect_case_stmt removes
                 // the legal ones and validation rejects the rest (E-78)
                 if let ast::LiteralKind::IntNumber(int) = lit.kind() {
+                    // Enhancement-590: `3000000000` became the real 3e9 with
+                    // nothing said; record it for validation's lint
+                    if int.overflows_integer() {
+                        self.source_map.int_overflow_literals.push(id);
+                    }
                     if int.dontcare_masks().is_some() {
                         self.body.stray_dontcare_literals.push(id);
                     }

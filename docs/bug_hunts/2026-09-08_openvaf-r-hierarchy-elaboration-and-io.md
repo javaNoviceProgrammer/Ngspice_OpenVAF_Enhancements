@@ -277,6 +277,15 @@ table from the names it prints and nothing is truncated; `showwidth_examples`
   here only because a reader of LRM 4.5.4 will be surprised by 0.62 V one microsecond
   into a reset to 0.25 V.
 
+**Status (2026-09-09):** resolved by Enhancement-590 -- `$param_given(arr)` answers
+for the array, lint L030 for lossy integer constants, lint ids accepted by `-A`/`-W`/`-E`
+and printed by `--lints`, the function-scope message names the item and quotes LRM
+4.7.1, the concatenated table name folds in both folders, an extra control-string axis
+is warned, `leafx l1;` gets the port-list note, instance-name collisions are refused,
+and ngspice adds the quoting hint. The non-ASCII help line and the control-code list
+were withdrawn: both were complete, the hunt's grep had dropped the following lines.
+`hunt3diag_examples` 42 of 42 per solver, sweep 485 of 485.
+
 ## Smaller notes (not pursued)
 
 - `{}` as an empty array is refused ("empty concatenation"); `'{}` and the LRM's null

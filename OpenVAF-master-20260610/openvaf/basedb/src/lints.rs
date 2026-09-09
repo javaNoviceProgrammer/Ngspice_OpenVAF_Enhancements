@@ -224,5 +224,10 @@ pub mod builtin {
         // that declares `m` usually applies it itself, and nothing in the
         // Verilog-A is wrong -- the collision is with the netlist syntax.
         pub const reserved_parameter_name = LintData{default_lvl: Warn, documentation_id: 29};
+        // Enhancement-590: a constant an `integer` cannot hold -- a literal wider
+        // than 32 bits (read as a real, saturated when stored) or a real default
+        // on an integer parameter (rounded) -- was folded without a word, while
+        // the same value on a netlist card is refused or warned.
+        pub const lossy_integer_constant = LintData{default_lvl: Warn, documentation_id: 30};
     }
 }

@@ -1229,6 +1229,21 @@ impl Ctx<'_> {
                 Cow::Borrowed(TiSlice::from_ref(info.signatures))
             }
 
+            // Enhancement-590: `$param_given(arr)` for an ARRAY parameter. The generic
+            // path infers the argument and refuses a bare array name with "requires a
+            // bit-select [i]", so LRM 9.19's parameter_identifier form could only be
+            // written per element. Resolve the elements here (the pre-resolution the
+            // filters use) and answer for the whole array; lowering ORs the elements'
+            // given flags, so it is true when any element was given.
+            BuiltIn::param_given if args.len() == 1 && self.is_bare_array_ref(args[0]) => {
+                if self.infere_array_arg(stmt, args[0]).is_some()
+                    && self.result.array_param_refs.contains_key(&args[0])
+                {
+                    return (Some(Ty::Val(Type::Bool)), true);
+                }
+                Cow::Borrowed(TiSlice::from_ref(info.signatures))
+            }
+
             // Enhancement-40: `$table_model` is variadic so tables of ANY dimension
             // work. This arm owns EVERY table_model call (the generic varargs
             // fallthrough below would resize-and-truncate the listed signatures,

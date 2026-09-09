@@ -163,6 +163,24 @@ pub enum BodyValidationDiagnostic {
     /// literal. The table is built at compile time; an overridable `parameter
     /// string` may be replaced by the model card afterwards.
     TableStringNotConst { expr: ExprId, what: Box<str> },
+    /// Enhancement-590: a control string with more axis sub-strings than the
+    /// table has inputs; the surplus is ignored, so this is a warning.
+    TableControlExtraAxes { expr: ExprId, code: Box<str>, axes: usize, ndim: usize },
+    /// Enhancement-590: an integer literal wider than 32 bits, lowered as a real
+    /// (`value` as written, `sci` in scientific notation, `clipped` what an
+    /// `integer` store makes of it).
+    IntLiteralOverflow { expr: ExprId, stmt: StmtId, value: Box<str>, sci: Box<str>, clipped: i32 },
+    /// Enhancement-590: an `integer` parameter whose constant default has a
+    /// fraction (`fraction`) or does not fit 32 bits (`!fraction`); `verdict`
+    /// says what the compiler makes of it ("rounded to 3", "clipped to ...").
+    LossyIntegerDefault {
+        param: ParamId,
+        expr: ExprId,
+        stmt: StmtId,
+        value: Box<str>,
+        verdict: Box<str>,
+        fraction: bool,
+    },
 
     /// Book audit (paramsets), LRM 6.4.1: a paramset statement is one of an
     /// analog function's -- no contribution, no event control, no named block.
@@ -580,6 +598,13 @@ impl BodyValidationDiagnostic {
             non_trivial_branches: HashSet::default(),
             trivial_probes: HashMap::default(),
             alias_calls: Vec::new(),
+            int_overflow: db
+                .body_with_sourcemap(def)
+                .1
+                .int_overflow_literals
+                .iter()
+                .copied()
+                .collect(),
         };
 
         for stmt in &*body.entry_stmts {
@@ -837,6 +862,9 @@ struct BodyValidator<'a> {
     /// about one call's target naming ANOTHER call's net reference, which is
     /// only decidable once every call has been seen.
     alias_calls: Vec<(ExprId, StmtId, bool, Option<NodeId>, Option<String>)>,
+    /// Enhancement-590: the literals body lowering read as reals because they
+    /// did not fit an `integer` (`BodySourceMap::int_overflow_literals`).
+    int_overflow: HashSet<ExprId>,
 }
 
 impl BodyValidator<'_> {
@@ -1782,6 +1810,20 @@ impl ExprValidator<'_, '_> {
     }
 
     fn validate_expr(&mut self, expr: ExprId) {
+        // Enhancement-590: a literal that did not fit an `integer`
+        if self.parent.int_overflow.contains(&expr) {
+            if let Expr::Literal(Literal::Float(v)) = self.parent.body.exprs[expr] {
+                let value = f64::from(v);
+                let stmt = self.stmt;
+                self.parent.diagnostics.push(BodyValidationDiagnostic::IntLiteralOverflow {
+                    expr,
+                    stmt,
+                    value: format!("{value}").into_boxed_str(),
+                    sci: format!("{value:e}").into_boxed_str(),
+                    clipped: if value > 0.0 { i32::MAX } else { i32::MIN },
+                });
+            }
+        }
         match self.parent.body.exprs[expr] {
             Expr::Call { ref fun, ref args, .. } => {
                 match self.parent.infer.resolved_calls.get(&expr) {
@@ -1933,6 +1975,38 @@ impl ExprValidator<'_, '_> {
                                     // 'I' names a column of a file or of the array form;
                                     // inline `'{...}` data has no column to drop
                                     let columns = arrays_form.is_some() || !inline;
+                                    // Enhancement-590: the number of INPUTS, so a control
+                                    // string naming more axes than the table has is caught
+                                    let ndim = if let Some(k) = arrays_form {
+                                        k
+                                    } else if inline {
+                                        1
+                                    } else {
+                                        args.iter()
+                                            .position(|&a| self.is_table_str_arg(a))
+                                            .unwrap_or(args.len())
+                                    };
+                                    // Enhancement-590: "3L,1L" on a 1-D table names an axis
+                                    // that does not exist and was accepted without a word;
+                                    // an 'I' sub-string names a data column to drop, not an
+                                    // input, so it is not counted
+                                    let axes = ctrl
+                                        .split_once(';')
+                                        .map_or(&*ctrl, |(head, _)| head)
+                                        .split(',')
+                                        .map(str::trim)
+                                        .filter(|s| !s.is_empty() && !s.starts_with(['I', 'i']))
+                                        .count();
+                                    if axes > ndim {
+                                        self.parent.diagnostics.push(
+                                            BodyValidationDiagnostic::TableControlExtraAxes {
+                                                expr: carg,
+                                                code: ctrl.clone(),
+                                                axes,
+                                                ndim,
+                                            },
+                                        );
+                                    }
                                     if let Some(why) =
                                         table_ctrl_problem(&ctrl, runtime_data, columns)
                                     {
@@ -3968,6 +4042,8 @@ fn table_ctrl_problem(ctrl: &str, runtime_data: bool, columns: bool) -> Option<S
         }
         None => ctrl,
     };
+    // Enhancement-590: extra sub-strings are judged at the call site, as a
+    // warning -- Enhancement-395 accepts them, so they must keep compiling.
     for sub in body.split(',') {
         // whitespace anywhere in a sub-string is ignored, so "3 L" keeps working
         let sub: String = sub.chars().filter(|c| !c.is_whitespace()).collect();
@@ -4148,6 +4224,15 @@ pub(crate) fn const_str_in(
             }
             _ => None,
         },
+        // Enhancement-590: `{"t1", ".tbl"}` -- a concatenation of constant
+        // strings is a constant string (it was refused as "not compile-time")
+        Expr::Concat { rep: None, ref elems } if !elems.is_empty() => {
+            let mut out = String::new();
+            for &e in elems {
+                out.push_str(&const_str_in(db, body, infer, e, depth + 1)?);
+            }
+            Some(out)
+        }
         _ => None,
     }
 }
@@ -4187,6 +4272,39 @@ fn check_param_default_range(
 
     let exprs = db.param_exprs(param);
     let Some(value) = const_num_in(db, body, infer, exprs.default, 0) else { return };
+
+    // Enhancement-590: an `integer` parameter's constant default that an integer
+    // cannot hold -- `parameter integer half = 2.5` ran with 3, `= 3000000000`
+    // with 2147483647, and nothing was said, while the same values on a model
+    // card are warned (rounded) or refused (out of range).
+    if db.param_data(param).ty == Some(Type::Integer) && value.is_finite() {
+        let fraction = value.fract() != 0.0;
+        let overflow = value > i32::MAX as f64 || value < i32::MIN as f64;
+        // an overflowing LITERAL is already reported at the literal
+        let literal_reported = overflow
+            && db
+                .body_with_sourcemap(DefWithBodyId::ParamId(param))
+                .1
+                .int_overflow_literals
+                .contains(&exprs.default);
+        if (fraction || overflow) && !literal_reported {
+            if let Some(&stmt) = body.entry_stmts.first() {
+                let verdict = if fraction {
+                    format!("rounded to {}", value.round())
+                } else {
+                    format!("clipped to {}", if value > 0.0 { i32::MAX } else { i32::MIN })
+                };
+                diagnostics.push(BodyValidationDiagnostic::LossyIntegerDefault {
+                    param,
+                    expr: exprs.default,
+                    stmt,
+                    value: format!("{value}").into_boxed_str(),
+                    verdict: verdict.into_boxed_str(),
+                    fraction,
+                });
+            }
+        }
+    }
 
     let in_range = |start: f64, start_inclusive: bool, end: f64, end_inclusive: bool| {
         let lo_ok = if start_inclusive { value >= start } else { value > start };

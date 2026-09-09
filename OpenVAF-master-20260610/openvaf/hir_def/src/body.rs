@@ -58,6 +58,9 @@ pub struct BodySourceMap {
     /// Diagnostics accumulated during body lowering. These contain `AstPtr`s and so are stored in
     /// the source map (since they're just as volatile).
     pub diagnostics: Vec<AttrDiagnostic>,
+    /// Enhancement-590: integer literals that did not fit an `integer` and were
+    /// lowered as reals (`Literal::new`), so validation can say so.
+    pub int_overflow_literals: Vec<ExprId>,
 }
 
 impl BodySourceMap {

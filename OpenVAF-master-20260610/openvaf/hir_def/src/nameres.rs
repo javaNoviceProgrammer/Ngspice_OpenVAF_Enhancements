@@ -420,14 +420,24 @@ impl DefMap {
 
                         return Err(PathResolveError::NotFound { name: name.clone() });
                     }
-                    DefMapSource::Function(_fun) => {
+                    DefMapSource::Function(fun) => {
                         if let Some(builtin) = BUILTIN_SCOPE.get(name) {
                             break *builtin;
                         }
 
-                        // let parent = fun.lookup(db).scope;
-                        //parent.def_map(db).resolve_normal_path_in_scope(scope, path, db); TODO
-                        //give hint if found in full def map
+                        // Enhancement-590: `V(p,n)` inside an analog function was
+                        // "'V' was not found in the current scope" -- the name exists,
+                        // one scope up; say what it is and why it is out of reach.
+                        let parent = fun.lookup(db).scope;
+                        if let Ok(found) = parent
+                            .def_map(db)
+                            .resolve_local_name_in_scope(parent.local_scope, name)
+                        {
+                            return Err(PathResolveError::NotAccessibleInFunction {
+                                name: name.clone(),
+                                kind: found.item_kind(),
+                            });
+                        }
 
                         return Err(PathResolveError::NotFound { name: name.clone() });
                     }

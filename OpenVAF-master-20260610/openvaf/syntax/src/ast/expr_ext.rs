@@ -518,6 +518,14 @@ impl ast::IntNumber {
         src.parse().ok()
     }
 
+    /// Enhancement-590: a decimal literal that does not fit a 32-bit `integer`
+    /// (a based literal with don't-care digits is a different case, handled by
+    /// `casex`/`casez`).
+    pub fn overflows_integer(&self) -> bool {
+        let src = self.number_text();
+        !src.contains('\'') && src.parse::<i32>().is_err()
+    }
+
     /// Enhancement-392: this literal's value NEGATED, when the negation fits in an
     /// `i32` even though the literal itself does not.
     ///

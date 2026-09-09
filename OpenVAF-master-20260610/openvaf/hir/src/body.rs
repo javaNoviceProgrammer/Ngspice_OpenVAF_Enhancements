@@ -466,6 +466,15 @@ impl<'a> BodyRef<'a> {
                         res.push(param);
                     }
                 }
+                // Enhancement-590: `$param_given(arr)` tests every element
+                if let Some(ids) = self.infere.array_param_refs.get(arg) {
+                    for &id in ids {
+                        let param = Parameter { id };
+                        if !res.contains(&param) {
+                            res.push(param);
+                        }
+                    }
+                }
             }
         }
         res

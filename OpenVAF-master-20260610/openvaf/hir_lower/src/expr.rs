@@ -3301,20 +3301,18 @@ impl BodyLoweringCtx<'_, '_, '_> {
             // specify this, or is this my default?", so every such derivation
             // silently took the wrong branch through a paramset.
             BuiltIn::param_given => {
-                let param = self.body.into_parameter(args[0]);
-                // BOOL constants, not iconst: `ParamGiven` is bool-typed, so
-                // inference records a bool->int cast at integer-assignment
-                // sites, and a bicast over an INT constant panics the MIR
-                // constant folder ("invalid int operation bicast").
-                if param.is_paramset_bound(self.ctx.db) {
-                    TRUE
-                } else if param.is_function_local(self.ctx.db) {
-                    // LRM 4.7.1: a function-local parameter can never be given
-                    // from outside; there is no runtime flag slot for it (it
-                    // is not an OSDI parameter), so answer a constant false.
-                    FALSE
+                // Enhancement-590: a whole array parameter is given when ANY of
+                // its elements is (they are separate OSDI parameters).
+                if let Some(elems) = self.body.array_param_ref(args[0]) {
+                    let mut given = FALSE;
+                    for param in elems {
+                        let flag = self.param_given_flag(param);
+                        given = crate::stmt::bool_or(self.ctx, given, flag);
+                    }
+                    given
                 } else {
-                    self.ctx.use_param(ParamKind::ParamGiven { param })
+                    let param = self.body.into_parameter(args[0]);
+                    self.param_given_flag(param)
                 }
             }
             BuiltIn::port_connected => {
@@ -4897,6 +4895,24 @@ impl BodyLoweringCtx<'_, '_, '_> {
             .collect()
     }
 
+    /// The runtime given-flag of one parameter, or the constant the LRM fixes.
+    fn param_given_flag(&mut self, param: hir::Parameter) -> Value {
+        // BOOL constants, not iconst: `ParamGiven` is bool-typed, so
+        // inference records a bool->int cast at integer-assignment
+        // sites, and a bicast over an INT constant panics the MIR
+        // constant folder ("invalid int operation bicast").
+        if param.is_paramset_bound(self.ctx.db) {
+            TRUE
+        } else if param.is_function_local(self.ctx.db) {
+            // LRM 4.7.1: a function-local parameter can never be given
+            // from outside; there is no runtime flag slot for it (it
+            // is not an OSDI parameter), so answer a constant false.
+            FALSE
+        } else {
+            self.ctx.use_param(ParamKind::ParamGiven { param })
+        }
+    }
+
     fn lower_integral(&mut self, kind: IdtKind, args: &[ExprId]) -> Value {
         let (equation, val) = self.ctx.implicit_equation(ImplicitEquationKind::Idt(kind));
 
@@ -5239,6 +5255,15 @@ fn const_str_in_body(
             let init = param.init(db);
             let default = param.default(db);
             const_str_in_body(db, init.borrow(), default, depth + 1)
+        }
+        // Enhancement-590: `{"t1", ".tbl"}` -- the same fold hir_ty's validation
+        // applies, so a name validation accepted is the name the table is read from
+        Expr::Concat { rep: None, elems } if !elems.is_empty() => {
+            let mut out = String::new();
+            for &e in elems.iter() {
+                out.push_str(&const_str_in_body(db, body, e, depth + 1)?);
+            }
+            Some(out)
         }
         _ => None,
     }

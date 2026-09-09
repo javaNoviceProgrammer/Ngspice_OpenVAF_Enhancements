@@ -1525,7 +1525,26 @@ nupa_substitute(dico_t *dico, const char *s, char **lp)
             } else {
                 err = evaluate_expr(dico, &qstr, s, kptr);
                 if (err) {
-                    err = message(dico, "Cannot compute substitute\n");
+                    /* Enhancement-590: `s=b` on a card is read as the expression
+                       {b}; when the fragment is a bare word, say the two things
+                       it could have been meant as, instead of only
+                       "Undefined parameter [b]" and "Cannot compute substitute". */
+                    const char *b = s, *e = kptr;
+                    bool ident;
+                    while (b < e && isspace_c(*b))
+                        b++;
+                    while (e > b && isspace_c(e[-1]))
+                        e--;
+                    ident = (b < e) && alfa(*b);
+                    for (const char *q = b + 1; ident && q < e; q++)
+                        ident = alfanum(*q);
+                    if (ident)
+                        err = message(dico,
+                                      "Cannot compute substitute: '%.*s' is not a .param name; "
+                                      "if it is meant as a string value, quote it: \"%.*s\"\n",
+                                      (int) (e - b), b, (int) (e - b), b);
+                    else
+                        err = message(dico, "Cannot compute substitute\n");
                     goto Lend;
                 }
             }

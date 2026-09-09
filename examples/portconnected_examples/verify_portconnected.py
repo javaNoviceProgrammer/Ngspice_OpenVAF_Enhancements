@@ -140,7 +140,7 @@ def main():
         ("vector_port.va", "'p' requires a bit-select [i]"),
         ("not_a_port.va", "expected a port reference but no direction was declared for net 'mid'"),
         ("not_a_port.va", "expected net reference but found real value"),
-        ("in_function.va", "'a' was not found in the current scope"),
+        ("in_function.va", "'a' cannot be used inside an analog function: it is a node of the enclosing module"),
         ("constant_context.va", "system function '$port_connected' is not allowed in constants"),
     ):
         r, log = refused(src, needle)

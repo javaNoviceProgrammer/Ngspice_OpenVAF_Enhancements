@@ -163,6 +163,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                         message: err.message(),
                     }])
                     .with_message(err.to_string())
+                    .with_notes(err.notes()) // Enhancement-590
             }
             InferenceDiagnostic::ArgCntMismatch { expected, found, expr, exact } => {
                 let src = self.parse.to_file_span(

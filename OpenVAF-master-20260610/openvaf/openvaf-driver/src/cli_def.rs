@@ -324,6 +324,13 @@ fn lint_arg(lvl: LintLevel) -> Arg {
     };
 
     let all_lints = builtin_lints::ALL.iter().map(|lint| PossibleValue::new(lint.name));
+    // Enhancement-590: the id a diagnostic prints (`warning[L022]`) is accepted
+    // too; the names stay the documented spelling, so the ids are hidden.
+    let lint_ids = builtin_lints::ALL.iter().map(|lint| {
+        let id: &'static str =
+            Box::leak(format!("L{:03}", lint.documentation_id).into_boxed_str());
+        PossibleValue::new(id).hide(true)
+    });
 
     arg.num_args(1)
         .action(ArgAction::Append)
@@ -336,7 +343,8 @@ fn lint_arg(lvl: LintLevel) -> Arg {
                 PossibleValue::new("errors").help("all lints whose lvl is set to deny"),
             ]
             .into_iter()
-            .chain(all_lints),
+            .chain(all_lints)
+            .chain(lint_ids),
         ))
         .required(false)
         .hide_possible_values(true)

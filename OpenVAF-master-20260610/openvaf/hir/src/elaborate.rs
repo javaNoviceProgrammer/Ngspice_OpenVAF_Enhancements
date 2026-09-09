@@ -1868,6 +1868,73 @@ fn check_no_genvar_left_in_analog(rendered: &str, genvars: &[String]) -> anyhow:
     Ok(())
 }
 
+/// Enhancement-590: an instance name is unique in its module and does not reuse
+/// the name of a net, parameter, variable, branch, function or genvar. Both
+/// forms compiled without a word: a second instance `l2` surfaced later as
+/// "'l2__r' was already declared" (its mangled parameter), and `electrical l1;
+/// leafx l1(p, n);` was accepted outright. Checked on the source, before the
+/// instantiations are rewritten out of it.
+fn check_instance_name_collisions(module_ast: &ast::ModuleDecl) -> anyhow::Result<()> {
+    let module =
+        module_ast.name().map(|n| n.syntax().text().to_string()).unwrap_or_else(|| "?".into());
+    let mut others: HashSet<String> = HashSet::new();
+    for item in module_ast.module_items() {
+        let mut push = |n: String| {
+            others.insert(n);
+        };
+        match item {
+            ast::ModuleItem::NetDecl(decl) => {
+                decl.names().for_each(|n| push(n.syntax().text().to_string()))
+            }
+            ast::ModuleItem::VarDecl(decl) => decl
+                .vars()
+                .filter_map(|v| v.name())
+                .for_each(|n| push(n.syntax().text().to_string())),
+            ast::ModuleItem::ParamDecl(decl) => decl
+                .paras()
+                .filter_map(|p| p.name())
+                .for_each(|n| push(n.syntax().text().to_string())),
+            ast::ModuleItem::BranchDecl(decl) => {
+                decl.names().for_each(|n| push(n.syntax().text().to_string()))
+            }
+            ast::ModuleItem::AliasParam(decl) => {
+                if let Some(n) = decl.name() {
+                    push(n.syntax().text().to_string());
+                }
+            }
+            ast::ModuleItem::Function(fun) => {
+                if let Some(n) = fun.name() {
+                    push(n.syntax().text().to_string());
+                }
+            }
+            ast::ModuleItem::GenvarDecl(decl) => {
+                decl.names().for_each(|n| push(n.syntax().text().to_string()))
+            }
+            _ => {}
+        }
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    for item in module_ast.module_items() {
+        if let ast::ModuleItem::Instantiation(inst) = item {
+            for unit in inst.instance_units() {
+                let Some(name) = unit.name() else { continue };
+                let name = name.syntax().text().to_string();
+                if !seen.insert(name.clone()) {
+                    anyhow::bail!("instance '{name}' is declared twice in module '{module}'");
+                }
+                if others.contains(&name) {
+                    anyhow::bail!(
+                        "instance '{name}' has the same name as a net, parameter, variable, \
+                         branch, function or genvar of module '{module}'; the identifiers \
+                         of one module are unique"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn render_module_with_generates(module_ast: &ast::ModuleDecl) -> anyhow::Result<String> {
     let has_generate = module_ast.module_items().any(|it| {
         matches!(it, ast::ModuleItem::GenerateFor(_) | ast::ModuleItem::GenvarDecl(_)
@@ -2988,6 +3055,13 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
 
     let ast_id_map = db.ast_id_map(root_file);
     let parse = db.parse(root_file);
+    // Enhancement-590: name collisions are judged on the source, where the
+    // instantiation statements still exist
+    for item in parse.tree().items() {
+        if let ast::Item::ModuleDecl(module_ast) = item {
+            check_instance_name_collisions(&module_ast)?;
+        }
+    }
     let by_name: HashMap<Name, ItemTreeId<TreeModule>> =
         tree.data.modules.iter_enumerated().map(|(id, m)| (m.name.clone(), id)).collect();
 
