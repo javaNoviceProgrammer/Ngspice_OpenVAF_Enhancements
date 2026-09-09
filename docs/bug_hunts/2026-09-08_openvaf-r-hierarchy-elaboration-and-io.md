@@ -235,6 +235,10 @@ and the precision clips it. `sens` output names the same parameters in full
 30-level hierarchy chain's parameters (`a__a__a__...__r`) all display as
 `a__a__a__a_`, indistinguishable from one another.
 
+**Status (2026-09-09):** resolved by Enhancement-589. The widths are decided per
+table from the names it prints and nothing is truncated; `showwidth_examples`
+19 of 19 per solver, sweep 484 of 484.
+
 ## F8 — smaller diagnostic slips
 
 - **Non-ASCII identifier** (`real réal;`): `error: encountered unexpected token!` and

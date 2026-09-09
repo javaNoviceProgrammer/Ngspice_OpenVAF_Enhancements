@@ -363,6 +363,88 @@ printdesc(IFparm p, bool print_type, bool print_flags, bool csv)
 
 static int count;
 
+/* Enhancement-589: the table's two widths, decided per batch of devices instead
+   of fixed at LEFT_WIDTH / DEV_WIDTH. The fixed widths were also PRECISIONS
+   ("%*.*s"), so a parameter name longer than 11 characters, or an instance,
+   model or string value longer than 21, was silently cut: `averyveryverylongname`
+   listed as `averyveryve`, a hierarchical OSDI child's `a__a__a__a__r` as
+   `a__a__a__a_`, indistinguishable from its neighbours. Now the name column is as
+   wide as the longest name it will print, the device columns as wide as the
+   longest instance or model name in the batch, and nothing is ever truncated --
+   a text cell that is still wider than its column overflows it rather than lose
+   characters. `count` (devices per row) follows from the widths so the table
+   still fits `width` when it can; a name wider than the screen gets one column. */
+static int leftw = LEFT_WIDTH;
+static int colw = DEV_WIDTH;
+static int name_max;
+
+static int
+measure_name(dgen *dg, IFparm *p, int i)
+{
+    NG_IGNORE(p);
+    NG_IGNORE(i);
+    if (dg->instance && (int) strlen(dg->instance->GENname) > name_max)
+        name_max = (int) strlen(dg->instance->GENname);
+    if (dg->model && (int) strlen(dg->model->GENmodName) > name_max)
+        name_max = (int) strlen(dg->model->GENmodName);
+    return 0;
+}
+
+static void
+show_set_widths(dgen *dg, int screen_width, int param_flag, wordlist *params)
+{
+    int      i, xcount, flags;
+    IFparm  *plist;
+    wordlist *w;
+
+    leftw = LEFT_WIDTH;
+    colw = DEV_WIDTH;
+
+    /* a device type may have no model (or instance) parameter table at all;
+       the caller skips such a batch, but the widths are set before it looks */
+    if (dg->flags & DGEN_INSTANCE) {
+        xcount = ft_sim->devices[dg->dev_type_no]->numInstanceParms
+            ? *ft_sim->devices[dg->dev_type_no]->numInstanceParms : 0;
+        plist = ft_sim->devices[dg->dev_type_no]->instanceParms;
+    } else {
+        xcount = ft_sim->devices[dg->dev_type_no]->numModelParms
+            ? *ft_sim->devices[dg->dev_type_no]->numModelParms : 0;
+        plist = ft_sim->devices[dg->dev_type_no]->modelParms;
+    }
+
+    /* the same filter param_forall_old applies, so the column fits exactly the
+       names that will be printed */
+    flags = param_flag ? param_flag : DGEN_DEFPARAMS;
+    if (param_flag || !params)
+        for (i = 0; i < xcount; i++)
+            if ((plist[i].dataType & IF_ASK)
+                && !(plist[i].dataType & IF_REDUNDANT)
+                && ((plist[i].dataType & IF_SET) || dg->ckt->CKTrhsOld)
+                && (!(plist[i].dataType & IF_UNINTERESTING) || (flags == DGEN_ALLPARAMS))
+                && (int) strlen(plist[i].keyword) > leftw)
+                leftw = (int) strlen(plist[i].keyword);
+
+    for (w = params; w; w = w->wl_next)
+        if ((int) strlen(w->wl_word) > leftw)
+            leftw = (int) strlen(w->wl_word);
+
+    count = (screen_width - leftw) / (colw + 1);
+    if (count < 1)
+        count = 1;
+
+    /* the batch is the next `count` devices of this type; if one of their names
+       is wider than a column, widen the columns and, with fewer of them fitting
+       the screen, shorten the batch -- names can only get shorter that way */
+    name_max = 0;
+    dgen_for_n(dg, count, measure_name, NULL, 0);
+    if (name_max > colw) {
+        colw = name_max;
+        count = (screen_width - leftw) / (colw + 1);
+        if (count < 1)
+            count = 1;
+    }
+}
+
 /* Enhancement-493: `showmod <model name>` could not find the model.
  *
  * The device generator's grammar reads a bare word as an INSTANCE name, and only
@@ -460,6 +542,8 @@ all_show(wordlist *wl, int mode)
         screen_width = DEF_WIDTH;
     count = (screen_width - LEFT_WIDTH) / (DEV_WIDTH + 1);
     count = 1;
+    leftw = LEFT_WIDTH;     /* Enhancement-589: this layout keeps the fixed widths */
+    colw = DEV_WIDTH;
 
     n = 0;
     do {
@@ -703,6 +787,7 @@ all_show_old(wordlist *wl, int mode, int quiet)
              dg; dgen_nth_next(&dg, count))
         {
             instances = 1;
+            show_set_widths(dg, screen_width, param_flag, params);   /* Enhancement-589 */
             if (dg->flags & DGEN_INSTANCE) {
                 instances = 2;
                 fprintf(cp_out, " %s: %s\n",
@@ -712,7 +797,7 @@ all_show_old(wordlist *wl, int mode, int quiet)
 
                 i = 0;
                 do {
-                    fprintf(cp_out, "%*s", LEFT_WIDTH, "device");
+                    fprintf(cp_out, "%*s", leftw, "device");
                     j = dgen_for_n(dg, count, printstr_n, NULL, i);
                     i += 1;
                     fprintf(cp_out, "\n");
@@ -721,7 +806,7 @@ all_show_old(wordlist *wl, int mode, int quiet)
                 if (ft_sim->devices[dg->dev_type_no]->numModelParms) {
                     i = 0;
                     do {
-                        fprintf(cp_out, "%*s", LEFT_WIDTH, "model");
+                        fprintf(cp_out, "%*s", leftw, "model");
                         j = dgen_for_n(dg, count, printstr_m, NULL, i);
                         i += 1;
                         fprintf(cp_out, "\n");
@@ -744,7 +829,7 @@ all_show_old(wordlist *wl, int mode, int quiet)
                 n += 1;
                 i = 0;
                 do {
-                    fprintf(cp_out, "%*s", LEFT_WIDTH, "model");
+                    fprintf(cp_out, "%*s", leftw, "model");
                     j = dgen_for_n(dg, count, printstr_m, NULL, i);
                     i += 1;
                     fprintf(cp_out, "\n");
@@ -785,9 +870,9 @@ printstr_n(dgen *dg, IFparm *p, int i)
     NG_IGNORE(i);
 
     if (dg->instance)
-        fprintf(cp_out, " %*.*s", DEV_WIDTH, DEV_WIDTH, dg->instance->GENname);
+        fprintf(cp_out, " %*s", colw, dg->instance->GENname);
     else
-        fprintf(cp_out, " %*s", DEV_WIDTH, "<\?\?\?\?\?\?\?>");
+        fprintf(cp_out, " %*s", colw, "<\?\?\?\?\?\?\?>");
     return 0;
 }
 
@@ -799,9 +884,9 @@ printstr_m(dgen *dg, IFparm *p, int i)
     NG_IGNORE(i);
 
     if (dg->model)
-        fprintf(cp_out, " %*.*s", DEV_WIDTH, DEV_WIDTH, dg->model->GENmodName);
+        fprintf(cp_out, " %*s", colw, dg->model->GENmodName);
     else
-        fprintf(cp_out, " %*s", DEV_WIDTH, "<\?\?\?\?\?\?\?>");
+        fprintf(cp_out, " %*s", colw, "<\?\?\?\?\?\?\?>");
     return 0;
 }
 
@@ -864,10 +949,9 @@ param_forall_old(dgen *dg, int flags)
             j = 0;
             do {
                 if (!j)
-                    fprintf(cp_out, "%*.*s", LEFT_WIDTH, LEFT_WIDTH,
-                            plist[i].keyword);
+                    fprintf(cp_out, "%*s", leftw, plist[i].keyword);
                 else
-                    fprintf(cp_out, "%*.*s", LEFT_WIDTH, LEFT_WIDTH, " ");
+                    fprintf(cp_out, "%*s", leftw, " ");
                 k = dgen_for_n(dg, count, printvals_old, (plist + i), j);
                 fprintf(cp_out, "\n");
                 j += 1;
@@ -906,9 +990,9 @@ listparam(wordlist *p, dgen *dg)
             j = 0;
             do {
                 if (!j)
-                    fprintf(cp_out, "%*.*s", LEFT_WIDTH, LEFT_WIDTH, p->wl_word);
+                    fprintf(cp_out, "%*s", leftw, p->wl_word);
                 else
-                    fprintf(cp_out, "%*.*s", LEFT_WIDTH, LEFT_WIDTH, " ");
+                    fprintf(cp_out, "%*s", leftw, " ");
                 k = dgen_for_n(dg, count, printvals_old, (plist + i), j);
                 fprintf(cp_out,"\n");
                 j += 1;
@@ -917,9 +1001,9 @@ listparam(wordlist *p, dgen *dg)
             j = 0;
             do {
                 if (!j)
-                    fprintf(cp_out, "%*.*s", LEFT_WIDTH, LEFT_WIDTH, p->wl_word);
+                    fprintf(cp_out, "%*s", leftw, p->wl_word);
                 else
-                    fprintf(cp_out, "%*s", LEFT_WIDTH, " ");
+                    fprintf(cp_out, "%*s", leftw, " ");
                 k = dgen_for_n(dg, count, bogus1, NULL, j);
                 fprintf(cp_out, "\n");
                 j += 1;
@@ -939,9 +1023,9 @@ listparam(wordlist *p, dgen *dg)
         j = 0;
         do {
             if (!j)
-                fprintf(cp_out, "%*.*s", LEFT_WIDTH, LEFT_WIDTH, p->wl_word);
+                fprintf(cp_out, "%*s", leftw, p->wl_word);
             else
-                fprintf(cp_out, "%*s", LEFT_WIDTH, " ");
+                fprintf(cp_out, "%*s", leftw, " ");
             k = dgen_for_n(dg, count, bogus2, NULL, j);
             fprintf(cp_out, "\n");
             j += 1;
@@ -957,7 +1041,7 @@ bogus1(dgen *dg, IFparm *p, int i)
     NG_IGNORE(p);
     NG_IGNORE(i);
 
-    fprintf(cp_out, " %*s", DEV_WIDTH, "---------");
+    fprintf(cp_out, " %*s", colw, "---------");
     return 0;
 }
 
@@ -969,7 +1053,7 @@ bogus2(dgen *dg, IFparm *p, int i)
     NG_IGNORE(p);
     NG_IGNORE(i);
 
-    fprintf(cp_out, " %*s", DEV_WIDTH, "?????????");
+    fprintf(cp_out, " %*s", colw, "?????????");
     return 0;
 }
 
@@ -1085,9 +1169,9 @@ printvals_old(dgen *dg, IFparm *p, int i)
 
     if (i >= n) {
         if (i == 0)
-            fprintf(cp_out, "         -");
+            fprintf(cp_out, " %*s", colw, "-");
         else
-            fprintf(cp_out, "          ");
+            fprintf(cp_out, " %*s", colw, "");
         return 0;
     }
 
@@ -1097,54 +1181,54 @@ printvals_old(dgen *dg, IFparm *p, int i)
         /* va: ' ' is no flag for %s */
         switch ((p->dataType & IF_VARTYPES) & ~IF_VECTOR) {
         case IF_FLAG:
-            fprintf(cp_out, " % *d", DEV_WIDTH, val.v.vec.iVec[i]);
+            fprintf(cp_out, " % *d", colw, val.v.vec.iVec[i]);
             break;
         case IF_INTEGER:
-            fprintf(cp_out, " % *d", DEV_WIDTH, val.v.vec.iVec[i]);
+            fprintf(cp_out, " % *d", colw, val.v.vec.iVec[i]);
             break;
         case IF_REAL:
-            fprintf(cp_out, " % *.6g", DEV_WIDTH, val.v.vec.rVec[i]);
+            fprintf(cp_out, " % *.6g", colw, val.v.vec.rVec[i]);
             break;
         case IF_COMPLEX:
             if (!(i % 2))
-                fprintf(cp_out, " % *.6g", DEV_WIDTH, val.v.vec.cVec[i / 2].real);
+                fprintf(cp_out, " % *.6g", colw, val.v.vec.cVec[i / 2].real);
             else
-                fprintf(cp_out, " % *.6g", DEV_WIDTH, val.v.vec.cVec[i / 2].imag);
+                fprintf(cp_out, " % *.6g", colw, val.v.vec.cVec[i / 2].imag);
             break;
         case IF_STRING:
-            fprintf(cp_out, " %*.*s", DEV_WIDTH, DEV_WIDTH, val.v.vec.sVec[i]);
+            fprintf(cp_out, " %*s", colw, val.v.vec.sVec[i]);
             break;
         case IF_INSTANCE:
-            fprintf(cp_out, " %*.*s", DEV_WIDTH, DEV_WIDTH, val.v.vec.uVec[i]);
+            fprintf(cp_out, " %*s", colw, val.v.vec.uVec[i]);
             break;
         default:
-            fprintf(cp_out, " %*.*s", DEV_WIDTH, DEV_WIDTH, " ******** ");
+            fprintf(cp_out, " %*s", colw, " ******** ");
         }
     } else {
         switch ((p->dataType & IF_VARTYPES) & ~IF_VECTOR) {
         case IF_FLAG:
-            fprintf(cp_out, " % *d", DEV_WIDTH, val.iValue);
+            fprintf(cp_out, " % *d", colw, val.iValue);
             break;
         case IF_INTEGER:
-            fprintf(cp_out, " % *d", DEV_WIDTH, val.iValue);
+            fprintf(cp_out, " % *d", colw, val.iValue);
             break;
         case IF_REAL:
-            fprintf(cp_out, " % *.6g", DEV_WIDTH, val.rValue);
+            fprintf(cp_out, " % *.6g", colw, val.rValue);
             break;
         case IF_COMPLEX:
             if (i % 2)
-                fprintf(cp_out, " % *.6g", DEV_WIDTH, val.cValue.real);
+                fprintf(cp_out, " % *.6g", colw, val.cValue.real);
             else
-                fprintf(cp_out, " % *.6g", DEV_WIDTH, val.cValue.imag);
+                fprintf(cp_out, " % *.6g", colw, val.cValue.imag);
             break;
         case IF_STRING:
-            fprintf(cp_out, " %*.*s", DEV_WIDTH, DEV_WIDTH, val.sValue);
+            fprintf(cp_out, " %*s", colw, val.sValue);
             break;
         case IF_INSTANCE:
-            fprintf(cp_out, " %*.*s", DEV_WIDTH, DEV_WIDTH, val.uValue);
+            fprintf(cp_out, " %*s", colw, val.uValue);
             break;
         default:
-            fprintf(cp_out, " %*.*s", DEV_WIDTH, DEV_WIDTH, " ******** ");
+            fprintf(cp_out, " %*s", colw, " ******** ");
         }
     }
 

@@ -1,0 +1,25 @@
+// Enhancement-589: names for the `show` / `showmod` width test.
+//   averyveryverylongmodelparameter   31 characters, a model parameter
+//   averyveryverylonginstanceparam    30 characters, an instance parameter
+//   l1__deep_parameter_name_in_child  32 characters after hierarchy mangling
+//   label_string                      a string value longer than 21 characters
+`include "disciplines.vams"
+
+module deepleaf(p, n);
+inout p, n; electrical p, n;
+parameter real deep_parameter_name_in_child = 1k;
+analog I(p,n) <+ V(p,n) / deep_parameter_name_in_child;
+endmodule
+
+module showwidth(p, n);
+inout p, n; electrical p, n;
+parameter real averyveryverylongmodelparameter = 1k;
+parameter real twelve_chars = 2k;
+(* type="instance" *) parameter real averyveryverylonginstanceparam = 4k;
+parameter string label_string = "short";
+parameter real w[0:2] = '{1, 2, 3};
+deepleaf l1(p, n);
+analog I(p,n) <+ V(p,n) / averyveryverylongmodelparameter
+              + V(p,n) / twelve_chars
+              + V(p,n) / averyveryverylonginstanceparam;
+endmodule
