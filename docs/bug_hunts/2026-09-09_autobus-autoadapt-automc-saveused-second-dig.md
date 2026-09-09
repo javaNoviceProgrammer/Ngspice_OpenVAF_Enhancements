@@ -64,6 +64,10 @@ control block and in the dot cards E-572 added. The same textual scan is what ma
 `v()` inside a quoted `-track` string or an `if` condition work, so the fix is the list
 of prefixes, not the method.
 
+**Status (2026-09-09):** resolved by Enhancement-591. The scan registers the
+`vm`/`vp`/`vr`/`vi`/`vdb`/`vg` forms, one or two nodes, as the plain accessor of each
+node; `saveforms_examples` 16 of 16 per solver, sweep 486 of 486.
+
 ## F3 — a bit-level third touch is silent
 
 `N1 x s1 bm` and `N2 x s2 bm` share the 5-bit bus `x`; with `adapter=am5` (a 5-bit

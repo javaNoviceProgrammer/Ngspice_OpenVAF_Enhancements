@@ -13,6 +13,7 @@ Modified: 2000 AlansFixes
 #include "ngspice/cpdefs.h"
 #include "ngspice/ftedefs.h"
 #include "ngspice/dstring.h"
+#include "ngspice/stringutil.h"
 #include "ngspice/dvec.h"
 #include "ngspice/fteinp.h"
 #include "ngspice/sim.h"
@@ -247,30 +248,89 @@ static void e469_scan_refs(const char *line, wordlist **wl)
             p++;
             continue;
         }
-        /* v( or i( preceded by a non-identifier character */
+        /* v( or i( preceded by a non-identifier character.
+         *
+         * Enhancement-591: and the accessor spellings cpitf.c defines as
+         * aliases of v() -- vm( vp( vr( vi( vdb( vg(, in either case, one or
+         * two nodes -- which name the same vectors and
+         * were invisible here. `print v(in) vdb(out)` after an `ac` saved `in`
+         * alone and `out` was "not available"; `.meas ac gain find vdb(out)`
+         * failed "no such vector"; and a block that used ONLY `vm(out)` worked
+         * by accident, because the scan found nothing and the option stood
+         * down (F2 of the 2026-09-09 dig). A suffixed form is registered as
+         * the plain accessor of each node it names, `vdb(a,b)` as `v(a)` and
+         * `v(b)`, which is what `save` understands; the plain forms keep their
+         * verbatim registration. */
         if ((*p == 'v' || *p == 'V' || *p == 'i' || *p == 'I') &&
-            p[1] == '(' &&
             (p == line || (!isalnum_c(p[-1]) && p[-1] != '_'))) {
-            const char *q = p + 2;
-            int depth = 1;
-            while (*q && depth) {
-                if (*q == '(')
-                    depth++;
-                else if (*q == ')')
-                    depth--;
-                if (depth)
-                    q++;
-            }
-            if (*q == ')') {
-                char buf[256];
-                size_t n = (size_t) (q + 1 - p);
-                if (n < sizeof buf) {
-                    memcpy(buf, p, n);
-                    buf[n] = '\0';
-                    e469_add(wl, buf);
+            /* cpitf.c's alias table: vm vp vr vi vdb vg of v(); i() has none */
+            static const char *const suffixes[] = { "", "m", "p", "r", "i", "db", "g" };
+            size_t k, slen = 0;
+            int found = 0;
+            size_t nsuf = (*p == 'v' || *p == 'V') ? sizeof suffixes / sizeof *suffixes : 1;
+            for (k = 0; k < nsuf; k++) {
+                size_t l = strlen(suffixes[k]);
+                if ((l == 0 || ciprefix(suffixes[k], p + 1)) && p[1 + l] == '(') {
+                    slen = l;
+                    found = 1;
+                    break;
                 }
-                p = q + 1;
-                continue;
+            }
+            if (found) {
+                const char *open = p + 1 + slen;      /* the '(' */
+                const char *q = open + 1;
+                int depth = 1;
+                while (*q && depth) {
+                    if (*q == '(')
+                        depth++;
+                    else if (*q == ')')
+                        depth--;
+                    if (depth)
+                        q++;
+                }
+                if (*q == ')') {
+                    char buf[256];
+                    if (slen == 0) {
+                        size_t n = (size_t) (q + 1 - p);
+                        if (n < sizeof buf) {
+                            memcpy(buf, p, n);
+                            buf[n] = '\0';
+                            e469_add(wl, buf);
+                        }
+                    } else {
+                        /* each top-level comma-separated node as <v|i>(node) */
+                        const char *a = open + 1;
+                        while (a < q) {
+                            const char *b = a;
+                            int d = 0;
+                            while (b < q && !(d == 0 && *b == ',')) {
+                                if (*b == '(')
+                                    d++;
+                                else if (*b == ')')
+                                    d--;
+                                b++;
+                            }
+                            while (a < b && isspace_c(*a))
+                                a++;
+                            {
+                                const char *e = b;
+                                while (e > a && isspace_c(e[-1]))
+                                    e--;
+                                if (e > a && (size_t) (e - a) + 4 < sizeof buf) {
+                                    buf[0] = *p;
+                                    buf[1] = '(';
+                                    memcpy(buf + 2, a, (size_t) (e - a));
+                                    buf[2 + (e - a)] = ')';
+                                    buf[3 + (e - a)] = '\0';
+                                    e469_add(wl, buf);
+                                }
+                            }
+                            a = b + 1;
+                        }
+                    }
+                    p = q + 1;
+                    continue;
+                }
             }
         }
         p++;
