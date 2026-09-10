@@ -1967,7 +1967,14 @@ name_eq(char *n1, char *n2)
         n2 = buf2;
     }
 
-    if (strcmp(n1, n2) == 0)
+    /* Enhancement-594: compare without regard to case. The deck reader
+     * lowercases a `save` name, but an analysis may publish a vector in mixed
+     * case -- the sp analysis's S_1_1, Y_1_1, Z_1_1, Rbase, NF, SOpt, NFmin
+     * and Rn -- so `save S_2_1` matched nothing ("nothing of that name is in
+     * this analysis") while `print S_2_1` found the vector, because findvec()
+     * already compares without case. Node names are lowercase throughout, so
+     * nothing that matched before matches differently now. */
+    if (cieq(n1, n2))
         return TRUE;
 
     /* Enhancement-428: accept the obvious spelling of an internal node inside a
@@ -1980,11 +1987,11 @@ name_eq(char *n1, char *n2)
         bool eq = FALSE;
         char *alt = cp_hier_devname(n1);
         if (alt) {
-            eq = (strcmp(alt, n2) == 0);
+            eq = cieq(alt, n2);
             tfree(alt);
         }
         if (!eq && (alt = cp_hier_devname(n2)) != NULL) {
-            eq = (strcmp(n1, alt) == 0);
+            eq = cieq(n1, alt);
             tfree(alt);
         }
         return eq;

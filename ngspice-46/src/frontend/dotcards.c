@@ -112,6 +112,13 @@ ft_dotsaves(void)
  *   - a control block with no output command at all, where there is nothing
  *     to infer from.
  * In each case the run is left exactly as it would have been.
+ *
+ * WHAT IT DOES NOT PRUNE (Enhancement-594): an analysis whose plot holds no
+ * node. A noise run publishes onoise_spectrum, inoise_spectrum and the
+ * totals; an sp run publishes S_i_j, Y_i_j, Z_i_j and Rbase. The set inferred
+ * above can never name those, so ft_saveused() also registers a `save all`
+ * restricted to each of the two -- invisible to every other analysis, so a
+ * transient beside them is pruned exactly as before.
  */
 
 static const char *e469_out_cmds[] = {
@@ -532,9 +539,34 @@ void ft_saveused(wordlist *controls)
      * unmatched-name warning for the names a deck actually asked for. */
     ft_save_mark_auto(1);
     com_save(saves);
+    /* Enhancement-594: an analysis whose plot holds no node at all. A noise
+     * run publishes onoise_spectrum, inoise_spectrum and the totals (and the
+     * per-generator contributions when asked for); an sp run publishes S_i_j,
+     * Y_i_j, Z_i_j, Rbase and the noise figures. Nothing a control block
+     * names is one of those -- the scan took `out` from the `noise v(out) v1
+     * ...` line itself and `in` from a `print v(in)` -- so the inferred set
+     * matched nothing of theirs and beginPlot() refused the analysis
+     * outright: "no data saved for Noise analysis; analysis not run", on
+     * EVERY deck with a noise run, under an option whose one promise is that
+     * the deck still works. Stock ngspice says the same to a hand-written
+     * `save out` before a noise run; the author of that line can see it, the
+     * author of this option wrote no such line. So save everything for those
+     * two analyses: a `save all` restricted to one analysis is ignored by
+     * every other (beginPlot() marks it used and moves on), so a transient
+     * beside them stays pruned exactly as before, and what the two build is
+     * a frequency sweep of a handful of vectors -- nothing this option was
+     * made to shed. Registered whenever the option acts rather than on
+     * sight of a `noise` line, because the analysis can also arrive through
+     * a `.noise` card and `run`, or a loop the scan cannot follow. */
+    {
+        static wordlist all = { "all", NULL, NULL };
+        com_save2(&all, "NOISE");
+        com_save2(&all, "SP");
+    }
     ft_save_mark_auto(0);
     if (ft_ngdebug)
-        fprintf(stdout, "saveused: %d vector(s) kept\n", wl_length(saves));
+        fprintf(stdout, "saveused: %d vector(s) kept; a noise or sp analysis "
+                "keeps everything (its plot holds no node)\n", wl_length(saves));
     wl_free(saves);
 }
 

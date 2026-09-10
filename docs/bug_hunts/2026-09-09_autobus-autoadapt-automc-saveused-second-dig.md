@@ -50,6 +50,15 @@ difference is that here the user wrote no `save`; Enhancement-469's one promise 
 that the deck still works. `sens`, `pz` and `tf` are unaffected (their plots are not
 gated by the save list).
 
+**Status (2026-09-10):** resolved by Enhancement-594. Whenever the option acts it also
+registers a `save all` restricted to the noise analysis and one restricted to the sp
+analysis, which every other analysis ignores, so a transient beside them stays pruned.
+Two slips found under it are fixed too: `name_eq` compared a lowercased save name with
+the mixed-case `S_2_1` an sp run publishes (stock `save S_2_1` failed the same way),
+and the E-417 dedup in `ft_getSaves` dropped a second `save all` that differed only in
+its analysis restriction. Stock semantics are untouched: `save out` before `noise`
+still refuses the run.
+
 ## F2 — the scanner's vocabulary
 
 | block | result |

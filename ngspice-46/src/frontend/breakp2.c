@@ -191,12 +191,26 @@ osdi_expand_save(const char *nm, char ***names, int *count)
 
 /* Enhancement-417: is `nm` already among the first `n` entries? */
 static int
-save_already_present(const struct save_info *array, int n, const char *nm)
+save_already_present(const struct save_info *array, int n, const char *nm,
+                     const char *analysis)
 {
     int q;
-    for (q = 0; q < n; q++)
-        if (array[q].name && eq(array[q].name, (char *)nm))
-            return 1;
+    for (q = 0; q < n; q++) {
+        if (!array[q].name || !eq(array[q].name, (char *)nm))
+            continue;
+        /* Enhancement-594: the same name restricted to DIFFERENT analyses is
+         * two requests, not one. `save all` for the noise analysis beside
+         * `save all` for the sp analysis lost the second here, so an sp run
+         * under `.option saveused` was still pruned to nothing of its own.
+         * settrace() itself never merges `all` at insert time for the same
+         * reason; this pass, added for the `@dev[i_p]` expansion, must not
+         * merge what it kept apart. */
+        if ((array[q].analysis == NULL) != (analysis == NULL))
+            continue;
+        if (analysis && !cieq(array[q].analysis, analysis))
+            continue;
+        return 1;
+    }
     return 0;
 }
 
@@ -249,7 +263,8 @@ ft_getSaves(struct save_info **savesp)
             const char *lb;
 
             if (osdi_expand_save(d->db_nodename1, &tn, &nt) <= 0) {
-                if (!save_already_present(array, i, d->db_nodename1)) {
+                if (!save_already_present(array, i, d->db_nodename1,
+                                          d->db_analysis)) {
                     array[i].used = 0;
                     array[i].autosaved = d->db_auto;   /* Enhancement-496 */
                     array[i].analysis =
@@ -263,7 +278,7 @@ ft_getSaves(struct save_info **savesp)
             dev = copy_substring(d->db_nodename1 + 1, lb);
             for (k = 0; k < nt; k++) {
                 char *nm = tprintf("@%s[i_%s]", dev, tn[k]);
-                if (save_already_present(array, i, nm)) {
+                if (save_already_present(array, i, nm, d->db_analysis)) {
                     tfree(nm);
                 } else {
                     array[i].used = 0;
@@ -274,7 +289,8 @@ ft_getSaves(struct save_info **savesp)
                 }
                 tfree(tn[k]);
             }
-            if (nt == 2 && !save_already_present(array, i, d->db_nodename1)) {
+            if (nt == 2 && !save_already_present(array, i, d->db_nodename1,
+                                                       d->db_analysis)) {
                 /* Enhancement-417: the original spelling, copied rather than
                  * re-synthesized, so the bare entry stays byte-identical to
                  * what the deck (or inp_savecurrents) wrote. */
