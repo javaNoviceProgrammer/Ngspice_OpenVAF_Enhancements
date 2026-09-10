@@ -179,6 +179,9 @@ int  INPreportCtrlNodes(void);
    the control block or a dot card still refers to. */
 int  INPreportBusBases(CKTcircuit *ckt);
 int  INPadaptCheckControls(wordlist *controls, wordlist *dotcards);
+/* Enhancement-592: a `.ic`/`.nodeset` node that is a bit of a split node */
+int  INPadaptSplitOf(const char *name, const char **nf, const char **nr,
+                     const char **suffix);
 void INPpas3(
         CKTcircuit *, struct card *, INPtables *, TSKtask *, IFparm *, int);
 void INPpas4(CKTcircuit *, INPtables *);

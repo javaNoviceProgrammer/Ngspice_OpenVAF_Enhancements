@@ -92,6 +92,10 @@ adapter 1" is the fact.
 ignored"; the `.save v(x[2])` on the same deck prints E-572's "autoadapt split node
 'x' into 'x_f' and 'x_r' ... refer to x_f or x_r instead".
 
+**Status (2026-09-10):** F4 and F5 resolved by Enhancement-592 -- three messages for
+the three adapter faults, and `.ic`/`.nodeset` on a split bit name the split and
+offer `x_f[2]` / `x_r[2]`; `adaptmsg_examples` 10 of 10 per solver, sweep 487 of 487.
+
 ## Withdrawn and observations
 
 - **`v(x1.a[2])` after `X1 n0 n1 n2 n3 n4 b bs` is not a node** — a subcircuit formal is

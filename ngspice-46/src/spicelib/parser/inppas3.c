@@ -107,8 +107,16 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                     INPgetNetTok(&line,&nodename,1);
                     /* If node is not found, issue a warning, ignore the defective token */
                     if (INPtermSearch(ckt, &nodename, tab, &node1) != E_EXISTS) {
-                        fprintf(stderr,
-                            "Warning : Nodeset on non-existent node - %s, ignored\n", nodename);
+                        const char *nf, *nr, *sfx;
+                        /* Enhancement-592: a bit of a node autoadapt split */
+                        if (INPadaptSplitOf(nodename, &nf, &nr, &sfx))
+                            fprintf(stderr,
+                                "Warning: autoadapt split node '%.*s' into '%s' and '%s', so its bit '%s' no longer exists;\n"
+                                "         the .nodeset on it is ignored -- refer to %s%s or %s%s instead.\n",
+                                (int) (sfx - nodename), nodename, nf, nr, nodename, nf, sfx, nr, sfx);
+                        else
+                            fprintf(stderr,
+                                "Warning : Nodeset on non-existent node - %s, ignored\n", nodename);
                         fprintf(stderr,
                             "   Please check line %s\n\n", current->line);
                         FREE(name);
@@ -171,8 +179,16 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                     INPgetNetTok(&line,&nodename,1);
                     /* If node is not found, issue a warning, ignore the defective token */
                     if (INPtermSearch(ckt, &nodename, tab, &node1) != E_EXISTS) {
-                        fprintf(stderr,
-                            "Warning : IC on non-existent node - %s, ignored\n", nodename);
+                        const char *nf, *nr, *sfx;
+                        /* Enhancement-592: a bit of a node autoadapt split */
+                        if (INPadaptSplitOf(nodename, &nf, &nr, &sfx))
+                            fprintf(stderr,
+                                "Warning: autoadapt split node '%.*s' into '%s' and '%s', so its bit '%s' no longer exists;\n"
+                                "         the .ic on it is ignored -- refer to %s%s or %s%s instead.\n",
+                                (int) (sfx - nodename), nodename, nf, nr, nodename, nf, sfx, nr, sfx);
+                        else
+                            fprintf(stderr,
+                                "Warning : IC on non-existent node - %s, ignored\n", nodename);
                         fprintf(stderr,
                             "   Please check line %s\n\n", current->line);
                         FREE(name);

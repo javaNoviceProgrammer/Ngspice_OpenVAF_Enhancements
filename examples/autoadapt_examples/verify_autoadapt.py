@@ -177,7 +177,7 @@ check("[E-463] an adapter model that does not exist is reported",
       "not defined in this deck" in out, "")
 _rc, out = run(SHORT, "notadapter", opts=".option autobus\n.option autoadapt adapter=mx\n")
 check("[E-463] an adapter that is not two BUS ports is reported",
-      "exactly two bus ports" in out, "")
+      ("exactly two bus ports" in out or "has a port of width 1" in out), "")   # E-592 wording
 W2 = ("V1 in 0 dc 1\nRs0 in a[0] 1k\nRs1 in a[1] 1k\n"
       "Rg0 c[0] 0 100\nRg1 c[1] 0 100\nN1 a b m2\nN2 b c m2")
 _rc, out = run(W2, "width", ctl="op", opts=".option autobus\n" + AUTO)

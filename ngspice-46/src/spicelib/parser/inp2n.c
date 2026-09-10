@@ -444,6 +444,32 @@ static bool adapt_line_mentions(const char *line, const char *base)
     return FALSE;
 }
 
+/* Enhancement-592: is `name` a bit of a node autoadapt split -- `x[2]`, or
+ * KiCad-spelled `x_2_` -- and what are the two names to use instead? `.ic`
+ * and `.nodeset` resolve their nodes in pass 3, before INPadaptCheckControls
+ * looks at the surviving dot cards, so a `.ic v(x[2])=0.5` got only the
+ * generic "IC on non-existent node" while a `.save v(x[2])` got the split
+ * explained. The list is still intact in pass 3; this reads it. */
+int INPadaptSplitOf(const char *name, const char **nf, const char **nr,
+                    const char **suffix)
+{
+    struct adaptsplit *a;
+
+    if (!name)
+        return 0;
+    for (a = adaptsplits; a; a = a->next) {
+        size_t n = strlen(a->node);
+        if (strncmp(name, a->node, n) == 0 &&
+            (name[n] == '[' || (name[n] == '_' && isdigit_c(name[n + 1])))) {
+            *nf = a->nf;
+            *nr = a->nr;
+            *suffix = name + n;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int INPadaptCheckControls(wordlist *controls, wordlist *dotcards)
 {
     struct adaptsplit *a, *nx;
@@ -1211,11 +1237,32 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
             return;
         }
         anp = INPbusPorts(adev, astart, acnt, AUTOBUS_MAXPORT);
-        if (anp != 2 || acnt[0] < 2 || acnt[1] < 2 || acnt[0] != acnt[1]) {
+        /* Enhancement-592: one compound test printed one message for three
+         * different faults, and for a scalar or `[0:0]` adapter that message
+         * read "must have exactly two bus ports of equal width (found 2
+         * port(s), widths 1/1)" -- two ports, equal widths, refused. The rule
+         * it was enforcing is unstated there: autoadapt splits BUS nodes only
+         * (a shared scalar node is never adapted, E-463), so a port of width
+         * one has nothing it could sit in. Say which of the three it is. */
+        if (anp != 2) {
             fprintf(stderr, "Error: autoadapt: adapter model '%s' must have "
-                    "exactly two bus ports of equal width (found %d port(s), "
-                    "widths %d/%d).\n", amodel, anp,
-                    anp > 0 ? acnt[0] : 0, anp > 1 ? acnt[1] : 0);
+                    "exactly two bus ports (found %d).\n", amodel,
+                    anp < 0 ? 0 : anp);
+            return;
+        }
+        if (acnt[0] < 2 || acnt[1] < 2) {
+            fprintf(stderr, "Error: autoadapt: adapter model '%s' has a port of "
+                    "width 1 (widths %d/%d); autoadapt splits bus nodes only -- a "
+                    "shared scalar node is never adapted -- so a scalar or one-bit "
+                    "port has nothing it could sit in. Declare both ports as buses "
+                    "of the shared node's width, `inout [0:N-1] p, n;`.\n",
+                    amodel, acnt[0], acnt[1]);
+            return;
+        }
+        if (acnt[0] != acnt[1]) {
+            fprintf(stderr, "Error: autoadapt: adapter model '%s' has ports of "
+                    "different widths (%d and %d); both must be the shared bus's "
+                    "width.\n", amodel, acnt[0], acnt[1]);
             return;
         }
         adapt_width = acnt[0];
