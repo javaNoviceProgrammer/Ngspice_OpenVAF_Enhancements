@@ -466,7 +466,7 @@ CKTacLoad(CKTcircuit* ckt)
             if (error) return(error);
         }
     }
-    CKTdcpathStamp(ckt);                       /* Enhancement-575 */
+    CKTdcpathStamp(ckt, 1);                    /* Enhancement-575, 595 */
 
 #ifdef XSPICE
     /* gtri - begin - Put resistors to ground at all nodes. */

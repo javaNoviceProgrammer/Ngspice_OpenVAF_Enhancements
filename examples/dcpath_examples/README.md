@@ -31,3 +31,15 @@ python3 verify_dcpath.py
 ```
 
 37 checks per solver, all PASS.
+
+## Enhancement-595 — the hold outside DC
+
+By default (`dcpath=dc`) a node the DC walk misses but a reactive walk reaches — a
+node carried by a capacitor — is held at DC only and released in tran and ac, where the
+capacitor carries it; nothing leaks. A node no walk reaches (a current source into a
+lone node, an isolated transformer secondary) is held in every mode, and a released node
+whose diagonal is still zero in tran (a zero-valued capacitor, `zddt.va` with `c=0`)
+keeps the hold. `dcpath=all` is Enhancement-575's whole-run hold; `.option dcpathall`
+combines it with a value (`dcpath=1n dcpathall`). Section [9] pins these, and the AC of
+a capacitor-only node on both solvers, since Sparse read only the real part of the AC
+row before (an Enhancement-571 slip fixed here).

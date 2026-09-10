@@ -19,10 +19,19 @@ analysis, and the message names it.
   3. the four modes and the value: gmin (default), <G>, warn, error, off, nodcpath,
      a bare `dcpath`, and `.option gmin` moving hold AND junction where `dcpath=<G>`
      moves the hold alone
-  4. transient: the held node decays with C/gmin; `dcpath=warn` keeps it flat
+  4. transient: under the default (`dcpath=dc`, Enhancement-595) the held node is
+     released once the run leaves DC and stays flat; `dcpath=all` (Enhancement-575's
+     whole-run hold) decays with C/gmin; `dcpath=warn` is flat
   5. ac on a held node runs; `.option rshunt` keeps its own numbers (the walk stands
      down: every node has a path then)
   6. the message cap: five named, then a count
+  9. Enhancement-595, the hold outside DC: the message says which nodes are released;
+     a node with no reactive path (a current source into a lone node, an isolated
+     transformer secondary) is held in every mode; a zero-valued capacitor or a
+     ddt() with a zero coefficient keeps the hold in tran; ac at 0.1 Hz is the exact
+     divider under the default and the gmin-bent value under `dcpath=all`, on both
+     solvers (Sparse read only the real part of the AC row before this);
+     `dcpathall` combines with a value; an unknown word is refused by name
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
@@ -37,7 +46,7 @@ sys.path.insert(0, os.path.dirname(HERE))          # the examples/ dir (holds _s
 from _setup import VAF as OPENVAF, NG as NGSPICE
 from _setup import check_both_solvers as _check_both_solvers; _check_both_solvers(__file__)  # verify under BOTH KLU and Sparse solvers
 
-MODELS = ("vprobe", "vddt", "vres", "vrc", "th_rth", "th_pwr", "vdiff")
+MODELS = ("vprobe", "vddt", "vres", "vrc", "th_rth", "th_pwr", "vdiff", "zddt")
 
 
 def compile_va(m):
@@ -190,13 +199,17 @@ def main():
     check("`.option dcpath=1n` moves the hold alone: v(x)=1, the diode's leakage unchanged",
           near(v2.get("v(x)"), 1.0) and abs(v2.get("i(vd)", 0)) < 2e-12, f"v(x)={v2.get('v(x)')} i(vd)={v2.get('i(vd)')}")
 
-    print("[4] transient: the held node leaks with C/gmin")
+    print("[4] transient: released outside DC by default (E-595); `dcpath=all` leaks with C/gmin")
     tr = "v1 a 0 1\nr1 a 0 1k\nc1 a x 1p\nc2 x 0 1p\n.ic v(x)=1"
     ctl = "tran 0.01 0.5 uic\nmeas tran vx1 find v(x) at=0.1\nmeas tran vx2 find v(x) at=0.5"
-    out = ngspice(deck("decay", tr, ctl=ctl))
+    out = ngspice(deck("default flat", tr, ctl=ctl))
+    v = values(out)
+    check("default (dcpath=dc): the capacitor carries the node in tran, nothing leaks: v(x) stays at 1.5",
+          near(v.get("vx1"), 1.5, 1e-3) and near(v.get("vx2"), 1.5, 1e-3), f"vx1={v.get('vx1')} vx2={v.get('vx2')}")
+    out = ngspice(deck("decay", tr, ctl=ctl, opts=".option dcpath=all\n"))
     v = values(out)
     e1, e2 = 1.5 * math.exp(-0.1 / 2.0), 1.5 * math.exp(-0.5 / 2.0)
-    check("2 pF from 1.5 V (the source step couples 0.5 V in) through 1 pS, tau = 2 s: v(x)=1.4268 at 0.1 s, 1.1682 at 0.5 s",
+    check("dcpath=all: 2 pF from 1.5 V (the source step couples 0.5 V in) through 1 pS, tau = 2 s: v(x)=1.4268 at 0.1 s, 1.1682 at 0.5 s",
           near(v.get("vx1"), e1, 2e-3) and near(v.get("vx2"), e2, 2e-3), f"vx1={v.get('vx1')} vx2={v.get('vx2')}")
     out = ngspice(deck("flat", tr, ctl=ctl, opts=".option dcpath=warn\n"))
     v = values(out)
@@ -210,6 +223,54 @@ def main():
     out = ngspice(deck("rshunt", "v1 a 0 1\nr1 a b 1k\nb1 c 0 v=2*v(x)\nrc c 0 1k", prints="v(x) v(c)", opts=".option rshunt=1e12\n"))
     check("with `.option rshunt` every node has a path: the walk stands down, no message, 3 iterations",
           "no DC path" not in out and iters(out) is not None and iters(out) <= 5, f"iterations={iters(out)}")
+
+    print("[9] Enhancement-595: the hold outside DC")
+    cap = "v1 a 0 1\nr1 a 0 1k\nc1 a x 1p\nc2 x 0 1p"
+    RELEASED = "held at DC only -- tran and ac release it while a reactive path carries the node"
+    out = ngspice(deck("suffix", cap, prints="v(x)"))
+    check("the message says the node is released outside DC", HELD.format("x") + "; " + RELEASED in out, "")
+    out = ngspice(deck("all", cap, prints="v(x)", opts=".option dcpath=all\n"))
+    check("dcpath=all: the same message without the suffix", HELD.format("x") in out and RELEASED not in out, "")
+    out = ngspice(deck("dcpathall", cap, prints="v(x)", opts=".option dcpath=1n dcpathall\n"))
+    check("`.option dcpath=1n dcpathall`: the value and the whole-run hold combine",
+          "1e-09 S installed to provide one (.option dcpath)" in out and RELEASED not in out, "")
+    ctl = "tran 0.0001 0.005 uic\nmeas tran vx1 find v(x) at=1m\nmeas tran vx2 find v(x) at=2m"
+    out = ngspice(deck("dcpathall decay", tr, ctl=ctl, opts=".option dcpath=1n dcpathall\n"))
+    v = values(out)
+    check("...and the transient leaks with C/G, tau = 2 ms: 0.9098 at 1 ms, 0.5518 at 2 ms",
+          near(v.get("vx1"), 1.5 * math.exp(-0.5), 2e-3) and near(v.get("vx2"), 1.5 * math.exp(-1.0), 2e-3),
+          f"vx1={v.get('vx1')} vx2={v.get('vx2')}")
+    out = ngspice(deck("bogus", cap, prints="v(x)", opts=".option dcpath=bogus\n"))
+    check("an unknown word is refused by name and the default used",
+          "dcpath=bogus is not gmin, warn, error, off, dc, all or a conductance; using dcpath=gmin" in out
+          and HELD.format("x") in out, "")
+    src = "v1 in 0 1\nr1 in 0 1k\ni1 0 x 1p"
+    out = ngspice(deck("lone node tran", src, ctl="tran 1u 10u\nmeas tran vx find v(x) at=5u"))
+    check("a current source into a lone node has no reactive path: held in tran too, v(x) = 1 pA / 1 pS = 1 V, no suffix",
+          near(values(out).get("vx"), 1.0, 1e-3) and RELEASED not in out and SING not in out, f"vx={values(out).get('vx')}")
+    sec = "v1 in 0 dc 0 ac 1 sin(0 1 1k)\nr1 in a 1\nl1 a 0 1m\nl2 p q 1m\nk1 l1 l2 0.9\nc3 p q 1n"
+    out = ngspice(deck("secondary", sec, ctl="tran 10u 1m\nmeas tran vp find v(p) at=0.25m\nmeas tran vq find v(q) at=0.25m"))
+    v = values(out)
+    check("an isolated secondary with a capacitor across it is an island: p and q held in every mode, the transient runs symmetric",
+          HELD.format("p") in out and HELD.format("q") in out and RELEASED not in out and SING not in out
+          and v.get("vp") is not None and abs(v.get("vp", 0)) > 0.01 and near(v.get("vp"), -v.get("vq", 0), 1e-6),
+          f"vp={v.get('vp')} vq={v.get('vq')}")
+    zc = "v1 in 0 dc 1 sin(1 0.5 1k)\nr1 in a 1k\nc1 a x 0"
+    out = ngspice(deck("zero cap", zc, ctl="tran 10u 1m\nmeas tran vx find v(x) at=0.5m"))
+    check("a zero-valued capacitor to a lone node: released by the walk, but the tran stamp finds the diagonal zero and holds; no singular report",
+          SING not in out and near(values(out).get("vx"), 0.0, 1e-9) or (SING not in out and abs(values(out).get("vx", 1)) < 1e-9),
+          f"vx={values(out).get('vx')}")
+    zd = "v1 in 0 dc 1 sin(1 0.5 1k)\nr1 in a 1k\nn1 a x zm\n.model zm zddt c=0"
+    out = ngspice(deck("zero ddt", zd, ctl="tran 10u 1m\nmeas tran vx find v(x) at=0.5m", pre="pre_osdi zddt.osdi\n"))
+    check("an OSDI ddt() with a zero coefficient: the same, no singular report",
+          SING not in out and abs(values(out).get("vx", 1)) < 1e-9, f"vx={values(out).get('vx')}")
+    acd = "v1 a 0 dc 1 ac 1\nr1 a 0 1k\nc1 a x 1p\nc2 x 0 1p"
+    out = ngspice(deck("ac released", acd, ctl="ac lin 1 0.1 0.1", prints="vm(x)"))
+    check("ac at 0.1 Hz under the default: the exact divider 0.5 (released; the same under Sparse, which read only the real part of the row before)",
+          near(values(out).get("vm(x)"), 0.5, 1e-6) and SING not in out, f"{values(out).get('vm(x)')}")
+    out = ngspice(deck("ac held", acd, ctl="ac lin 1 0.1 0.1", prints="vm(x)", opts=".option dcpath=all\n"))
+    check("ac at 0.1 Hz under dcpath=all: 0.39124, the divider bent by 1 pS against 1.26 pS of 2 pF",
+          near(values(out).get("vm(x)"), 0.391239, 1e-4), f"{values(out).get('vm(x)')}")
 
     print("[8] OSDI voltage contributions: a branch to an implicit ground, and a branch between two nodes")
     out = ngspice(deck("osdi driven out", "v1 a 0 1\nn1 a c mp\n.model mp vprobe", prints="v(c)", pre="pre_osdi vprobe.osdi\n"))

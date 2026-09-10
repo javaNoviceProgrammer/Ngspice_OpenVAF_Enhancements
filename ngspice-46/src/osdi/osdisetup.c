@@ -543,7 +543,14 @@ static int dcpath_pair_cmp(const void *a, const void *b) {
 }
 
 void OSDIdcpathEdges(CKTcircuit *ckt, int type,
-                     void (*join)(void *, int, int), void *arg) {
+                     void (*join)(void *, int, int), void *arg, int reactive) {
+  /* Enhancement-595: with `reactive` set, an entry flagged REACT joins as
+   * well as one flagged RESIST -- the walk that decides whether a node the
+   * DC walk missed is carried by a capacitor in tran and ac. The symmetry
+   * rule is the same: a ddt() of a probed voltage is a dependency, not a
+   * path. */
+  const uint32_t want = reactive ? (JACOBIAN_ENTRY_RESIST | JACOBIAN_ENTRY_REACT)
+                                 : JACOBIAN_ENTRY_RESIST;
   GENmodel *gen_model = ckt->CKThead[type];
   OsdiRegistryEntry *entry;
   const OsdiDescriptor *descr;
@@ -577,7 +584,7 @@ void OSDIdcpathEdges(CKTcircuit *ckt, int type,
     uint32_t np = 0;
     for (i = 0; i < n; i++) {
       const OsdiJacobianEntry *e = &descr->jacobian_entries[i];
-      if (e->flags & JACOBIAN_ENTRY_RESIST) {
+      if (e->flags & want) {
         pairs[2 * np] = e->nodes.node_1;
         pairs[2 * np + 1] = e->nodes.node_2;
         np++;
@@ -588,7 +595,7 @@ void OSDIdcpathEdges(CKTcircuit *ckt, int type,
       const OsdiJacobianEntry *e = &descr->jacobian_entries[i];
       uint32_t key[2];
       sym[i] = 0;
-      if (!(e->flags & JACOBIAN_ENTRY_RESIST))
+      if (!(e->flags & want))
         continue;
       if (e->nodes.node_1 == e->nodes.node_2) {
         sym[i] = 1;                       /* a diagonal joins nothing new */
@@ -599,7 +606,8 @@ void OSDIdcpathEdges(CKTcircuit *ckt, int type,
       if (np && bsearch(key, pairs, np, 2 * sizeof(uint32_t), dcpath_pair_cmp))
         sym[i] = 1;
       if (ft_ngdebug)
-        fprintf(stderr, "OSDI: dcpath %s entry (%s, %s) flags %u%s\n", descr->name,
+        fprintf(stderr, "OSDI: dcpath%s %s entry (%s, %s) flags %u%s\n",
+                reactive ? " (reactive walk)" : "", descr->name,
                 descr->nodes[e->nodes.node_1].name, descr->nodes[e->nodes.node_2].name,
                 e->flags, sym[i] ? " -- a path" : " -- a dependency only");
     }
@@ -644,7 +652,8 @@ void OSDIdcpathEdges(CKTcircuit *ckt, int type,
       if (npart[k] == 1)
         toground[partner[k]] = 1;
       if (ft_ngdebug)
-        fprintf(stderr, "OSDI: dcpath %s flow node %s couples %u voltage node%s%s\n",
+        fprintf(stderr, "OSDI: dcpath%s %s flow node %s couples %u voltage node%s%s\n",
+                reactive ? " (reactive walk)" : "",
                 descr->name, descr->nodes[k].name, npart[k], npart[k] == 1 ? "" : "s",
                 npart[k] == 1 ? " -- a branch to ground" : "");
     }

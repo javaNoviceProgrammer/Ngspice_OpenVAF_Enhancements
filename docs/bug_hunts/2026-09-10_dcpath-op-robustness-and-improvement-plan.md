@@ -84,6 +84,15 @@ once the sweep has run with it for a while.
 **Risk.** Low. A node held at DC and released in tran starts the transient from a
 consistent op and keeps it; nothing else reads `CKTdcpathG`.
 
+**Status (2026-09-10):** done as Enhancement-595, with `dc` as the default. Two things the
+plan had not seen: a node with no reactive path at all (a current source into a lone node,
+an isolated secondary) must stay held in every mode, since `optran` runs as a transient, so
+a second walk over the reactive edges decides per node; and a zero-valued reactive element
+would leave a released node with an all-zero row, so the tran stamp keeps the hold where
+the diagonal is still exactly zero. Found on the way and fixed: under Sparse, E-571's AC
+zero-row hold read only the real part of the row, so every capacitor-only node was
+gmin-held in AC (0.391 against KLU's 0.500 at 0.1 Hz for 1 pF).
+
 ### 2. A MOSFET gate with a gate-current model is connected
 
 **What.** Probe 9: the table excludes any terminal whose name contains "gate", so a

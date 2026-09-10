@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+// Enhancement-595: a ddt() whose coefficient can be zero -- a parasitic
+// capacitor a parameter switches off. The Jacobian entry is flagged REACT
+// whatever the value, so the reactive walk takes it as a path; the tran
+// stamp then finds the node's diagonal still exactly zero and keeps the hold.
+module zddt(a, b);
+inout a, b; electrical a, b;
+parameter real c = 0 from [0:inf);
+analog I(a, b) <+ ddt(c * V(a, b));
+endmodule

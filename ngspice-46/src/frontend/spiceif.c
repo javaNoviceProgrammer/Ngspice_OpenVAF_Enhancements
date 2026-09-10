@@ -526,6 +526,7 @@ if_is_option(const char *name)
         "nosaveused", "noautobus", "noautoadapt", "noautomc", "noosdimc",
         "noosdicache",               /* Enhancement-573 */
         "dcpath", "nodcpath",        /* Enhancement-575 */
+        "dcpathall",                 /* Enhancement-595 */
         "noosdilim",          /* F1: OSDI Newton step limiting opt-out (osdiload.c) */
         "autoadapt", "adapter",      /* PROTOTYPE: autoadapt */
         /* Enhancement-445: the `.four` analysis controls. Each is read by

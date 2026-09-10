@@ -1876,7 +1876,17 @@ SMPzeroLines (SMPmatrix *Matrix, unsigned char *rowzero, unsigned char *colzero,
             int ec = M->IntToExtColMap [ic] ;
             for (e = M->FirstInCol [ic] ; e != NULL ; e = e->NextInCol) {
                 int er = M->IntToExtRowMap [e->Row] ;
-                if (e->Real != 0.0 || (M->Complex && e->Imag != 0.0)) {
+                /* Enhancement-595: read the imaginary part whether or not
+                 * the matrix is flagged complex yet. The AC load runs before
+                 * spFactor sets M->Complex, so under Sparse a row holding
+                 * only jwC entries -- a node reached through capacitors --
+                 * read as all-zero here, and Enhancement-571 held it with
+                 * gmin in every AC analysis: vm() of a 1 pF node at 0.1 Hz
+                 * came out 0.391 under Sparse and 0.500 under KLU. Imag is
+                 * zero from allocation until a complex load writes it, and
+                 * spClear zeroes it once the matrix has ever been complex,
+                 * so an unflagged real matrix reads the same as before. */
+                if (e->Real != 0.0 || e->Imag != 0.0) {
                     if (er >= 1 && er <= n)
                         rowhas [er] = 1 ;
                     if (ec >= 1 && ec <= n)

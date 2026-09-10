@@ -89,6 +89,28 @@ CKTannounceSolver(int klu)
  *   .option dcpath=warn   say so, install nothing -- Enhancement-569's numbers
  *   .option dcpath=error  refuse to run, naming every such node
  *   .option dcpath=off    neither check nor message -- Enhancement-566's run
+ *
+ * Enhancement-595 -- HOW LONG the hold stays. Held for the whole run
+ * (Spectre's rule, E-575's first form) a node reached only through a
+ * capacitor leaks with C/gmin in a transient -- 2 pF against 1 pS is a
+ * two-second time constant -- and its AC response bends below gmin/C. In a
+ * transient the capacitor companion conductance, 2C/h, carries such a node
+ * by many orders over gmin, and in AC it sees jwC: the hold is needed only
+ * where the matrix is evaluated AT DC -- op, dc, the transient's initial
+ * point, the ac's. So a SECOND walk counts the reactive edges too (a
+ * capacitor joins its pair, a MOSFET gate its terminals, an OSDI REACT entry
+ * its nodes); a node THAT walk reaches is held at DC only, and released in
+ * tran and ac. A node it does not reach -- a current source into a lone
+ * node, a probed port, an isolated transformer secondary with a capacitor
+ * across it -- is held in every mode, as before. A zero-valued reactive
+ * element (a parasitic capacitor set to 0, a ddt() with a zero coefficient)
+ * would leave a released node with an all-zero row, so the tran stamp holds
+ * a released node whose diagonal is still exactly zero after the device
+ * loads, and the AC load has Enhancement-571's all-zero-row hold already.
+ *
+ *   .option dcpath=dc     hold at DC only, release in tran and ac   (default)
+ *   .option dcpath=all    hold in every mode, Spectre's rule (E-575's form)
+ *   .option dcpathall     the same, as a word of its own: `dcpath=1n dcpathall`
  */
 enum { DCPATH_OFF, DCPATH_WARN, DCPATH_HOLD, DCPATH_ERROR };
 enum { DCP_ALL, DCP_NONE, DCP_PAIR, DCP_NOGATE, DCP_ASRC };
@@ -162,14 +184,25 @@ static int dcpath_is_gate(const char *termname)
     return 0;
 }
 
-/* the edges of every built-in instance of `type` */
-static void dcpath_builtin_edges(CKTcircuit *ckt, int type, struct dcpath_uf *uf)
+/* the edges of every built-in instance of `type`. Enhancement-595: with
+ * `reactive` set, a capacitor joins its pair and a MOSFET gate its terminals
+ * (its oxide capacitance carries it in tran and ac); a current source and a
+ * mutual inductance still join nothing -- coupling is not a path to ground,
+ * an isolated secondary floats at every frequency. */
+static void dcpath_builtin_edges(CKTcircuit *ckt, int type, struct dcpath_uf *uf,
+                                 int reactive)
 {
     SPICEdev *dev = DEVices[type];
     int how = dcpath_how(dev->DEVpublic.name);
     int terms = dev->DEVpublic.terms ? *dev->DEVpublic.terms : 0;
     GENmodel *model;
 
+    if (reactive) {
+        if (how == DCP_NONE && strcmp(dev->DEVpublic.name, "Capacitor") == 0)
+            how = DCP_PAIR;
+        else if (how == DCP_NOGATE)
+            how = DCP_ALL;
+    }
     if (how == DCP_NONE || terms <= 0)
         return;
     for (model = ckt->CKThead[type]; model; model = model->GENnextModel) {
@@ -235,12 +268,77 @@ static void dcpath_mif_edges(CKTcircuit *ckt, int type, struct dcpath_uf *uf)
 /* `.option dcpath`, read the way E-471 reads reusesetup: a number before a
  * string before a bool, because a bare `set` publishes a bool, `=1n` a number
  * and `=warn` a string. */
-static int dcpath_mode(CKTcircuit *ckt, double *g)
+/* Enhancement-595: a number with SPICE's scale suffixes, for the value part
+ * of `dcpath=1n,all` (the option reader hands a comma-joined value over as a
+ * string, so the number inside is parsed here). */
+static int dcpath_num(const char *w, double *v)
+{
+    char *end;
+    double x = strtod(w, &end);
+    if (end == w)
+        return 0;
+    switch (tolower((unsigned char) *end)) {
+    case 'f': x *= 1e-15; break;
+    case 'p': x *= 1e-12; break;
+    case 'n': x *= 1e-9;  break;
+    case 'u': x *= 1e-6;  break;
+    case 'm': x *= (strncasecmp(end, "meg", 3) == 0 ? 1e6 : (strncasecmp(end, "mil", 3) == 0 ? 25.4e-6 : 1e-3)); break;
+    case 'k': x *= 1e3;   break;
+    case 'g': x *= 1e9;   break;
+    case 't': x *= 1e12;  break;
+    case '\0': break;
+    default: return 0;
+    }
+    if (*end) {                              /* the unit letters may follow, nothing else */
+        end++;
+        if (strncasecmp(end - 1, "meg", 3) == 0 || strncasecmp(end - 1, "mil", 3) == 0)
+            end += 2;
+        while (*end && isalpha((unsigned char) *end))
+            end++;
+        if (*end)
+            return 0;
+    }
+    *v = x;
+    return 1;
+}
+
+/* one word of the option's string form; returns 0 for a word it does not know */
+static int dcpath_word(const char *w, double *g, int *all, int *mode)
+{
+    double v;
+    if (cieq(w, "gmin") || cieq(w, "on") || cieq(w, "yes") || cieq(w, "true"))
+        *mode = DCPATH_HOLD;
+    else if (cieq(w, "warn"))
+        *mode = DCPATH_WARN;
+    else if (cieq(w, "error"))
+        *mode = DCPATH_ERROR;
+    else if (cieq(w, "off") || cieq(w, "no") || cieq(w, "false"))
+        *mode = DCPATH_OFF;
+    else if (cieq(w, "dc"))                  /* Enhancement-595 */
+        *all = 0;
+    else if (cieq(w, "all") || cieq(w, "always"))
+        *all = 1;
+    else if (dcpath_num(w, &v)) {
+        if (v > 0.0) {
+            *g = v;
+            *mode = DCPATH_HOLD;
+        } else {
+            fprintf(stderr, "Warning: .option dcpath=%g installs nothing; "
+                            "taking it as dcpath=warn\n", v);
+            *mode = DCPATH_WARN;
+        }
+    } else
+        return 0;
+    return 1;
+}
+
+static int dcpath_mode(CKTcircuit *ckt, double *g, int *all)
 {
     double v;
     char s[64];
 
     *g = ckt->CKTgmin;
+    *all = 0;                                /* Enhancement-595: DC only */
     /* `.option rshunt` / `gshunt` puts a conductance from EVERY node to
        ground: no node lacks a DC path then, there is nothing to install and
        nothing to report -- the global workaround keeps its numbers (E-571's
@@ -253,6 +351,13 @@ static int dcpath_mode(CKTcircuit *ckt, double *g)
 #endif
     if (cp_getvar("nodcpath", CP_BOOL, NULL, 0))
         return DCPATH_OFF;
+    /* Enhancement-595: `.option dcpathall` -- hold in every mode -- as a
+       word of its own, so it combines with a value: `dcpath=1n dcpathall`.
+       (The option reader splits a value at a comma, so `dcpath=1n,all`
+       cannot reach here as one word.) Read before the numeric form, which
+       returns on its own. */
+    if (cp_getvar("dcpathall", CP_BOOL, NULL, 0))
+        *all = 1;
     if (cp_getvar("dcpath", CP_REAL, &v, 0)) {
         if (v > 0.0) {
             *g = v;
@@ -263,17 +368,13 @@ static int dcpath_mode(CKTcircuit *ckt, double *g)
         return DCPATH_WARN;
     }
     if (cp_getvar("dcpath", CP_STRING, s, sizeof s)) {
-        if (cieq(s, "gmin") || cieq(s, "on") || cieq(s, "yes") || cieq(s, "true"))
-            return DCPATH_HOLD;
-        if (cieq(s, "warn"))
-            return DCPATH_WARN;
-        if (cieq(s, "error"))
-            return DCPATH_ERROR;
-        if (cieq(s, "off") || cieq(s, "no") || cieq(s, "false"))
-            return DCPATH_OFF;
-        fprintf(stderr, "Warning: .option dcpath=%s is not gmin, warn, error, off "
-                        "or a conductance; using dcpath=gmin\n", s);
-        return DCPATH_HOLD;
+        int mode = DCPATH_HOLD;
+        if (!dcpath_word(s, g, all, &mode)) {
+            fprintf(stderr, "Warning: .option dcpath=%s is not gmin, warn, error, off, "
+                            "dc, all or a conductance; using dcpath=gmin\n", s);
+            mode = DCPATH_HOLD;
+        }
+        return mode;
     }
     return DCPATH_HOLD;
 }
@@ -284,15 +385,17 @@ static int dcpath_mode(CKTcircuit *ckt, double *g)
 static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
                         unsigned char *named)
 {
-    struct dcpath_uf uf;
+    struct dcpath_uf uf, ufr;
     CKTnode *nd;
     double g;
-    int mode, i, root, nfound = 0, nlisted = 0;
+    int mode, i, root, rootr = 0, all, nfound = 0, nlisted = 0, nalways = 0;
+    int *dconly = NULL, ndconly = 0;
 
     FREE(ckt->CKTdcpathNodes);
     ckt->CKTdcpathCount = 0;
+    ckt->CKTdcpathAlways = 0;
     ckt->CKTdcpathG = 0.0;
-    mode = dcpath_mode(ckt, &g);
+    mode = dcpath_mode(ckt, &g, &all);
     if (mode == DCPATH_OFF || nunk <= 0)
         return OK;
 
@@ -304,7 +407,7 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
         if (!DEVices[i] || !ckt->CKThead[i])
             continue;
         if (DEVices[i]->DEVpublic.registry_entry) {
-            OSDIdcpathEdges(ckt, i, dcpath_join, &uf);
+            OSDIdcpathEdges(ckt, i, dcpath_join, &uf, 0);
             continue;
         }
 #ifdef XSPICE
@@ -313,9 +416,38 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
             continue;
         }
 #endif
-        dcpath_builtin_edges(ckt, i, &uf);
+        dcpath_builtin_edges(ckt, i, &uf, 0);
     }
     root = dcpath_find(&uf, 0);
+    /* Enhancement-595: the reactive walk, only when a hold is going to be
+     * installed at DC only. It decides, per node the DC walk missed, whether
+     * a capacitor carries it in tran and ac (released there) or nothing does
+     * (held in every mode). */
+    ufr.parent = NULL;
+    ufr.n = 0;
+    if (mode == DCPATH_HOLD && !all) {
+        ufr.n = nunk;
+        ufr.parent = TMALLOC(int, (size_t) nunk + 1);
+        for (i = 0; i <= nunk; i++)
+            ufr.parent[i] = i;
+        for (i = 0; i < DEVmaxnum; i++) {
+            if (!DEVices[i] || !ckt->CKThead[i])
+                continue;
+            if (DEVices[i]->DEVpublic.registry_entry) {
+                OSDIdcpathEdges(ckt, i, dcpath_join, &ufr, 1);
+                continue;
+            }
+#ifdef XSPICE
+            if (DEVices[i]->DEVinstSize == &MIFiSize) {
+                dcpath_mif_edges(ckt, i, &ufr);
+                continue;
+            }
+#endif
+            dcpath_builtin_edges(ckt, i, &ufr, 1);
+        }
+        rootr = dcpath_find(&ufr, 0);
+        dconly = TMALLOC(int, (size_t) nunk + 1);
+    }
     ckt->CKTdcpathNodes = TMALLOC(int, (size_t) nunk + 1);
     for (nd = ckt->CKTnodes; nd; nd = nd->next) {
         const char *name;
@@ -337,15 +469,24 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
         nfound++;
         named[nd->number] = 1;
         if (mode == DCPATH_HOLD) {
+            /* Enhancement-595: carried by a reactive element in tran and ac? */
+            int released = ufr.parent && dcpath_find(&ufr, nd->number) == rootr;
             SMPmakeElt(matrix, nd->number, nd->number);
-            ckt->CKTdcpathNodes[nlisted++] = nd->number;
+            if (released)
+                dconly[ndconly++] = nd->number;
+            else
+                ckt->CKTdcpathNodes[nalways++] = nd->number;
+            nlisted++;
             if (nfound <= 5) {
+                const char *dur = released
+                    ? "; held at DC only -- tran and ac release it while a reactive path carries the node"
+                    : "";
                 if (g == ckt->CKTgmin)
                     fprintf(stderr, "Warning: no DC path from node '%s' to ground; "
-                                    "gmin (%g S) installed to provide one\n", name, g);
+                                    "gmin (%g S) installed to provide one%s\n", name, g, dur);
                 else
                     fprintf(stderr, "Warning: no DC path from node '%s' to ground; "
-                                    "%g S installed to provide one (.option dcpath)\n", name, g);
+                                    "%g S installed to provide one (.option dcpath)%s\n", name, g, dur);
             }
         } else if (mode == DCPATH_WARN) {
             if (nfound <= 5)
@@ -360,10 +501,16 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
         fprintf(stderr, "Warning: ... and %d more nodes without a DC path to ground\n",
                 nfound - 5);
     FREE(uf.parent);
+    FREE(ufr.parent);
     if (mode == DCPATH_HOLD) {
+        /* the always-held nodes first, then the ones released outside DC */
+        for (i = 0; i < ndconly; i++)
+            ckt->CKTdcpathNodes[nalways + i] = dconly[i];
+        ckt->CKTdcpathAlways = nalways;
         ckt->CKTdcpathCount = nlisted;
         ckt->CKTdcpathG = nlisted ? g : 0.0;
     }
+    FREE(dconly);
     if (nlisted == 0)
         FREE(ckt->CKTdcpathNodes);
     if (mode == DCPATH_ERROR && nfound > 0) {
@@ -377,16 +524,29 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
 /* the hold: CKTdcpathG onto every listed diagonal, after the device loads.
  * Looked up per load rather than cached, so the KLU CSC conversion needs no
  * rebinding (the lookup is what Enhancement-571 does in the AC load). */
-void CKTdcpathStamp(CKTcircuit *ckt)
+void CKTdcpathStamp(CKTcircuit *ckt, int ac)
 {
-    int k;
+    int k, atdc;
     if (!ckt->CKTdcpathNodes || ckt->CKTdcpathCount <= 0 || ckt->CKTdcpathG <= 0.0)
         return;
+    /* Enhancement-595: the entries past CKTdcpathAlways are held only where
+     * the matrix is evaluated at DC (op, dc, the transient's and the ac's
+     * operating point -- MODEDC covers all three, and optran runs as a
+     * transient, where the capacitor carries the node). In a transient a
+     * released node whose diagonal is still exactly zero after the device
+     * loads has a zero-valued reactive element and nothing else, and keeps
+     * the hold; in ac the all-zero row is Enhancement-571's to hold. */
+    atdc = !ac && (ckt->CKTmode & MODEDC);
     for (k = 0; k < ckt->CKTdcpathCount; k++) {
         double *d = (double *) SMPfindElt(ckt->CKTmatrix, ckt->CKTdcpathNodes[k],
                                           ckt->CKTdcpathNodes[k], 0);
-        if (d)
-            *d += ckt->CKTdcpathG;
+        if (!d)
+            continue;
+        if (k >= ckt->CKTdcpathAlways && !atdc) {
+            if (ac || *d != 0.0)
+                continue;
+        }
+        *d += ckt->CKTdcpathG;
     }
 }
 
@@ -660,6 +820,7 @@ CKTunsetup(CKTcircuit *ckt)
     /* Enhancement-575: the DC-path hold list belongs to one setup */
     FREE(ckt->CKTdcpathNodes);
     ckt->CKTdcpathCount = 0;
+    ckt->CKTdcpathAlways = 0;
     ckt->CKTdcpathG = 0.0;
 
     error = OK;

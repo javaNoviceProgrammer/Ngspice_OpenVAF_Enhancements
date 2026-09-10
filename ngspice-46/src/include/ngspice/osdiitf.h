@@ -195,7 +195,8 @@ extern int OSDIanyCollapseChanged(CKTcircuit *ckt);   /* Enhancement-471 */
    an OSDI instance of `type` joins through a RESISTIVE Jacobian entry -- the
    DC-connectivity edges the setup's `.option dcpath` walk needs. */
 extern void OSDIdcpathEdges(CKTcircuit *ckt, int type,
-                            void (*join)(void *, int, int), void *arg);
+                            void (*join)(void *, int, int), void *arg,
+                            int reactive);   /* Enhancement-595: REACT entries join too */
 
 /* `.option osdimc` (alias `automc`) automatic Monte-Carlo: called by if_run
  * at the start of every run-class command (not `resume`). Advances the trial

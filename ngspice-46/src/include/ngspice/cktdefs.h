@@ -356,6 +356,12 @@ struct CKTcircuit {
     int *CKTdcpathNodes;
     int CKTdcpathCount;
     double CKTdcpathG;
+    /* Enhancement-595: the first CKTdcpathAlways entries of the list have no
+       path to ground even through reactive elements and are held in every
+       mode; the rest are held at DC only (`.option dcpath=dc`, the default)
+       and released in tran and ac, where a capacitor carries them. Under
+       `dcpath=all` every entry is held in every mode (Spectre's rule). */
+    int CKTdcpathAlways;
     /* Enhancement-365: set when an analysis has REPLACED ckt->CKTmatrix while
      * leaving CKTisSetup asserted, so every device's cached matrix-element
      * pointer now dangles. `pz` does exactly this (CKTpzSetup destroys and
@@ -560,7 +566,7 @@ extern int CKTsetBreak(CKTcircuit *, double);
 extern int CKTsetNodPm(CKTcircuit *, CKTnode *, int , IFvalue *, IFvalue *);
 extern int CKTsetOpt(CKTcircuit *, JOB *, int , IFvalue *);
 extern int CKTsetup(CKTcircuit *);
-extern void CKTdcpathStamp(CKTcircuit *);        /* Enhancement-575 */
+extern void CKTdcpathStamp(CKTcircuit *, int ac); /* Enhancement-575, 595 */
 extern void CKTannounceSolver(int klu);   /* Enhancement-266: announce-on-change */
 extern int CKTunsetup(CKTcircuit *);
 extern int CKTtemp(CKTcircuit *);
