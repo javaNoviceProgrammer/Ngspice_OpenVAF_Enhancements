@@ -159,7 +159,8 @@ print("\nwhat it refuses, and says so")
 _rc, out = run(f"{DRIVE}\nRb0 b[0] 0 1k\n{LOAD}\nN1 a b mymodel1\nN2 b c mymodel2",
                "third", opts=".option autobus\n" + AUTO)
 check("[E-463] a node also touched by a resistor is not adapted",
-      "not exactly twice" in out and "split" not in out.split("not exactly twice")[0],
+      ("not exactly twice" in out or "is also used by" in out)   # E-593 names the line
+      and "split" not in out.split("not exactly twice" if "not exactly twice" in out else "is also used by")[0],
       "")
 _rc, out = run(f"{DRIVE}\nN1 b b mymodel1\n" + "\n".join(f"Rg{k} b[{k}] 0 100" for k in range(4)),
                "selfloop", opts=".option autobus\n" + AUTO)

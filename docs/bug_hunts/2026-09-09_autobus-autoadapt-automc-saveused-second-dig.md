@@ -79,6 +79,11 @@ and the only message is E-572's "'x' was expanded to the 5 bus bits, but the dec
 uses it as a plain node", which is about the resistor, not about the adaptation that
 did not happen.
 
+**Status (2026-09-10):** resolved by Enhancement-593. E-466's quiet default stands for
+unlisted nodes; a `.adapt`-listed candidate's refusal is a Warning that quotes the
+extra line (`c1 x[2] 0 1p`) or names the third OSDI instance; `adaptlisted_examples`
+8 of 8 per solver, sweep 488 of 488.
+
 ## F4 and F5 — two messages
 
 `e1.cir`: an adapter declared `inout [0:0] p, n` on a scalar shared node is refused

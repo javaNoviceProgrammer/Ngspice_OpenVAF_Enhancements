@@ -1044,7 +1044,43 @@ struct adapt_cand {
     int nuse;
     struct adapt_use use[2];
     int extra;                  /* uses beyond two, or non-OSDI sightings */
+    char *extra_inst;           /* Enhancement-593: the first OSDI instance beyond two */
 };
+
+/* Enhancement-593: the first instance line, other than the two OSDI uses, that
+ * names bus `tok` or one of its bits (`x[2]`, KiCad `x_2_`) in a node position
+ * -- the same spellings adapt_count_occurrences counts. So a refusal can say
+ * WHERE the third use is rather than only that there are three. */
+static struct card *adapt_extra_line(struct card *deck, const char *tok,
+                                     const struct card *u0, const struct card *u1)
+{
+    struct card *c;
+    size_t n = strlen(tok);
+
+    for (c = deck; c; c = c->nextcard) {
+        char *p = c->line;
+        if (!p || !*p || *p == '*' || *p == '.' || c == u0 || c == u1)
+            continue;
+        while ((p = strstr(p, tok)) != NULL) {
+            char before = (p == c->line) ? ' ' : p[-1];
+            const char *after = p + n;
+            if (isspace_c(before) || before == '(') {
+                if (*after == '\0' || isspace_c(*after) || *after == ')' ||
+                    *after == '[')
+                    return c;
+                if (*after == '_' && isdigit_c(after[1])) {
+                    const char *q = after + 1;
+                    while (isdigit_c(*q))
+                        q++;
+                    if (*q == '_' && (q[1] == '\0' || isspace_c(q[1]) || q[1] == ')'))
+                        return c;
+                }
+            }
+            p += n;
+        }
+    }
+    return NULL;
+}
 
 /* Is `node` named on a `.adapt` card? Whole tokens only -- a substring test
    would make `.adapt bb` silently select `b`. A flattened node carries its
@@ -1340,6 +1376,7 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
                     cand[ncand].node = copy(tok);
                     cand[ncand].nuse = 0;
                     cand[ncand].extra = 0;
+                    cand[ncand].extra_inst = NULL;
                     ncand++;
                 }
                 if (i < ncand) {
@@ -1351,6 +1388,8 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
                         cand[i].use[cand[i].nuse].inst = copy(inst);
                         cand[i].nuse++;
                     } else {
+                        if (!cand[i].extra_inst)
+                            cand[i].extra_inst = copy(inst);
                         cand[i].extra++;
                     }
                 }
@@ -1368,15 +1407,28 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
         int occ;
         char *nf, *nr, *aline;
 
-        if (only && !adapt_listed(only, k->node, NULL))
-            continue;
-        if (k->nuse < 2)
-            continue;
-        if (k->extra) {
-            if (verbose)
-                fprintf(stderr, "Warning: autoadapt: bus node '%s' is used by more "
-                    "than two OSDI ports; not adapted.\n", k->node);
-            continue;
+        /* Enhancement-593: a node the deck named in `.adapt` and did not get
+         * an adapter for is reported even under the quiet default (E-466: a
+         * deck that asked for an adapter and did not get one must not run on
+         * in silence; E-467 already reports a name that selects nothing, but a
+         * name that selects a candidate the rules then refuse was silent). An
+         * unlisted node keeps E-466's quiet default. */
+        {
+            bool listed = only && adapt_listed(only, k->node, NULL);
+            if (only && !listed)
+                continue;
+            if (k->nuse < 2)
+                continue;
+            if (k->extra) {
+                if (verbose || listed)
+                    fprintf(stderr, "Warning: autoadapt: bus node '%s' is used by "
+                        "more than two OSDI ports (%s, %s and %s); an adapter "
+                        "sits between exactly two; not adapted.\n", k->node,
+                        k->use[0].inst, k->use[1].inst,
+                        k->extra_inst ? k->extra_inst : "another");
+                continue;
+            }
+            k->extra = listed;          /* carried to the occurrence test below */
         }
         if (k->use[0].card == k->use[1].card) {
             fprintf(stderr, "Error: autoadapt: bus node '%s' appears on both "
@@ -1399,9 +1451,25 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
         }
         occ = adapt_count_occurrences(deck, k->node);
         if (occ != 2) {
-            if (verbose)
-                fprintf(stderr, "Warning: autoadapt: node '%s' occurs %d times in "
-                    "the deck, not exactly twice; not adapted.\n", k->node, occ);
+            /* Enhancement-593: say where the extra use is -- a bit of the bus
+             * (`c1 x[2] 0 1p`) counts as a use, and used to be refused with
+             * nothing more than a count, in debug mode only */
+            if (verbose || k->extra) {
+                struct card *x = adapt_extra_line(deck, k->node, k->use[0].card,
+                                                  k->use[1].card);
+                if (x)
+                    fprintf(stderr, "Warning: autoadapt: bus node '%s' is also used "
+                        "by `%s` (%d uses, not the two OSDI ports %s and %s "
+                        "alone); not adapted. An adapter needs the node on "
+                        "exactly those two lines -- move the other use to "
+                        "%s_f or %s_r after splitting by hand, or leave the "
+                        "node unadapted.\n", k->node, x->line, occ,
+                        k->use[0].inst, k->use[1].inst, k->node, k->node);
+                else
+                    fprintf(stderr, "Warning: autoadapt: node '%s' occurs %d times "
+                        "in the deck, not exactly twice; not adapted.\n",
+                        k->node, occ);
+            }
             continue;
         }
         /* the HIGHER port index is the forward side -- intrinsic, so that
