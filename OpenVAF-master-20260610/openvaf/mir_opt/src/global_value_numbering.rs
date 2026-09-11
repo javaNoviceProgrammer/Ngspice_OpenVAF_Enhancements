@@ -16,6 +16,11 @@ use typed_index_collections::TiVec;
 
 use crate::simplify::SimplifyCtx;
 
+/* Enhancement-596: the test module existed but was never compiled in; it
+ * holds the regression for the call-expression comparison. */
+#[cfg(test)]
+mod test;
+
 struct GVNExpression {
     opcode: Opcode,
     payload: GVNExprPayLoad,
@@ -236,8 +241,18 @@ impl GVNExpression {
                 arg1.iter().eq(arg2)
             }
             Opcode::Call => {
+                // Enhancement-596: this compared `self` with ITSELF -- both payloads
+                // were read from `self.payload`, so every pair of call expressions
+                // that landed in the same hash-table probe (same 7-bit tag in the
+                // same group, about one pair in 128) was declared equal whatever the
+                // callee and the arguments, and the later call was replaced by the
+                // earlier one's value. In a compact model that read ten `$simparam`
+                // names, `$simparam("vntol", -1)` came back with gmin's value; the
+                // literal "vntol" was gone from the object. Every side-effect-free
+                // callback is exposed the same way: a `ddx` derivative, a string
+                // compare, `$simparam$str`, `%m`.
                 let CallExprPayLoad { func_ref: func_ref_1, args: args1 } = self.payload.call();
-                let CallExprPayLoad { func_ref: func_ref_2, args: args2 } = self.payload.call();
+                let CallExprPayLoad { func_ref: func_ref_2, args: args2 } = other.payload.call();
                 if func_ref_1 != func_ref_2 {
                     return false;
                 }

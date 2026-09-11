@@ -81,6 +81,14 @@ a different `Rodeo` than the one the codegen resolves against. A real compact mo
 that reads ten simparams is not exotic (gmin, iniLim, sourceScaleFactor, tnom, scale,
 plus a few tolerances), and the symptom is a silently wrong tolerance or scale.
 
+**Status (2026-09-10):** resolved by Enhancement-596. The cause was one word in the
+optimiser: global value numbering's equality test for a call expression read both payloads
+from `self`, so any two side-effect-free calls that met in the same hash-table probe were
+"equal" whatever the callee and arguments -- the threshold and the position dependence
+were the probe sequence. Every such callback (`ddx`, string compares, `$simparam$str`,
+`%m`, `$port_connected`, `$param_given`) was exposed. Fixed, with the GVN test module
+wired in and two tests that fail on the old line.
+
 ## F2 — a bare word on the instance line is a zero
 
 | line | result |
