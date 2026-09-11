@@ -627,6 +627,34 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
       if (!thismodel)
           txfree(INPgetModBin(ckt, token, &thismodel, tab, line));
       if (c && !thismodel) {
+          /* Enhancement-597: `n1 a 0 im k` -- the last bare word is taken as
+           * the model and refused as "Unable to find definition of model k",
+           * when the word before it IS a model and `k` is a parameter that
+           * lost its `=value`. Say that instead of naming a model nobody
+           * wrote. Only in the no-`=` path is `prev` still the token before
+           * `token`. */
+          if (!eqp && prev && INPlookMod(prev)) {
+              char *msg;
+              const char *q = token;
+              if (*q == '+' || *q == '-')
+                  q++;
+              if (isdigit_c(*q) || *q == '.')
+                  msg = tprintf("  '%s' is a value without a parameter name; "
+                                "the model is '%s' -- write <name>=%s\n",
+                                token, prev, token);
+              else
+                  msg = tprintf("  '%s' is not a model and not a name=value "
+                                "parameter; the model is '%s', so a parameter "
+                                "here needs a value -- write %s=<value>\n",
+                                token, prev, token);
+              LITERR(msg);
+              tfree(msg);
+              tfree(c);
+              tfree(token);
+              tfree(prev);
+              tfree(pprev);
+              return;
+          }
           LITERR(c);
           tfree(c);
           tfree(token);

@@ -11611,6 +11611,20 @@ void inp_rem_unused_models(struct nscope *root, struct card *deck)
             /* ignore certain cases, for example
              *    'C5 node1 node2 42.0' or 'R2 node1 node2 4k7'
              */
+            /* Enhancement-597: `n1 a 0 im 3` -- a bare NUMBER after the model
+             * is not a model name, so the branch below is skipped, the card
+             * `im` is never marked used and is commented out. Keep it, so
+             * INP2N can say what the `3` is. */
+            if (*curr_line == 'n' && num_terminals > 0 &&
+                !is_a_modelname(elem_model_name, curr_line)) {
+                char *before = get_model_name(curr_line, num_terminals - 1);
+                if (is_a_modelname(before, curr_line)) {
+                    struct modellist *mprev = inp_find_model(card->level, before);
+                    if (mprev)
+                        mprev->used = TRUE;
+                }
+                tfree(before);
+            }
             if (is_a_modelname(elem_model_name, curr_line)) {
 
                 struct modellist *m =
@@ -11633,9 +11647,28 @@ void inp_rem_unused_models(struct nscope *root, struct card *deck)
                     mark_all_binned(m->model->level, elem_model_name);
                 }
                 else {
-                    fprintf(stderr, "warning, can't find model '%s' from line\n    "
-                           "%s\n",
-                            elem_model_name, curr_line);
+                    /* Enhancement-597: `n1 a 0 im k` -- on an `n` line the
+                     * model is taken to be the last bare word, so a parameter
+                     * that lost its `=value` was reported here as a missing
+                     * model `k`, and the card `im` it hid, now "unused", was
+                     * commented out below -- which is why INP2N could then
+                     * say only "Unable to find definition of model k". When
+                     * the word BEFORE the last one is a model, keep that card
+                     * and stay quiet: INP2N reports the bare parameter by
+                     * name, with the model it belongs to. */
+                    struct modellist *mprev = NULL;
+                    if (*curr_line == 'n' && num_terminals > 0) {
+                        char *before = get_model_name(curr_line, num_terminals - 1);
+                        if (is_a_modelname(before, curr_line))
+                            mprev = inp_find_model(card->level, before);
+                        tfree(before);
+                    }
+                    if (mprev)
+                        mprev->used = TRUE;
+                    else
+                        fprintf(stderr, "warning, can't find model '%s' from line\n    "
+                                "%s\n",
+                                elem_model_name, curr_line);
                 }
             }
 

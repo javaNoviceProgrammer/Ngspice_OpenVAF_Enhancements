@@ -105,6 +105,13 @@ A parameter name without `=value` after a `name=value` is a typo (`m 2`, `m=`, a
 analysis silently. An OSDI line should refuse a bare word ("parameter 'm' given without
 a value") — or, if ngspice's built-in grammar is to be kept, at least say what it did.
 
+**Status (2026-09-10):** resolved by Enhancement-597. A scalar parameter whose value is
+missing or did not parse is refused on the instance line and on the card's instance
+defaults, with the shape named; the deck reader keeps the card a trailing bare word
+hides, so `n1 a 0 im k` is explained as a parameter without a value rather than a
+missing model `k`. An integer that does not fit is refused on the line as it was on the
+card. `tag=""`, the `off` flag and `m=0` are unchanged.
+
 ## F3 — `$simparam$str` cannot take a default
 
 ```

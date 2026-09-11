@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+module istr(p, n);
+inout p, n; electrical p, n;
+(* type="instance" *) parameter string tag = "x";
+(* type="instance" *) parameter real w = 1 from (0:inf);
+(* type="instance" *) parameter integer k = 1 from [0:10];
+(* desc="tag empty" *) real empty;
+(* desc="k" *) real kk;
+analog begin
+  empty = (tag == "") ? 1 : 0;
+  kk = k;
+  I(p,n) <+ V(p,n)*w/1k;
+end
+endmodule

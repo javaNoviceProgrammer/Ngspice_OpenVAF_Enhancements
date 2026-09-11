@@ -165,6 +165,60 @@ e467_bad_instance_value(CKTcircuit *ckt, IFdevice *device, GENinstance *fast,
 }
 
 
+/* Enhancement-597: a scalar parameter whose value is missing or did not parse.
+ *
+ * `n1 a b am w=2 m` -- the `=2` lost from `m` -- read the bare `m`, asked
+ * INPgetValue for its value at the END of the line, got 0.0 from INPevaluate's
+ * error path, and applied it: m = 0, the device gone from every analysis, not a
+ * word said. `temp` alone was 0 C, a second bare `w` was w = 0 refused deep in
+ * setup with no value in the message, and a built-in line (`r1 a 0 1k tc1`)
+ * did the same after a "can't find model 'tc1'" that named the wrong cause.
+ * The same hole on a .model card's instance-parameter default (`.model am
+ * alias width`) put 0 into every instance of the card. The model-card path
+ * for MODEL parameters has refused an unparsable value since Enhancement-507;
+ * this is the instance-parameter half.
+ *
+ * A name without a value is refused the way an unknown name is (the line
+ * fails), and the message says which of the two shapes it was: nothing after
+ * the name, or a token that is not a number. Only scalar types are judged
+ * (real, integer, string); a flag such as a diode's `off` takes no value and
+ * a node/instance/vector value has its own reader. `kind=""` is an empty
+ * STRING value, not a missing one, and stays legal: the end-of-line test
+ * runs before the value is read, on the raw text. */
+static char *
+e597_value_refusal(IFparm *p, const char *rest, const char *card)
+{
+    int type = p->dataType & IF_VARTYPES;
+    const char *s = rest ? rest : "";
+    const char *e;
+    char *tok;
+
+    if (type != IF_REAL && type != IF_INTEGER && type != IF_STRING)
+        return NULL;
+    while (*s && isspace_c(*s))
+        s++;
+    if (!*s)
+        return tprintf("  parameter '%s' has no value%s -- write %s=<value>\n",
+                       p->keyword, card, p->keyword);
+    if (type == IF_STRING)
+        return NULL;
+    if (type == IF_INTEGER && INPlastRangeError())
+        return tprintf("  parameter '%s'%s: the value does not fit an integer\n",
+                       p->keyword, card);
+    if (!INPlastValueError())
+        return NULL;
+    for (e = s; *e && !isspace_c(*e); e++)
+        ;
+    tok = copy_substring(s, e);
+    {
+        char *msg = tprintf("  parameter '%s'%s: '%s' is not a number\n",
+                            p->keyword, card, tok);
+        tfree(tok);
+        return msg;
+    }
+}
+
+
 char *
 INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
             double *leading, int *waslead, INPtables *tab)
@@ -234,10 +288,22 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
             goto quit;
         }
 
-        val = INPgetValue(ckt, &value, p->dataType, tab);
-        if (!val) {
-            rtn = INPerror(E_PARMVAL);
-            goto quit;
+        {
+            const char *raw = value;          /* Enhancement-597: judged before the read */
+            val = INPgetValue(ckt, &value, p->dataType, tab);
+            if (!val) {
+                rtn = INPerror(E_PARMVAL);
+                goto quit;
+            }
+            {
+                char *card = tprintf(" on the .model %s card",
+                                     fast->GENmodPtr->GENmodName
+                                         ? (const char *) fast->GENmodPtr->GENmodName : "");
+                rtn = e597_value_refusal(p, raw, card);
+                tfree(card);
+                if (rtn)
+                    goto quit;
+            }
         }
         if (INPlastRoundWarn()) {
             /* same warning inpgmod.c gives on a .model card */
@@ -325,10 +391,16 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
             }
         }
 
-        val = INPgetValue(ckt, line, p->dataType, tab);
-        if (!val) {
-            rtn = INPerror(E_PARMVAL);
-            goto quit;
+        {
+            const char *raw = *line;          /* Enhancement-597: judged before the read */
+            val = INPgetValue(ckt, line, p->dataType, tab);
+            if (!val) {
+                rtn = INPerror(E_PARMVAL);
+                goto quit;
+            }
+            rtn = e597_value_refusal(p, raw, "");
+            if (rtn)
+                goto quit;
         }
         if (INPlastRoundWarn()) {
             /* same warning inpgmod.c gives on a .model card */
