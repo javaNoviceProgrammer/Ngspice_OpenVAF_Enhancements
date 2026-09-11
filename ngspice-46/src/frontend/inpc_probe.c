@@ -80,6 +80,21 @@ static int check_for_nodes(char* instance, int numnodes);
    voltage probes.
 
    */
+/* Enhancement-605: the card after which a line meant for the head of the
+ * deck goes -- past a .control block that opens the deck (every OSDI deck
+ * opens with one, for `pre_osdi`), where a `.save` line would run as a
+ * command: ".save: no such command available in ngspice". */
+static struct card *
+probe_head(struct card *deck)
+{
+    struct card *at = deck;
+
+    if (at && ciprefix(".control", at->line))
+        while (at->nextcard && !ciprefix(".endc", at->line))
+            at = at->nextcard;
+    return at;
+}
+
 void inp_probe(struct card* deck)
 {
     struct card *card;
@@ -129,7 +144,15 @@ void inp_probe(struct card* deck)
 
     if (!havesave) {
         char* vline = copy(".save all");
-        deck = insert_new_line(deck, vline, 0, deck->linenum_orig, deck->linesource);
+        /* Enhancement-605: `deck` is the first card after the title, and the
+         * line went in right after it -- INSIDE a .control block that opens
+         * the deck (every OSDI deck opens with one, for `pre_osdi`), where it
+         * ran as a command: ".save: no such command available in ngspice".
+         * It goes after that block's .endc. And `deck` itself is no longer
+         * moved onto the inserted card: the walks below start at the first
+         * card again, so a probed device on the deck's first line is seen. */
+        struct card *at = probe_head(deck);
+        insert_new_line(at, vline, 0, at->linenum_orig, at->linesource);
     }
 
     /* set a variable if .probe command is given */
@@ -453,7 +476,7 @@ void inp_probe(struct card* deck)
                             allsaves = wl_cons(nodesaves, allsaves);
                             tfree(strnode1);
                             tfree(strnode2);
-                            tmpcard1 = deck->nextcard;
+                            tmpcard1 = probe_head(deck);    /* Enhancement-605 */
                             tmpcard1 = insert_new_line(tmpcard1, newline, 0, tmpcard1->linenum_orig, tmpcard1->linesource);
                         }
                         continue;
@@ -978,7 +1001,7 @@ void inp_probe(struct card* deck)
             char* newline = wl_flatten(allsaves);
             wl_free(allsaves);
             allsaves = NULL;
-            card = deck->nextcard;
+            card = probe_head(deck);    /* Enhancement-605 */
             card = insert_new_line(card, newline, 0, card->linenum_orig, card->linesource);
         }
 
