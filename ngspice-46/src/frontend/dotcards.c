@@ -684,6 +684,124 @@ ft_savemeasure(void)
 }
 
 
+/* Enhancement-603: a `.print` or `.plot` card names an ANALYSIS, and an
+ * analysis can have published several plots -- noise publishes the spectral
+ * densities as noise1 and the integrated totals as noise2, holding different
+ * vectors. The loop below ran the card on every plot of the type with the
+ * whole item list, so `.print noise onoise_spectrum` printed its table from
+ * noise1 and then "vector onoise_spectrum is not available" from noise2, and
+ * `.print noise onoise_spectrum onoise_total` -- one item from each plot --
+ * printed nothing at all, each plot refusing the list over the item it did
+ * not hold.
+ *
+ * A `.print` on such a type now gives each plot the items it can serve, and
+ * an item no plot serves is reported once. A `.plot` keeps its whole word
+ * list (its keywords -- xlimit, xlog -- ride along) and is simply skipped on
+ * a plot that holds none of its vectors. Returns FALSE when the type matched
+ * fewer than two plots, or a `.plot` could be served nowhere, and the caller
+ * runs as before. */
+
+static bool
+dotcard_number_item(struct pnode *pn)
+{
+    double d;
+    char *s = pn->pn_name;
+
+    return pn->pn_value && !pn->pn_func && !pn->pn_op && s &&
+           ft_numparse(&s, FALSE, &d) >= 0 && *s == '\0';
+}
+
+static bool
+dotcard_on_plots(const char *plottype, wordlist *items, bool asciiplot)
+{
+    struct plot *pl;
+    int nplots = 0, nitems = 0, k, nserved = 0;
+    bool *served = NULL;
+    static wordlist col = { "col", NULL, NULL };
+
+    for (pl = plot_list; pl; pl = pl->pl_next)
+        if (ciprefix(plottype, pl->pl_typename))
+            nplots++;
+    if (nplots < 2 || !items)
+        return FALSE;
+
+    for (pl = plot_list; pl; pl = pl->pl_next) {
+        struct pnode *names, *pn;
+        wordlist *sub = NULL, *tail = NULL;
+        int n = 0, good = 0;
+
+        if (!ciprefix(plottype, pl->pl_typename))
+            continue;
+        plot_cur = pl;
+        names = ft_getpnames_quotes(items, FALSE);
+        for (pn = names; pn; pn = pn->pn_next)
+            n++;
+        if (!n || (nitems && n != nitems)) {
+            /* not a list this can compare across plots */
+            free_pnode(names);
+            tfree(served);
+            return FALSE;
+        }
+        if (!nitems) {
+            nitems = n;
+            served = TMALLOC(bool, n);
+        }
+        for (k = 0, pn = names; pn; pn = pn->pn_next, k++) {
+            if (!ft_pnode_item_valid(pn))
+                continue;
+            if (asciiplot && dotcard_number_item(pn))
+                continue;       /* a keyword's argument, not a vector */
+            served[k] = TRUE;
+            good++;
+            if (!asciiplot && pn->pn_name) {
+                wordlist *w = wl_cons(copy(pn->pn_name), NULL);
+                if (tail) {
+                    tail->wl_next = w;
+                    w->wl_prev = tail;
+                } else {
+                    sub = w;
+                }
+                tail = w;
+            }
+        }
+        free_pnode(names);
+        if (good) {
+            nserved += good;
+            if (asciiplot) {
+                com_asciiplot(items);
+            } else {
+                col.wl_next = sub;
+                com_print(&col);
+                col.wl_next = NULL;
+            }
+            fprintf(cp_out, "\n");
+        }
+        wl_free(sub);
+    }
+
+    if (!nserved && asciiplot) {
+        tfree(served);
+        return FALSE;
+    }
+    if (!asciiplot) {
+        /* the items no plot of the type could serve, once each */
+        struct pnode *names, *pn;
+
+        names = ft_getpnames_quotes(items, FALSE);
+        for (k = 0, pn = names; pn && k < nitems; pn = pn->pn_next, k++)
+            if (!served[k])
+                fprintf(cp_err,
+                        "Warning: .print %s: '%s' is in none of the %d %s "
+                        "plots, so it is not printed.\n",
+                        plottype, pn->pn_name ? pn->pn_name : "?",
+                        nplots, plottype);
+        free_pnode(names);
+    }
+    tfree(served);
+    return TRUE;
+}
+
+
 /* Execute the .whatever lines found in the deck, after we are done running.
  * We'll be cheap and use cp_lexer to get the words... This should make us
  * spice-2 compatible.  If terse is TRUE then there was a rawfile, so don't
@@ -823,13 +941,17 @@ ft_cktcoms(bool terse)
                 fixdotprint(command);
                 twl.wl_next = command;
                 found = 0;
-                for (pl = plot_list; pl; pl = pl->pl_next)
-                    if (ciprefix(plottype, pl->pl_typename)) {
-                        plot_cur = pl;
-                        com_print(&twl);
-                        fprintf(cp_out, "\n");
-                        found = 1;
-                    }
+                if (dotcard_on_plots(plottype, command, FALSE)) {
+                    found = 1;      /* Enhancement-603 */
+                } else {
+                    for (pl = plot_list; pl; pl = pl->pl_next)
+                        if (ciprefix(plottype, pl->pl_typename)) {
+                            plot_cur = pl;
+                            com_print(&twl);
+                            fprintf(cp_out, "\n");
+                            found = 1;
+                        }
+                }
                 if (!found)
                     fprintf(cp_err, "Error: .print: no %s analysis found.\n",
                             plottype);
@@ -851,13 +973,17 @@ ft_cktcoms(bool terse)
                 command = command->wl_next;
                 fixdotplot(command);
                 found = 0;
-                for (pl = plot_list; pl; pl = pl->pl_next)
-                    if (ciprefix(plottype, pl->pl_typename)) {
-                        plot_cur = pl;
-                        com_asciiplot(command);
-                        fprintf(cp_out, "\n");
-                        found = 1;
-                    }
+                if (dotcard_on_plots(plottype, command, TRUE)) {
+                    found = 1;      /* Enhancement-603 */
+                } else {
+                    for (pl = plot_list; pl; pl = pl->pl_next)
+                        if (ciprefix(plottype, pl->pl_typename)) {
+                            plot_cur = pl;
+                            com_asciiplot(command);
+                            fprintf(cp_out, "\n");
+                            found = 1;
+                        }
+                }
                 if (!found)
                     fprintf(cp_err, "Error: .plot: no %s analysis found.\n",
                             plottype);

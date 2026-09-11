@@ -543,6 +543,87 @@ OUTpBeginPlot(CKTcircuit *circuitPtr, JOB *analysisPtr,
 }
 
 
+/* Enhancement-603: the plot sequence of a multi-plot analysis (see the
+ * comment at its use in beginPlot). seq_job is the job whose sequence is
+ * open, seq_left what it said would follow the plot last handled, and
+ * seq_unmatched the saved names no plot of the sequence has held so far. */
+static JOB *seq_job;
+static int seq_left;
+static wordlist *seq_unmatched;
+
+static void
+seq_reset(void)
+{
+    wl_free(seq_unmatched);
+    seq_unmatched = NULL;
+    seq_job = NULL;
+    seq_left = 0;
+}
+
+/* The words of `a` that are also in `b`; both lists are consumed. */
+static wordlist *
+wl_intersect(wordlist *a, wordlist *b)
+{
+    wordlist *out = NULL, *w, *x;
+
+    for (w = a; w; w = w->wl_next)
+        for (x = b; x; x = x->wl_next)
+            if (name_eq(w->wl_word, x->wl_word)) {
+                out = wl_cons(copy(w->wl_word), out);
+                break;
+            }
+    wl_free(a);
+    wl_free(b);
+    return out;
+}
+
+static void
+unmatched_warning(const char *name)
+{
+    fprintf(cp_err,
+            "Warning: save '%s': nothing of that name is in this "
+            "analysis,\n         so no such vector is produced.\n", name);
+}
+
+/* Every produced vector but the reference, under the `save all` rules
+ * (`nosub` drops subcircuit nodes, `nointernals` every internal but the
+ * branch currents; the probe helpers and the device-internal nodes are never
+ * taken). Pass 1's `save all` branch, and Enhancement-603's kept-whole plot. */
+static void
+save_every_name(runDesc *run, char *refName, char **dataNames, int numNames,
+                int dataType, int initmem, bool savenosub,
+                bool savenointernals)
+{
+    int i;
+
+    for (i = 0; i < numNames; i++)
+        if (!refName || !name_eq(dataNames[i], refName))
+            /*  Save the node (with restrictions) */
+                /* don't save subckt nodes */
+            if (!(savenosub && strchr(dataNames[i], '.')) &&
+                /* no internals at all, but still #branch */
+                (!(savenointernals && strstr(dataNames[i], "#")) || strstr(dataNames[i], "#branch")) &&
+                /* created by .probe */
+                !strstr(dataNames[i], "probe_int_") &&
+                /* don't save internal device nodes */
+                !strstr(dataNames[i], "#internal") &&
+                !strstr(dataNames[i], "#source") &&
+                !strstr(dataNames[i], "#drain") &&
+                !strstr(dataNames[i], "#collector") &&
+                !strstr(dataNames[i], "#collCX") &&
+                !strstr(dataNames[i], "#emitter") &&
+                !strstr(dataNames[i], "#base"))
+            {
+                addDataDesc(run, dataNames[i], dataType, i, initmem);
+            }
+    /* generate a vector of real time information */
+    if (ft_ngdebug && refName && eq(refName, "time")) {
+         addDataDesc(run, "speedcheck", IF_REAL, numNames, initmem);
+         addDataDesc(run, "deltacheck", IF_REAL, numNames, initmem);
+    }
+}
+
+
 static int
 beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analName, char *refName, int refType, int numNames, char **dataNames, int dataType, bool windowed, runDesc **runp)
 {
@@ -557,6 +638,7 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
     bool savealli = FALSE;
     bool savenosub = FALSE;
     bool savenointernals = FALSE;
+    bool any_applicable = FALSE;    /* Enhancement-603 */
     char *an_name;
     int initmem;
 
@@ -608,6 +690,7 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                     savesused[i] = TRUE;
                     continue;
                 }
+                any_applicable = TRUE;      /* Enhancement-603 */
 
                 /*  Check for ".save all" and new synonym ".save allv"  */
 
@@ -699,31 +782,8 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                 }
             }
         } else {
-            for (i = 0; i < numNames; i++)
-                if (!refName || !name_eq(dataNames[i], refName))
-                    /*  Save the node (with restrictions) */
-                        /* don't save subckt nodes */
-                    if (!(savenosub && strchr(dataNames[i], '.')) &&
-                        /* no internals at all, but still #branch */
-                        (!(savenointernals && strstr(dataNames[i], "#")) || strstr(dataNames[i], "#branch")) &&
-                        /* created by .probe */
-                        !strstr(dataNames[i], "probe_int_") &&
-                        /* don't save internal device nodes */
-                        !strstr(dataNames[i], "#internal") &&
-                        !strstr(dataNames[i], "#source") &&
-                        !strstr(dataNames[i], "#drain") &&
-                        !strstr(dataNames[i], "#collector") &&
-                        !strstr(dataNames[i], "#collCX") &&
-                        !strstr(dataNames[i], "#emitter") &&
-                        !strstr(dataNames[i], "#base"))
-                    {
-                        addDataDesc(run, dataNames[i], dataType, i, initmem);
-                    }
-            /* generate a vector of real time information */
-            if (ft_ngdebug && refName && eq(refName, "time")) {
-                 addDataDesc(run, "speedcheck", IF_REAL, numNames, initmem);
-                 addDataDesc(run, "deltacheck", IF_REAL, numNames, initmem);
-            }
+            save_every_name(run, refName, dataNames, numNames, dataType,
+                            initmem, savenosub, savenointernals);
         }
 
         /* Pass 1 and a bit.
@@ -794,7 +854,14 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                 continue;
 
             if (!parseSpecial(saves[i].name, namebuf, parambuf, depbuf)) {
-                if (saves[i].analysis)
+                /* Enhancement-603: a plain name that simply is not in this
+                 * plot is reported below ("nothing of that name is in this
+                 * analysis"), and was reported here as well, as unparsable,
+                 * which it is not. Only an `@`-spelling parseSpecial refuses
+                 * is worth this line. */
+                if (saves[i].analysis && saves[i].name &&
+                    (strchr(saves[i].name, '@') ||
+                     strchr(saves[i].name, '[')))
                     fprintf(cp_err, "Warning: can't parse '%s': ignored\n",
                             saves[i].name);
                 continue;
@@ -967,40 +1034,103 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
          * spelling was the one route left quiet. Warn rather than refuse: an
          * absent vector is not a wrong answer, and a deck that saves a node it
          * does not always build is a real idiom. */
-        if (numsaves) {
-            for (i = 0; i < numsaves; i++) {
-                bool matched;
+        /* Enhancement-603: an analysis that publishes several plots in
+         * sequence -- noise: the spectral densities, then the integrated
+         * totals -- is one analysis to the save list. Every plot of it ran
+         * through the passes above against the same saves, and a plot that
+         * held nothing they name was refused, "no data saved for Noise
+         * analysis; analysis not run": `.print noise onoise_spectrum` lost
+         * the totals (and the analysis went on into a run descriptor with no
+         * plot behind it), `.print noise onoise_total` lost the whole
+         * analysis, since the densities are opened first. And the unmatched
+         * warning below spoke at each plot, so a name the other plot held
+         * was reported missing.
+         *
+         * The analysis says how many plots follow (CKTplotsToFollow, consumed
+         * here). Within a sequence a plot the saves do not reach is kept
+         * whole -- what a save list restricted to the analysis asks for is
+         * that analysis's output, and the other plot is the rest of it; the
+         * integrated totals are a handful of scalars, the densities a
+         * sweep of a few vectors. When NO save applies to the analysis at
+         * all (every one restricted to another) the plot is refused as
+         * before: nothing was asked of this analysis. The unmatched warning
+         * is deferred to the last plot of the sequence and printed for the
+         * names no plot held. */
+        {
+            int follow = circuitPtr ? circuitPtr->CKTplotsToFollow : 0;
+            bool continuing = seq_job && seq_job == analysisPtr &&
+                              follow == seq_left - 1;
+            bool multi = follow > 0 || continuing;
+            wordlist *now_unmatched = NULL;
 
-                if (!saves[i].name || strchr(saves[i].name, '@') ||
-                    strchr(saves[i].name, '['))
-                    continue;           /* E-418 already speaks for these */
+            if (circuitPtr)
+                circuitPtr->CKTplotsToFollow = 0;
+            if (!continuing)
+                seq_reset();
 
-                /* savesused[] is already set for the items the loop above
-                   consumed -- the `all`/`allv` keywords themselves, and anything
-                   belonging to another analysis -- so honour it first in either
-                   mode. Under `save all`, which `.probe` turns on, Pass 1 never
-                   runs, so an explicit name still has to be matched here;
-                   everything real is saved in that mode, so a name matching
-                   nothing is genuinely absent either way. */
-                matched = savesused[i];
-                if (!matched && (saveall || savenosub || savenointernals)) {
-                    matched = (refName && name_eq(saves[i].name, refName));
-                    for (j = 0; !matched && j < numNames; j++)
-                        if (name_eq(saves[i].name, dataNames[j]))
-                            matched = TRUE;
+            if (multi && any_applicable && numsaves &&
+                !saveall && !savenosub && !savenointernals &&
+                ((run->numData == 1 && run->refIndex != -1) ||
+                 (run->numData == 0 && run->refIndex == -1)))
+                save_every_name(run, refName, dataNames, numNames, dataType,
+                                numNames, FALSE, FALSE);
+
+            if (numsaves) {
+                for (i = 0; i < numsaves; i++) {
+                    bool matched;
+
+                    if (!saves[i].name || strchr(saves[i].name, '@') ||
+                        strchr(saves[i].name, '['))
+                        continue;           /* E-418 already speaks for these */
+
+                    /* savesused[] is already set for the items the loop above
+                       consumed -- the `all`/`allv` keywords themselves, and anything
+                       belonging to another analysis -- so honour it first in either
+                       mode. Under `save all`, which `.probe` turns on, Pass 1 never
+                       runs, so an explicit name still has to be matched here;
+                       everything real is saved in that mode, so a name matching
+                       nothing is genuinely absent either way. */
+                    matched = savesused[i];
+                    if (!matched && (saveall || savenosub || savenointernals)) {
+                        matched = (refName && name_eq(saves[i].name, refName));
+                        for (j = 0; !matched && j < numNames; j++)
+                            if (name_eq(saves[i].name, dataNames[j]))
+                                matched = TRUE;
+                    }
+
+                    /* Enhancement-496: an INFERRED save is never reported.
+                     * `.option saveused` registers what it believes the control
+                     * block mentions, and deliberately over-collects; a name it
+                     * guessed wrong is not something the author wrote, so telling
+                     * them a vector is missing names a plot keyword as a signal.
+                     * A name the deck really did write still reports, unchanged. */
+                    if (!matched && !saves[i].autosaved) {
+                        if (multi)
+                            now_unmatched = wl_cons(copy(saves[i].name),
+                                                    now_unmatched);
+                        else
+                            unmatched_warning(saves[i].name);
+                    }
                 }
+            }
 
-                /* Enhancement-496: an INFERRED save is never reported.
-                 * `.option saveused` registers what it believes the control
-                 * block mentions, and deliberately over-collects; a name it
-                 * guessed wrong is not something the author wrote, so telling
-                 * them a vector is missing names a plot keyword as a signal.
-                 * A name the deck really did write still reports, unchanged. */
-                if (!matched && !saves[i].autosaved)
-                    fprintf(cp_err,
-                            "Warning: save '%s': nothing of that name is in this "
-                            "analysis,\n         so no such vector is produced.\n",
-                            saves[i].name);
+            if (multi && follow > 0) {
+                /* not the last plot: carry the names no plot has held */
+                if (!continuing)
+                    seq_unmatched = now_unmatched;
+                else
+                    seq_unmatched = wl_intersect(seq_unmatched, now_unmatched);
+                seq_job = analysisPtr;
+                seq_left = follow;
+            } else if (multi) {
+                /* the last plot: what neither it nor any earlier one held */
+                wordlist *w, *missing =
+                    wl_intersect(seq_unmatched, now_unmatched);
+                seq_unmatched = NULL;
+                for (w = missing; w; w = w->wl_next)
+                    unmatched_warning(w->wl_word);
+                wl_free(missing);
+                seq_reset();
             }
         }
 

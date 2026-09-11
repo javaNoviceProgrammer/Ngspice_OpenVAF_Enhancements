@@ -243,6 +243,10 @@ struct pnode* ft_getpnames_quotes(wordlist* wl, bool check)
  * not named 'list'. There should really be another flag for this...
  */
 
+/* Enhancement-603: set while ft_pnode_item_valid() asks the question without
+ * the answer being printed. */
+static bool checkvalid_quiet;
+
 static bool
 checkvalid(struct pnode *pn)
 {
@@ -250,7 +254,9 @@ checkvalid(struct pnode *pn)
         if (pn->pn_value) {
             if ((pn->pn_value->v_length == 0) &&
                 !eq(pn->pn_value->v_name, "list")) {
-                if (eq(pn->pn_value->v_name, "all"))
+                if (checkvalid_quiet)
+                    ;
+                else if (eq(pn->pn_value->v_name, "all"))
                     fprintf(cp_err,
                             "Warning from checkvalid: %s: no matching vectors.\n",
                             pn->pn_value->v_name);
@@ -287,9 +293,10 @@ checkvalid(struct pnode *pn)
                    pn->pn_left->pn_value->v_name) {
             /* An index over a base that resolves to nothing and spells no
              * literal vector either: genuinely invalid, as before. */
-            fprintf(cp_err,
-                    "Warning from checkvalid: vector %s is not available or has zero length.\n",
-                    pn->pn_left->pn_value->v_name);
+            if (!checkvalid_quiet)
+                fprintf(cp_err,
+                        "Warning from checkvalid: vector %s is not available or has zero length.\n",
+                        pn->pn_left->pn_value->v_name);
             return (FALSE);
         } else if (pn->pn_op && (pn->pn_op->op_arity == 2)) {
             if (!checkvalid(pn->pn_left))
@@ -303,6 +310,29 @@ checkvalid(struct pnode *pn)
         pn = pn->pn_next;
     }
     return (TRUE);
+}
+
+
+/* Enhancement-603: is this ONE item of a parsed list (its pn_next not
+ * followed) evaluable in the current plot -- every vector it names present
+ * and of nonzero length? The same test ft_getpnames(wl, TRUE) applies to the
+ * whole list, asked quietly and per item, so a caller can tell which items
+ * of a list the current plot can serve before it prints. */
+bool
+ft_pnode_item_valid(struct pnode *pn)
+{
+    struct pnode *next;
+    bool ok;
+
+    if (!pn)
+        return FALSE;
+    next = pn->pn_next;
+    pn->pn_next = NULL;
+    checkvalid_quiet = TRUE;
+    ok = checkvalid(pn);
+    checkvalid_quiet = FALSE;
+    pn->pn_next = next;
+    return ok;
 }
 
 

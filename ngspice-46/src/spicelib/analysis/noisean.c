@@ -276,6 +276,10 @@ NOISEan(CKTcircuit* ckt, int restart)
             error = CKTnames(ckt, &numNames, &nameList);
             if (error) return(error);
             /* Dump operating point. */
+            /* Enhancement-603: the spectral plot follows, and the integrated
+             * plot after it when the sweep has a span. */
+            ckt->CKTplotsToFollow =
+                1 + (job->NstartFreq != job->NstopFreq ? 1 : 0);
             error = SPfrontEnd->OUTpBeginPlot(ckt, ckt->CKTcurJob,
                 "NOISE Operating Point",
                 NULL, IF_REAL,
@@ -325,6 +329,11 @@ NOISEan(CKTcircuit* ckt, int restart)
                 ciprefix("inoise", data->namelist[i]) ||
                 ciprefix("onoise", data->namelist[i]);
 
+        /* Enhancement-603: tell the front end the integrated plot follows
+         * (a sweep with a span), so a save list that names only the totals
+         * does not refuse this plot -- and so the whole analysis -- and one
+         * that names only the densities does not refuse the totals. */
+        ckt->CKTplotsToFollow = job->NstartFreq != job->NstopFreq ? 1 : 0;
         error = SPfrontEnd->OUTpBeginPlot(ckt, ckt->CKTcurJob,
             data->squared
             ? "Noise Spectral Density Curves - (V^2 or A^2)/Hz"
@@ -592,13 +601,21 @@ NOISEan(CKTcircuit* ckt, int restart)
                 ciprefix("inoise", data->namelist[i]) ||
                 ciprefix("onoise", data->namelist[i]);
 
-        SPfrontEnd->OUTpBeginPlot(ckt, ckt->CKTcurJob,
+        /* Enhancement-603: the last plot of the sequence; and the result is
+         * checked, as the spectral plot's is. It was ignored, so a refused
+         * plot -- `.print noise onoise_spectrum` names nothing of this one,
+         * and the front end refused it "no data saved for Noise analysis" --
+         * left NplotPtr on a run descriptor with no plot behind it, which
+         * then took the totals and was ended as if it were one. */
+        ckt->CKTplotsToFollow = 0;
+        error = SPfrontEnd->OUTpBeginPlot(ckt, ckt->CKTcurJob,
             data->squared
             ? "Integrated Noise - V^2 or A^2"
             : "Integrated Noise",
             NULL, 0,
             data->numPlots, data->namelist, IF_REAL,
             &(data->NplotPtr));
+        if (error) return(error);
 
         error = CKTnoise(ckt, INT_NOIZ, N_CALC, data);
         if (error) return(error);

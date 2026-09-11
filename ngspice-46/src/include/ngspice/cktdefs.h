@@ -362,6 +362,17 @@ struct CKTcircuit {
        and released in tran and ac, where a capacitor carries them. Under
        `dcpath=all` every entry is held in every mode (Spectre's rule). */
     int CKTdcpathAlways;
+    /* Enhancement-603: how many more plots the running analysis will open
+     * after the one it is opening now. An analysis that publishes several
+     * plots in sequence (noise: the spectral densities, then the integrated
+     * totals) sets it before each OUTpBeginPlot so the front end can treat
+     * the sequence as one analysis when it applies the save list -- a plot
+     * of the sequence that holds nothing the saves name is kept whole rather
+     * than refused, and a saved name is reported missing only when no plot
+     * of the sequence held it. The front end consumes it (resets it to 0)
+     * on every OUTpBeginPlot, so an analysis that opens one plot need not
+     * touch it. */
+    int CKTplotsToFollow;
     /* Enhancement-365: set when an analysis has REPLACED ckt->CKTmatrix while
      * leaving CKTisSetup asserted, so every device's cached matrix-element
      * pointer now dangles. `pz` does exactly this (CKTpzSetup destroys and

@@ -22,8 +22,11 @@ Checks:
   [4] an ac beside the noise run is still pruned to what the block names
   [5] sp under the option: S_2_1 prints and `wrs2p` writes a full file
   [6] stock, no option: `save S_2_1 in` before sp now matches (case)
-  [7] stock semantics untouched: `save in` alone before sp still drops S_2_1,
-      and `save out` before noise still aborts the noise run
+  [7] stock semantics untouched: `save in` alone before sp still drops S_2_1;
+      `save out` before noise -- re-pinned by Enhancement-603: the noise plots
+      are a sequence to the save list, so a plot the saves do not reach is
+      kept whole rather than refused, and `out` is reported once as not in
+      the analysis (it used to abort the run)
 """
 import os
 import re
@@ -140,8 +143,9 @@ out = run(SP_CKT, "save in\nsp lin 3 1k 10k\nprint S_2_1", "t7a", opt=False)
 check("[7] stock: `save in` alone still drops S_2_1 -- an explicit list is obeyed",
       not printed(out, "s_2_1") and "not available" in out, out[-160:])
 out = run(NOISE_CKT, "save out\nnoise v(out) v1 dec 2 100 10k\nprint noise2.onoise_total", "t7b", opt=False)
-check("[7] stock: `save out` before noise still refuses the run, as it always did",
-      ABORT in out, out[-160:])
+check("[7] E-603: `save out` before noise runs it, keeps the plots whole, reports `out` once",
+      ABORT not in out and value(out, "noise2.onoise_total") is not None
+      and out.count("nothing of that name") == 1, out[-200:])
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

@@ -251,6 +251,12 @@ analysis restriction as `ft_getSaves`'s does since E-594, a batch run evaluates 
 cards of every analysis it produced, and the measure header names the analysis being
 evaluated.
 
+**Status (2026-09-11):** N7 resolved by Enhancement-603 -- the noise analysis tells the front
+end how many plots follow, a plot of the sequence the saves do not reach is kept whole, the
+unmatched-name warning is deferred and printed once, the false "can't parse" is gone, the
+integrated plot's `OUTpBeginPlot` result is checked, and a `.print noise` card prints from
+each plot what it holds.
+
 ## What held
 
 | area | probes | result |
