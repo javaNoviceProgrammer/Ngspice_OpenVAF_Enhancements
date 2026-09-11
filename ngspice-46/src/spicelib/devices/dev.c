@@ -806,7 +806,11 @@ static char *osdi_stage_reload_copy(const char *path) {
 
   char *dst = tprintf("%s/ngspice_osdi_reload_%ld_%u.osdi",
                       tmpdir, (long) time(NULL), counter++);
-  FILE *in = fopen(path, "rb");
+  /* Enhancement-599: open the name the way the first load did (the deck's
+     directory, NGSPICE_OSDI_DIR, ...), not against the working directory */
+  char *src = osdi_resolve_input_path(path);
+  FILE *in = fopen(src ? src : path, "rb");
+  tfree(src);
   if (!in) { tfree(dst); return NULL; }
   FILE *out = fopen(dst, "wb");
   if (!out) { fclose(in); tfree(dst); return NULL; }

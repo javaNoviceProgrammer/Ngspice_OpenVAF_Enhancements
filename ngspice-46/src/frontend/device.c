@@ -843,6 +843,20 @@ all_show_old(wordlist *wl, int mode, int quiet)
 
                 if (params)
                     wl_forall(params, listparam, dg);
+                /* Enhancement-599: the instance parameters the card carries
+                 * as its instances' defaults (`.model am alias width=3`).
+                 * They live in no model-parameter table, so nothing above
+                 * printed them, and the one place they could be seen was
+                 * the deck. `altermod` moves them now, so show them. */
+                if (dg->model && dg->model->defaults) {
+                    wordlist *w;
+                    fprintf(cp_out, "%*s\n", leftw + 24,
+                            "instance defaults on this card:");
+                    for (w = dg->model->defaults; w && w->wl_next;
+                         w = w->wl_next->wl_next)
+                        fprintf(cp_out, "%*s %*s\n", leftw, w->wl_word, colw,
+                                w->wl_next->wl_word);
+                }
                 fprintf(cp_out, "\n");
             }
         }

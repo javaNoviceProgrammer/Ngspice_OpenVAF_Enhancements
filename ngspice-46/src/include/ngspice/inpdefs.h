@@ -138,6 +138,13 @@ void INPgetTree(char **, INPparseTree **, CKTcircuit *, INPtables *);
 void INPfreeTree(IFparseTree *);
 IFvalue *INPgetValue(CKTcircuit *, char **, int, INPtables *);
 /* Enhancement-507: did the last INPgetValue() scalar conversion fail? */
+/* Enhancement-599: which instance parameters an instance took from its .model
+   card (the card's instance-parameter defaults, replayed by INPdevParse) and
+   which it set itself -- so `altermod` can move the card's default onto the
+   instances that follow it and leave the ones that gave their own value. */
+void INPcardDefaultNote(GENinstance *inst, int id, int explicit_);
+int  INPcardDefaultFollows(GENinstance *inst, int id);
+void INPcardDefaultClear(void);
 int INPlastValueError(void);
 int INPlastRangeError(void);   /* Enhancement-509 */
 int INPlastRoundWarn(void);    /* non-integral value rounded into an integer parameter */

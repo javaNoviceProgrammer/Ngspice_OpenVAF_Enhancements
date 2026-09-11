@@ -87,7 +87,7 @@ static struct variable *parmtovar(IFvalue *pv, IFparm *opt,
 static IFparm *parmlookup(IFdevice *dev, GENinstance **inptr, char *param,
                            int do_model, int inout);
 static int say_instance_level(IFdevice *device, const char *model,
-                              const char *param, int writing);   /* hunt F15 */
+                              const char *param, int writing, GENmodel *mod);   /* hunt F15 */
 static IFvalue *doask(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod,
                        IFparm *opt, int ind);
 
@@ -176,6 +176,9 @@ if_inpdeck(struct card *deck, INPtables **tab)
        Enter the model into the global model table modtab
        and into the corresponding hash table modtabhash.
        The role of 'tab' is unclear (not used any more?). */
+    INPcardDefaultClear();      /* Enhancement-599: a new circuit's instances (INPpas2 also
+                                   parses the card a control-block command synthesises,
+                                   so the table is cleared here, once per deck) */
     INPpas1(ckt, deck->nextcard, *tab);
     /* store the new model tables in the current circuit */
     ft_curckt->ci_modtab = modtab;
@@ -1052,7 +1055,7 @@ spif_getparam_special(CKTcircuit *ckt, char **name, char *param, int ind, int do
         opt = parmlookup(device, &dev, param, modelo_dispositivo, 0);
         if (!opt) {
             if (!(modelo_dispositivo && !dev && mod &&
-                  say_instance_level(device, *name, param, 0)))
+                  say_instance_level(device, *name, param, 0, mod)))
                 fprintf(cp_err, "Error: no such parameter %s.\n", param);
             return (NULL);
         }
@@ -1131,7 +1134,7 @@ spif_getparam(CKTcircuit *ckt, char **name, char *param, int ind, int do_model)
         opt = parmlookup(device, &dev, param, do_model, 0);
         if (!opt) {
             if (!(do_model && !dev && mod &&
-                  say_instance_level(device, *name, param, 0)))
+                  say_instance_level(device, *name, param, 0, mod)))
                 fprintf(cp_err, "Error: no such parameter %s.\n", param);
             return (NULL);
         }
@@ -1342,6 +1345,36 @@ if_setparam_string(CKTcircuit *ckt, char **name, char *param, char *strval,
     return 1;
 }
 
+/* the card's default entry for `param`, matched by parameter id so that an
+   alias spelling (`width=3` on the card, `w` in the command) is found */
+static wordlist *card_default_entry(IFdevice *device, GENmodel *mod, const char *param)
+{
+    GENinstance *dummy = NULL;
+    IFparm *want = parmlookup(device, &dummy, (char *) param, 0, 0);
+    wordlist *w;
+    if (!want || !mod)
+        return NULL;
+    for (w = mod->defaults; w && w->wl_next; w = w->wl_next->wl_next) {
+        GENinstance *d2 = NULL;
+        IFparm *have = parmlookup(device, &d2, w->wl_word, 0, 0);
+        if (have && have->id == want->id)
+            return w;
+    }
+    return NULL;
+}
+
+static void card_default_record(IFdevice *device, GENmodel *mod, const char *param,
+                                const char *text)
+{
+    wordlist *w = card_default_entry(device, mod, param);
+    if (w) {
+        tfree(w->wl_next->wl_word);
+        w->wl_next->wl_word = copy(text);
+        return;
+    }
+    mod->defaults = wl_cons(copy(param), wl_cons(copy(text), mod->defaults));
+}
+
 /* hunt F15 (2026-09-05): the name is a MODEL and `param` is one of its
  * INSTANCE parameters. `altermod mm l=10` was refused as "model 'mm' has no
  * parameter l" while `.model mm vidd l=10` set every instance and `alter n1
@@ -1356,12 +1389,19 @@ if_setparam_string(CKTcircuit *ckt, char **name, char *param, char *strval,
  * Nonzero when the message was printed. */
 static int
 say_instance_level(IFdevice *device, const char *model, const char *param,
-                   int writing)
+                   int writing, GENmodel *mod)
 {
     GENinstance *dummy = NULL;
+    const char *card = NULL;
     if (!param || !model
         || !parmlookup(device, &dummy, (char *) param, 0, writing ? 1 : 0))
         return 0;
+    /* Enhancement-599: the card's own default for it, when the card set one */
+    if (mod) {
+        wordlist *w = card_default_entry(device, mod, param);
+        if (w)
+            card = w->wl_next->wl_word;
+    }
     fprintf(cp_err, "Error: '%s' is an INSTANCE parameter of model '%s'%s; ",
             param, model,
             device->registry_entry
@@ -1374,9 +1414,85 @@ say_instance_level(IFdevice *device, const char *model, const char *param,
                         "@<instance>[%s]=...` on each instance, or write %s=... "
                         "on the .model card, where it is the instances' "
                         "default.\n", param, param);
+    else if (card)
+        fprintf(cp_err, "a model has no value of its own to read; the .model card "
+                        "gives %s=%s as the default of the instances that do not set "
+                        "it (`showmod %s` lists it). Read a value from an instance: "
+                        "@<instance>[%s].\n", param, card, model, param);
     else
         fprintf(cp_err, "a model has no value of its own to read. Read it from "
                         "an instance: @<instance>[%s].\n", param);
+    return 1;
+}
+
+
+/* Enhancement-599: `altermod <model> <instance parameter>=<value>` -- the
+ * card's default of an instance parameter, moved at run time.
+ *
+ * A .model card may carry instance parameters as the defaults of its
+ * instances (`.model am alias width=3`, E-546); they are replayed onto each
+ * instance as it is parsed. Hunt F15 (E-560) refused `altermod am width=5`
+ * because, after that replay, nothing could tell an instance that took the
+ * default from one that wrote its own -- and the refusal recommended the very
+ * card it could not change. INPdevParse keeps the distinction now
+ * (INPcardDefaultNote), so the command can do what the card does: set the
+ * parameter on every instance of the model that follows the card (took its
+ * default, or never set it), leave the instances that gave their own value,
+ * and record the new value in the model's default list so `showmod` reports
+ * it. Returns 1 when handled (the parameter is instance-level). */
+static int
+altermod_instance_default(CKTcircuit *ckt, int typecode, IFdevice *device,
+                          GENmodel *mod, const char *name, char *param,
+                          struct dvec *val)
+{
+    GENinstance *dummy = NULL, *inst;
+    IFparm *opt;
+    int moved = 0, kept = 0, err = 0;
+    char text[64];
+
+    if (!param || !mod || !val)
+        return 0;
+    opt = parmlookup(device, &dummy, param, 0, 1);
+    if (!opt)
+        return 0;
+    if (opt->dataType & IF_VECTOR)
+        return 0;                       /* per-element spellings stay as they are */
+
+    for (inst = mod->GENinstances; inst; inst = inst->GENnextInstance) {
+        if (!INPcardDefaultFollows(inst, opt->id)) {
+            kept++;
+            continue;
+        }
+        err = doset_user(ckt, typecode, inst, NULL, opt, val);
+        if (err)
+            break;
+        INPcardDefaultNote(inst, opt->id, 0);
+        moved++;
+    }
+    if (err) {
+        fprintf(cp_err, "Error: the device refused %s=... on %s; the card's default "
+                        "was not changed.\n", param, inst ? inst->GENname : "an instance");
+        return 1;
+    }
+    if ((opt->dataType & (IF_VARTYPES & ~IF_VECTOR)) == IF_REAL && val->v_realdata)
+        snprintf(text, sizeof text, "%.15g", val->v_realdata[0]);
+    else if ((opt->dataType & (IF_VARTYPES & ~IF_VECTOR)) == IF_INTEGER && val->v_realdata)
+        snprintf(text, sizeof text, "%d", (int) val->v_realdata[0]);
+    else
+        text[0] = '\0';
+    if (text[0])
+        card_default_record(device, mod, opt->keyword, text);
+    if (moved)
+        fprintf(cp_out, "altermod: '%s' is an instance parameter; %s is now the default "
+                        "of model %s -- %d instance%s follow%s it, %d keep%s %s own value.\n",
+                param, text[0] ? text : "the value", name, moved, moved == 1 ? "" : "s",
+                moved == 1 ? "s" : "", kept, kept == 1 ? "s" : "",
+                kept == 1 ? "its" : "their");
+    else
+        fprintf(cp_out, "altermod: '%s' is an instance parameter; %s is recorded as the "
+                        "default of model %s, but every one of its %d instance%s sets its "
+                        "own value, so nothing changes.\n",
+                param, text[0] ? text : "the value", name, kept, kept == 1 ? "" : "s");
     return 1;
 }
 
@@ -1437,7 +1553,11 @@ if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_
                 fprintf(cp_err, "Error: array parameter '%s' is set per "
                         "element: use @%s[%s[0]] = <value> (one element at a "
                         "time).\n", param, *name, param);
-            else if (say_instance_level(device, *name, param, 1))
+            else if (do_model &&
+                     altermod_instance_default(ckt, typecode, device, mod, *name,
+                                               param, val))
+                ;                                  /* Enhancement-599 */
+            else if (say_instance_level(device, *name, param, 1, mod))
                 ;                                  /* hunt F15 */
             else
                 fprintf(cp_err, "Error: model '%s' has no parameter %s.\n",
@@ -1472,7 +1592,8 @@ if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_
         mod = dev->GENmodPtr;
         dev = NULL;
     }
-    doset_user(ckt, typecode, dev, mod, opt, val);
+    if (doset_user(ckt, typecode, dev, mod, opt, val) == OK && dev && !do_model)
+        INPcardDefaultNote(dev, opt->id, 1);        /* Enhancement-599: its own now */
 
     /* Call to CKTtemp(ckt) will be invoked here only by 'altermod' commands,
        to set internal model parameters pParam of each instance for immediate use,

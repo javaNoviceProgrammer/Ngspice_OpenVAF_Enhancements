@@ -129,6 +129,7 @@ typedef struct OsdiObjectFile {
 } OsdiObjectFile;
 
 extern OsdiObjectFile load_object_file(const char *path);
+extern char *osdi_resolve_input_path(const char *name);   /* Enhancement-599 */
 extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry);
 extern int osdi_devtype_is_osdi(int type);   /* Enhancement-323 */
 

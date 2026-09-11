@@ -13,6 +13,8 @@ Author: 1985 Thomas L. Quarles
 
 #include "ngspice/ngspice.h"
 #include <stdio.h>
+#include <stdint.h>
+#include <string.h>
 #include "ngspice/ifsim.h"
 #include "ngspice/inpdefs.h"
 #include "ngspice/cktdefs.h"   /* Enhancement-467: CKTtemp for the dtemp guard */
@@ -164,6 +166,102 @@ e467_bad_instance_value(CKTcircuit *ckt, IFdevice *device, GENinstance *fast,
     return 0;
 }
 
+
+/* ---- Enhancement-599: who took the card's default -------------------------
+ *
+ * A `.model` card may carry INSTANCE parameters (`.model am alias width=3`):
+ * they are the card's defaults, replayed onto every instance of the card as
+ * it is parsed (the loop over GENmodPtr->defaults below). After that replay
+ * nothing could tell an instance that took the default from one that wrote
+ * its own value -- the device sees both as "given" -- which is why `altermod
+ * am width=5` was refused (hunt F15, E-560) and `showmod am` did not list
+ * the default at all (F4 of the 2026-09-10 hunt). This side table keeps the
+ * distinction: CARD when the value came from the card, EXPLICIT when the
+ * instance line (or a later `alter`) set it. Keyed by the instance pointer
+ * and the parameter id, so it is cleared when a circuit is parsed anew
+ * (INPpas2) and never read across circuits. */
+#define CD_CARD     1u
+#define CD_EXPLICIT 2u
+struct cd_entry { GENinstance *inst; int id; unsigned flags; };
+static struct cd_entry *cd_tab = NULL;
+static size_t cd_cap = 0, cd_n = 0;
+
+static size_t cd_hash(const GENinstance *inst, int id)
+{
+    uintptr_t h = (uintptr_t) inst;
+    h ^= h >> 17;
+    h *= 0x9E3779B97F4A7C15ull;
+    h ^= (uintptr_t) id * 0x85EBCA6Bu;
+    return (size_t) h;
+}
+
+static struct cd_entry *cd_find(GENinstance *inst, int id, int create)
+{
+    size_t i, mask;
+    if (!cd_cap) {
+        if (!create)
+            return NULL;
+        cd_cap = 1024;
+        cd_tab = TMALLOC(struct cd_entry, cd_cap);
+        memset(cd_tab, 0, cd_cap * sizeof *cd_tab);
+    }
+    if (create && cd_n * 2 >= cd_cap) {           /* grow at half load */
+        struct cd_entry *old = cd_tab;
+        size_t oldcap = cd_cap, k;
+        cd_cap *= 2;
+        cd_tab = TMALLOC(struct cd_entry, cd_cap);
+        memset(cd_tab, 0, cd_cap * sizeof *cd_tab);
+        cd_n = 0;
+        for (k = 0; k < oldcap; k++)
+            if (old[k].inst) {
+                struct cd_entry *e = cd_find(old[k].inst, old[k].id, 1);
+                e->flags = old[k].flags;
+            }
+        tfree(old);
+    }
+    mask = cd_cap - 1;
+    for (i = cd_hash(inst, id) & mask; ; i = (i + 1) & mask) {
+        if (!cd_tab[i].inst) {
+            if (!create)
+                return NULL;
+            cd_tab[i].inst = inst;
+            cd_tab[i].id = id;
+            cd_tab[i].flags = 0;
+            cd_n++;
+            return &cd_tab[i];
+        }
+        if (cd_tab[i].inst == inst && cd_tab[i].id == id)
+            return &cd_tab[i];
+    }
+}
+
+void INPcardDefaultNote(GENinstance *inst, int id, int explicit_)
+{
+    struct cd_entry *e;
+    if (!inst || id < 0)
+        return;
+    e = cd_find(inst, id, 1);
+    if (explicit_)
+        e->flags = (e->flags & ~CD_CARD) | CD_EXPLICIT;
+    else if (!(e->flags & CD_EXPLICIT))
+        e->flags |= CD_CARD;
+}
+
+/* 1 when the instance never set `id` itself: it took the card's default, or
+   nothing set it at all and it runs on the declared default -- either way a
+   new card default is its value. */
+int INPcardDefaultFollows(GENinstance *inst, int id)
+{
+    struct cd_entry *e = inst ? cd_find(inst, id, 0) : NULL;
+    return !(e && (e->flags & CD_EXPLICIT));
+}
+
+void INPcardDefaultClear(void)
+{
+    tfree(cd_tab);
+    cd_tab = NULL;
+    cd_cap = cd_n = 0;
+}
 
 /* Enhancement-597: a scalar parameter whose value is missing or did not parse.
  *
@@ -318,6 +416,8 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
         error = e467_bad_instance_value(ckt, device, fast, p, val)
                     ? 0
                     : ft_sim->setInstanceParm (ckt, fast, p->id, val, NULL);
+        if (!error)
+            INPcardDefaultNote(fast, p->id, 0);      /* Enhancement-599 */
         if (error) {
             rtn = INPerror(error);
             if (rtn && error == E_BADPARM) {
@@ -414,6 +514,8 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
         error = e467_bad_instance_value(ckt, device, fast, p, val)
                     ? 0
                     : ft_sim->setInstanceParm (ckt, fast, p->id, val, NULL);
+        if (!error)
+            INPcardDefaultNote(fast, p->id, 1);      /* Enhancement-599: its own */
         if (error) {
             rtn = INPerror(error);
             goto quit;

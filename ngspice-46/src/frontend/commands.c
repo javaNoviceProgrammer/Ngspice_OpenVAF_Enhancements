@@ -343,6 +343,14 @@ struct comm spcp_coms[] = {
       "the netlist and the object it produces is loaded; recompiled every run unless the deck "
       "carries `.option osdicache`. "
       "With -f, force-reloads an already-loaded file so a recompiled model is picked up without restarting." } ,
+    /* Enhancement-599: the spelling every deck uses is a live command too. In a
+     * deck the `pre_` prefix hoists the line into the pre-pass; typed at the
+     * prompt or reached at execution time it used to be "no such command". */
+    { "pre_osdi", com_osdi, FALSE, TRUE,
+      { 040000, 040000, 040000, 040000 }, E_BEGINNING, 1, LOTS,
+      NULL,
+      "[-f] [-va] library ... : the same as `osdi`. In a deck's .control block the pre_ prefix "
+      "runs the line before the circuit is read; at the prompt it loads (or with -f reloads) now." } ,
 #endif
     { "snp", com_pre_snp, FALSE, TRUE,          /* Enhancement-200 (use as `pre_snp`) */
       { 040000, 040000, 040000, 040000 }, E_BEGINNING, 1, LOTS,

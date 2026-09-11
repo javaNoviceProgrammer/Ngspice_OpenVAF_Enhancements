@@ -967,6 +967,7 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
     bool commands = FALSE;
     wordlist *wl = NULL, *end = NULL, *wl_first = NULL;
     wordlist *controls = NULL, *pre_controls = NULL;
+    int block_cmds = 0;         /* Enhancement-599: commands seen in the current .control block */
     FILE *lastin, *lastout, *lasterr;
     double temperature_value;
     bool expr_w_temper = FALSE;
@@ -1228,6 +1229,7 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                     fprintf(cp_err, "Warning: redundant .control card\n");
                 else
                     commands = TRUE;
+                block_cmds = 0;                 /* Enhancement-599 */
             } else if (ciprefix(".endc", dd->line)) {
                 ld->nextcard = dd->nextcard;
                 line_free(dd, FALSE); /* SJB - free this line's memory */
@@ -1297,9 +1299,30 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                      * pre_, to be executed before circuit parsing.
                      */
 
+                    /* Enhancement-599: a `pre_` line is hoisted out of its block
+                     * wherever it sits, so `pre_osdi -f x.osdi` written AFTER a
+                     * `shell` that recompiles x.osdi ran before the shell, said
+                     * "reloaded", and reloaded the old object; at execution time
+                     * the line was gone. Say so when a reload is asked for behind
+                     * other commands in its block, and name the form that acts
+                     * there (F5 of the 2026-09-10 hunt). A plain `pre_osdi` after a
+                     * `set` is the ordinary layout and stays quiet. */
+                    {
+                        const char *q = s + 4;
+                        bool force = (strstr(q, " -f") != NULL || strstr(q, " -force") != NULL);
+                        if (force && block_cmds > 0)
+                            fprintf(cp_err,
+                                    "Note: `%s` is a pre-pass command: it runs before the "
+                                    "circuit is read, ahead of the %d command%s above it in "
+                                    "this .control block. To reload at that point in the "
+                                    "block -- after a `shell` that recompiled the file -- "
+                                    "write it without the prefix: `%s`.\n",
+                                    s, block_cmds, block_cmds == 1 ? "" : "s", q);
+                    }
                     s = s + 4;
                     pre_controls = wl_cons(copy(s), pre_controls);
                 } else if (*s) {
+                    block_cmds++;                   /* Enhancement-599 */
                     /* Assemble all other commands to be executed
                      * after circuit parsing */
 

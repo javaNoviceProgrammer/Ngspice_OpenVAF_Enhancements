@@ -105,6 +105,14 @@ static char *resolve_path(const char *name) {
   return (char *)NULL;
 } /* end of function inp_pathresolve */
 
+static char *resolve_input_path(const char *name);
+/* Enhancement-599: exported for the forced-reload staging in dev.c, which
+   copies the file BEFORE load_object_file resolves the name -- a relative
+   `pre_osdi -f m.osdi` from a deck in another directory opened the name
+   against the working directory and reported "could not stage a reload
+   copy". */
+char *osdi_resolve_input_path(const char *name) { return resolve_input_path(name); }
+
 static char *resolve_input_path(const char *name) {
   /* if name is an absolute path name,
    *   or if we haven't anything to prepend anyway

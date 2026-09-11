@@ -144,6 +144,11 @@ the card default is a model-level quantity (then `showmod` should list it and
 the card should not accept it). The first is what a user sweeping a PDK's card-level
 `w` default expects.
 
+**Status (2026-09-10):** resolved by Enhancement-599. The parser records which instances
+took the card's default and which set their own, so `altermod` moves the default onto the
+followers, records it on the card and says what it did; `showmod` lists the card's
+instance defaults; the read-side refusal names the card's value.
+
 ## F5 — `pre_osdi -f` after a recompile reloads before it
 
 ```
@@ -172,6 +177,11 @@ spelling every deck uses reports a reload it did not do at the point the deck sa
 Two fixes fit: make `pre_osdi` an ordinary command at execution time as well (the
 hoisting stays for the leading block), or have the hoisted `-f` say "in the pre-pass,
 before the circuit".
+
+**Status (2026-09-10):** resolved by Enhancement-599. A `pre_osdi -f` behind other commands
+in its block gets a Note at the pre-pass naming `osdi -f` as the form that acts there;
+`pre_osdi` is a live command at the prompt; and the forced reload's staged copy resolves a
+relative name the way the first load did.
 
 ## D1 — the opvar save warns twice, and under saveused
 

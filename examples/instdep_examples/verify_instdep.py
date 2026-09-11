@@ -313,9 +313,12 @@ if osdi:
     rc2, o = sim(osdi, "v1 1 0 dc 1\nn1 1 0 mm w=8e-6\nn2 1 0 mm w=8e-6 l=2e-6\n.model mm m",
                  "op\naltermod mm l=4e-6\nprint @mm[l]\ndc @mm[l] 4e-6 8e-6 2e-6\n"
                  "alter @n1[l]=4e-6\nop\nprint @n1[rl] @n2[rl]", "f15")
-    check("[19] altermod of a promoted parameter says it is INSTANCE-level and points at alter and the card (was: 'has no parameter l' after a MOS width probe)",
-          "'l' is an INSTANCE parameter of model 'mm'" in o and "`altermod` sets model parameters" in o
-          and "alter @<instance>[l]=" in o and "has no parameter l" not in o
+    # Enhancement-599: the command moves the card's default now -- onto the
+    # instances that follow the card (n1, no l of its own), not onto n2, which
+    # set l itself -- and says so; the old refusal is gone.
+    check("[19] altermod of a promoted parameter moves the card's default onto the instances that follow it and says so (was: refused as instance-level; before that 'has no parameter l' after a MOS width probe)",
+          "'l' is an instance parameter; 4e-06 is now the default of model mm -- 1 instance follows it, 1 keeps its own value" in o
+          and "`altermod` sets model parameters" not in o and "has no parameter l" not in o
           and "no such parameter w" not in o and "width instance parameter" not in o, o.strip()[-300:])
     check("[20] print @mm[l] and dc @mm[l] say the same and point at the instance",
           "a model has no value of its own to read" in o and "sweep @<instance>[l] instead" in o, o.strip()[-300:])
