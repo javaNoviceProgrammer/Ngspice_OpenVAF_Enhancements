@@ -173,8 +173,14 @@ void raw_write(char *name, struct plot *pl, bool app, bool binary)
 
     fprintf(fp, "Variables:\n");
     for (i = 0, v = pl->pl_dvecs; v; v = v->v_next) {
+        /* Enhancement-607: a `@dev[param]` vector keeps its own name -- see
+         * fileInit_pass2() in outitf.c. `i(@r1[i])` came back from a load
+         * under a name neither `@r1[i]` nor `i(@r1[i])` reaches. */
+        if (v->v_name[0] == '@') {
+            fprintf(fp, "\t%d\t%s\t%s", i++, v->v_name, ft_typenames(v->v_type));
+        }
         /* write i(name) instead of name#branch */
-        if (v->v_type == SV_CURRENT && !keepbranch) {
+        else if (v->v_type == SV_CURRENT && !keepbranch) {
             branch = NULL;
             /* get name only*/
             if ((branch = strstr(v->v_name, "#branch")) != NULL) {
@@ -607,6 +613,16 @@ raw_read(char *name) {
                 if (isdigit_c(v->v_name[0]) && (r = ft_typabbrev(v ->v_type)) != NULL) {
                     char *x = v->v_name;
                     v->v_name = tprintf("%s(%s)", r, v->v_name);
+                    tfree(x);
+                }
+                /* Enhancement-607: a file an earlier writer produced spells
+                 * a device-parameter vector `i(@r1[i])` (or `v(@...)`); the
+                 * writers keep the `@` name now, and such a name is put back
+                 * on reading, so old files load addressable too. */
+                if ((ciprefix("i(@", v->v_name) || ciprefix("v(@", v->v_name)) &&
+                        v->v_name[strlen(v->v_name) - 1] == ')') {
+                    char *x = v->v_name;
+                    v->v_name = copy_substring(x + 2, x + strlen(x) - 1);
                     tfree(x);
                 }
 

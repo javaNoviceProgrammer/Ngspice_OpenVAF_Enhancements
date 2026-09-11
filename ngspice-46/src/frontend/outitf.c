@@ -1729,7 +1729,18 @@ fileInit_pass2(runDesc *run)
         /* Use run->type to detect SP analysis */
         type = guess_type(name, run->type);
 
-        if (type == SV_CURRENT && !keepbranch) {
+        /* Enhancement-607: a `@dev[param]` vector is written under its own
+         * name. The wrappers below spell a NODE voltage `v(x)` and a BRANCH
+         * current `i(x)`, and a loaded file's `v(out)` and `i(v1)` resolve to
+         * `out` and `v1#branch` again. But `@r1[i]` is current-typed, so it
+         * was written `i(@r1[i])` -- a name nothing reads back: after `load`,
+         * `@r1[i]` asks the (absent) device, and `i(@r1[i])` is the parser's
+         * i() of a name that is not a source. Every OSDI terminal current
+         * `.option savecurrents` records, `@n1[i_p]`, was affected; a `@`
+         * name is a device parameter, never a node or a branch. */
+        if (*name == '@') {
+            fprintf(run->fp, "\t%d\t%s\t%s", i, name, ft_typenames(type));
+        } else if (type == SV_CURRENT && !keepbranch) {
             char *branch = strstr(name, "#branch");
             if (branch)
                 *branch = '\0';
