@@ -80,6 +80,14 @@ struct CKTnode {
      * card and by nothing else, i.e. it is a typo, and the analysis would
      * otherwise report it as a perfectly good 0 V. */
     unsigned int devRef:1;      /* FLAG named by a device / made by the simulator */
+    /* Enhancement-608: a node the deck reader made before setup -- a .ic,
+     * .nodeset, .tf or .pz card naming a device's INTERNAL node ahead of the
+     * device that builds it -- and that the device then took over as that
+     * internal node at setup, rather than building a second node of the same
+     * name beside it. It is a parse-time node, so CKTdltNNum() leaves it in
+     * place at unsetup and the device takes it over again at the next
+     * setup: what the card bound to stays the node the device stamps. */
+    unsigned int adopted:1;
 };
 
 /* defines for node parameters */
@@ -87,6 +95,15 @@ enum {
     PARM_NS = 1,
     PARM_IC,
     PARM_NODETYPE,
+};
+
+/* Enhancement-608: see CKTcircuit.CKTpendingNodeParms */
+struct CKTpendingNodeParm {
+    char *name;                 /* the node's name, a private copy */
+    int parm;                   /* PARM_NS or PARM_IC */
+    double value;
+    unsigned int reported:1;    /* the "no such node" warning printed */
+    struct CKTpendingNodeParm *next;
 };
 
 /* Enhancement-438: `.option warn_physics` -- set by the frontend, read by the
@@ -238,6 +255,17 @@ struct CKTcircuit {
     CKTnode *CKTnodes;          /* ??? */
     CKTnode *CKTlastNode;       /* ??? */
     CKTnode *prev_CKTlastNode;  /* just before model setup */
+    /* Enhancement-608: device-local nodes CKTdltNNum() retired at unsetup,
+     * kept under their names (a private copy each) so that the next setup's
+     * CKTmkVolt()/CKTmkCur() of the same name revives the same struct: a
+     * job that bound to a device's internal node (`tf v(n1#mid) v1` after an
+     * `op`) still points at the node the device stamps. */
+    NGHASHPTR CKTretiredNodes;  /* name -> CKTnode * */
+    /* Enhancement-608: `.ic`/`.nodeset` entries on a device's internal node
+     * (`v(n1#mid)`), which does not exist when INPpas3 reads the card; kept
+     * by name and applied by CKTsetup() once the devices have built their
+     * nodes. An entry no setup can place is reported once. */
+    struct CKTpendingNodeParm *CKTpendingNodeParms;
 
     /* This define should be somewhere else ??? */
 #define NODENAME(ckt,nodenum) CKTnodName(ckt,nodenum)
@@ -540,6 +568,9 @@ extern int CKTmapNode(CKTcircuit *, CKTnode **, IFuid);
 extern int CKTmkCur(CKTcircuit  *, CKTnode **, IFuid , char *);
 extern int CKTmkNode(CKTcircuit *, CKTnode **);
 extern int CKTmkVolt(CKTcircuit  *, CKTnode **, IFuid , char *);
+extern int CKTmkSignal(CKTcircuit *, CKTnode **, IFuid, char *, int);   /* Enhancement-608 */
+extern CKTnode *CKTreviveNode(CKTcircuit *, const char *);              /* Enhancement-608 */
+extern void CKTfreeRetiredNodes(CKTcircuit *);                          /* Enhancement-608 */
 extern int CKTmodAsk(CKTcircuit *, GENmodel *, int , IFvalue *, IFvalue *);
 extern int CKTmodCrt(CKTcircuit *, int , GENmodel **, IFuid);
 extern int CKTmodParam(CKTcircuit *, GENmodel *, int , IFvalue *, IFvalue *);
@@ -575,6 +606,9 @@ extern int CKTsenUpdate(CKTcircuit *);
 extern int CKTsetAnalPm(CKTcircuit *, JOB *, int , IFvalue *, IFvalue *);
 extern int CKTsetBreak(CKTcircuit *, double);
 extern int CKTsetNodPm(CKTcircuit *, CKTnode *, int , IFvalue *, IFvalue *);
+extern void CKTpendNodPm(CKTcircuit *, const char *, int, double);   /* Enhancement-608 */
+extern void CKTapplyPendingNodPm(CKTcircuit *);                      /* Enhancement-608 */
+extern void CKTfreePendingNodPm(CKTcircuit *);                       /* Enhancement-608 */
 extern int CKTsetOpt(CKTcircuit *, JOB *, int , IFvalue *);
 extern int CKTsetup(CKTcircuit *);
 extern void CKTdcpathStamp(CKTcircuit *, int ac); /* Enhancement-575, 595 */

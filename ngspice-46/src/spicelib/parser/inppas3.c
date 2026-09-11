@@ -12,6 +12,28 @@ Modified: AlansFixes
 
 #include "inppas3.h"
 
+/* Enhancement-608: a `.ic` or `.nodeset` on a device's INTERNAL node --
+ * `v(n1#mid)`, the node the device builds at setup, after this pass -- was
+ * refused, "on non-existent node, ignored". When the part before the '#'
+ * names an instance of the deck, the entry is kept by name (CKTpendNodPm)
+ * and CKTsetup() places it once the device has built the node. A name that
+ * is no instance's stays the refusal it was; a suffix the device does not
+ * build is reported at setup. */
+static int
+inp_internal_node_name(CKTcircuit *ckt, const char *nodename)
+{
+    const char *sharp = strchr(nodename, '#');
+    char *inst;
+    int found;
+
+    if (!sharp || sharp == nodename || !sharp[1])
+        return 0;
+    inst = copy_substring(nodename, sharp);
+    found = CKTfndDev(ckt, inst) != NULL;
+    tfree(inst);
+    return found;
+}
+
 extern IFsimulator *ft_sim;
 
 
@@ -36,6 +58,8 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                                    resistance into */
     int which;			/* which analysis we are performing */
     CKTnode *node1;		/* the first node's node pointer */
+    char *deferred;         /* Enhancement-608: an internal node's name, placed at setup */
+    int found;
 
     NG_IGNORE(task);
 
@@ -106,7 +130,12 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                     char *nodename;
                     INPgetNetTok(&line,&nodename,1);
                     /* If node is not found, issue a warning, ignore the defective token */
-                    if (INPtermSearch(ckt, &nodename, tab, &node1) != E_EXISTS) {
+                    deferred = NULL;
+                    found = INPtermSearch(ckt, &nodename, tab, &node1) == E_EXISTS;
+                    if (!found && inp_internal_node_name(ckt, nodename)) {
+                        deferred = nodename;    /* Enhancement-608: placed at setup */
+                        node1 = NULL;
+                    } else if (!found) {
                         const char *nf, *nr, *sfx;
                         /* Enhancement-592: a bit of a node autoadapt split */
                         if (INPadaptSplitOf(nodename, &nf, &nr, &sfx))
@@ -140,7 +169,10 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                         FREE(name);
                         continue;
                     }
-                    IFC(setNodeParm, (ckt, node1, which, &ptemp, NULL));
+                    if (deferred)
+                        CKTpendNodPm(ckt, deferred, which, ptemp.rValue);
+                    else
+                        IFC(setNodeParm, (ckt, node1, which, &ptemp, NULL));
                     FREE(name);
                     continue;
                 }
@@ -178,7 +210,12 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                     char *nodename;
                     INPgetNetTok(&line,&nodename,1);
                     /* If node is not found, issue a warning, ignore the defective token */
-                    if (INPtermSearch(ckt, &nodename, tab, &node1) != E_EXISTS) {
+                    deferred = NULL;
+                    found = INPtermSearch(ckt, &nodename, tab, &node1) == E_EXISTS;
+                    if (!found && inp_internal_node_name(ckt, nodename)) {
+                        deferred = nodename;    /* Enhancement-608: placed at setup */
+                        node1 = NULL;
+                    } else if (!found) {
                         const char *nf, *nr, *sfx;
                         /* Enhancement-592: a bit of a node autoadapt split */
                         if (INPadaptSplitOf(nodename, &nf, &nr, &sfx))
@@ -214,7 +251,10 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                         FREE(name);
                         continue;
                     }
-                    IFC(setNodeParm, (ckt, node1, which, &ptemp, NULL));
+                    if (deferred)
+                        CKTpendNodPm(ckt, deferred, which, ptemp.rValue);
+                    else
+                        IFC(setNodeParm, (ckt, node1, which, &ptemp, NULL));
                     FREE(name);
                     continue;
                 }

@@ -78,6 +78,8 @@ CKTdestroy(CKTcircuit *ckt)
     }
     ckt->CKTnodes = NULL;
     ckt->CKTlastNode = NULL;
+    CKTfreeRetiredNodes(ckt);       /* Enhancement-608 */
+    CKTfreePendingNodPm(ckt);       /* Enhancement-608 */
 
     /* LTRA code addition */
     if (ckt->CKTtimePoints != NULL)

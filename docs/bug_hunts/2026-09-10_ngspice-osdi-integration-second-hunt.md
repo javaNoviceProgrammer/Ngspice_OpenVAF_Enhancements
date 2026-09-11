@@ -251,6 +251,14 @@ analysis restriction as `ft_getSaves`'s does since E-594, a batch run evaluates 
 cards of every analysis it produced, and the measure header names the analysis being
 evaluated.
 
+**Status (2026-09-11):** N1 resolved by Enhancement-606 (`showmod` by hierarchical model
+name), N2 by Enhancement-608 (a parse-time node of an internal node's name is adopted by
+the device, a retired node is revived across setups, a `.ic`/`.nodeset` on an internal
+node is placed at setup -- and the interactive `tf` on an internal node read freed memory),
+N3 by Enhancement-605 (the `.probe` card's `.save all` placed past a leading `.control`
+block), N4 by Enhancement-607 (`@dev[param]` vectors keep their names in raw files),
+N5 by Enhancement-604 (a numparam failure refuses the line or the deck, not the process).
+
 **Status (2026-09-11):** N7 resolved by Enhancement-603 -- the noise analysis tells the front
 end how many plots follow, a plot of the sequence the saves do not reach is kept whole, the
 unmatched-name warning is deferred and printed once, the false "can't parse" is gone, the

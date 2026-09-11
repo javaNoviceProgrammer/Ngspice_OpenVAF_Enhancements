@@ -7,6 +7,7 @@ Copyright 1992 Regents of the University of California.  All rights reserved.
 
 #include "ngspice/ngspice.h"
 #include "ngspice/cktdefs.h"
+#include "ngspice/hash.h"      /* Enhancement-608 */
 #include "ngspice/ifsim.h"
 #include "ngspice/sperror.h"
 
@@ -17,16 +18,70 @@ CKTdltNod(CKTcircuit* ckt, CKTnode* node)
     return CKTdltNNum(ckt, node->number);
 }
 
+/* Enhancement-608: a device-local node is not freed when its device lets go
+ * of it at unsetup; it is RETIRED under its name, and CKTmkVolt()/CKTmkCur()
+ * of that name at the next setup revives the same struct. A job that bound
+ * to the node -- `tf v(n1#mid) v1` typed after an `op` binds to the live
+ * internal node -- used to keep a pointer into freed memory once the run's
+ * own unsetup/setup had rebuilt the node, and reported whatever it read
+ * there (a transfer function of -5e-4 for a divider's mid node). The name
+ * is a private copy: IFdelUid() frees the symbol table's. */
+static void
+CKTretireNode(CKTcircuit *ckt, CKTnode *node)
+{
+    char *keep = node->name ? copy(node->name) : NULL;
+    int error = SPfrontEnd->IFdelUid(ckt, node->name, UID_SIGNAL);
+
+    NG_IGNORE(error);
+    node->name = NULL;
+    node->next = NULL;
+    if (!keep) {
+        tfree(node);
+        return;
+    }
+    if (!ckt->CKTretiredNodes)
+        ckt->CKTretiredNodes = nghash_init(64);
+    nghash_insert(ckt->CKTretiredNodes, keep, node);   /* the key is copied */
+    tfree(keep);
+}
+
+CKTnode *
+CKTreviveNode(CKTcircuit *ckt, const char *name)
+{
+    CKTnode *n;
+
+    if (!ckt || !name || !ckt->CKTretiredNodes)
+        return NULL;
+    n = nghash_delete(ckt->CKTretiredNodes, (void *) name);
+    if (n) {
+        n->next = NULL;
+        n->name = NULL;
+        n->ptr = NULL;
+        n->natabstol = 0.0;
+        n->devRef = 0;
+        n->adopted = 0;
+    }
+    return n;
+}
+
+static void
+free_retired(void *node)
+{
+    tfree(node);
+}
+
+void
+CKTfreeRetiredNodes(CKTcircuit *ckt)
+{
+    if (ckt->CKTretiredNodes)
+        nghash_free(ckt->CKTretiredNodes, free_retired, NULL);
+    ckt->CKTretiredNodes = NULL;
+}
+
 int
 CKTdltNNum(CKTcircuit* ckt, int num)
 {
     CKTnode* n, * prev, * node;
-    int	error;
-
-    if (!ckt->prev_CKTlastNode->number || num <= ckt->prev_CKTlastNode->number) {
-        fprintf(stderr, "Internal Error: CKTdltNNum() removing a non device-local node, this will cause serious problems, please report this issue !\n");
-        controlled_exit(EXIT_FAILURE);
-    }
 
     prev = NULL;
     node = NULL;
@@ -37,6 +92,17 @@ CKTdltNNum(CKTcircuit* ckt, int num)
             break;
         }
         prev = n;
+    }
+
+    /* Enhancement-608: a parse-time node the device took over as its
+     * internal node stays -- it is the deck's, and the device takes it over
+     * again at the next setup. */
+    if (node && node->adopted)
+        return OK;
+
+    if (!ckt->prev_CKTlastNode->number || num <= ckt->prev_CKTlastNode->number) {
+        fprintf(stderr, "Internal Error: CKTdltNNum() removing a non device-local node, this will cause serious problems, please report this issue !\n");
+        controlled_exit(EXIT_FAILURE);
     }
 
     if (!node)
@@ -53,10 +119,9 @@ CKTdltNNum(CKTcircuit* ckt, int num)
     if (node == ckt->CKTlastNode)
         ckt->CKTlastNode = prev;
 
-    error = SPfrontEnd->IFdelUid(ckt, node->name, UID_SIGNAL);
-    tfree(node);
+    CKTretireNode(ckt, node);       /* Enhancement-608: kept, not freed */
 
-    return error;
+    return OK;
 }
 
 
@@ -99,8 +164,9 @@ CKTdltNodeSet(CKTcircuit *ckt, const char *del, int maxnum)
 
     for (n = ckt->CKTnodes; n; n = next) {
         next = n->next;
-        if (n->number > floor_num && n->number <= maxnum && del[n->number]) {
-            int e;
+        /* Enhancement-608: an adopted node is the deck's, not the device's */
+        if (n->number > floor_num && n->number <= maxnum && del[n->number] &&
+                !n->adopted) {
             if (prev)
                 prev->next = next;
             else
@@ -108,10 +174,7 @@ CKTdltNodeSet(CKTcircuit *ckt, const char *del, int maxnum)
             if (n == ckt->CKTlastNode)
                 ckt->CKTlastNode = prev;
             ckt->CKTmaxEqNum -= 1;
-            e = SPfrontEnd->IFdelUid(ckt, n->name, UID_SIGNAL);
-            if (e && !error)
-                error = e;
-            tfree(n);
+            CKTretireNode(ckt, n);      /* Enhancement-608: kept, not freed */
         } else {
             prev = n;
         }

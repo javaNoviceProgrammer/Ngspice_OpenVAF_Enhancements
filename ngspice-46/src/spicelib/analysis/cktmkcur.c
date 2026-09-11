@@ -21,23 +21,6 @@ Author: 1985 Thomas L. Quarles
 int
 CKTmkCur(CKTcircuit *ckt, CKTnode **node, IFuid basename, char *suffix)
 {
-    IFuid uid;
-    int error;
-    CKTnode *mynode;
-    CKTnode *checknode;
-
-    error = CKTmkNode(ckt,&mynode);
-    if(error) return(error);
-    checknode = mynode;
-    error = SPfrontEnd->IFnewUid (ckt, &uid, basename, suffix, UID_SIGNAL, &checknode);
-    if(error) {
-        FREE(mynode);
-        if(node) *node = checknode;
-        return(error);
-    }
-    mynode->name = uid;
-    mynode->type = SP_CURRENT;
-    if(node) *node = mynode;
-    error = CKTlinkEq(ckt,mynode);
-    return(error);
+    /* Enhancement-608: one routine with CKTmkVolt(), in cktmkvol.c */
+    return CKTmkSignal(ckt, node, basename, suffix, SP_CURRENT);
 }

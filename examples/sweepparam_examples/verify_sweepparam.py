@@ -63,15 +63,14 @@ landed on the last timepoint.
     publish duplicate operating points under an abscissa that disagrees with the
     value applied.
 
-[5] NOT FIXED, AND WHY: `.ic`/`.nodeset` ON A DEVICE-INTERNAL NODE.
+[5] `.ic`/`.nodeset` ON A DEVICE-INTERNAL NODE -- fixed by Enhancement-608.
 
-    `.ic v(n1#mid)=0.5` is ignored, while a built-in `C1 mid 0 1n ic=0.5` works.
-    This is NOT an OSDI gap. `INPpas3` resolves .ic/.nodeset names before
-    `CKTsetup()`, which is when EVERY device -- built-in and OSDI alike --
-    creates its internal nodes, and inppas3.c's own header comment says so:
-    "All circuit nodes will have been created by now, (except for internal
-    device nodes)". A built-in diode's `d1#internal` is rejected identically.
-    Pinned below so the symmetry is not mistaken for a regression later.
+    `.ic v(n1#mid)=0.5` used to be ignored ("IC on non-existent node"), for
+    built-in and OSDI devices alike: `INPpas3` resolved .ic/.nodeset names
+    before `CKTsetup()`, which is when every device creates its internal
+    nodes. Since Enhancement-608 such an entry is kept by name and placed at
+    setup once the node exists; a built-in diode's `d1#internal` is accepted
+    the same way. Re-pinned below to the new behaviour.
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
@@ -315,11 +314,11 @@ def main():
           "is not in the circuit" in out)
 
     # ------------------------------------------------------------------ [5]
-    print("\n[5] .ic on a device-internal node: a UNIFORM limitation, pinned")
+    print("\n[5] .ic on a device-internal node: placed at setup since Enhancement-608")
     rc, out = run("* sp\nV1 a 0 dc 1\nD1 a 0 dm\n.model dm d(is=1e-14 rs=10)\n"
                   ".ic v(d1#internal)=0.3\n.control\noption noacct\nop\n.endc\n.end\n")
-    check("a BUILT-IN diode's internal node is rejected too -- not an OSDI gap",
-          "non-existent node" in out and "d1#internal" in out)
+    check("a BUILT-IN diode's internal node is accepted (E-608), no 'non-existent node'",
+          "non-existent node" not in out and rc == 0)
     rc, out = run("* sp\nV1 a 0 dc 1\nR1 a mid 1k\nC1 mid 0 1n ic=0.5\n"
                   ".control\noption noacct\nset numdgt=10\n"
                   "tran 1n 100n uic\nprint v(mid)[0]\n.endc\n.end\n")

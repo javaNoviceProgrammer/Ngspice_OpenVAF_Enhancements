@@ -638,6 +638,10 @@ CKTsetup(CKTcircuit *ckt)
         }
     }
 
+    /* Enhancement-608: the devices' internal nodes exist now; place the
+     * `.ic`/`.nodeset` entries INPpas3 kept for them. */
+    CKTapplyPendingNodPm(ckt);
+
 #ifdef XSPICE
   /* gtri - begin - Setup for adding rshunt option resistors */
 
