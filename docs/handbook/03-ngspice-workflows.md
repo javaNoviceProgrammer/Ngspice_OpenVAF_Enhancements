@@ -338,6 +338,14 @@ automc_save` (alias `osdimc_save`) records the OSDI parameters only.
 overshoot=pk-1`), and `montecarlo ... -writemc pk npk=track1.hits
 tpk=track1.time[0]` per sample, after the tracks, specs and exprs — each a
 scalar, a column added on first use, the csv's last line rewritten in place.
+A `.model` card whose parameter draws (`.model rmod va_res R_ohm={agauss(1k,50,3)}`)
+is a column too, `rmod:r_ohm`. From a schematic front end that loads
+`libngspice` and spells every net `/name`: give `savemc` an absolute path in
+the schematic's directive text, put the analysis in a `.control` block
+(`montecarlo 20 -analysis op -writemc gain=v(/mid)/v(/in)` — the shared library
+runs the block when the circuit is loaded), and for the host's own run write
+`set controlswait` followed by the `writemc` line: those commands wait for the
+run the host starts and then land on its row.
 [`examples/writemc_examples/`](../../examples/writemc_examples/).
 
 **Automatic MC from the model's own statistics — `.option osdimc`.** A

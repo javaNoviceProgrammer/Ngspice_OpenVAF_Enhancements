@@ -296,6 +296,7 @@ extern struct pnode *alloc_pnode(void);
     } while(0)
 extern void free_pnode_x(struct pnode *t);
 extern struct pnode* ft_getpnames_quotes(wordlist* wl, bool check);
+extern struct pnode *ft_getpnames_from_string_quotes(const char *sz, bool check); /* Enhancement-611 */
 extern bool ft_pnode_item_valid(struct pnode *pn);   /* Enhancement-603 */
 
 /* plotcurve.c */

@@ -1543,12 +1543,38 @@ mcs_slot_name(const char *line, const char *card, const char *at)
 
     while (*w && isspace_c(*w))
         w++;
-    if (!*w || *w == '*' || *w == '.')
+    if (!*w || *w == '*')
         return NULL;
-    e = w;
-    while (*e && !isspace_c(*e))
-        e++;
-    inst = copy_substring(w, e);
+    if (*w == '.') {
+        /* Enhancement-611: a `.model <name> <type> key={...}` line is a
+         * draw too -- one per run, shared by every instance of the model --
+         * and montecarlo's fast path already records it as `<model>:<key>`;
+         * a plain run (a host's own `.op`, say) must give the same column. Any
+         * other dot card has no slot. */
+        if (strncasecmp(w, ".model", 6) != 0 || !isspace_c(w[6]))
+            return NULL;
+        w += 6;
+        while (*w && isspace_c(*w))
+            w++;
+        if (!*w)
+            return NULL;
+        e = w;
+        while (*e && !isspace_c(*e) && *e != '(')
+            e++;
+        inst = copy_substring(w, e);
+        k = at - 1;
+        while (k > line && isspace_c(k[-1]))
+            k--;
+        if (!(k > line && k[-1] == '=')) {  /* a model has no positional slot */
+            tfree(inst);
+            return NULL;
+        }
+    } else {
+        e = w;
+        while (*e && !isspace_c(*e))
+            e++;
+        inst = copy_substring(w, e);
+    }
     k = at - 1;                             /* the '{' */
     while (k > line && isspace_c(k[-1]))
         k--;

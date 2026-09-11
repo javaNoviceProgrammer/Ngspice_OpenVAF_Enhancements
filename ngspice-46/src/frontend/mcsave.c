@@ -819,7 +819,7 @@ MCSAVEappend(const char *name, double value)
 static int
 mcs_eval_scalar(const char *expr, double *out, char **why)
 {
-    struct pnode *pn = ft_getpnames_from_string(expr, TRUE);
+    struct pnode *pn = ft_getpnames_from_string_quotes(expr, TRUE);
     struct dvec *v;
     int ok = 0;
 

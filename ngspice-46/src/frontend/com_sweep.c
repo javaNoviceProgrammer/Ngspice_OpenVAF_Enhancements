@@ -165,7 +165,7 @@ static double sw_num(const char *w)
  * it fills a whole column with zeros and plots as a clean flat line. */
 static double sw_eval_expr_ok(const char *expr, int *ok)
 {
-    struct pnode *pn = ft_getpnames_from_string(expr, TRUE);
+    struct pnode *pn = ft_getpnames_from_string_quotes(expr, TRUE);
     double f = 0.0;
     if (ok)
         *ok = 0;
@@ -197,7 +197,7 @@ static double sw_eval_expr_ok(const char *expr, int *ok)
  * expression resolves to nothing. */
 static struct dvec *sw_eval_expr_copy(const char *expr)
 {
-    struct pnode *pn = ft_getpnames_from_string(expr, TRUE);
+    struct pnode *pn = ft_getpnames_from_string_quotes(expr, TRUE);
     struct dvec *out = NULL;
     if (!pn)
         return NULL;
@@ -266,7 +266,7 @@ static double sw_interp(const double *x, const double *y, int len, double xq)
  * taken from the evaluated vector, falling back to the current plot's scale. */
 static int sw_eval_vec(const char *expr, double **px, double **py)
 {
-    struct pnode *pn = ft_getpnames_from_string(expr, TRUE);
+    struct pnode *pn = ft_getpnames_from_string_quotes(expr, TRUE);
     int n = 0;
     *px = *py = NULL;
     if (pn) {
@@ -4908,18 +4908,23 @@ void com_montecarlo(wordlist *wl)
      * once, and the run goes on without it */
     if (nwmc > 0 && !MCSAVEactive()) {
         fprintf(cp_err, "montecarlo: -writemc: nothing is recorded -- `.option savemc` "
-                        "is not set; the run proceeds without it\n");
+                        "is not set%s\n",
+                nspec + nexpr + ntrack ? "; the run proceeds without it" : "");
         wmc_off_note = 1;
     }
 
     /* Enhancement-552: a yield is a judgement, so it needs a spec WITH a limit;
      * a value to keep without judging it is an -expr. Nothing to judge and
      * nothing to record is a run for no result, and is refused as such. */
-    if (nspec == 0 && nexpr == 0 && ntrack == 0) {
+    if (nspec == 0 && nexpr == 0 && ntrack == 0 && !(nwmc > 0 && !wmc_off_note)) {
+        /* Enhancement-611: a -writemc that has a savemc file to land in is a
+         * result too -- one value per sample on that sample's row */
         fprintf(cp_err, "montecarlo: nothing to do -- give '-spec <metric> -max <hi>|-min <lo>' "
                         "for a yield, '-expr [name=]<expression>' to record a value "
-                        "per sample into a montecarlo<n> plot, and/or '-track \"<track arguments>\"' "
-                        "to run track per sample and record its hits there\n");
+                        "per sample into a montecarlo<n> plot, '-track \"<track arguments>\"' "
+                        "to run track per sample and record its hits there, and/or "
+                        "'-writemc [name=]<expression>' to put a value per sample onto "
+                        "its row of the `.option savemc` file\n");
         return;
     }
     /* Enhancement-609: a track<k>. reference must name a -track of this command */

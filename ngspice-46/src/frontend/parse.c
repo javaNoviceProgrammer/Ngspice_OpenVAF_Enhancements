@@ -239,6 +239,20 @@ struct pnode* ft_getpnames_quotes(wordlist* wl, bool check)
 
 
 
+/* Enhancement-611: the string form of ft_getpnames_quotes() -- for an
+ * expression that a command evaluates from its own text rather than from a
+ * wordlist. A node a schematic tool named with a leading '/' (`/mid`) or a
+ * digit only parses inside v()/i() with the quoting print and plot get. */
+struct pnode *ft_getpnames_from_string_quotes(const char *sz, bool check)
+{
+    wordlist *wl = wl_cons(copy(sz), NULL);
+    struct pnode *pn = ft_getpnames_quotes(wl, check);
+    wl_free(wl);
+    return pn;
+}
+
+
+
 /* See if there are any variables around which have length 0 and are
  * not named 'list'. There should really be another flag for this...
  */

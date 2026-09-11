@@ -37,6 +37,15 @@ Checks:
   [8] the file stays complete row by row: after the last sample the csv
       already holds every row with its writemc values
   [9] [0] on a one-point vector is the element; [1] is still refused
+  Found by driving the shared library from a schematic front end (it spells
+  every net `/name`, and its own run is a plain `.op`):
+  [10] `/`-prefixed node names evaluate in writemc, -writemc and -expr, as
+       they already did in print (the same auto-quoting)
+  [11] a `.model` card draw is a column on a plain run too (it was only
+       recorded on montecarlo's fast path), named `<model>:<key>` on both
+  [12] `montecarlo N -analysis op -writemc ...` with nothing else to judge
+       or record is a run with a result, not "nothing to do"; with savemc
+       off it still is nothing to do, said without "the run proceeds"
 """
 import glob
 import os
@@ -196,6 +205,41 @@ check("[8] csv: complete row by row -- right after the run, every row already ca
 out = run(RLC, "t9", "let s = 3\nprint s[0]\nprint s[1]")
 check("[9] [0] on a one-point vector is the element; [1] is refused, naming the one element",
       "s[0] = 3" in out and "indexing a scalar (s): its one element is [0]" in out, out[-300:])
+
+# ------------------------------------------------------------ [10] ---
+KIC = (".model dm d is={agauss(1e-14, 1e-15, 3)} n=1.5\nV1 /in 0 DC 1\nR1 /in /mid {agauss(1k, 50, 3)}\n"
+       "D1 /mid 0 dm\n")
+clean()
+out = run(".option savemc\n" + KIC, "t10", "op\nprint v(/mid)\nwritemc gain=v(/mid)/v(/in) vmid=v(/mid)[0]\n"
+          "montecarlo 3 -seed 2 -analysis op -expr e=v(/mid)/v(/in) -writemc gain=v(/mid)/v(/in)\n"
+          "print montecarlo1.e")
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+vmid = re.search(r"^v\(/mid\) = ([-+.\deE]+)", out, re.M)
+es = re.findall(r"^\d+\s+([-+.\deE]+)\s*$", out, re.M)
+check("[10] /-prefixed nets: writemc, -writemc and -expr all evaluate v(/mid)/v(/in), v(/mid)[0]",
+      "does not evaluate" not in out and "PPerror" not in out and vmid is not None and len(rows) == 4
+      and head[-2:] == ["gain", "vmid"] and close(col(head, rows, "gain")[0], float(vmid.group(1)))
+      and close(col(head, rows, "vmid")[0], float(vmid.group(1))) and len(es) == 3
+      and all(close(col(head, rows, "gain")[1 + i], float(es[i])) for i in range(3)),
+      f"{head} {rows[:2]} {es} {out[-200:]}")
+
+# ------------------------------------------------------------ [11] ---
+check("[11] a .model card draw (dm:is) is a column on the plain run and on montecarlo's fast path alike",
+      "dm:is" in head and all(v is not None and 5e-15 < v < 2e-14 for v in col(head, rows, "dm:is"))
+      and len(set(col(head, rows, "dm:is"))) == 4, f"{head} {col(head, rows, 'dm:is') if 'dm:is' in head else ''}")
+
+# ------------------------------------------------------------ [12] ---
+clean()
+out = run(".option savemc\n" + KIC, "t12", "montecarlo 3 -seed 2 -analysis op -writemc gain=v(/mid)/v(/in)")
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+check("[12] montecarlo with only -writemc (and savemc on) runs: three rows, each with its gain",
+      "nothing to do" not in out and len(rows) == 3 and "gain" in head
+      and all(v is not None and 0.8 < v < 1.0 for v in col(head, rows, "gain")), f"{head} {rows} {out[-200:]}")
+out = run(KIC, "t12b", "montecarlo 3 -seed 2 -analysis op -writemc gain=v(/mid)/v(/in)")
+check("[12] ...with savemc off it is nothing to do: both messages, no 'the run proceeds', no samples run",
+      "nothing to do" in out and "-writemc [name=]<expression>" in out
+      and "-writemc: nothing is recorded -- `.option savemc` is not set" in out
+      and "the run proceeds" not in out and "random samples" not in out, out[-400:])
 
 clean()
 print(f"\n{passed}/{checks} checks passed")

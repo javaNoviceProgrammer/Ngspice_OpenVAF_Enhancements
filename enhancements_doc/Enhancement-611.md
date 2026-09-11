@@ -5,7 +5,9 @@ row, the csv/txt last line rewritten in place; `com_writemc`; `MCSAVEactive`),
 `src/frontend/com_sweep.c` (`com_montecarlo`: the `-writemc` flag, its items evaluated per
 sample after the tracks, specs and exprs), `src/frontend/commands.c` (the command, the
 help), `src/frontend/evaluate.c` (`op_ind`: element 0 of a one-point vector),
-`examples/writemc_examples/` (new, 11 checks per solver; `mc_example6` beside it),
+`src/frontend/parse.c` (`ft_getpnames_from_string_quotes`), `src/frontend/numparam/xpressn.c`
+(`mcs_slot_name`: a `.model` card's slot),
+`examples/writemc_examples/` (new, 15 checks per solver; `mc_example6` beside it),
 `examples/sweepguard_examples/` (one case re-classified); handbook [§3.6](../docs/handbook/03-ngspice-workflows.md). **ngspice only.** Requested by
 the user, following Enhancement-610.
 
@@ -83,6 +85,37 @@ test on `print d[0]` — which failed only because `d` had one point. The analys
 legitimate single-frequency distortion run and always ran as one; the case is moved to the
 suite's ordinary sweeps.
 
+**Found by driving the shared library from a schematic front end.** The feature was
+then tried where a `.control` block is not the natural home — a schematic tool that loads
+`libngspice`, spells every net `/name`, and runs a plain `.op` of its own. Three things
+gave way, all fixed:
+
+* `v(/mid)/v(/in)` did not parse. `print` and `plot` quote a `v()`/`i()` argument that
+  starts with a digit or holds an arithmetic character (`ft_getpnames_quotes`), and `/` is
+  one; the expression evaluators behind `writemc`, `montecarlo -writemc/-expr/-spec`,
+  `sweep -output` and the rest called the plain parser and answered `PPerror: syntax
+  error`. A string form of the same quoting, `ft_getpnames_from_string_quotes`, now
+  serves them.
+* A `.model` card whose parameter draws — `.model rmod va_res R_ohm={agauss(1k,50,3)}`,
+  the natural place for process variation — was a `rmod:r_ohm` column on montecarlo's fast
+  path (`sw_fp_apply` records the model bind) but **not on a plain run**: the re-source
+  path's slot naming refused every dot card. It now names a `.model` line's `key={...}`
+  slot `<model>:<key>`, the same column on both paths.
+* `montecarlo 20 -analysis op -writemc gain=...` with no `-spec`, `-expr` or `-track` was
+  refused as "nothing to do"; a `-writemc` with a `savemc` file to land in is a result.
+  With `savemc` off it still is nothing to do, and the note no longer says "the run
+  proceeds".
+
+The shape that works from such a host: `.option savemc=<absolute path>` (a host that
+hands the circuit over as text sets no netlist directory), the random `.param`, the
+`.model` and a `.control` block in the schematic's directive text — `pre_osdi <abs
+path>.osdi`, the `montecarlo ... -writemc` line, then `set controlswait` and a `writemc
+gain=v(/mid)/v(/in) vmid=v(/mid)[0]`. The shared library runs a `.control` block when the
+circuit is loaded, before the host's own analysis, and the commands after `controlswait`
+wait for that run to finish. Driven that way (`ngSpice_Circ`, then `bg_run`), the file
+holds the 20 montecarlo rows with their `gain`/`vmid`, then row 21 for the host's `.op`
+with the two values appended after that run, equal to the `v(/mid)` its plot holds.
+
 ## Verification
 
 | check | result |
@@ -96,5 +129,9 @@ suite's ordinary sweeps.
 | `-writemc x=track2.value` with one `-track` | refused at parse time |
 | the csv right after the run (`shell cp`) | every row already carries its `-writemc` value |
 | `let s = 3`, `print s[0]`, `print s[1]` | 3; "its one element is [0]" |
+| `writemc gain=v(/mid)/v(/in) vmid=v(/mid)[0]`, `-writemc` and `-expr` with `/`-names | all evaluate; the values equal `print v(/mid)` and the `-expr` record |
+| `.model dm d is={agauss(...)}` on a plain `op` and under montecarlo | `dm:is` on every row, four distinct draws |
+| `montecarlo 3 -analysis op -writemc gain=...` alone; the same with `savemc` off | three rows with `gain`; "nothing to do" and the note, no samples run |
+| the same deck through `libngspice` (`ngSpice_Circ`, `bg_run`) | 21 rows: 20 montecarlo samples with `gain`/`vmid`, the host's own `.op` row with them appended after the run |
 
 Full sweep 505 of 505 on both solvers.
