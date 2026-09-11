@@ -1,0 +1,34 @@
+* mc_example5 -- .option savemc: every drawn parameter of every sample, to a file beside the deck
+*
+* An RLC step response. Three kinds of statistics live in this deck:
+*   .param rr = agauss(...)        a random .param  -> inlined into each use (one draw per use, ngspice's rule)
+*   x1 ... c={gauss(...)}          a subcircuit call's own drawn value
+*   .model rm rstat                a Verilog-A model with (* std= *) parameters, drawn by .option osdimc
+* .option savemc writes, after every analysis run, one row with the value in force of all of them:
+*   mcparams_<date>_<time>.csv in this directory.
+.option savemc osdimc mcseed=7
+.param rr = agauss(20, 30, 3)
+.subckt load a b c=1u
+C1 a b {c}
+.ends
+V1 in 0 pulse(0 1 0 1n 1n 1m 2m)
+R1 in a {rr}
+L1 a out 1m
+x1 out 0 load c={gauss(1u, 0.1, 1)}
+N1 out 0 rm
+N2 out 0 rm
+.model rm rstat r=1k
+.control
+set noinit
+pre_osdi rstat.osdi
+* 200 samples: each one redraws rr and the load's c (a reset), and osdimc draws r/dr; then the transient runs
+* and the row is written. The peak of v(out) is kept beside it as a montecarlo record.
+montecarlo 200 -seed 3 -analysis "tran 2u 1m" -expr pk=maximum(v(out)) -track "v(out) -spec localmax -prominence 20m"
+print mean(montecarlo1.pk) mean(track1.hits)
+* the peak per sample, to join with the file's rows (row k = sample k) in mcparams_plot.py
+wrdata pk.txt montecarlo1.pk
+* what the file looks like:
+shell head -4 mcparams_*.csv
+shell wc -l mcparams_*.csv
+.endc
+.end

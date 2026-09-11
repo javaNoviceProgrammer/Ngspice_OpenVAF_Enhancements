@@ -1,0 +1,7 @@
+trial	analysis	status	r1
+1	tran	ok	19.9076747778
+2	tran	ok	24.7414355357
+3	tran	ok	28.2376154966
+4	tran	ok	19.3037096231
+5	tran	ok	28.2649178113
+6	dc	failed	28.2649178113

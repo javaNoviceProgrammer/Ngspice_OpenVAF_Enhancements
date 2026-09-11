@@ -1,0 +1,18 @@
+* mc_example5 -- the same run, saved as a real .xlsx (open it in Excel/Numbers) and OSDI-only
+* .option savemc=excel      -> mcparams_<date>_<time>.xlsx, every drawn parameter
+* .option automc_save       -> the OSDI parameters only (alias osdimc_save); a csv here
+.option savemc=excel osdimc mcseed=7
+.param rr = agauss(20, 30, 3)
+V1 in 0 pulse(0 1 0 1n 1n 1m 2m)
+R1 in a {rr}
+L1 a out 1m
+C1 out 0 1u
+N1 out 0 rm
+.model rm rstat r=1k
+.control
+set noinit
+pre_osdi rstat.osdi
+montecarlo 50 -seed 3 -analysis "tran 2u 1m" -expr pk=maximum(v(out))
+shell ls -la mcparams_*.xlsx
+.endc
+.end

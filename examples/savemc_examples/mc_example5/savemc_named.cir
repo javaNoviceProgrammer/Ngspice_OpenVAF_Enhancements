@@ -1,0 +1,19 @@
+* mc_example5 -- a named file: .option savemc=<name>.<csv|txt|xlsx>; a repeat loop, and a run that fails
+.option savemc=loop_draws.txt
+.param rr = agauss(20, 30, 3)
+V1 in 0 pulse(0 1 0 1n 1n 1m 2m)
+R1 in a {rr}
+L1 a out 1m
+C1 out 0 1u
+.control
+set noinit
+* a hand-written loop: every reset redraws rr, every tran is a row
+repeat 5
+  reset
+  tran 2u 1m
+end
+* a run that is refused is a row too, marked failed (the draw happened)
+dc V1 0 1 -0.1
+shell cat loop_draws.txt
+.endc
+.end
