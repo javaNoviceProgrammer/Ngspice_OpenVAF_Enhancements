@@ -35,6 +35,8 @@ Modified: 2000 AlansFixes
 
 
 static int dosim(char *what, wordlist *wl);
+/* Enhancement-602: where plot_list stood before the current run */
+static struct plot *plot_before_run = NULL;
 extern struct INPmodel *modtab;
 extern NGHASHPTR modtabhash;
 extern struct dbcomm *dbs;
@@ -320,6 +322,9 @@ static int dosim(
 
     ft_curckt->ci_inprogress = TRUE;
     cp_vset("sim_status", CP_NUM, &err);
+    /* Enhancement-602: the plot list before the run, so the `.meas` cards of
+     * EVERY analysis this run produced can be evaluated on their own plot. */
+    plot_before_run = plot_list;
     /* "sens2" not used in ngspice */
     if (eq(what, "sens2")) {
         if (if_sens_run(ft_curckt->ci_ckt, ww, ft_curckt->ci_symtab) == 1) {
@@ -409,7 +414,38 @@ static int dosim(
 
     /* execute the .measure statements */
     if (!err && ft_curckt->ci_last_an && ft_curckt->ci_meas) {
-        do_measure(ft_curckt->ci_last_an, FALSE);
+        /* Enhancement-602 (N6 of the 2026-09-10 hunt): a batch `run` with
+         * several analysis cards evaluated `.meas` for the LAST analysis
+         * only -- do_measure() skips every card whose type is not the one
+         * named -- so `.meas dc vmax max v(a)` beside a `.tran` printed a
+         * "Measurements for DC Analysis" header and nothing under it, and a
+         * `.meas tran` beside a later `.ac` printed nothing at all. Evaluate
+         * each analysis the run produced on its own plot, in the order they
+         * ran, and leave the last plot current as before. */
+        struct plot *pl, *last = plot_cur;
+        struct plot *made[64];
+        int nmade = 0, k;
+        for (pl = plot_list; pl && pl != plot_before_run && nmade < 64; pl = pl->pl_next)
+            made[nmade++] = pl;
+        if (nmade <= 1) {
+            do_measure(ft_curckt->ci_last_an, FALSE);
+        } else {
+            for (k = nmade - 1; k >= 0; k--) {
+                const char *ty = made[k]->pl_typename;
+                char an[16];
+                int n = 0;
+                while (ty && ty[n] && !isdigit_c(ty[n]) && n < 15) {
+                    an[n] = ty[n];
+                    n++;
+                }
+                an[n] = '\0';
+                if (!(cieq(an, "tran") || cieq(an, "dc") || cieq(an, "ac") || cieq(an, "sp")))
+                    continue;
+                plot_cur = made[k];
+                do_measure(an, FALSE);
+            }
+            plot_cur = last;
+        }
     }
 
     return err;

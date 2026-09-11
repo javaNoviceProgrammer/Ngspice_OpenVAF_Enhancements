@@ -246,6 +246,11 @@ the instance table is named as an operating-point quantity, read and write, on t
 and on the instance; an integer or string out of range shows its value; the
 duplicate-plus-alias line reaches the alias error since Enhancement-597.
 
+**Status (2026-09-11):** N6 resolved by Enhancement-602 -- `settrace`'s dedup respects the
+analysis restriction as `ft_getSaves`'s does since E-594, a batch run evaluates the `.meas`
+cards of every analysis it produced, and the measure header names the analysis being
+evaluated.
+
 ## What held
 
 | area | probes | result |

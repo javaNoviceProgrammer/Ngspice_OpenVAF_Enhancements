@@ -115,13 +115,30 @@ settrace(wordlist *wl, int what, char *name)
                 continue;
         }
 
-        /* Don't save a nodename more than once, except for token 'all' */
+        /* Don't save a nodename more than once, except for token 'all'.
+         *
+         * Enhancement-602 (N6 of the 2026-09-10 hunt): ONE save per name,
+         * whatever the analysis it was restricted to. `.print dc v(a)` and
+         * `.print tran v(a)` in a batch deck each register `a` restricted to
+         * their analysis (ft_savedotargs); the second was dropped here, so
+         * the transient's beginPlot found no save at all and the analysis was
+         * refused -- "no data saved for Transient analysis; analysis not run".
+         * A `.meas dc` beside a `.tran` lost the transient the same way, and
+         * a `.meas tran` beside a `.dc` lost the dc. The sibling dedup in
+         * ft_getSaves was made to respect the restriction by Enhancement-594;
+         * this is the same rule at insert time: a repeat is a repeat only for
+         * the same analysis, or when an unrestricted save already covers
+         * every analysis. */
         if (db_type == DB_SAVE) {
             for (dbcheck = dbs; dbcheck; dbcheck = dbcheck->db_next) {
                 if (dbcheck->db_type == DB_SAVE && eq(dbcheck->db_nodename1, db_nodename1) &&
                     !eq("all", db_nodename1)) {
-                    tfree(db_nodename1);
-                    goto loopend;
+                    bool covered = dbcheck->db_analysis == NULL ||
+                                   (name && cieq(dbcheck->db_analysis, name));
+                    if (covered) {
+                        tfree(db_nodename1);
+                        goto loopend;
+                    }
                 }
             }
         }

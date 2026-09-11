@@ -411,31 +411,6 @@ do_measure(
             txfree(meastype);
             continue;
         }
-        /* print header before evaluating first .meas line */
-        else if (first_time) {
-            first_time = FALSE;
-
-            if (!chk_only && strcmp(an_type, "tran") == 0) {
-                fprintf(stdout, "\n  Measurements for Transient Analysis\n\n");
-                if (measout)
-                    fprintf(measout, "\n  Measurements for Transient Analysis\n\n");
-            }
-            else if (!chk_only && strcmp(an_type, "dc") == 0) {
-                fprintf(stdout, "\n  Measurements for DC Analysis\n\n");
-                if (measout)
-                    fprintf(measout, "\n  Measurements for DC Analysis\n\n");
-            }
-            else if (!chk_only && strcmp(an_type, "ac") == 0) {
-                fprintf(stdout, "\n  Measurements for AC Analysis\n\n");
-                if (measout)
-                    fprintf(measout, "\n  Measurements for AC Analysis\n\n");
-            }
-            else if (!chk_only && strcmp(an_type, "sp") == 0) {
-                fprintf(stdout, "\n  Measurements for SP Analysis\n\n");
-                if (measout)
-                    fprintf(measout, "\n  Measurements for SP Analysis\n\n");
-            }
-        }
 
         /* skip param|expr measurement types for now -- will be done after other measurements */
         if (strncmp(meastype, "param", 5) == 0 || strncmp(meastype, "expr", 4) == 0) {
@@ -451,6 +426,40 @@ do_measure(
             txfree(resname);
             txfree(meastype);
             continue;
+        }
+
+        /* print header before evaluating first .meas line.
+         *
+         * Enhancement-602: the header used to be chosen by the FIRST card's
+         * type, before the card was matched against the analysis being
+         * evaluated -- so a `.meas dc` card at the top of a deck whose run
+         * ended in a transient printed "Measurements for DC Analysis" and
+         * then nothing, and the transient's own measures appeared under the
+         * wrong title. It is chosen by the analysis being evaluated now, and
+         * printed only when a card of that analysis is about to run. */
+        if (first_time) {
+            first_time = FALSE;
+
+            if (!chk_only && strcmp(an_name, "tran") == 0) {
+                fprintf(stdout, "\n  Measurements for Transient Analysis\n\n");
+                if (measout)
+                    fprintf(measout, "\n  Measurements for Transient Analysis\n\n");
+            }
+            else if (!chk_only && strcmp(an_name, "dc") == 0) {
+                fprintf(stdout, "\n  Measurements for DC Analysis\n\n");
+                if (measout)
+                    fprintf(measout, "\n  Measurements for DC Analysis\n\n");
+            }
+            else if (!chk_only && strcmp(an_name, "ac") == 0) {
+                fprintf(stdout, "\n  Measurements for AC Analysis\n\n");
+                if (measout)
+                    fprintf(measout, "\n  Measurements for AC Analysis\n\n");
+            }
+            else if (!chk_only && strcmp(an_name, "sp") == 0) {
+                fprintf(stdout, "\n  Measurements for SP Analysis\n\n");
+                if (measout)
+                    fprintf(measout, "\n  Measurements for SP Analysis\n\n");
+            }
         }
 
         /* New way of processing measure statements using common code
