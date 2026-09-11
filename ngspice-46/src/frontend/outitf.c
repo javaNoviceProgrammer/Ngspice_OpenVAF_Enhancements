@@ -63,6 +63,7 @@ static void plotAddComplexValue(dataDesc *desc, IFcomplex value);
 static void plotEnd(runDesc *run);
 static bool parseSpecial(char *name, char *dev, char *param, char *ind);
 static bool name_eq(char *n1, char *n2);
+int ft_save_probe = 0;                 /* Enhancement-600 */
 static bool getSpecial(dataDesc *desc, runDesc *run, IFvalue *val);
 static void freeRun(runDesc *run);
 static int InterpFileAdd(runDesc *plotPtr, IFvalue *refValue, IFvalue *valuePtr);
@@ -863,6 +864,7 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                     GENinstance *tfast = NULL;
                     int tdev = -1, tdtype = 0, err;
 
+                    ft_save_probe = 1;             /* Enhancement-600 */
                     err = INPaName(parambuf, &tmpval, circuitPtr, &tdev,
                                    namebuf, &tfast, ft_sim, &tdtype, NULL);
 
@@ -888,6 +890,7 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                             }
                         }
                     }
+                    ft_save_probe = 0;
 
                     /* Enhancement-507: only E_BADPARM means the name is not
                      * one the device has.
@@ -927,7 +930,13 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                                 "Warning: save '%s': device has no parameter "
                                 "'%s', so this vector will stay empty.\n",
                                 saves[i].name, parambuf);
-                    else if (err != OK)
+                    else if (err != OK && !saves[i].autosaved)
+                        /* Enhancement-600: said once (the device's own
+                         * "no operating point yet" was printed on top of it),
+                         * and not at all for a save `.option saveused`
+                         * inferred -- the author wrote no `save`, so there is
+                         * nothing to tell them about; E-496's rule for the
+                         * unmatched-name warning. */
                         fprintf(cp_err,
                                 "Warning: save '%s': '%s' has no value yet -- it "
                                 "is an operating-point variable and no analysis "

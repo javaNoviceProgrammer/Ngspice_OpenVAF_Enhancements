@@ -174,6 +174,11 @@ extern void ft_dotsaves(void);
 extern void ft_saveused(wordlist *controls);    /* Enhancement-469 */
 extern void inp_set_saveused(bool onoff);        /* Enhancement-469 */
 extern void ft_save_mark_auto(int onoff);        /* Enhancement-496 */
+/* Enhancement-600: set while beginPlot probes a `save @dev[param]` item for
+   existence. A device's own "no operating point computed yet" message is for a
+   user READ; the probe has its own sentence for that case, so the device stays
+   quiet during it. */
+extern int ft_save_probe;
 extern int ft_savedotargs(void);
 
 /* error.c */

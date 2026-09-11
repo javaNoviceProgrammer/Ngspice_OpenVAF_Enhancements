@@ -43,6 +43,7 @@ model_numnodes(int type)
 void
 INP2M(CKTcircuit *ckt, INPtables *tab, struct card *current)
 {
+    char *binmiss = NULL;             /* Enhancement-600 */
     /* Mname <node> <node> <node> <node> <model> [L=<val>]
      *       [W=<val>] [AD=<val>] [AS=<val>] [PD=<val>]
      *       [PS=<val>] [NRD=<val>] [NRS=<val>] [OFF]
@@ -80,8 +81,17 @@ INP2M(CKTcircuit *ckt, INPtables *tab, struct card *current)
             txfree(INPgetMod(ckt, token, &thismodel, tab));
 
             /* check if using model binning -- pass in line since need 'l' and 'w' */
-            if (!thismodel)
-                txfree(INPgetModBin(ckt, token, &thismodel, tab, line));
+            if (!thismodel) {
+                char *bmsg = INPgetModBin(ckt, token, &thismodel, tab, line);
+                /* Enhancement-600: a bin miss explains itself; keep the last
+                 * one, so the refusal below can show it instead of the bare
+                 * "could not find a valid modelname" */
+                if (bmsg && !thismodel) {
+                    tfree(binmiss);
+                    binmiss = bmsg;
+                } else
+                    txfree(bmsg);
+            }
 
             if (thismodel) {
                 INPinsert(&token, tab);
@@ -89,7 +99,11 @@ INP2M(CKTcircuit *ckt, INPtables *tab, struct card *current)
             }
         }
         if (i >= max_i) {
-            LITERR ("could not find a valid modelname");
+            if (binmiss) {
+                LITERR (binmiss);
+                tfree(binmiss);
+            } else
+                LITERR ("could not find a valid modelname");
             return;
         }
         INPtermInsert(ckt, &token, tab, &node[i]);

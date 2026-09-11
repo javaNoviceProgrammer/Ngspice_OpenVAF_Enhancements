@@ -59,6 +59,52 @@ const char *INPbuiltinModelTypeKeyword(const char *type_name)
     return NULL;
 }
 
+/* ---- Enhancement-600: the cards whose TYPE nothing defines -----------------
+ *
+ * A `.model ma resa` whose type belongs to no built-in device and to no loaded
+ * OSDI or XSPICE library is dropped here with "Unknown model type resa -
+ * ignored" attached to the card -- but the deck's error loop stops at the
+ * first instance-line error, and the card usually sits AFTER the lines that
+ * use it, so what the user saw was only "Unable to find definition of model
+ * ma", for a card that is plainly there. Remember the name and type so
+ * INPgetMod can say what really happened. Cleared with the model table. */
+struct unknown_card { char *name; char *type; int line; struct unknown_card *next; };
+static struct unknown_card *unknown_cards = NULL;
+
+static void note_unknown_card(const char *name, const char *type, int line)
+{
+    struct unknown_card *u = TMALLOC(struct unknown_card, 1);
+    u->name = copy(name);
+    u->type = copy(type);
+    u->line = line;
+    u->next = unknown_cards;
+    unknown_cards = u;
+}
+
+const char *INPunknownModelType(const char *name, int *line)
+{
+    struct unknown_card *u;
+    for (u = unknown_cards; u; u = u->next)
+        if (strcmp(u->name, name) == 0) {
+            if (line)
+                *line = u->line;
+            return u->type;
+        }
+    return NULL;
+}
+
+void INPclearUnknownModelTypes(void)
+{
+    while (unknown_cards) {
+        struct unknown_card *u = unknown_cards;
+        unknown_cards = u->next;
+        tfree(u->name);
+        tfree(u->type);
+        tfree(u);
+    }
+}
+
+
 /*--------------------------------------------------------------
  * This fcn takes the model card & examines it.  Depending upon
  * model type, it parses the model line, and then calls
@@ -667,6 +713,7 @@ char *INPdomodel(CKTcircuit *ckt, struct card *image, INPtables * tab)
       type = INPtypelook(type_name);
       if(type < 0) {
 	err = tprintf("Unknown model type %s - ignored\n", type_name);
+	note_unknown_card(modname, type_name, image ? image->linenum_orig : 0);   /* Enhancement-600 */
 
 #ifdef TRACE
 	printf("In INPdomodel, ignoring unknown model typ typename = %s . . .\n", type_name);

@@ -624,8 +624,15 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
 #endif
       c = INPgetMod(ckt, token, &thismodel, tab);
       /* check if using model binning -- pass in line since need 'l' and 'w' */
-      if (!thismodel)
-          txfree(INPgetModBin(ckt, token, &thismodel, tab, line));
+      if (!thismodel) {
+          char *bmsg = INPgetModBin(ckt, token, &thismodel, tab, line);
+          /* Enhancement-600: a bin miss explains itself; prefer it */
+          if (bmsg && !thismodel) {
+              tfree(c);
+              c = bmsg;
+          } else
+              txfree(bmsg);
+      }
       if (c && !thismodel) {
           /* Enhancement-597: `n1 a 0 im k` -- the last bare word is taken as
            * the model and refused as "Unable to find definition of model k",

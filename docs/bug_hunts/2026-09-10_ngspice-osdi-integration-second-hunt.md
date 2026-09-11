@@ -196,6 +196,9 @@ second from E-418's save check. And with `.option saveused` and `print @n1[gd]` 
 precisely so their noise is not reported. The per-point recording is right in every case
 (the `dc temp` table below).
 
+**Status (2026-09-11):** D1 resolved by Enhancement-600 -- the device is quiet under
+beginPlot's probe, so the E-418 sentence is the only one, and an inferred save gets none.
+
 ## D2, D3, D4 — diagnostic slips
 
 - `osdi file.osdi` in the control block instead of `pre_osdi` → the netlist is parsed
@@ -204,6 +207,9 @@ precisely so their noise is not reported. The per-point recording is right in ev
   mentions `pre_osdi`. An instance outside every bin of a binned OSDI model
   (`nv.1`, `nv.2`, E-495) gets the same sentence; "no bin of nv covers w=1u l=50u" is
   what the reader needs.
+- **Status (2026-09-11):** D2 resolved by Enhancement-600 -- pass 1 remembers the cards it
+  dropped for an unknown type and `INPgetMod` names the card, its line, the type and
+  `pre_osdi`; a bin miss lists the bins and the instance's `l` and `w`.
 - `print @km[lvo]` for an opvar → "'lvo' is an INSTANCE parameter of model 'km'
   (declared (* type="instance" *) ...)".
 - `k=0.4` on an integer `from [1:3]` → "Parameter k of 'rm' is out of bounds; range

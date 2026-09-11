@@ -12,6 +12,7 @@
 #include "ngspice/iferrmsg.h"
 #include "ngspice/ngspice.h"
 #include "ngspice/typedefs.h"
+#include "ngspice/fteext.h"   /* Enhancement-600: ft_save_probe */
 
 #include "osdidefs.h"
 
@@ -427,12 +428,16 @@ extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
   if (id >= (int)descr->num_params && id < (int)cur_base) {
     OsdiExtraInstData *xtra = osdi_extra_instance_data(entry, instPtr);
     if (!xtra->opvars_valid) {
-      fprintf(stderr,
-              "Warning: @%s[%s] is an operating-point variable and no "
-              "operating point has been computed for %s, so it has no "
-              "value.\n",
-              instPtr->GENname, descr->param_opvar[id].name[0],
-              instPtr->GENname);
+      /* Enhancement-600: quiet under beginPlot's save probe, which says the
+       * same thing in its own words -- a `save @n1[x]` before any analysis
+       * printed both. */
+      if (!ft_save_probe)
+        fprintf(stderr,
+                "Warning: @%s[%s] is an operating-point variable and no "
+                "operating point has been computed for %s, so it has no "
+                "value.\n",
+                instPtr->GENname, descr->param_opvar[id].name[0],
+                instPtr->GENname);
       return (E_NOTFOUND);
     }
   }

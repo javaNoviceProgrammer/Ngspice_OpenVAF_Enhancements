@@ -145,6 +145,10 @@ IFvalue *INPgetValue(CKTcircuit *, char **, int, INPtables *);
 void INPcardDefaultNote(GENinstance *inst, int id, int explicit_);
 int  INPcardDefaultFollows(GENinstance *inst, int id);
 void INPcardDefaultClear(void);
+/* Enhancement-600: a .model card pass 1 dropped for an unknown type; the type
+   text (or NULL) and, when asked, the card's line number. */
+const char *INPunknownModelType(const char *name, int *line);
+void INPclearUnknownModelTypes(void);
 int INPlastValueError(void);
 int INPlastRangeError(void);   /* Enhancement-509 */
 int INPlastRoundWarn(void);    /* non-integral value rounded into an integer parameter */

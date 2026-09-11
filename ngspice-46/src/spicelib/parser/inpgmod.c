@@ -632,6 +632,8 @@ INPgetModBin(CKTcircuit *ckt, char *name, INPmodel **model, INPtables *tab, char
     double       l, w, lmin, lmax, wmin, wmax;
     double       parse_values[4];
     bool         parse_found[4];
+    int          nbins = 0, bins_seen = 0, bins_len = 0;   /* Enhancement-600 */
+    char         bins[512];
     static char *instance_tokens[] = { "l", "w", "nf", "wnflag" };
     static char *model_tokens[]    = { "lmin", "lmax", "wmin", "wmax" };
     double       scale;
@@ -727,9 +729,30 @@ INPgetModBin(CKTcircuit *ckt, char *name, INPmodel **model, INPtables *tab, char
                 *model = modtmp;
                 return NULL;
             }
+            nbins++;                              /* Enhancement-600 */
+            if (bins_len < (int) sizeof bins - 80)
+                bins_len += snprintf(bins + bins_len, sizeof bins - (size_t) bins_len,
+                                     "%s%s l=[%g:%g] w=[%g:%g]", bins_len ? ", " : "",
+                                     modtmp->INPmodName, lmin, lmax, wmin, wmax);
         }
+        if (nbins)
+            bins_seen = nbins;                    /* both passes see the same bins */
+        nbins = 0;
+        if (pass == 0)
+            bins_len = 0;                         /* pass 1 rebuilds the same list */
     }
 
+    /* Enhancement-600: bins exist, none covers this instance -- say which
+     * bins there are and what the instance asked for, instead of leaving the
+     * caller's "Unable to find definition of model nv" for a card set that is
+     * plainly in the deck. */
+    if (bins_seen)
+        return tprintf("Unable to find definition of model %s: %d bin%s of it %s "
+                       "(%s), but none covers this instance's l=%g w=%g (with "
+                       ".option scale=%g applied).\n",
+                       name, bins_seen, bins_seen == 1 ? "" : "s",
+                       bins_seen == 1 ? "is in the deck" : "are in the deck",
+                       bins, l, w, scale);
     return NULL;
 }
 
@@ -810,6 +833,23 @@ INPgetMod(CKTcircuit *ckt, char *name, INPmodel **model, INPtables *tab)
 #endif
 
     *model = NULL;
+    {
+        /* Enhancement-600: say what is actually wrong. The card may well be
+         * in the deck -- with a TYPE nothing defines (pass 1 dropped it, and
+         * its own warning is lost when the card sits after the line that
+         * uses it), or as a set of bins none of which covers this instance
+         * (INPgetModBin, which the callers try next, says that itself). */
+        int line = 0;
+        const char *type = INPunknownModelType(name, &line);
+        if (type)
+            return tprintf("Unable to find definition of model %s: the .model %s card "
+                           "(line %d) names the type \"%s\", which no built-in device "
+                           "and no loaded OSDI or XSPICE library defines. A Verilog-A "
+                           "module is loaded with `pre_osdi <file.osdi>` in a .control "
+                           "block before the netlist is read; an `osdi` command without "
+                           "the prefix runs after it, too late for this card.\n",
+                           name, name, line, type);
+    }
     return tprintf("Unable to find definition of model %s\n", name);
 }
 
