@@ -28,6 +28,7 @@ Todo:
 
 #include "ngspice/fteext.h"
 #include "ngspice/inpdefs.h"    /* Enhancement-604: INPerrCat */
+#include "../mcsave.h"           /* Enhancement-610 */
 #include "ngspice/stringskip.h"
 #include "ngspice/compatmode.h"
 #include "ngspice/randnumb.h"   /* Enhancement-149: LHS sample advance */
@@ -858,6 +859,7 @@ nupa_signal(int sig)
     bool refuse = FALSE;
 
     if (sig == NUPADECKCOPY) {
+        MCSAVEnewDeck();                    /* Enhancement-610 */
         if (firstsignalS) {
             nupa_init();
             /* Enhancement-149: one full deck re-evaluation pass == one Monte

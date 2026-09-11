@@ -18,6 +18,7 @@
 
 /* random numbers in /maths/misc/randnumb.c */
 #include "ngspice/randnumb.h"
+#include "../mcsave.h"     /* Enhancement-610 */
 
 /************ keywords ************/
 
@@ -1495,6 +1496,78 @@ insertnumber(dico_t *dico, char **lp, DSTRINGPTR ustr_p)
 }
 
 
+/* Enhancement-610: does this brace fragment read a symbol that was drawn --
+ * in the instance's scope (`x1.p`) or the global one? */
+static int
+mcs_frag_reads_draw(dico_t *dico, const char *b, const char *e)
+{
+    const char *p = b;
+    const char *inst = dico->stack_depth > 0 && dico->inst_name
+                       ? dico->inst_name[dico->stack_depth] : NULL;
+    while (p < e) {
+        if (alfa(*p)) {
+            const char *q = p;
+            char *id, *scoped;
+            int hit;
+            while (q < e && alfanum(*q))
+                q++;
+            id = copy_substring(p, q);
+            hit = MCSAVEis_stochastic(id);
+            if (!hit && inst && *inst) {
+                scoped = tprintf("%s.%s", inst, id);
+                hit = MCSAVEis_stochastic(scoped);
+                tfree(scoped);
+            }
+            tfree(id);
+            if (hit)
+                return 1;
+            p = q;
+        } else {
+            p++;
+        }
+    }
+    return 0;
+}
+
+/* Enhancement-610: the slot a brace at `at` (just past its '{') fills:
+ * `<instance>:<key>` for `key={...}`, `<instance>` for the positional value;
+ * NULL for a line that is no element card. The key is read off `line`, the
+ * original text the brace sits in; the instance name off `card`, the card as
+ * it stands now -- expansion has renamed a subcircuit's `r1` to `r.x1.r1`
+ * there, and that is the name the slot is known by. */
+static char *
+mcs_slot_name(const char *line, const char *card, const char *at)
+{
+    const char *w = card ? card : line, *e, *k;
+    char *inst, *name;
+
+    while (*w && isspace_c(*w))
+        w++;
+    if (!*w || *w == '*' || *w == '.')
+        return NULL;
+    e = w;
+    while (*e && !isspace_c(*e))
+        e++;
+    inst = copy_substring(w, e);
+    k = at - 1;                             /* the '{' */
+    while (k > line && isspace_c(k[-1]))
+        k--;
+    if (k > line && k[-1] == '=') {
+        const char *kend = k - 1, *kbeg;
+        while (kend > line && isspace_c(kend[-1]))
+            kend--;
+        kbeg = kend;
+        while (kbeg > line && (alfanum(kbeg[-1]) || kbeg[-1] == '_'))
+            kbeg--;
+        if (kbeg < kend) {
+            name = tprintf("%s:%.*s", inst, (int) (kend - kbeg), kbeg);
+            tfree(inst);
+            return name;
+        }
+    }
+    return inst;
+}
+
 bool
 nupa_substitute(dico_t *dico, const char *s, char **lp)
 /* s: pointer to original source line.
@@ -1503,6 +1576,7 @@ nupa_substitute(dico_t *dico, const char *s, char **lp)
 */
 {
     const char * const s_end = s + strlen(s);
+    const char * const line0 = s;           /* Enhancement-610 */
     bool err = 0;
 
     DS_CREATE(qstr, 200); /* temp result dynamic string */
@@ -1572,6 +1646,19 @@ nupa_substitute(dico_t *dico, const char *s, char **lp)
                 }
             }
 
+            /* Enhancement-610: a device slot whose value is a draw -- the
+             * brace calls a random function (`r1 a b {agauss(1k,50,1)}`, or a
+             * random .param inlined there), or reads a parameter that was
+             * drawn (a subcircuit's `{p}` with `p={gauss(...)}` on the call).
+             * Named by the slot, `<instance>` or `<instance>:<key>`, as
+             * montecarlo's fast path names it, for `.option savemc`. */
+            if (MCSAVEexpr_is_random(s) || mcs_frag_reads_draw(dico, s, kptr)) {
+                char *name = mcs_slot_name(line0, dico->cardline, s);
+                if (name) {
+                    MCSAVEparam(name, strtod(ds_get_buf(&qstr), NULL));
+                    tfree(name);
+                }
+            }
             s = kptr + 1;
             err = insertnumber(dico, lp, &qstr);
             if (err)
@@ -1730,6 +1817,20 @@ nupa_assignment(dico_t *dico, const char *s, char mode)
                         " Formula() error.\n"
                         "      |%s| : |%s|=|%s|\n", s, ds_get_buf(&tstr), ds_get_buf(&ustr));
                 break;
+            }
+            /* Enhancement-610: a parameter with statistics -- its value in
+             * force, for `.option savemc`; scoped by the subcircuit instance
+             * whose parameters (or whose body's .param) these are */
+            if (MCSAVEexpr_is_random(tmp)) {
+                const char *inst = dico->stack_depth > 0 && dico->inst_name
+                                   ? dico->inst_name[dico->stack_depth] : NULL;
+                if (inst && *inst) {
+                    char *scoped = tprintf("%s.%s", inst, ds_get_buf(&tstr));
+                    MCSAVEparam(scoped, rval);
+                    tfree(scoped);
+                } else {
+                    MCSAVEparam(ds_get_buf(&tstr), rval);
+                }
             }
         } else if (dtype == NUPA_STRING) {
             DS_CREATE(sstr, 200);

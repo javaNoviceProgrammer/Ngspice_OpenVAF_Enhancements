@@ -318,6 +318,22 @@ globalmax -output pk" -spec "track1.pk" -min 4`. A hand-written `repeat` loop wi
 `$track_plot`/`$track_hits` (§3.3) remains for a trial that runs several
 analyses per draw.
 
+**A record of every draw — `.option savemc`.** `.option savemc` (E-610) writes,
+for every run-class command (`op`, `tran`, `run`, … — one row per run, a
+failed run marked), the value in force of every parameter with statistics to
+`mcparams_<date>_<time>.csv` beside the netlist: each device slot whose value
+draws (`r1 in out {agauss(1k,50,1)}`, or a random `.param` used there — ngspice
+inlines a random `.param` into each use, so each use is its own draw), named
+`r1` or `m1:w`; a subcircuit call's own drawn value, `x1.p`; and, under
+`.option osdimc`, every OSDI parameter with declared statistics, read off the
+devices as `@sm[r]` / `@n1[dr]`. Every `montecarlo` sample is a row (on the
+fast path a subcircuit's own value is not re-derived and its column is empty
+there; the device slots it feeds are recorded). `savemc=txt` is tab-separated,
+`savemc=excel` a genuine `.xlsx`, `savemc=<name>.<ext>` names the file; a
+`reset` continues the file, a different deck starts another; `.option
+automc_save` (alias `osdimc_save`) records the OSDI parameters only.
+[`examples/savemc_examples/`](../../examples/savemc_examples/).
+
 **Automatic MC from the model's own statistics — `.option osdimc`.** A
 Verilog-A parameter can *declare* its variability with attributes, and the
 simulator then handles the whole loop

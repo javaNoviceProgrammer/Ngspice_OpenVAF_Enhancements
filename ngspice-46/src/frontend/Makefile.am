@@ -56,6 +56,8 @@ libfte_la_SOURCES = \
     com_sweep.h  \
     com_track.c  \
     com_track.h  \
+    mcsave.c  \
+    mcsave.h  \
     com_stb.c  \
     com_stb.h  \
     com_rfstab.c  \

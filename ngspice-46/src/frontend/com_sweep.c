@@ -61,6 +61,7 @@ analyses is suppressed via `ft_optimizing`.
 #include "com_sweep.h"
 #include "com_aging.h"      /* Enhancement-501: aging_replay() */
 #include "com_track.h"      /* Enhancement-582: montecarlo -track */
+#include "mcsave.h"         /* Enhancement-610: savemc */
 #include "ngspice/osdiitf.h" /* Enhancement-535: osdimc trial policy */
 #include "variable.h"       /* struct variable: sw_read_knob reads a bare knob's principal value */
 
@@ -2083,6 +2084,7 @@ void sw_fp_apply(char *const *sw, const double *vals, int nsw)
      * matched. Raise the same boundary here. */
     mc_sample_advance();
 
+    MCSAVEredraw();                      /* Enhancement-610: values re-derived below */
     for (j = 0; j < nsw; j++)
         nupa_add_param((char *) sw[j], vals[j]);
     nupa_recompute_params(sw, nsw);      /* refresh derived-param closure */
@@ -2108,6 +2110,14 @@ void sw_fp_apply(char *const *sw, const double *vals, int nsw)
             v = nupa_eval_expr(b->expr, &ok);
             if (!ok) { last_expr = NULL; continue; }
             last_expr = NULL;
+            /* Enhancement-610: the slot the draw lands in, named as the
+             * re-source path names it (mcsave.c) */
+            {
+                char *nm = b->param ? tprintf("%s:%s", b->name, b->param)
+                                    : copy(b->name);
+                MCSAVEparam(nm, v);
+                tfree(nm);
+            }
         } else {
             int ok = 0;
             v = nupa_eval_expr(b->expr, &ok);

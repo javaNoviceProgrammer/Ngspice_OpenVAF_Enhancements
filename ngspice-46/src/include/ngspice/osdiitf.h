@@ -209,6 +209,12 @@ extern void OSDIdcpathEdges(CKTcircuit *ckt, int type,
  * it restores any drawn parameter to its nominal and is otherwise free.
  * Defined in src/osdi/osdisetup.c. */
 extern void OSDImcNewRun(CKTcircuit *ckt);
+/* Enhancement-610: for `.option savemc` (frontend/mcsave.c) */
+typedef void (*OSDImcSnapshotFn)(const char *owner, const char *param,
+                                 double value, void *ctx);
+extern bool OSDImcEnabled(void);
+extern bool OSDImcHasStats(CKTcircuit *ckt);
+extern void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx);
 
 /* bug-hunt F1: a USER (`alter`/`altermod`, wildcards included) stored a scalar
  * real parameter -- recenter its Monte-Carlo nominal if it has one. Called

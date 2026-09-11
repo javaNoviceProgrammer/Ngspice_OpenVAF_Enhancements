@@ -77,6 +77,7 @@ CDHW*/
 #endif
 
 #include "ngspice/osdiitf.h" /* OSDImcNewRun: .option osdimc Monte-Carlo */
+#include "mcsave.h"          /* Enhancement-610: .option savemc */
 
 extern INPmodel *modtab;
 extern NGHASHPTR modtabhash;
@@ -432,11 +433,14 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
             if (!(err == E_PANIC && CKTvaFatalRaised))
                 ft_sperror(err, "doAnalyses");
             /* wrd_end(); */
+            if (err != E_PAUSE)
+                MCSAVErun(what, 0);         /* Enhancement-610: the draw happened */
             if (err == E_PAUSE)
                 return (1);
             else
                 return (2);
         }
+        MCSAVErun(what, 1);                 /* Enhancement-610: one row per run */
     } else if (eq(what, "resume")) {
         if ((err = ft_sim->doAnalyses (ckt, 0, ft_curckt->ci_curTask)) != OK) {
             ft_sperror(err, "doAnalyses");
@@ -523,6 +527,8 @@ if_is_option(const char *name)
            cp_getvar by OSDImcNewRun/osdimc_enabled (osdisetup.c), so the
            cards WORK and belong here for the same reason `reusesetup` does. */
         "osdimc", "automc", "mcseed", "osdimc_verbose",
+        /* Enhancement-610: read through cp_getvar by mcsave.c */
+        "savemc", "nosavemc", "automc_save", "osdimc_save",
         /* Enhancement-572: the documented OFF spellings of these options were
            honoured but reported as unknown, the defect E-511 removed for
            osdicache and seedinfo. */

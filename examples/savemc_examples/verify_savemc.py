@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+"""Enhancement-610: `.option savemc` -- the value of every parameter with
+statistics, one row per analysis run, in a file beside the netlist.
+
+`.option savemc[=csv|excel|txt|<name>.<ext>]` records, for every run-class
+command (op, tran, run, ... -- one row each, a failed run marked), the
+value in force of every parameter with statistics: a device slot whose value
+draws (`r1 in out {agauss(1k,50,1)}`, or a random .param inlined there, as
+ngspice inlines them -- each use its own draw), named `<instance>` or
+`<instance>:<key>`; a subcircuit call's own drawn value, `x1.p`; and, under
+`.option osdimc`, every OSDI parameter declared with `(* std= *)`, read off
+the devices as `@<model>[<param>]` / `@<instance>[<param>]`. The file is
+`mcparams_<date>_<time>.<ext>` in the netlist's directory (unique within a
+second), csv by default; `txt` is tab-separated; `excel` a genuine .xlsx.
+`.option automc_save` (alias `osdimc_save`) records the OSDI parameters only.
+One file per deck: a `reset` continues it (every montecarlo sample is one),
+a different deck starts another.
+
+Checks:
+  [1] the default: op, reset, op -> a csv beside the deck (not in the working
+      directory), header trial/analysis/status + r1, r2, x1.p, r.x1.r1, two
+      rows whose values are the devices' own (`@r1[r]` ... per run)
+  [2] montecarlo on the fast path: one row per sample; r1 and r.x1.r1 equal
+      the -expr records; x1.p is blank there (not re-evaluated on that path)
+  [3] osdimc: `@n1[dr]`, `@sm[r]` per sample equal the -expr records; the
+      baseline row is the nominal
+  [4] savemc=excel: a valid .xlsx (zip), the sheet's header and rows, all
+      samples present at exit
+  [5] savemc=txt tab-separated; savemc=myrun.txt names the file, in the
+      deck's directory; savemc=csv
+  [6] automc_save / osdimc_save: the OSDI columns only
+  [7] nothing to record: the note, once, and no file; OSDI statistics with
+      osdimc off: the note
+  [8] a failed run is a row, status failed
+  [9] two decks within one second get distinct names; a second deck sourced
+      in one session gets its own file and the first stays complete
+  [10] no "unknown option" warning for the four spellings
+"""
+import glob
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import zipfile
+
+A = "@"     # the accessor prefix, spelled apart so no line reads as a GitHub mention
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+from _setup import NG as NGSPICE, VAF  # noqa: E402
+from _setup import check_both_solvers as _check_both_solvers; _check_both_solvers(__file__)  # noqa: E402
+
+checks = passed = 0
+WORK = tempfile.mkdtemp(prefix="savemc_")
+RUNDIR = tempfile.mkdtemp(prefix="savemc_cwd_")      # ngspice's working directory, NOT the deck's
+
+
+def check(label, ok, detail=""):
+    global checks, passed
+    checks += 1
+    passed += bool(ok)
+    print(f"  {'PASS' if ok else 'FAIL'}  {label}" + (f"  [{detail}]" if detail else ""))
+    return ok
+
+
+with open(os.path.join(WORK, "st.va"), "w") as f:
+    f.write('`include "disciplines.vams"\nmodule st(p, n);\ninout p, n; electrical p, n;\n'
+            '(* std=25.0 *) parameter real r = 1000.0 from (0:inf);\n'
+            '(* type="instance", std=10.0 *) parameter real dr = 0.0;\n'
+            'analog I(p,n) <+ V(p,n)/(r+dr);\nendmodule\n')
+r = subprocess.run([VAF, os.path.join(WORK, "st.va"), "-o", os.path.join(WORK, "st.osdi")],
+                   capture_output=True, text=True)
+if r.returncode != 0:
+    print(r.stdout + r.stderr)
+    sys.exit(1)
+
+
+def clean():
+    for f in glob.glob(os.path.join(WORK, "mcparams_*")) + glob.glob(os.path.join(RUNDIR, "mcparams_*")) \
+            + glob.glob(os.path.join(WORK, "myrun.*")):
+        os.remove(f)
+
+
+def run(body, tag, ctl, cwd=RUNDIR):
+    path = os.path.join(WORK, f"{tag}.cir")
+    with open(path, "w") as f:
+        f.write(f"* savemc {tag}\n{body}.control\nset numdgt=12\n{ctl}\n.endc\n.end\n")
+    p = subprocess.run([NGSPICE, "-b", path], capture_output=True, text=True, timeout=300,
+                       cwd=cwd, stdin=subprocess.DEVNULL)
+    return p.stdout + p.stderr
+
+
+def files(ext="csv", where=WORK):
+    return sorted(glob.glob(os.path.join(where, f"mcparams_*.{ext}")))
+
+
+def read_csv(path, sep=","):
+    with open(path) as f:
+        lines = [l.rstrip("\n") for l in f if l.strip()]
+    head = lines[0].split(sep)
+    rows = [l.split(sep) for l in lines[1:]]
+    return head, rows
+
+
+def vals(out, name):
+    return [float(x) for x in re.findall(rf"^{re.escape(name)} = ([-+.\deE]+)", out, re.M)]
+
+
+def close(a, b, tol=1e-6):
+    return abs(a - b) <= tol * max(1.0, abs(b))
+
+
+NOTE = "Note: savemc: recording the"
+PRE = ".control\npre_osdi st.osdi\n.endc\n"
+DIV = (".subckt sub a b p=1k\nr1 a b {p}\n.ends\nv1 in 0 dc 1\nr1 in mid {agauss(1k, 50, 1)}\n"
+       "r2 mid out {agauss(2k, 100, 1)}\nx1 out 0 sub p={gauss(500, 0.1, 1)}\n")
+print("Enhancement-610: .option savemc\n")
+
+# ------------------------------------------------------------- [1] ---
+clean()
+out = run(".option savemc\n" + DIV, "t1", f"op\nprint {A}r1[r] {A}r2[r] {A}r.x1.r1[r]\nreset\nop\nprint {A}r1[r] {A}r2[r] {A}r.x1.r1[r]")
+fs = files()
+check("[1] .option savemc: a csv named mcparams_<date>_<time>.csv beside the deck, not in the working directory",
+      len(fs) == 1 and re.search(r"mcparams_\d{8}_\d{6}\.csv$", fs[0]) and not files(where=RUNDIR)
+      and out.count(NOTE) == 1, f"{fs} {files(where=RUNDIR)}")
+head, rows = read_csv(fs[0]) if fs else ([], [])
+r1 = vals(out, f"{A}r1[r]"); r2 = vals(out, f"{A}r2[r]"); rx = vals(out, f"{A}r.x1.r1[r]")
+check("[1] ...header trial,analysis,status,r1,r2,x1.p,r.x1.r1; a row per op (2), the values the devices' own",
+      head == ["trial", "analysis", "status", "r1", "r2", "x1.p", "r.x1.r1"] and len(rows) == 2
+      and all(rows[i][0] == str(i + 1) and rows[i][1] == "op" and rows[i][2] == "ok" for i in range(2))
+      and all(close(float(rows[i][3]), r1[i]) and close(float(rows[i][4]), r2[i]) and close(float(rows[i][6]), rx[i])
+              and close(float(rows[i][5]), rx[i]) for i in range(2)),
+      f"{head} {rows}")
+
+# ------------------------------------------------------------- [2] ---
+clean()
+out = run(".option savemc\n" + DIV, "t2",
+          f'montecarlo 6 -seed 3 -analysis op -expr rr={A}r1[r] -expr rx={A}r.x1.r1[r]\n'
+          'print montecarlo1.rr montecarlo1.rx')
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+rr = [float(x) for x in re.findall(r"^\d+\s+([-+.\deE]+)\s+([-+.\deE]+)", out.split("montecarlo1.rr")[-1], re.M)[:0]]
+tab = re.findall(r"^\d+\s+([-+.\deE]+)\s+([-+.\deE]+)\s*$", out, re.M)
+check("[2] montecarlo (fast path): one row per sample; r1 and r.x1.r1 equal the -expr records; x1.p blank there",
+      "fast path armed" in out and len(rows) == 6 and len(tab) == 6
+      and all(close(float(rows[i][3]), float(tab[i][0])) and close(float(rows[i][6]), float(tab[i][1]))
+              and rows[i][5] == "" for i in range(6)), f"{head} {rows[:3]} {tab[:3]}")
+
+# ------------------------------------------------------------- [3] ---
+OSDI = PRE + "v1 in 0 dc 1\nr1 in out {agauss(1k, 50, 1)}\nn1 out 0 sm\n.model sm st r=1k\n"
+clean()
+out = run(".option savemc osdimc mcseed=5\n" + OSDI, "t3",
+          f'op\nmontecarlo 5 -seed 3 -analysis op -expr d1={A}n1[dr] -expr smr={A}sm[r]\nprint montecarlo1.d1 montecarlo1.smr')
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+tab = re.findall(r"^\d+\s+([-+.\deE]+)\s+([-+.\deE]+)\s*$", out, re.M)
+check(f"[3] osdimc: the baseline op row is the nominal (0, 1000); each sample's {A}n1[dr], {A}sm[r] equal the -expr records",
+      head == ["trial", "analysis", "status", "r1", f"{A}n1[dr]", f"{A}sm[r]"] and len(rows) == 6 and len(tab) == 5
+      and float(rows[0][4]) == 0.0 and float(rows[0][5]) == 1000.0
+      and all(close(float(rows[i + 1][4]), float(tab[i][0])) and close(float(rows[i + 1][5]), float(tab[i][1]))
+              for i in range(5)), f"{head} {rows[:3]} {tab[:2]}")
+
+# ------------------------------------------------------------- [4] ---
+clean()
+out = run(".option savemc=excel osdimc mcseed=5\n" + OSDI, "t4",
+          f'montecarlo 30 -seed 3 -analysis op -expr rr={A}r1[r] -expr d1={A}n1[dr]\nprint montecarlo1.rr[2] montecarlo1.d1[2]')
+fs = files("xlsx")
+ok = False
+detail = str(fs)
+if fs:
+    z = zipfile.ZipFile(fs[0])
+    bad = z.testzip()
+    names = z.namelist()
+    x = z.read("xl/worksheets/sheet1.xml").decode()
+    xrows = re.findall(r'<row r="(\d+)">(.*?)</row>', x)
+    cells = [[c[0] or c[1] for c in re.findall(r'<c r="[A-Z]+\d+"(?: t="inlineStr")?>(?:<is><t>(.*?)</t></is>|<v>(.*?)</v>)</c>', b)]
+             for _, b in xrows]
+    ok = (bad is None and "xl/workbook.xml" in names and "xl/styles.xml" in names
+          and cells[0] == ["trial", "analysis", "status", "r1", f"{A}n1[dr]", f"{A}sm[r]"] and len(cells) == 31
+          and close(float(cells[3][3]), vals(out, "montecarlo1.rr[2]")[0])
+          and close(float(cells[3][4]), vals(out, "montecarlo1.d1[2]")[0]))
+    detail = f"{bad} {names} {cells[:2]} {len(cells)}"
+check("[4] savemc=excel: a valid .xlsx, the header, all 30 samples present at exit, sample 3 equal to the record", ok, detail)
+
+# ------------------------------------------------------------- [5] ---
+clean()
+out = run(".option savemc=txt\n" + OSDI, "t5a", "op\nreset\nop")
+fs = files("txt"); head, rows = read_csv(fs[0], "\t") if fs else ([], [])
+check("[5] savemc=txt: tab-separated, two rows", len(fs) == 1 and head == ["trial", "analysis", "status", "r1"]
+      and len(rows) == 2 and "\t" in open(fs[0]).readline(), f"{fs} {head}")
+clean()
+out = run(".option savemc=myrun.txt\n" + OSDI, "t5b", "op")
+p = os.path.join(WORK, "myrun.txt")
+check("[5] savemc=myrun.txt: the named file, in the deck's directory, tab-separated by its extension",
+      os.path.exists(p) and "\t" in open(p).readline() and not files("txt") and f"to {p}" in out, out[-200:])
+clean()
+out = run(".option savemc=csv\n" + OSDI, "t5c", "op")
+check("[5] savemc=csv: the same as the bare option", len(files()) == 1 and NOTE in out, str(files()))
+
+# ------------------------------------------------------------- [6] ---
+clean()
+out = run(".option automc_save osdimc mcseed=5\n" + OSDI, "t6a",
+          f'montecarlo 4 -seed 3 -analysis op -expr d1={A}n1[dr]\nprint montecarlo1.d1')
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+tab = re.findall(r"^\d+\s+([-+.\deE]+)\s*$", out, re.M)
+check("[6] automc_save: the OSDI columns only; the values per sample equal the record",
+      head == ["trial", "analysis", "status", f"{A}n1[dr]", f"{A}sm[r]"] and len(rows) == 4 and len(tab) == 4
+      and all(close(float(rows[i][3]), float(tab[i])) for i in range(4)), f"{head} {rows[:2]}")
+clean()
+out = run(".option osdimc_save=txt osdimc mcseed=5\n" + OSDI, "t6b", "op")
+fs = files("txt"); head, rows = read_csv(fs[0], "\t") if fs else ([], [])
+check("[6] osdimc_save=txt: the alias, with a format", head == ["trial", "analysis", "status", f"{A}n1[dr]", f"{A}sm[r]"], f"{head}")
+
+# ------------------------------------------------------------- [7] ---
+clean()
+out = run(".option savemc\nv1 in 0 dc 1\nr1 in out 1k\nr2 out 0 1k\n", "t7a", "op\nop")
+check("[7] nothing statistical: the note once, no file",
+      out.count("nothing to record -- no parameter with statistics") == 1 and not files() and NOTE not in out, out[-300:])
+clean()
+out = run(".option savemc\n" + PRE + "v1 in 0 dc 1\nr1 in out 1k\nn1 out 0 sm\n.model sm st r=1k\n", "t7b", "op")
+check("[7] OSDI statistics declared, osdimc off: the note says they are not drawn nor recorded",
+      "declare statistics, but `.option osdimc` is off" in out and not files(), out[-300:])
+clean()
+out = run(".option automc_save\n" + DIV, "t7c", "op")
+check("[7] automc_save on a deck with no OSDI statistics: the note names the scope",
+      "no OSDI parameter with statistics" in out and "automc_save records OSDI parameters only" in out and not files(),
+      out[-300:])
+
+# ------------------------------------------------------------- [8] ---
+clean()
+out = run(".option savemc\nv1 in 0 dc 1\nr1 in out {agauss(1k, 50, 1)}\nr2 out 0 1k\n", "t8",
+          "op\ntran 1n 10n\ndc v1 0 1 -0.1")
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+check("[8] op, tran and a refused dc: three rows, the dc marked failed, the same draw on all",
+      [r[1:3] for r in rows] == [["op", "ok"], ["tran", "ok"], ["dc", "failed"]]
+      and len({r[3] for r in rows}) == 1, f"{rows}")
+
+# ------------------------------------------------------------- [9] ---
+clean()
+out1 = run(".option savemc\n" + OSDI, "t9a", "op")
+out2 = run(".option savemc\n" + OSDI, "t9b", "op")
+fs = files()
+check("[9] two runs within one second: two files, distinct names",
+      len(fs) == 2 and fs[0] != fs[1], str([os.path.basename(f) for f in fs]))
+clean()
+with open(os.path.join(WORK, "second.cir"), "w") as f:
+    f.write("* savemc second deck\n.option savemc\nv1 in 0 dc 1\nr1 in out {agauss(3k, 50, 1)}\nr2 out 0 1k\n"
+            ".control\nop\n.endc\n.end\n")
+out = run(".option savemc\n" + OSDI, "t9c", f"op\nreset\nop\nsource {os.path.join(WORK, 'second.cir')}\nop")
+fs = files()
+heads = [read_csv(f) for f in fs]
+check("[9] a second deck sourced in one session: its own file; the first holds its two rows",
+      len(fs) == 2 and sorted(len(h[1]) for h in heads) == [2, 2] and out.count(NOTE) == 2,
+      f"{[os.path.basename(f) for f in fs]} {[len(h[1]) for h in heads]}")
+
+# ------------------------------------------------------------ [10] ---
+clean()
+out = run(".option savemc nosavemc automc_save osdimc_save\n" + OSDI, "t10", "op")
+check("[10] no 'unknown option' warning for savemc, nosavemc, automc_save, osdimc_save; nosavemc turns it off",
+      "unknown option" not in out and not files() and NOTE not in out, out[-300:])
+
+clean()
+print(f"\n{passed}/{checks} checks passed")
+sys.exit(0 if passed == checks else 1)

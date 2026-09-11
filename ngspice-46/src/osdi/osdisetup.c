@@ -2662,6 +2662,63 @@ static void osdimc_write(const OsdiDescriptor *descr, void *inst, void *model,
   }
 }
 
+/* Enhancement-610: for `.option savemc` -- is the automatic Monte Carlo on,
+ * does the circuit hold an OSDI parameter with declared statistics, and what
+ * do those parameters hold now (read off the devices, so the baseline trial,
+ * a pinned value and a pending draw are reported as they ran). The callback
+ * gets the owner -- the model card's name for a process parameter, the
+ * instance's for a mismatch one -- and the parameter's name. */
+bool OSDImcEnabled(void) { return osdimc_enabled(); }
+
+bool OSDImcHasStats(CKTcircuit *ckt) {
+  if (!ckt)
+    return false;
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+    if (entry->num_stat_params > 0 && entry->stat_param_infos)
+      return true;
+  }
+  return false;
+}
+
+void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx) {
+  if (!ckt || !fn)
+    return;
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+    const OsdiDescriptor *descr = entry->descriptor;
+    const OsdiStatParam *infos = entry->stat_param_infos;
+    if (entry->num_stat_params == 0 || !infos)
+      continue;
+    for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
+         gen_model = gen_model->GENnextModel) {
+      void *model = osdi_model_data(gen_model);
+      for (uint32_t s = 0; s < entry->num_stat_params; s++) {
+        uint32_t id = infos[s].param_id;
+        const char *pname = descr->param_opvar[id].name[0];
+        if (id >= descr->num_instance_params) {
+          void *src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
+          if (src)
+            fn((char *)gen_model->GENmodName, pname, *(double *)src, ctx);
+        } else {
+          for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+               gen_inst = gen_inst->GENnextInstance) {
+            void *inst = osdi_instance_data(entry, gen_inst);
+            void *src = descr->access(inst, model, id,
+                                      ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
+            if (src)
+              fn((char *)gen_inst->GENname, pname, *(double *)src, ctx);
+          }
+        }
+      }
+    }
+  }
+}
+
 /* The per-run entry point: called by if_run for every run-class command
  * (`run`, `tran`, `op`, ... -- everything but `resume`). */
 void OSDImcNewRun(CKTcircuit *ckt) {
