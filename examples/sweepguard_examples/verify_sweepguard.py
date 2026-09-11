@@ -92,7 +92,6 @@ NONSENSE = [
     ("disto, DnumSteps+1 overflows",    "disto lin 2147483647 1e30 1e6 -0.5"),
     ("disto, negative step count",      "disto lin -5 1 1e6 1e-30"),
     ("disto, zero steps per decade",    "disto dec 0 1e4 1e5"),
-    ("disto, linear start == stop",     "disto lin 1 1e6 1e6"),
     ("tran, timepoint count overflows", "tran 1e6 1e30 1e6"),
     ("dc, step below the start's ULP",  "dc V1 1 1 1e-30"),
     ("dc, count exceeds int",           "dc V1 0 1 1e-30"),
@@ -103,6 +102,12 @@ NONSENSE = [
 # reject what cannot be represented.
 NORMAL = [
     ("disto dec",  "disto dec 2 1e4 1e5 0.9\nsetplot disto1\nprint d[0]", r"d\[0\] = (\S+)"),
+    # Enhancement-611: a one-point linear sweep (start == stop) is a legitimate
+    # single-frequency analysis, and always ran as one; it sat in NONSENSE and
+    # "passed" only because `d[0]` on a one-point vector used to be refused
+    # ("indexing a scalar"), which is what the leak test keyed on. Element 0
+    # of a one-point vector is its value now, so the case is where it belongs.
+    ("disto lin, one point", "disto lin 1 1e6 1e6\nsetplot disto1\nprint d[0]", r"d\[0\] = (\S+)"),
     ("ac dec",     "ac dec 5 1e4 1e6\nprint vdb(d)[10]",                  r"vdb\(d\)\[10\] = (\S+)"),
     ("dc sweep",   "dc V1 0 1 0.001\nprint v(d)[500]",                    r"v\(d\)\[500\] = (\S+)"),
     ("dc reverse", "dc V1 1 0 -0.1\nprint v(d)[5]",                       r"v\(d\)\[5\] = (\S+)"),

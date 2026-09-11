@@ -94,6 +94,7 @@
 #include "spiceif.h" /* for com_snload() and com_snsave() */
 
 #include "com_dl.h"
+#include "mcsave.h"          /* Enhancement-611: writemc */
 #include "snp2va.h"
 
 #ifdef XSPICE
@@ -246,7 +247,7 @@ struct comm spcp_coms[] = {
     { "montecarlo", com_montecarlo, FALSE, FALSE,  /* Enhancement-151 */
       { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
       NULL,
-      "<N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>] (-spec <metric> -max <hi>|-min <lo>)... (-expr [name=]<expression>)... (-track \"<track arguments>\")... : "
+      "<N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>] (-spec <metric> -max <hi>|-min <lo>)... (-expr [name=]<expression>)... (-track \"<track arguments>\")... [-writemc [name=]<expression> ...] : "
       "packaged Monte Carlo -- runs N samples. A -spec with a limit is judged: a sample passes only if every "
       "spec is within its limits, and the yield is reported with a Wilson 95%% CI and per-spec violations. "
       "An -expr is recorded per sample, unjudged, into a montecarlo<n> plot ($montecarlo_plot): a scalar as an "
@@ -255,7 +256,9 @@ struct comm spcp_coms[] = {
       "($track_plot): sample as its scale, hits per sample, and every vector of the track plot under its own name "
       "(time/frequency/v_sweep, value, index, x_out, width) as an Lmax x N family whose row k is hit k of every "
       "sample, nan where a sample had fewer (plain vectors when no sample has more than one). Any of the three "
-      "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib)." } ,
+      "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib). With `.option savemc`, "
+      "-writemc puts each listed value (an -expr name, a track<k>.<vector>, any scalar expression) onto the "
+      "sample's row of the savemc file, as the writemc command does after a run." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
       NULL,
@@ -502,6 +505,12 @@ struct comm spcp_coms[] = {
       "[-edge rise|fall|both] [-at entry|exit|mid] [-prominence p] [-raw] [-output name ...] : every place a "
       "condition holds, as a plot trackN -- a locator (localmax, localmin, globalmax, globalmin, bare or on an "
       "expression), a crossing lhs==rhs, a region lhs<rhs, or any boolean; one spec, every expression read at the hits." },
+    { "writemc", com_writemc, FALSE, FALSE,      /* Enhancement-611 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "[name=]<expression> ... : put each value (a scalar, evaluated on the current plot) onto the row "
+      "`.option savemc` wrote for the last analysis run -- a value computed in the .control block, beside "
+      "the draws behind it; a column is added on first use." },
     { "sweep", com_sweep, TRUE, FALSE,           /* Enhancement-146 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
@@ -946,7 +955,7 @@ struct comm nutcp_coms[] = {
     { "montecarlo", com_montecarlo, FALSE, FALSE,  /* Enhancement-151 */
       { 0, 0, 0, 0 }, E_DEFHMASK, 1, LOTS,
       NULL,
-      "<N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>] (-spec <metric> -max <hi>|-min <lo>)... (-expr [name=]<expression>)... (-track \"<track arguments>\")... : "
+      "<N> [-lhs] [-warm] [-seed <s>] [-analysis <cmd>] (-spec <metric> -max <hi>|-min <lo>)... (-expr [name=]<expression>)... (-track \"<track arguments>\")... [-writemc [name=]<expression> ...] : "
       "packaged Monte Carlo -- runs N samples. A -spec with a limit is judged: a sample passes only if every "
       "spec is within its limits, and the yield is reported with a Wilson 95%% CI and per-spec violations. "
       "An -expr is recorded per sample, unjudged, into a montecarlo<n> plot ($montecarlo_plot): a scalar as an "
@@ -955,7 +964,9 @@ struct comm nutcp_coms[] = {
       "($track_plot): sample as its scale, hits per sample, and every vector of the track plot under its own name "
       "(time/frequency/v_sweep, value, index, x_out, width) as an Lmax x N family whose row k is hit k of every "
       "sample, nan where a sample had fewer (plain vectors when no sample has more than one). Any of the three "
-      "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib)." } ,
+      "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib). With `.option savemc`, "
+      "-writemc puts each listed value (an -expr name, a track<k>.<vector>, any scalar expression) onto the "
+      "sample's row of the savemc file, as the writemc command does after a run." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
       NULL,

@@ -890,7 +890,28 @@ op_ind(struct pnode *arg1, struct pnode *arg2)
         v->v_numdims = 1;
         v->v_dims[0] = v->v_length;
         if (v->v_length <= 1) {
-            fprintf(cp_err, "Error: indexing a scalar (%s)\n",
+            /* Enhancement-611: a one-point vector's element 0 is itself.
+             * `track1.time[0]` -- the first hit of a sample -- is written
+             * once and must read on the samples with ONE hit as on those
+             * with several; it used to be refused there ("indexing a
+             * scalar"), which turned a `-spec track1.value[0]` into an
+             * unresolved metric on the first single-hit sample. */
+            if (v->v_length == 1 && ind->v_length == 1 &&
+                    ((isreal(ind) && idx_floor(ind->v_realdata[0]) == 0) ||
+                     (!isreal(ind) &&
+                      idx_floor(realpart(ind->v_compdata[0])) == 0 &&
+                      idx_floor(imagpart(ind->v_compdata[0])) == 0))) {
+                struct dvec *one = vec_copy(v);
+                vec_new(one);
+                if (arg1->pn_value == NULL)
+                    vec_free(v);
+                if (arg2->pn_value == NULL)
+                    vec_free(ind);
+                return (one);
+            }
+            fprintf(cp_err, v->v_length == 1
+                    ? "Error: indexing a scalar (%s): its one element is [0]\n"
+                    : "Error: indexing a scalar (%s)\n",
                     v->v_name);
             return (NULL);
         }

@@ -1,0 +1,33 @@
+* mc_example6 -- writemc / -writemc: what the run produced, on the same row as the draws behind it
+*
+* mc_example5 recorded every drawn parameter per sample (.option savemc). Here the
+* results computed from each run go onto the same row:
+*   montecarlo ... -writemc ...   per sample, after the tracks, specs and exprs
+*   writemc ...                   after a run in a hand-written repeat/reset loop
+.option savemc osdimc mcseed=7
+.param rr = agauss(20, 30, 3)
+V1 in 0 pulse(0 1 0 1n 1n 1m 2m)
+R1 in a {rr}
+L1 a out 1m
+C1 out 0 1u
+N1 out 0 rm
+.model rm rstat r=1k
+.control
+set noinit
+pre_osdi rstat.osdi
+* --- 200 samples: the peak, the number of ringing peaks, when the first one comes, and
+*     the overshoot, beside r1 and the model's dr and r draws on every row
+montecarlo 200 -seed 3 -analysis "tran 2u 1m" -expr pk=maximum(v(out)) -track "v(out) -spec localmax -prominence 20m" -writemc pk npk=track1.hits tpk=track1.time[0] over=maximum(v(out))-1
+* --- 20 more trials by hand: reset redraws, tran runs, writemc adds what this trial computed
+repeat 20
+  reset
+  tran 2u 1m
+  let pk = maximum(v(out))
+  meas tran tr trig v(out) val=0.1 rise=1 targ v(out) val=0.9 rise=1
+  writemc pk tr q=pk*2
+end
+shell head -3 mcparams_*.csv
+shell tail -2 mcparams_*.csv
+shell wc -l mcparams_*.csv
+.endc
+.end

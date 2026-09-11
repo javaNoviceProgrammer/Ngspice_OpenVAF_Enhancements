@@ -4670,6 +4670,15 @@ void com_montecarlo(wordlist *wl)
     long expr_nohit[MC_MAXSPEC];        /* Enhancement-609: samples left nan for want of a hit */
     int expr_reads_track[MC_MAXSPEC];   /* Enhancement-609: evaluated after the tracks */
     int expr_defined_note[MC_MAXSPEC];  /* Enhancement-609: the name-taken note, once */
+    /* Enhancement-611: `-writemc [name=]<expression> ...` -- each value onto
+     * the sample's row of the `.option savemc` file, after the tracks, specs
+     * and exprs (so an -expr name or a track<k>.<vector> may be listed). */
+#define MC_MAXWRITE 32
+    int nwmc = 0;
+    char *wmc_name[MC_MAXWRITE];
+    char *wmc_expr[MC_MAXWRITE];
+    int wmc_failed_note[MC_MAXWRITE];
+    int wmc_off_note = 0;
     struct {
         int nvec;
         char *vname[MC_TRACKVEC];
@@ -4692,7 +4701,9 @@ void com_montecarlo(wordlist *wl)
                         "an -expr is recorded per sample into a montecarlo<n> plot; "
                         "a -track runs `track <arguments>` per sample and records its hits;\n"
                         "       a -spec or -expr may read the sample's k-th -track result as "
-                        "track<k>.<vector> (track1.value, track1.x_out, track1.hits)\n");
+                        "track<k>.<vector> (track1.value, track1.x_out, track1.hits);\n"
+                        "       -writemc [name=]<expression> ... puts each value onto the sample's row "
+                        "of the `.option savemc` file\n");
         return;
     }
     for (e = 0; e < MC_MAXSPEC; e++) {
@@ -4701,6 +4712,9 @@ void com_montecarlo(wordlist *wl)
         exprscale[e] = NULL; exprfirst[e] = NULL; exprvaried[e] = 0;
         spec_nohit[e] = 0; expr_nohit[e] = 0;       /* Enhancement-609 */
         expr_reads_track[e] = 0; expr_defined_note[e] = 0;   /* Enhancement-609 */
+    }
+    for (e = 0; e < MC_MAXWRITE; e++) {
+        wmc_name[e] = wmc_expr[e] = NULL; wmc_failed_note[e] = 0;
     }
     for (e = 0; e < MC_MAXTRACK; e++) {
         tpname[e] = NULL; thits_now[e] = 0;
@@ -4848,10 +4862,54 @@ void com_montecarlo(wordlist *wl)
             }
             nexpr++;
             wl = wl->wl_next;
+        } else if (eq(w, "-writemc")) {
+            /* Enhancement-611: the items up to the next flag, [name=]expr each */
+            wl = wl->wl_next;
+            if (!wl || !wl->wl_word || is_flag(wl->wl_word)) {
+                fprintf(cp_err, "montecarlo: -writemc needs at least one [name=]<expression>\n");
+                return;
+            }
+            while (wl && wl->wl_word && !is_flag(wl->wl_word)) {
+                char *tok = cp_unquote(wl->wl_word), *q = tok, *eqp = NULL;
+                if (nwmc >= MC_MAXWRITE) {
+                    fprintf(cp_err, "montecarlo: too many -writemc items (max %d)\n", MC_MAXWRITE);
+                    tfree(tok);
+                    return;
+                }
+                if (isalpha((unsigned char) *q) || *q == '_') {
+                    while (isalnum((unsigned char) *q) || *q == '_')
+                        q++;
+                    if (*q == '=' && q[1] != '=' && q > tok)
+                        eqp = q;
+                }
+                if (eqp) {
+                    wmc_name[nwmc] = copy_substring(tok, eqp);
+                    wmc_expr[nwmc] = copy(eqp + 1);
+                } else {
+                    wmc_name[nwmc] = copy(tok);
+                    wmc_expr[nwmc] = copy(tok);
+                }
+                if (!wmc_expr[nwmc][0]) {
+                    fprintf(cp_err, "montecarlo: -writemc '%s' has no expression after the '='\n", tok);
+                    tfree(tok);
+                    return;
+                }
+                tfree(tok);
+                nwmc++;
+                wl = wl->wl_next;
+            }
         } else {
             fprintf(cp_err, "montecarlo: unexpected token '%s'\n", w);
             return;
         }
+    }
+
+    /* Enhancement-611: -writemc records only through `.option savemc`; said
+     * once, and the run goes on without it */
+    if (nwmc > 0 && !MCSAVEactive()) {
+        fprintf(cp_err, "montecarlo: -writemc: nothing is recorded -- `.option savemc` "
+                        "is not set; the run proceeds without it\n");
+        wmc_off_note = 1;
     }
 
     /* Enhancement-552: a yield is a judgement, so it needs a spec WITH a limit;
@@ -4865,13 +4923,14 @@ void com_montecarlo(wordlist *wl)
         return;
     }
     /* Enhancement-609: a track<k>. reference must name a -track of this command */
-    for (s = 0; s < nspec + nexpr; s++) {
-        const char *txt = s < nspec ? metric[s] : exprtext[s - nspec];
+    for (s = 0; s < nspec + nexpr + nwmc; s++) {
+        const char *txt = s < nspec ? metric[s]
+                        : s < nspec + nexpr ? exprtext[s - nspec] : wmc_expr[s - nspec - nexpr];
         int k = mc_track_ref_max(txt);
         if (k > ntrack) {
             fprintf(cp_err, "montecarlo: %s '%s' reads track%d, but %s -- the k in "
                             "track<k>.<vector> is the -track's position in this command\n",
-                    s < nspec ? "-spec" : "-expr", txt, k,
+                    s < nspec ? "-spec" : s < nspec + nexpr ? "-expr" : "-writemc", txt, k,
                     ntrack == 0 ? "no -track was given"
                                 : ntrack == 1 ? "only one -track was given"
                                               : "fewer -track flags were given");
@@ -5179,6 +5238,29 @@ void com_montecarlo(wordlist *wl)
                                thits_now, 0, &expr_defined_note[e])) {
                 unresolved_expr = e;
                 unresolved_sample = i + 1;
+            }
+        }
+        /* Enhancement-611: the -writemc items onto this sample's row -- after
+         * the tracks, specs and exprs, so any of their names may be listed */
+        for (e = 0; e < nwmc && !wmc_off_note; e++) {
+            int refs = 0, miss = 0, mok = 0;
+            char *etext = mc_track_refs(wmc_expr[e], ntrack, tpname, thits_now, &refs, &miss);
+            struct dvec *v = miss ? NULL : sw_eval_expr_copy(etext);
+            tfree(etext);
+            if (v && v->v_length == 1) {
+                MCSAVEappend(wmc_name[e], v->v_realdata[0]);
+                mok = 1;
+            }
+            if (!mok && !miss && !wmc_failed_note[e]) {
+                fprintf(cp_err, "montecarlo: -writemc %s: %s on sample %d; that cell stays "
+                                "empty (said once)\n", wmc_name[e],
+                        v ? "not a scalar -- a row holds one number; reduce or index it"
+                          : "does not evaluate", i + 1);
+                wmc_failed_note[e] = 1;
+            }
+            if (v) {
+                v->v_scale = NULL;
+                vec_free(v);
             }
         }
         for (int t = 0; t < ntrack; t++)      /* Enhancement-609: read; now gone */
@@ -5495,6 +5577,10 @@ mc_free_exprs:                                   /* Enhancement-552 */
         if (exprdata[e]) tfree(exprdata[e]);
         if (exprfirst[e]) tfree(exprfirst[e]);
         if (exprscale[e]) vec_free(exprscale[e]);
+    }
+    for (e = 0; e < nwmc; e++) {                 /* Enhancement-611 */
+        tfree(wmc_name[e]);
+        tfree(wmc_expr[e]);
     }
     for (int t = 0; t < ntrack; t++) {           /* Enhancement-582 */
         for (int n = 0; n < trec[t].nvec; n++) {

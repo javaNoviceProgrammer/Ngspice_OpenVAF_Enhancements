@@ -28,6 +28,17 @@ extern int MCSAVEexpr_is_random(const char *e);
 /* a run-class command has finished: emit the row */
 extern void MCSAVErun(const char *analysis, int ok);
 
+/* Enhancement-611: is the recorder on (the option set)? */
+extern int MCSAVEactive(void);
+
+/* Enhancement-611: a value computed after the run, onto the run's row --
+ * `writemc` and montecarlo's -writemc. 0 done; -1 no run to attach to;
+ * -2 the recorder is off. */
+extern int MCSAVEappend(const char *name, double value);
+
+/* the `writemc` command: writemc [name=]<expr> ... */
+extern void com_writemc(wordlist *wl);
+
 /* the circuit is being freed / the program ends: the file is completed */
 extern void MCSAVEcircuitFreed(struct circ *ci);
 extern void MCSAVEfinish(void);

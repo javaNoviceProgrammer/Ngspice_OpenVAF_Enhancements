@@ -31,16 +31,26 @@
 #include "ngspice/dstring.h"
 #include "ngspice/osdiitf.h"
 #include "ngspice/stringskip.h"
+#include "ngspice/dvec.h"
+#include "ngspice/fteparse.h"
 #include "mcsave.h"
 #include <time.h>
 #include <ctype.h>
 #include <math.h>
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>         /* ftruncate */
+#endif
+#ifdef _MSC_VER
+#include <io.h>
+#define ftruncate(fd, len) _chsize(fd, (long) (len))
+#endif
 
 enum { FMT_CSV, FMT_TXT, FMT_XLSX };
 
 struct mcs_col {
     char *name;
     int osdi;                       /* an OSDI parameter, read per row */
+    int written;                    /* Enhancement-611: a writemc value, put on the row after the run */
     double value;                   /* the value in force */
     int set;
     int gen;                        /* the deck expansion that last set it */
@@ -66,6 +76,7 @@ static int fmt;
 static int osdi_only;
 static FILE *fp;                    /* csv/txt: kept open, appended */
 static int header_cols;             /* columns the csv/txt header was written with */
+static long lastrow_off = -1;       /* Enhancement-611: where the last row begins, to rewrite it */
 static int noted_nothing;
 static int noted_osdimc_off;
 
@@ -115,6 +126,7 @@ col_add(const char *name, int osdi)
     }
     cols[ncols].name = copy(name);
     cols[ncols].osdi = osdi;
+    cols[ncols].written = 0;
     cols[ncols].value = NAN;
     cols[ncols].set = 0;
     cols[ncols].gen = gen;
@@ -181,7 +193,7 @@ cols_prune_for_new_owner(void)
 {
     int i, k = 0;
     for (i = 0; i < ncols; i++) {
-        if (cols[i].osdi || (!cols[i].set && cols[i].gen != gen)) {
+        if (cols[i].osdi || cols[i].written || (!cols[i].set && cols[i].gen != gen)) {
             tfree(cols[i].name);
         } else {
             cols[k++] = cols[i];
@@ -330,7 +342,7 @@ put_value(FILE *f, double v)
 static int
 col_wanted(int i)
 {
-    return !osdi_only || cols[i].osdi;
+    return !osdi_only || cols[i].osdi || cols[i].written;
 }
 
 static void
@@ -372,8 +384,11 @@ text_rewrite(void)
     if (!fp)
         return;
     text_header(fp);
-    for (r = 0; r < nrows; r++)
+    for (r = 0; r < nrows; r++) {
+        if (r == nrows - 1)
+            lastrow_off = ftell(fp);
         text_row(fp, r);
+    }
     fflush(fp);
 }
 
@@ -595,6 +610,7 @@ mcs_reset_file(void)
     tfree(owner_name);
     owner = 0;
     header_cols = 0;
+    lastrow_off = -1;
     noted_nothing = 0;
     noted_osdimc_off = 0;
 }
@@ -709,7 +725,7 @@ MCSAVErun(const char *analysis, int ok)
     }
     rows[nrows] = TMALLOC(double, ncols);
     for (i = 0; i < ncols; i++)
-        rows[nrows][i] = cols[i].set ? cols[i].value : NAN;
+        rows[nrows][i] = cols[i].set && !cols[i].written ? cols[i].value : NAN;
     rowcols[nrows] = ncols;
     rowan[nrows] = copy(analysis ? analysis : "?");
     rowst[nrows] = copy(ok ? "ok" : "failed");
@@ -724,6 +740,164 @@ MCSAVErun(const char *analysis, int ok)
         text_rewrite();                 /* the first row, or a new column */
         return;
     }
+    lastrow_off = ftell(fp);
     text_row(fp, nrows - 1);
     fflush(fp);
+}
+
+/* ------------------------------------------------------------ Enhancement-611 */
+
+int
+MCSAVEactive(void)
+{
+    char *given = NULL;
+    int on = mcs_option(&given);
+    tfree(given);
+    return on;
+}
+
+/* a value computed after the run goes onto the run's row: `writemc` in a
+ * loop, montecarlo's -writemc per sample. The column is added on first use
+ * (a row that never gets it is empty there); for csv/txt the last line is
+ * rewritten in place -- the file stays complete row by row -- and a new
+ * column rewrites the file once, for its header. */
+int
+MCSAVEappend(const char *name, double value)
+{
+    struct mcs_col *c;
+    int i, newcol = 0;
+
+    if (!MCSAVEactive())
+        return -2;
+    if (!owner || nrows == 0)
+        return -1;
+    c = col_find(name);
+    if (!c) {
+        c = col_add(name, 0);
+        c->written = 1;
+        newcol = 1;
+    } else if (!c->written) {
+        /* the name of a draw: keep the draw's column, the value goes on
+         * as `<name>*` beside it */
+        char *alt = tprintf("%s*", name);
+        int r = MCSAVEappend(alt, value);
+        tfree(alt);
+        return r;
+    }
+    i = (int) (c - cols);
+    if (rowcols[nrows - 1] < ncols) {
+        int k;
+        rows[nrows - 1] = TREALLOC(double, rows[nrows - 1], ncols);
+        for (k = rowcols[nrows - 1]; k < ncols; k++)
+            rows[nrows - 1][k] = NAN;
+        rowcols[nrows - 1] = ncols;
+    }
+    rows[nrows - 1][i] = value;
+
+    if (fmt == FMT_XLSX) {
+        if (nrows % 25 == 0)
+            xlsx_write();
+        return 0;
+    }
+    if (newcol || !fp || lastrow_off < 0 || header_cols != ncols) {
+        text_rewrite();
+        return 0;
+    }
+    if (fseek(fp, lastrow_off, SEEK_SET) == 0) {
+        int fd = fileno(fp);
+        if (ftruncate(fd, lastrow_off) == 0) {
+            text_row(fp, nrows - 1);
+            fflush(fp);
+            return 0;
+        }
+    }
+    text_rewrite();
+    return 0;
+}
+
+/* evaluate one writemc item on the current plot: a scalar, or the message */
+static int
+mcs_eval_scalar(const char *expr, double *out, char **why)
+{
+    struct pnode *pn = ft_getpnames_from_string(expr, TRUE);
+    struct dvec *v;
+    int ok = 0;
+
+    *why = NULL;
+    if (!pn) {
+        *why = copy("it does not evaluate");
+        return 0;
+    }
+    v = ft_evaluate(pn);
+    if (!v || v->v_length < 1) {
+        *why = copy("it names no vector of the current plot");
+    } else if (v->v_length != 1) {
+        *why = tprintf("it has %d points and a row holds one number -- reduce it "
+                       "(maximum, mean, ...) or index it ([0])", v->v_length);
+    } else {
+        *out = isreal(v) ? v->v_realdata[0]
+                         : hypot(v->v_compdata[0].cx_real, v->v_compdata[0].cx_imag);
+        ok = 1;
+    }
+    if (!pn->pn_value && v)
+        vec_free(v);
+    free_pnode(pn);
+    return ok;
+}
+
+/* split `name=expr`: a leading identifier and one '=' (not '==') name the
+ * column; otherwise the whole word is both the expression and the name */
+static void
+mcs_split_item(const char *word, char **name, char **expr)
+{
+    const char *q = word;
+    if (isalpha_c(*q) || *q == '_') {
+        while (isalnum_c(*q) || *q == '_')
+            q++;
+        if (*q == '=' && q[1] != '=' && q > word) {
+            *name = copy_substring(word, q);
+            *expr = copy(q + 1);
+            return;
+        }
+    }
+    *name = copy(word);
+    *expr = copy(word);
+}
+
+void
+com_writemc(wordlist *wl)
+{
+    static int said_off;
+    wordlist *w;
+
+    if (!wl) {
+        fprintf(cp_err, "Usage: writemc [name=]<expression> ... -- each value onto the "
+                        "savemc row of the last analysis run\n");
+        return;
+    }
+    if (!MCSAVEactive()) {
+        if (!said_off)
+            fprintf(cp_err, "writemc: nothing is recorded -- `.option savemc` is not set "
+                            "(said once)\n");
+        said_off = 1;
+        return;
+    }
+    for (w = wl; w; w = w->wl_next) {
+        char *name, *expr, *why = NULL, *tok = cp_unquote(w->wl_word);
+        double v;
+        int r;
+        mcs_split_item(tok, &name, &expr);
+        tfree(tok);
+        if (!mcs_eval_scalar(expr, &v, &why)) {
+            fprintf(cp_err, "writemc: %s: %s\n", expr, why ? why : "?");
+            tfree(why);
+        } else {
+            r = MCSAVEappend(name, v);
+            if (r == -1)
+                fprintf(cp_err, "writemc: no analysis has run yet, so there is no row to "
+                                "put %s on\n", name);
+        }
+        tfree(name);
+        tfree(expr);
+    }
 }

@@ -332,7 +332,13 @@ there; the device slots it feeds are recorded). `savemc=txt` is tab-separated,
 `savemc=excel` a genuine `.xlsx`, `savemc=<name>.<ext>` names the file; a
 `reset` continues the file, a different deck starts another; `.option
 automc_save` (alias `osdimc_save`) records the OSDI parameters only.
-[`examples/savemc_examples/`](../../examples/savemc_examples/).
+[`examples/savemc_examples/`](../../examples/savemc_examples/). What the
+`.control` block computes from a run goes onto the same row (E-611): `writemc
+[name=]<expr> ...` after a run in a `repeat`/`reset` loop (`writemc pk tr
+overshoot=pk-1`), and `montecarlo ... -writemc pk npk=track1.hits
+tpk=track1.time[0]` per sample, after the tracks, specs and exprs — each a
+scalar, a column added on first use, the csv's last line rewritten in place.
+[`examples/writemc_examples/`](../../examples/writemc_examples/).
 
 **Automatic MC from the model's own statistics — `.option osdimc`.** A
 Verilog-A parameter can *declare* its variability with attributes, and the

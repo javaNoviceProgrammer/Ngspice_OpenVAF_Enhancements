@@ -1,0 +1,11 @@
+// rstat.va -- a resistor whose model declares its statistics
+// (* std=25 *)                  r  : process variation, one draw per model card per trial
+// (* type="instance", std=10 *) dr : mismatch, one draw per instance per trial
+`include "disciplines.vams"
+module rstat(p, n);
+inout p, n;
+electrical p, n;
+(* std=25.0 *)                  parameter real r  = 1000.0 from (0:inf);
+(* type="instance", std=10.0 *) parameter real dr = 0.0;
+analog I(p, n) <+ V(p, n) / (r + dr);
+endmodule
