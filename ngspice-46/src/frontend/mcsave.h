@@ -5,6 +5,8 @@
 
 #include "ngspice/cpdefs.h"
 
+struct circ;        /* a `struct circ *` in a prototype below, whatever is included first */
+
 /* a draw of a parameter with statistics: a `.param` whose expression calls a
  * random function (agauss, gauss, unif, aunif, limit, mvnorm), scoped
  * `x1.name` inside a subcircuit instance; a device line's own brace draw,
