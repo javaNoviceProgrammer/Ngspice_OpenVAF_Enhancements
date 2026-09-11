@@ -395,7 +395,11 @@ inp_subcktexpand(struct card *deck) {
 
     /*nupa_list_params(stdout);*/
     nupa_copy_inst_dico();
-    nupa_signal(NUPAEVALDONE);
+    /* Enhancement-604: a numparam error outside a device or model card
+     * refuses the deck, as an unknown subcircuit does above -- it used to
+     * end the process. */
+    if (nupa_signal(NUPAEVALDONE))
+        return NULL;
 
     return (deck);  /* return the spliced deck.  */
 }
@@ -874,6 +878,8 @@ struct card * inp_deckcopy(struct card *deck) {
         d->line = copy(deck->line);
         if (deck->error)
             d->error = copy(deck->error);
+        if (deck->nupa_error)
+            d->nupa_error = copy(deck->nupa_error);   /* Enhancement-604 */
         d->actualLine = inp_deckcopy(deck->actualLine);
         deck = deck->nextcard;
     }
@@ -924,6 +930,8 @@ struct card *inp_deckcopy_oc(struct card * deck)
         if (deck->error) {
             d->error = copy(deck->error);
         }
+        if (deck->nupa_error)
+            d->nupa_error = copy(deck->nupa_error);   /* Enhancement-604 */
         d->actualLine = NULL;
         deck = deck->nextcard;
         while (deck && *(deck->line) == '*') { /* skip comments */
@@ -983,6 +991,8 @@ struct card* inp_deckcopy_ln(struct card* deck)
         if (deck->error) {
             d->error = copy(deck->error);
         }
+        if (deck->nupa_error)
+            d->nupa_error = copy(deck->nupa_error);   /* Enhancement-604 */
         d->actualLine = NULL;
         deck = deck->nextcard;
     } /* end of loop over cards in the source deck */

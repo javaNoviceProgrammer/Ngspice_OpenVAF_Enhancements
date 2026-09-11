@@ -27,6 +27,7 @@ Todo:
 #include "numparam.h"
 
 #include "ngspice/fteext.h"
+#include "ngspice/inpdefs.h"    /* Enhancement-604: INPerrCat */
 #include "ngspice/stringskip.h"
 #include "ngspice/compatmode.h"
 #include "ngspice/randnumb.h"   /* Enhancement-149: LHS sample advance */
@@ -351,11 +352,21 @@ nupa_del_dicoS(void)
 }
 
 
-static void
+/* Enhancement-604: returns TRUE when the deck must not be loaded -- numparam
+ * errors it could not confine to a card (a `.param` line, a subcircuit call's
+ * value, a `.func`) and the user, at a terminal, did not ask to run anyway.
+ * This used to END THE PROCESS ("fatal error in ngspice, exit(1)"), the
+ * interactive session and everything sourced before it included; the deck is
+ * refused instead, as a deck with an unknown subcircuit is, and the batch
+ * run's exit status is the same as for any other refused deck. An error on
+ * a device or model card is not counted here at all: nupa_eval() attached it
+ * to the card, which the deck reader refuses as a line. */
+static bool
 nupa_done(void)
 {
     int nerrors = dicoS->errcount;
     int dictsize = donedico(dicoS);
+    bool refuse = FALSE;
 
     /* We cannot remove dicoS here because numparam is used by
        the .measure statements, which are invoked only after the
@@ -366,28 +377,26 @@ nupa_done(void)
         if (cp_getvar("interactive", CP_BOOL, NULL, 0))
             is_interactive = TRUE;
         if (ft_ngdebug)
-            printf(" Copies=%d Evals=%d Placeholders=%ld Symbols=%d Errors=%d\n",
-                linecountS, evalcountS, placeholder, dictsize, nerrors);
-        /* debug: ask if spice run really wanted */
-        if (ft_batchmode)
-            controlled_exit(EXIT_FAILURE);
-        if (!is_interactive) {
-            if (ft_ngdebug) {
-                fprintf(cp_err, "Numparam expansion errors: Problem with the input netlist.\n");
+            printf(" Copies=%d Evals=%d Placeholders=%ld Symbols=%d Errors=%d Cards refused=%d\n",
+                linecountS, evalcountS, placeholder, dictsize, nerrors,
+                dicoS->cardfails);
+        if (ft_batchmode || !is_interactive) {
+            fprintf(cp_err, "Numparam expansion errors in the netlist's .param, "
+                    ".func or subcircuit lines (see above): the circuit is not "
+                    "loaded.\n");
+            refuse = TRUE;
+        } else {
+            for (;;) {
+                int c;
+                printf("Numparam expansion errors: Run Spice anyway? y/n ?\n");
+                c = yes_or_no();
+                if (c == 'n' || c == EOF) {
+                    refuse = TRUE;
+                    break;
+                }
+                if (c == 'y')
+                    break;
             }
-            else {
-                fprintf(cp_err, "    Please check your input netlist.\n");
-            }
-            controlled_exit(EXIT_FAILURE);
-        }
-        for (;;) {
-            int c;
-            printf("Numparam expansion errors: Run Spice anyway? y/n ?\n");
-            c = yes_or_no();
-            if (c == 'n' || c == EOF)
-                controlled_exit(EXIT_FAILURE);
-            if (c == 'y')
-                break;
         }
     }
 
@@ -395,6 +404,7 @@ nupa_done(void)
     evalcountS = 0;
     placeholder = 0;
     /* release symbol table data */
+    return refuse;
 }
 
 
@@ -782,7 +792,33 @@ nupa_eval(struct card *card)
     } else if (c == 'B') {              /* substitute braces line */
         /* nupa_substitute() may reallocate line buffer. */
 
+        /* Enhancement-604: a brace expression this cannot evaluate --
+         * `w=nan`, a trailing `w=` (read as {nan}, {}) -- used to be a
+         * numparam error, and every numparam error ended the process at
+         * nupa_done() ("fatal error in ngspice, exit(1)"), the interactive
+         * session included, where `w=1e400` on the same line is refused at
+         * the line level. The message is attached to the card instead, so
+         * the deck reader refuses the line the way it refuses every other
+         * parse error ("Error on line N or its substitute"), and the line
+         * is handed on in the author's own text -- the parser adds what it
+         * makes of `{nan}` -- rather than with a half-filled placeholder.
+         * (nupa_error, not error: inp_dodeck() clears error before it
+         * parses and folds this in after.) */
+        DS_CREATE(sink, 120);
+        dicoS->sink = &sink;
         err = nupa_substitute(dicoS, dicoS->dynrefptr[linenum], &card->line);
+        dicoS->sink = NULL;
+        if (err) {
+            const char *why = skip_ws(ds_get_buf(&sink));
+            size_t n = strlen(why);
+            char *msg = tprintf("numparam: %.*s",
+                                (int) (n && why[n - 1] == '\n' ? n - 1 : n),
+                                why);
+            card->nupa_error = INPerrCat(card->nupa_error, msg);
+            tfree(card->line);
+            card->line = copy(dicoS->dynrefptr[linenum]);
+        }
+        ds_free(&sink);
         s = card->line;
     } else if (c == 'X') {
         /* compute args of subcircuit, if required */
@@ -813,11 +849,14 @@ nupa_eval(struct card *card)
 }
 
 
-void
+bool
 nupa_signal(int sig)
 /* warning: deckcopy may come inside a recursion ! substart no! */
 /* info is context-dependent string data */
+/* Enhancement-604: NUPAEVALDONE returns TRUE when the deck is to be refused */
 {
+    bool refuse = FALSE;
+
     if (sig == NUPADECKCOPY) {
         if (firstsignalS) {
             nupa_init();
@@ -832,9 +871,10 @@ nupa_signal(int sig)
     } else if (sig == NUPASUBDONE) {
         inexpansionS = 0;
     } else if (sig == NUPAEVALDONE) {
-        nupa_done();
+        refuse = nupa_done();
         firstsignalS = 1;
     }
+    return refuse;
 }
 
 

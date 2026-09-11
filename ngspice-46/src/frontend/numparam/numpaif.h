@@ -15,7 +15,7 @@ struct card;
 
 extern char  *nupa_copy(struct card *c);
 extern int    nupa_eval(struct card *card);
-extern void   nupa_signal(int sig);
+extern bool   nupa_signal(int sig);   /* Enhancement-604: NUPAEVALDONE says whether to refuse the deck */
 extern void   nupa_scan(const struct card *card);
 extern void   nupa_list_params(FILE *cp_out);
 extern double nupa_get_param(const char *param_name, int *found);

@@ -301,19 +301,32 @@ message(dico_t *dico, const char *fmt, ...)
 {
     va_list ap;
 
+    /* Enhancement-604: a caller that will attach the text to the card takes
+     * it here; the deck reader prints the line and its number. */
+    if (dico->sink) {
+        va_start(ap, fmt);
+        ds_cat_vprintf(dico->sink, fmt, ap);
+        va_end(ap);
+        dico->cardfails++;
+        return 1;
+    }
+
+    /* Enhancement-604: srcline is the deck reader's internal number and
+     * oldline the netlist's (nupa_eval sets them from linenum and
+     * linenum_orig); the two were printed under each other's label. */
     if (dico->srcline >= 0) {
         if (ft_ngdebug) {
             fprintf
             (stderr,
                 "Error in netlist line no. %d, new internal line no. %d:\n"
                 "%s\n\n",
-                dico->srcline, dico->oldline, dico->cardline);
+                dico->oldline, dico->srcline, dico->cardline);
         }
         else {
             fprintf
             (stderr,
                 "Error in netlist line no. %d, new internal line no. %d:\n\n",
-                dico->srcline, dico->oldline);
+                dico->oldline, dico->srcline);
         }
     }
     va_start(ap, fmt);
@@ -335,6 +348,8 @@ initdico(dico_t *dico)
 
     dico->srcline = -1;
     dico->errcount = 0;
+    dico->sink = NULL;          /* Enhancement-604 */
+    dico->cardfails = 0;
 
     dico->symbols = TMALLOC(NGHASHPTR, asize);
     dico->inst_name = TMALLOC(char*, asize);
@@ -1522,6 +1537,14 @@ nupa_substitute(dico_t *dico, const char *s, char **lp)
             if (s + 4 == kptr && strncasecmp(s, "LAST", 4) == 0) {
                 ds_clear(&qstr);
                 sadd(&qstr, "last");
+            } else if (skip_ws(s) == kptr) {
+                /* Enhancement-604: `w=` with nothing after it reaches here as
+                   the empty expression {} and was reported as an expression
+                   syntax error on the closing brace; say what is missing. */
+                err = message(dico, "Cannot compute substitute: the value is "
+                              "missing -- nothing follows the '=' (or the "
+                              "braces are empty)\n");
+                goto Lend;
             } else {
                 err = evaluate_expr(dico, &qstr, s, kptr);
                 if (err) {

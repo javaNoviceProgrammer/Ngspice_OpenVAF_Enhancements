@@ -81,6 +81,12 @@ struct card {
     char* linesource;
     char *line;
     char *error;
+    /* Enhancement-604: a numparam failure on this card, recorded before the
+     * parse. inp_dodeck() clears `error` before it parses (a re-parse must
+     * not report a previous pass's messages) and folds this in after, so the
+     * line is refused with the reason numparam had -- rather than the
+     * process ending. */
+    char *nupa_error;
     struct card *nextcard;
     struct card *actualLine;
     struct nscope *level;

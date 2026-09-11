@@ -652,6 +652,7 @@ line_free_x(struct card *deck, bool recurse)
         line_free_x(deck->actualLine, TRUE);
         tfree(deck->line);
         tfree(deck->error);
+        tfree(deck->nupa_error);        /* Enhancement-604 */
         tfree(deck);
         if (!recurse)
             return;
@@ -2208,6 +2209,15 @@ inp_dodeck(
             ckt->CKTsoaMaxWarns = 5;
     }
 
+    /* Enhancement-604: a card numparam could not evaluate carries its reason
+     * in nupa_error, attached before the parse (which the reset above would
+     * have thrown away). Put it first under the line, ahead of what the
+     * parser made of the unevaluated text; copied, so a re-parse of the same
+     * cards reports it again. */
+    for (dd = deck; dd; dd = dd->nextcard)
+        if (dd->nupa_error)
+            dd->error = INPerrCat(copy(dd->nupa_error), dd->error);
+
     ft_curckt->FTEstats->FTESTATdeckNumLines = 0;
     /*----------------------------------------------------
      Now run through the deck and look to see if there are
@@ -2230,15 +2240,28 @@ inp_dodeck(
 
         if (dd->error) {
             char *p, *q;
+            bool fatal = FALSE;
+            /* Enhancement-604: a .model card's issues are warnings (an
+             * unknown parameter is ignored and the model used), but a value
+             * numparam could not evaluate is not one of those -- the model
+             * would run with the parameter's default in place of what the
+             * deck wrote. Such a card is an error like any other line's. */
+            bool model_issue = strstr(dd->line, ".model") && !dd->nupa_error;
             p = dd->error;
             fflush(stdout);
+            /* Enhancement-604: the error is reported in full. It used to
+             * return at the first line of the message, so the second and
+             * later lines -- a parser message concatenated behind another,
+             * or a numparam reason with the line's own refusal under it --
+             * were never printed. The first erroneous card still ends the
+             * parse, as before. */
             do {
                 q = strchr(p, '\n');
                 if (q)
                     *q = '\0';
 
                 if (p == dd->error) {
-                    if (strstr(dd->line, ".model"))
+                    if (model_issue)
                         if (dd->linenum_orig == 0) { /* new line, e.g. in subcircuit */
                             fprintf(stderr, "Warning: Model issue on line:\n  %.*s ...\n%s\n",
                                 72, dd->line, dd->error);
@@ -2250,18 +2273,12 @@ inp_dodeck(
                     else if (dd->linenum_orig == 0) {
                         fprintf(stderr, "Error on line:\n  %s\n%s\n",
                                    dd->line, dd->error);
-                        if (ft_stricterror)
-                            controlled_exit(EXIT_BAD);
-                        have_err = TRUE;
-                        return 1;
+                        fatal = TRUE;
                     }
                     else {
                         fprintf(stderr, "Error on line %d or its substitute:\n  %s\n%s\n",
                                    dd->linenum_orig, dd->line, dd->error);
-                        if (ft_stricterror)
-                            controlled_exit(EXIT_BAD);
-                        have_err = TRUE;
-                        return 1;
+                        fatal = TRUE;
                     }
 
                 } else {
@@ -2271,6 +2288,12 @@ inp_dodeck(
                     *q++ = '\n';
                 p = q;
             } while (p && *p);
+            if (fatal) {
+                if (ft_stricterror)
+                    controlled_exit(EXIT_BAD);
+                have_err = TRUE;
+                return 1;
+            }
             fprintf(stderr, "\n");
         }  /* end  if (dd->error) */
 

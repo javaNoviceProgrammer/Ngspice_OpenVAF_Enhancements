@@ -6,6 +6,7 @@
 
 #include "numpaif.h"
 #include "ngspice/hash.h"
+#include "ngspice/dstring.h"
 
 /***** numparam internals ********/
 
@@ -58,6 +59,12 @@ typedef struct {                /* the input scanner data structure */
     int hs_compatibility;       /* allow extra keywords */
     int linecount;              /* number of lines in deck */
     char* cardline;             /* line of card treated currently */
+    /* Enhancement-604: while set, message() writes its text here instead of
+     * stderr and counts in cardfails rather than errcount -- the caller
+     * attaches it to the card, which the deck reader then refuses as a line,
+     * where every error used to end the process. */
+    DSTRING *sink;
+    int cardfails;
 } dico_t;
 
 
