@@ -47,6 +47,40 @@ dgen_hier_match(const char *word, const char *dev_name)
 }
 
 
+/* Enhancement-606: does `word` name the flattened model `mod_name` in the
+ * spelling the user writes elsewhere? Subcircuit expansion renames a card
+ * inside `x1` to `x1:rm`; `altermod x1.rm r=3k` and `altermod x1:rm ...` both
+ * reach it, and `showmod x1.r1` shows it through the instance -- but `showmod
+ * x1.rm` and `showmod x1:rm` found nothing. The grammar in dgen_next() cannot
+ * express either: `#x1.rm` is compared whole against `x1:rm`, and in `#x1:rm`
+ * the ':' is read as the subcircuit delimiter, leaving a DEVICE named `rm` in
+ * subcircuit `#x1`. So, as E-410 did for instances, this is consulted
+ * alongside that grammar and can only add a match: the query, with or without
+ * the model marker `#`, equal to the model's name with '.' standing for ':'.
+ * Requires a ':' or '.' in the query, so a bare name keeps its meaning. */
+static int
+dgen_hier_model_match(const char *word, const char *mod_name)
+{
+    const char *q, *m;
+
+    if (!word || !mod_name)
+        return 0;
+    if (*word == '#')
+        word++;
+    if (!strchr(word, ':') && !strchr(word, '.'))
+        return 0;
+    for (q = word, m = mod_name; *q && *m; q++, m++) {
+        if (*q == '.' || *q == ':') {
+            if (*m != ':' && *m != '.')
+                return 0;
+        } else if (tolower_c(*q) != tolower_c(*m)) {
+            return 0;
+        }
+    }
+    return *q == '\0' && *m == '\0';
+}
+
+
 void
 wl_forall(wordlist *wl, void (*fn)(wordlist*, dgen*), dgen *data)
 {
@@ -292,6 +326,16 @@ dgen_next(dgen **dgx)
                through to the unchanged grammar. */
             if (dev_name && dgen_hier_match(w->wl_word, dev_name)) {
                 need |= DGEN_INSTANCE;
+                done = 1;
+                break;
+            }
+
+            /* Enhancement-606: the flattened model name, dotted or with its
+               colons, as `altermod` already takes it. A model query, so an
+               instance-only walk (`show`) does not take it. */
+            if (mod_name && !(dg->flags & DGEN_INSTANCE) &&
+                dgen_hier_model_match(w->wl_word, mod_name)) {
+                need |= DGEN_MODEL;
                 done = 1;
                 break;
             }
