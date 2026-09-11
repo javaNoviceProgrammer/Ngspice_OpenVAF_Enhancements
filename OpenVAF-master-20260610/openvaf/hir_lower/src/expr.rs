@@ -10,7 +10,8 @@ use hir::signatures::{
     INT_EQ, INT_OP, LAST_CROSSING_DIRECTION, LAST_CROSSING_NO_DIRECTION, LIMIT_BUILTIN_FUNCTION,
     MAX_INT, MAX_REAL, NATURE_ACCESS_BRANCH,
     NATURE_ACCESS_NODES, NATURE_ACCESS_NODE_GND, NATURE_ACCESS_PORT_FLOW, REAL_EQ, REAL_OP,
-    SIMPARAM_DEFAULT, SIMPARAM_NO_DEFAULT, SLEW_NEG_MAX, SLEW_NO_MAX, SLEW_POS_MAX, STR_EQ, STR_REL,
+    SIMPARAM_DEFAULT, SIMPARAM_NO_DEFAULT, SIMPARAM_STR_DEFAULT, SIMPARAM_STR_NO_DEFAULT,
+    SLEW_NEG_MAX, SLEW_NO_MAX, SLEW_POS_MAX, STR_EQ, STR_REL,
     TRANSITION_DELAY, TRANSITION_DELAY_RISET, TRANSITION_DELAY_RISET_FALLT,
     TRANSITION_DELAY_RISET_FALLT_TOL, TRANSITION_NO_ARGS,
 };
@@ -3291,7 +3292,15 @@ impl BodyLoweringCtx<'_, '_, '_> {
             }
             BuiltIn::simparam_str => {
                 let arg0 = self.lower_expr(args[0]);
-                self.ctx.call1(CallBackKind::SimParamStr, &[arg0])
+                match_signature! {signature:
+                    SIMPARAM_STR_NO_DEFAULT => self.ctx.call1(CallBackKind::SimParamStr, &[arg0]),
+                    // Enhancement-598: the non-fatal form, through the callback
+                    // Enhancement-215 added for `$value$plusargs`.
+                    SIMPARAM_STR_DEFAULT => {
+                        let arg1 = self.lower_expr(args[1]);
+                        self.ctx.call1(CallBackKind::SimParamStrOpt, &[arg0, arg1])
+                    }
+                }
             }
             // Enhancement-398: a parameter a `paramset` bound WAS given -- by the
             // paramset. It is a localparam, so it has no runtime given-flag and

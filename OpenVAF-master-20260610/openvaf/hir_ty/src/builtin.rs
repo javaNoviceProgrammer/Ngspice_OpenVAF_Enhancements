@@ -333,7 +333,15 @@ bultins! {
         fn SIMPARAM_DEFAULT(Val(String),Val(Real)) -> Real;
     }
 
-    const fn SIMPARAM_STR(Val(String)) -> String;
+    // Enhancement-598: the string form takes the same optional default as the
+    // numeric one (LRM 9.15.1 `$simparam$str(param_name [, default_value])`).
+    // The two-argument call was refused at compile time although the backend
+    // had carried `simparam_str_opt` since Enhancement-215 (for plusargs), so
+    // a model had no non-fatal way to ask for a name a simulator may not serve.
+    SIMPARAM_STR = const {
+        fn SIMPARAM_STR_NO_DEFAULT(Val(String)) -> String;
+        fn SIMPARAM_STR_DEFAULT(Val(String),Val(String)) -> String;
+    }
 
     RANDOM = const {
         fn RANDOM_NO_SEED() -> Integer;

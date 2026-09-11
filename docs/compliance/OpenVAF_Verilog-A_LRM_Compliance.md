@@ -497,7 +497,9 @@ the default set — pick one constants set per model) — `$abstime`,
 `$simparam`, and `$simparam$str` serving `analysis_name`,
 `analysis_type`, `cwd` and `simulator` (Table 9-28's
 `module`/`instance`/`path` stay unserved with the honest
-warn-then-fatal: the channel carries no instance identity), plus
+warn-then-fatal: the channel carries no instance identity — and since
+E-598 `$simparam$str(name, default)` takes 9.15.1's optional default
+like `$simparam`, so a model asks for them without a `$fatal`), plus
 `$param_given`, `$port_connected`, `$mfactor` and the position hidden
 parameters. `$realtobits`/`$bitstoreal` are a documented subset
 boundary: their 64-bit-vector operand type does not exist in analog
@@ -1545,7 +1547,7 @@ connected port.)*
 | 9.6–9.7 Simulation control; **9.7.3 severity tasks: the non-fatal three defer to the accepted iteration, `$error` in an `analog initial` block stops the run, and each message reports its time / swept value / initialization** ([E-541](../../enhancements_doc/Enhancement-541.md)) | ✅ | `simctrl`, `simparamdiag`, `lrmvoice` |
 | 9.17.3 / Annex E.3.4 `$limit` | ✅ (unknown name falls back to no limiting with a warning, per 9.17.3; `vdslim` = Table E.2's preferred spelling of `limvds`) | `fetlim`, `lrm` |
 | Annex E SPICE primitives (E.2/E.3, Table E.1) | ✖ not supported: `resistor`/`capacitor`/`bjt`/… cannot be instantiated from Verilog-A source (clean error); instantiate SPICE devices at netlist level instead | — |
-| 9 misc ($finish family, $simparam; $simparam$str serves analysis_name/analysis_type/cwd/simulator — module/instance/path unserved ⚠️; $bound_step smallest-wins; $table_model per 9.21 incl. isoline files, per-dimension controls, `2`/`3`/`D`/`E` codes, `I`, `;N` selector, the array data source of any dimension from compile-time-constant arrays, `localparam string` names — `I` on runtime/inline data and overridable `parameter string` names ⚠️ refused; attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
+| 9 misc ($finish family, $simparam; $simparam$str serves analysis_name/analysis_type/cwd/simulator — module/instance/path unserved ⚠️, the two-argument default form accepted since E-598; $bound_step smallest-wins; $table_model per 9.21 incl. isoline files, per-dimension controls, `2`/`3`/`D`/`E` codes, `I`, `;N` selector, the array data source of any dimension from compile-time-constant arrays, `localparam string` names — `I` on runtime/inline data and overridable `parameter string` names ⚠️ refused; attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
 | plusargs (`$test`/`$value`) | ✅ ([E-215](../../enhancements_doc/Enhancement-215.md)) | `plusargs` |
 | simprobe / node aliases | ⚠️ LRM fallbacks (no-default `$simprobe` = warn + the mandated runtime fatal; all three 9.20 `shall be an error` rules enforced — context, a port as the aliased net, and a target that is another call's net ([E-541](../../enhancements_doc/Enhancement-541.md)); ⚠️ the third only within one module) | `alias`, `lrmvoice` |
 | 10 Compiler directives (incl. `` `__FILE__``/`` `__LINE__``, predefined-macro protection, `` `begin_keywords ``) | ✅ ([E-515](../../enhancements_doc/Enhancement-515.md)) | `preproc`, `directive`, `defaulttransition`, `filemacro`, `lrmlex` |

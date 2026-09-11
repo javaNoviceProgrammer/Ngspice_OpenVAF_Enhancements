@@ -128,6 +128,11 @@ does not serve (`osdiload.c`) — are a run-time `$fatal` at the operating point
 way for a portable model to ask politely. (`analysis_name`, `analysis_type`, `cwd`,
 `simulator` are served and were verified.)
 
+**Status (2026-09-10):** resolved by Enhancement-598. `$simparam$str` takes the LRM's
+optional default; the two-argument form lowers to the callback E-215 already carried, the
+L025 check applies to the one-argument forms only, and its help is spelled in the calling
+form.
+
 ## F4 — the card-level default of an instance parameter
 
 `.model am alias width=3 r=1k` with `n1 a 0 am w=2` and `n2 a 0 am`: `@n1[w] = 2`,

@@ -1587,13 +1587,16 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                      analysis, it does not merely read zero"
                         .to_owned(),
                 ];
-                if has_default_form {
-                    notes.push(
-                        format!("help: `$simparam(\"{name}\", <default>)` returns the \
-                                 default instead of aborting, which is how a model stays \
-                                 portable across simulators"),
-                    );
-                }
+                /* Enhancement-598: both spellings have the non-fatal form now. */
+                notes.push(if has_default_form {
+                    format!("help: `$simparam(\"{name}\", <default>)` returns the \
+                             default instead of aborting, which is how a model stays \
+                             portable across simulators")
+                } else {
+                    format!("help: `$simparam$str(\"{name}\", \"<default>\")` returns the \
+                             default instead of aborting, which is how a model stays \
+                             portable across simulators")
+                });
                 Report::warning()
                     .with_message(format!(
                         "{builtin} names the simulator parameter \"{name}\", which this \

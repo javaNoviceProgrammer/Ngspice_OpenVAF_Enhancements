@@ -14,7 +14,7 @@ use syntax::name::{AsIdent, Name};
 use crate::builtin::{
     ABSDELAY_MAX, DDT_TOL, IDT_IC_ASSERT_TOL, NATURE_ACCESS_BRANCH, NATURE_ACCESS_NODES,
     NATURE_ACCESS_NODE_GND, NATURE_ACCESS_PORT_FLOW, NOISE_TABLE_FILE, NOISE_TABLE_FILE_NAME,
-    NOISE_TABLE_INLINE, NOISE_TABLE_INLINE_NAME, SIMPARAM_NO_DEFAULT,
+    NOISE_TABLE_INLINE, NOISE_TABLE_INLINE_NAME, SIMPARAM_NO_DEFAULT, SIMPARAM_STR_NO_DEFAULT,
     TRANSITION_DELAY_RISET_FALLT_TOL,
 };
 use crate::db::HirTyDB;
@@ -3013,16 +3013,16 @@ impl ExprValidator<'_, '_> {
                 // `$simparam(name, default)` is the non-fatal form and is left
                 // alone -- returning the default for a name this simulator does
                 // not serve is precisely what it is for, and is how a model stays
-                // portable across simulators. `$simparam$str` has no such form
-                // (SIMPARAM_STR is a single one-argument signature), so every
-                // unresolvable name there is fatal.
-                let has_default_form = func == BuiltIn::simparam;
-                let checkable = !has_default_form || signature == Some(SIMPARAM_NO_DEFAULT);
+                // portable across simulators. Enhancement-598: `$simparam$str`
+                // has the same two forms now, and the same rule applies.
+                let numeric = func == BuiltIn::simparam;
+                let checkable = signature
+                    == Some(if numeric { SIMPARAM_NO_DEFAULT } else { SIMPARAM_STR_NO_DEFAULT });
                 if checkable {
                     if let Some(&arg) = args.first() {
                         self.check_simparam_name(
-                            if has_default_form { "$simparam" } else { "$simparam$str" },
-                            has_default_form,
+                            if numeric { "$simparam" } else { "$simparam$str" },
+                            numeric,
                             arg,
                         );
                     }
