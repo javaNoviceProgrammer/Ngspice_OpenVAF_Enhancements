@@ -4420,6 +4420,194 @@ process corners by the ordinary `.lib`/`.include` corner selection.
 
 #define MC_MAXSPEC 32
 
+/* Enhancement-609: a -spec or -expr may read the sample's -track result.
+ *
+ * `track<k>.<vector>` in a metric -- `track1.value`, `track2.x_out`,
+ * `track1.hits` -- names the k-th -track of THIS montecarlo command, for the
+ * sample being judged; so `-track "v(out) -spec localmax -prominence 20m"
+ * -spec "track1.value" -min 2` is the yield of "the peak clears 2 V". Until
+ * now a spec was evaluated on the analysis plot before the tracks ran, and
+ * nothing in it could reach them; the locators as functions
+ * (`globalmax(v(out))`) covered the plain cases only, not a track's
+ * prominence, edge, `-which`, or a region's `x_out`/`width`.
+ *
+ * The per-sample plot the track command made has a global number
+ * (`track37`), different every sample, so the metric is rewritten before it
+ * is evaluated: `track<k>.` becomes that plot's own name, and `track<k>.hits`
+ * the sample's hit count as a number -- a miss is 0, which no plot could
+ * say. The record plots made at the end are named track<k> in the same
+ * order, so the spelling means the same thing before and after the run. A
+ * spec on a track that had no hit for the sample is a violation (the thing
+ * judged is not there), counted apart in the report; an -expr on one leaves
+ * nan for that sample. */
+static int
+mc_track_ref_k(const char *s, const char *start, const char **after)
+{
+    int k = 0;
+    if (s != start && (isalnum_c(s[-1]) || s[-1] == '_' || s[-1] == '.'))
+        return 0;
+    if (strncmp(s, "track", 5) != 0 || !isdigit_c(s[5]))
+        return 0;
+    s += 5;
+    while (isdigit_c(*s))
+        k = k * 10 + (*s++ - '0');
+    if (*s != '.')
+        return 0;
+    *after = s + 1;
+    return k;
+}
+
+static int
+mc_track_ref_max(const char *text)
+{
+    const char *s, *after;
+    int kmax = 0;
+    for (s = text; *s; s++) {
+        int k = mc_track_ref_k(s, text, &after);
+        if (k > kmax)
+            kmax = k;
+    }
+    return kmax;
+}
+
+static char *
+mc_track_refs(const char *text, int ntrack, char **tpname, const int *thits,
+              int *refs, int *missing)
+{
+    DS_CREATE(out, 200);
+    const char *s, *after;
+    char *r;
+
+    *refs = 0;
+    *missing = 0;
+    for (s = text; *s; ) {
+        int k = mc_track_ref_k(s, text, &after);
+        if (k >= 1 && k <= ntrack) {
+            *refs = 1;
+            if (strncmp(after, "hits", 4) == 0 &&
+                    !(isalnum_c(after[4]) || after[4] == '_')) {
+                ds_cat_printf(&out, "%d", thits[k - 1] > 0 ? thits[k - 1] : 0);
+                s = after + 4;
+                continue;
+            }
+            if (!tpname[k - 1]) {
+                *missing = 1;
+                ds_cat_mem(&out, s, (size_t) (after - s));
+            } else {
+                ds_cat_str(&out, tpname[k - 1]);
+                ds_cat_char(&out, '.');
+            }
+            s = after;
+            continue;
+        }
+        ds_cat_char(&out, *s++);
+    }
+    r = copy(ds_get_buf(&out));
+    ds_free(&out);
+    return r;
+}
+
+/* Enhancement-609: one -expr on one sample -- the rewrite of track<k>. (E-609),
+ * the miss, the evaluation, the record's sizing on the first resolution, the
+ * ragged and same-value bookkeeping. Factored out of com_montecarlo() so that
+ * the exprs can be evaluated in TWO passes around the tracks: an -expr that
+ * does not read a track is evaluated before the tracks run and DEFINED as a
+ * vector of that name in the sample's analysis plot, so a -track (and a -spec)
+ * may use it -- `-expr q=v(out)*v(out) -track "q -spec localmax -output pk"
+ * -spec track1.pk -min 4`; an -expr that reads a track is evaluated after
+ * them. Returns 1 when the expression never resolved (the caller stops). */
+struct mc_exprslot {
+    double **data; int *len; int *type; double **first; struct dvec **scale;
+    int *ragged, *ragged_len, *ragged_at, *varied; long *nohit;
+};
+
+static int
+mc_expr_sample(struct mc_exprslot *X, const char *name, const char *text,
+               int i, int nsamp_req, int ntrack, char **tpname,
+               const int *thits_now, int define, int *defined_note)
+{
+    struct dvec *v;
+    int len, k, refs = 0, miss = 0;
+    char *etext = mc_track_refs(text, ntrack, tpname, thits_now, &refs, &miss);
+
+    if (miss) {                 /* Enhancement-609: nan for this sample */
+        tfree(etext);
+        (*X->nohit)++;
+        return 0;
+    }
+    v = sw_eval_expr_copy(etext);
+    tfree(etext);
+    if (!v)
+        return (*X->len == 0 && !*X->data);   /* never resolved yet */
+    len = v->v_length;
+    if (*X->len == 0) {
+        /* first resolution sizes the record: NaN until written */
+        struct dvec *sc0;
+        *X->len = len;
+        *X->type = v->v_type;
+        *X->data = TMALLOC(double, (size_t) nsamp_req * (size_t) len);
+        for (k = 0; k < nsamp_req * len; k++)
+            (*X->data)[k] = NAN;
+        *X->first = TMALLOC(double, (size_t) len);
+        memcpy(*X->first, v->v_realdata, sizeof(double) * (size_t) len);
+        /* the waveform's scale: a plot vector usually carries none of
+         * its own and relies on the plot's default (`time`, `v-sweep`,
+         * `frequency`), which is the analysis plot's at this point */
+        sc0 = v->v_scale ? v->v_scale : (plot_cur ? plot_cur->pl_scale : NULL);
+        if (len > 1 && sc0 && sc0->v_length == len) {
+            struct dvec *sc = sc0;
+            *X->scale = dvec_alloc(copy(sc->v_name), sc->v_type, VF_REAL, len, NULL);
+            for (k = 0; k < len; k++)
+                (*X->scale)->v_realdata[k] = isreal(sc) ? sc->v_realdata[k]
+                    : hypot(sc->v_compdata[k].cx_real, sc->v_compdata[k].cx_imag);
+        }
+    }
+    if (len != *X->len) {
+        if (!*X->ragged) {
+            *X->ragged = 1;
+            *X->ragged_len = len;
+            *X->ragged_at = i + 1;
+        }
+    } else {
+        memcpy(*X->data + (size_t) i * (size_t) len, v->v_realdata,
+               sizeof(double) * (size_t) len);
+        if (!*X->varied)
+            for (k = 0; k < len; k++)
+                if (v->v_realdata[k] != (*X->first)[k]) {
+                    *X->varied = 1;
+                    break;
+                }
+    }
+    /* Enhancement-609: define the value as a vector of the sample's plot, so
+     * a -track or a -spec of this command may use it by name. A name the
+     * analysis plot already holds is left to the plot (said once). */
+    if (define && plot_cur) {
+        struct dvec *d;
+        for (d = plot_cur->pl_dvecs; d; d = d->v_next)
+            if (d->v_name && eq(d->v_name, name))
+                break;
+        if (d) {
+            if (!*defined_note) {
+                fprintf(cp_err, "montecarlo: -expr %s: the analysis plot already has a "
+                                "vector of that name; a -track or -spec naming '%s' "
+                                "reads the plot's, not the -expr (choose another name)\n",
+                        name, name);
+                *defined_note = 1;
+            }
+        } else {
+            struct dvec *nv = dvec_alloc(copy(name), v->v_type,
+                                         (short) (VF_REAL | VF_PERMANENT), len, NULL);
+            memcpy(nv->v_realdata, v->v_realdata, sizeof(double) * (size_t) len);
+            if (len > 1 && v->v_scale && v->v_scale->v_length == len)
+                nv->v_scale = v->v_scale;
+            vec_new(nv);
+        }
+    }
+    v->v_scale = NULL;          /* borrowed, not ours to free */
+    vec_free(v);
+    return 0;
+}
+
 void com_montecarlo(wordlist *wl)
 {
     /* E-537 (hunt H): see hs_clear_results */
@@ -4466,6 +4654,12 @@ void com_montecarlo(wordlist *wl)
 #define MC_TRACKVEC 12
     int ntrack = 0;
     char *tracktext[MC_MAXTRACK];
+    char *tpname[MC_MAXTRACK];          /* Enhancement-609: the sample's track plot, or NULL */
+    int thits_now[MC_MAXTRACK];         /* Enhancement-609: the sample's hit count per -track */
+    long spec_nohit[MC_MAXSPEC];        /* Enhancement-609: violations for want of a hit */
+    long expr_nohit[MC_MAXSPEC];        /* Enhancement-609: samples left nan for want of a hit */
+    int expr_reads_track[MC_MAXSPEC];   /* Enhancement-609: evaluated after the tracks */
+    int expr_defined_note[MC_MAXSPEC];  /* Enhancement-609: the name-taken note, once */
     struct {
         int nvec;
         char *vname[MC_TRACKVEC];
@@ -4486,13 +4680,20 @@ void com_montecarlo(wordlist *wl)
                         "(-expr [name=]<expression>)... (-track \"<track arguments>\")...\n"
                         "       a -spec with a -max/-min limit is judged for the yield; "
                         "an -expr is recorded per sample into a montecarlo<n> plot; "
-                        "a -track runs `track <arguments>` per sample and records its hits\n");
+                        "a -track runs `track <arguments>` per sample and records its hits;\n"
+                        "       a -spec or -expr may read the sample's k-th -track result as "
+                        "track<k>.<vector> (track1.value, track1.x_out, track1.hits)\n");
         return;
     }
     for (e = 0; e < MC_MAXSPEC; e++) {
         exprdata[e] = NULL; exprlen[e] = 0; exprtype[e] = SV_NOTYPE;
         exprragged[e] = 0; exprragged_len[e] = 0; exprragged_at[e] = 0;
         exprscale[e] = NULL; exprfirst[e] = NULL; exprvaried[e] = 0;
+        spec_nohit[e] = 0; expr_nohit[e] = 0;       /* Enhancement-609 */
+        expr_reads_track[e] = 0; expr_defined_note[e] = 0;   /* Enhancement-609 */
+    }
+    for (e = 0; e < MC_MAXTRACK; e++) {
+        tpname[e] = NULL; thits_now[e] = 0;
     }
     /* Enhancement-478: atoi() read `2e2` as 2, so a 200-sample run drew 2 and
      * still printed a yield. `1e6` became 1 and was caught only by luck. */
@@ -4653,6 +4854,22 @@ void com_montecarlo(wordlist *wl)
                         "to run track per sample and record its hits there\n");
         return;
     }
+    /* Enhancement-609: a track<k>. reference must name a -track of this command */
+    for (s = 0; s < nspec + nexpr; s++) {
+        const char *txt = s < nspec ? metric[s] : exprtext[s - nspec];
+        int k = mc_track_ref_max(txt);
+        if (k > ntrack) {
+            fprintf(cp_err, "montecarlo: %s '%s' reads track%d, but %s -- the k in "
+                            "track<k>.<vector> is the -track's position in this command\n",
+                    s < nspec ? "-spec" : "-expr", txt, k,
+                    ntrack == 0 ? "no -track was given"
+                                : ntrack == 1 ? "only one -track was given"
+                                              : "fewer -track flags were given");
+            return;
+        }
+    }
+    for (e = 0; e < nexpr; e++)         /* Enhancement-609 */
+        expr_reads_track[e] = mc_track_ref_max(exprtext[e]) > 0;
     for (s = 0; s < nspec; s++)
         if (!hasmax[s] && !hasmin[s]) {
             fprintf(cp_err, "montecarlo: spec '%s' has no -max/-min limit -- a spec is judged "
@@ -4819,90 +5036,30 @@ void com_montecarlo(wordlist *wl)
             nfailed++;
             continue;
         }
-        int pass = 1;
-        for (s = 0; s < nspec; s++) {
-            int mok = 0;
-            double m = sw_eval_expr_ok(metric[s], &mok);
-            if (!mok) {
-                unresolved_spec = s;
-                unresolved_sample = i + 1;
-                break;
-            }
-            /* Enhancement-501: remember the spread each metric actually showed.
-             * A yield is a statement about VARIATION; if nothing varied, the
-             * sample set is one point measured nsamp times and the percentage
-             * (and its confidence interval) describe the RNG's absence, not the
-             * circuit. That happens whenever no drawn value reaches the value
-             * being measured -- no random .param at all, a random .param the
-             * metric does not depend on, or draws that never got pushed. */
-            if (!mc_seen) { mc_lo = mc_hi = m; }
-            else if (m < mc_lo) mc_lo = m;
-            else if (m > mc_hi) mc_hi = m;
-            mc_seen = 1;
-            if ((hasmax[s] && m > hi[s]) || (hasmin[s] && m < lo[s])) {
-                pass = 0;
-                specfail[s]++;
-            }
-        }
-        if (unresolved_spec >= 0)
-            break;
-        if (pass) npass++;
-        /* Enhancement-552: record every -expr for this sample */
+        /* Enhancement-609: -expr pass A -- the exprs that do not read a track,
+         * evaluated before the tracks and defined as vectors of the sample's
+         * plot, so a -track or -spec may use them by name */
         for (e = 0; e < nexpr; e++) {
-            struct dvec *v = sw_eval_expr_copy(exprtext[e]);
-            int len, k;
-            if (!v) {
-                if (exprlen[e] == 0 && !exprdata[e]) {   /* never resolved yet */
-                    unresolved_expr = e;
-                    unresolved_sample = i + 1;
-                }
+            struct mc_exprslot X = { &exprdata[e], &exprlen[e], &exprtype[e], &exprfirst[e],
+                                     &exprscale[e], &exprragged[e], &exprragged_len[e],
+                                     &exprragged_at[e], &exprvaried[e], &expr_nohit[e] };
+            if (expr_reads_track[e])
                 continue;
+            if (mc_expr_sample(&X, exprname[e], exprtext[e], i, nsamp_req, ntrack, tpname,
+                               thits_now, 1, &expr_defined_note[e])) {
+                unresolved_expr = e;
+                unresolved_sample = i + 1;
             }
-            len = v->v_length;
-            if (exprlen[e] == 0) {
-                /* first resolution sizes the record: NaN until written */
-                exprlen[e] = len;
-                exprtype[e] = v->v_type;
-                exprdata[e] = TMALLOC(double, (size_t) nsamp_req * (size_t) len);
-                for (k = 0; k < nsamp_req * len; k++)
-                    exprdata[e][k] = NAN;
-                exprfirst[e] = TMALLOC(double, (size_t) len);
-                memcpy(exprfirst[e], v->v_realdata, sizeof(double) * (size_t) len);
-                /* the waveform's scale: a plot vector usually carries none of
-                 * its own and relies on the plot's default (`time`, `v-sweep`,
-                 * `frequency`), which is the analysis plot's at this point */
-                struct dvec *sc0 = v->v_scale ? v->v_scale
-                                              : (plot_cur ? plot_cur->pl_scale : NULL);
-                if (len > 1 && sc0 && sc0->v_length == len) {
-                    struct dvec *sc = sc0;
-                    exprscale[e] = dvec_alloc(copy(sc->v_name), sc->v_type,
-                                              VF_REAL, len, NULL);
-                    for (k = 0; k < len; k++)
-                        exprscale[e]->v_realdata[k] = isreal(sc) ? sc->v_realdata[k]
-                            : hypot(sc->v_compdata[k].cx_real, sc->v_compdata[k].cx_imag);
-                }
-            }
-            if (len != exprlen[e]) {
-                if (!exprragged[e]) {
-                    exprragged[e] = 1;
-                    exprragged_len[e] = len;
-                    exprragged_at[e] = i + 1;
-                }
-            } else {
-                memcpy(exprdata[e] + (size_t) i * (size_t) len, v->v_realdata,
-                       sizeof(double) * (size_t) len);
-                if (!exprvaried[e])
-                    for (k = 0; k < len; k++)
-                        if (v->v_realdata[k] != exprfirst[e][k]) {
-                            exprvaried[e] = 1;
-                            break;
-                        }
-            }
-            v->v_scale = NULL;          /* borrowed, not ours to free */
-            vec_free(v);
         }
+        if (unresolved_expr >= 0)
+            break;
         /* Enhancement-582: run every -track on this sample and keep its plot's
-         * vectors; the plot itself is destroyed once copied */
+         * vectors. Enhancement-609: the tracks run FIRST, and each sample plot
+         * is kept until the specs and exprs below have read it (track<k>.<vector>). */
+        for (int t = 0; t < ntrack; t++) {
+            tfree(tpname[t]);
+            thits_now[t] = 0;
+        }
         for (int t = 0; t < ntrack; t++) {
             char *cmd = tprintf("track %s", tracktext[t]);
             int hits = 0;
@@ -4953,15 +5110,84 @@ void com_montecarlo(wordlist *wl)
                     }
                     if (hits > trec[t].lmax)
                         trec[t].lmax = hits;
-                    cmd = tprintf("destroy %s", pname);
-                    sw_run_cmd(cmd);
-                    tfree(cmd);
+                    /* Enhancement-609: kept until the specs and exprs have
+                     * read it; destroyed below */
+                    tpname[t] = copy(pname);
                 }
             }
+            thits_now[t] = hits > 0 ? hits : 0;
         }
-        if (unresolved_expr >= 0 || failed_track >= 0)
+        if (failed_track >= 0)
+            break;
+        int pass = 1;
+        for (s = 0; s < nspec; s++) {
+            int mok = 0, refs = 0, miss = 0;
+            char *mtext = mc_track_refs(metric[s], ntrack, tpname, thits_now, &refs, &miss);
+            double m;
+            if (miss) {                 /* Enhancement-609: nothing there to judge */
+                tfree(mtext);
+                spec_nohit[s]++;
+                specfail[s]++;
+                pass = 0;
+                continue;
+            }
+            m = sw_eval_expr_ok(mtext, &mok);
+            tfree(mtext);
+            if (!mok) {
+                unresolved_spec = s;
+                unresolved_sample = i + 1;
+                break;
+            }
+            /* Enhancement-501: remember the spread each metric actually showed.
+             * A yield is a statement about VARIATION; if nothing varied, the
+             * sample set is one point measured nsamp times and the percentage
+             * (and its confidence interval) describe the RNG's absence, not the
+             * circuit. That happens whenever no drawn value reaches the value
+             * being measured -- no random .param at all, a random .param the
+             * metric does not depend on, or draws that never got pushed. */
+            if (!mc_seen) { mc_lo = mc_hi = m; }
+            else if (m < mc_lo) mc_lo = m;
+            else if (m > mc_hi) mc_hi = m;
+            mc_seen = 1;
+            if ((hasmax[s] && m > hi[s]) || (hasmin[s] && m < lo[s])) {
+                pass = 0;
+                specfail[s]++;
+            }
+        }
+        if (unresolved_spec >= 0)
+            break;
+        if (pass) npass++;
+        /* Enhancement-552: record every -expr for this sample -- pass B: the
+         * ones that read a track (Enhancement-609; pass A ran before the tracks) */
+        for (e = 0; e < nexpr; e++) {
+            struct mc_exprslot X = { &exprdata[e], &exprlen[e], &exprtype[e], &exprfirst[e],
+                                     &exprscale[e], &exprragged[e], &exprragged_len[e],
+                                     &exprragged_at[e], &exprvaried[e], &expr_nohit[e] };
+            if (!expr_reads_track[e])
+                continue;
+            if (mc_expr_sample(&X, exprname[e], exprtext[e], i, nsamp_req, ntrack, tpname,
+                               thits_now, 0, &expr_defined_note[e])) {
+                unresolved_expr = e;
+                unresolved_sample = i + 1;
+            }
+        }
+        for (int t = 0; t < ntrack; t++)      /* Enhancement-609: read; now gone */
+            if (tpname[t]) {
+                char *cmd = tprintf("destroy %s", tpname[t]);
+                sw_run_cmd(cmd);
+                tfree(cmd);
+                tfree(tpname[t]);
+            }
+        if (unresolved_expr >= 0)
             break;
     }
+    for (int t = 0; t < ntrack; t++)          /* a sample left them on a break */
+        if (tpname[t]) {
+            char *cmd = tprintf("destroy %s", tpname[t]);
+            sw_run_cmd(cmd);
+            tfree(cmd);
+            tfree(tpname[t]);
+        }
     if (usewarm)
         CKTsetWarmStart(0);
     outp_loop_end();          /* Enhancement-477 */
@@ -5029,8 +5255,14 @@ void com_montecarlo(wordlist *wl)
         for (e = 0; e < nexpr; e++) {
             struct dvec *v;
             int len = exprlen[e];
-            if (!exprdata[e])
+            if (!exprdata[e]) {
+                if (expr_nohit[e])              /* Enhancement-609 */
+                    fprintf(cp_err, "montecarlo: -expr %s (%s) is not recorded -- its track "
+                                    "had no hit on any of the %ld sample%s\n",
+                            exprname[e], exprtext[e], expr_nohit[e],
+                            expr_nohit[e] == 1 ? "" : "s");
                 continue;
+            }
             if (exprragged[e]) {
                 fprintf(cp_err, "montecarlo: -expr %s (%s) is not recorded -- it has %d "
                                 "points on sample 1 but %d on sample %d, and a waveform "
@@ -5079,6 +5311,10 @@ void com_montecarlo(wordlist *wl)
             if (!exprvaried[e] && nsamp - nfailed > 1)
                 fprintf(cp_out, "  NOTE   : -expr %s gave the SAME value in every sample; "
                                 "nothing this deck draws reaches it\n", exprname[e]);
+            if (expr_nohit[e])                  /* Enhancement-609 */
+                fprintf(cp_out, "  NOTE   : -expr %s is nan on %ld sample%s whose track had "
+                                "no hit\n", exprname[e], expr_nohit[e],
+                        expr_nohit[e] == 1 ? "" : "s");
         }
         /* Enhancement-584 (was E-582's prefixed vectors): each -track is a plot
          * of its own, `track<k>`, with `sample` as its scale, `hits` per sample
@@ -5218,9 +5454,14 @@ void com_montecarlo(wordlist *wl)
         fprintf(cp_out, "  NOTE   : %ld of %d sample%s failed to simulate and are "
                         "EXCLUDED from the yield above\n",
                 nfailed, nsamp, nfailed == 1 ? "" : "s");
-    for (s = 0; s < nspec; s++)
-        fprintf(cp_out, "  spec %d (%s): %ld violation%s\n",
+    for (s = 0; s < nspec; s++) {
+        fprintf(cp_out, "  spec %d (%s): %ld violation%s",
                 s + 1, metric[s], specfail[s], specfail[s] == 1 ? "" : "s");
+        if (spec_nohit[s])                  /* Enhancement-609 */
+            fprintf(cp_out, " (%ld of them sample%s whose track had no hit to judge)",
+                    spec_nohit[s], spec_nohit[s] == 1 ? "" : "s");
+        fprintf(cp_out, "\n");
+    }
     /* Enhancement-501: a yield computed from samples that never differed is a
      * measurement of nothing repeated nvalid times -- always 0% or 100%, with a
      * confidence interval that looks tight precisely because every sample was

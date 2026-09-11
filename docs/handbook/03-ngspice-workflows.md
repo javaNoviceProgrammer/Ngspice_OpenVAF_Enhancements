@@ -303,8 +303,19 @@ fewer, so a *varying* hit count is exactly what it records: `track1.time[1]` is 
 second hit of every sample, `plot track1.value[0] vs r` the first peak against a
 recorded parameter. `-track "... -which first"` and other one-hit forms give plain
 N-long vectors. `montecarlo<n>` stays current, holding the counts and the `-expr`
-vectors; `setplot $track_plot` moves to the record. A hand-written `repeat` loop
-with `$track_plot`/`$track_hits` (§3.3) remains for a trial that runs several
+vectors; `setplot $track_plot` moves to the record. And a `-spec` or `-expr` may
+read the sample's track result (E-609): `track<k>.<vector>` names the k-th `-track`
+of the command, for the sample being judged — `-track "v(out) -spec localmax
+-prominence 20m" -spec "track1.value" -min 2` is the yield of "the peak clears
+2 V"; `track1.value[0]` the first of several hits, `track1.hits` the hit count
+(0 on a miss, so `-spec track1.hits -max 0` is the yield of "nothing there"), and
+a metric may mix the two plots (`track1.v_sweep / maximum(v(out))`). A spec on a
+track that had no hit is a violation, counted apart in the report; an `-expr` on
+one is nan for that sample. The other way round, an `-expr` that does not read a
+track is evaluated before the tracks and defined as a vector of the sample's
+plot, so it can feed a `-track` or a `-spec`: `-expr q=v(out)*2 -track "q -spec
+globalmax -output pk" -spec "track1.pk" -min 4`. A hand-written `repeat` loop with
+`$track_plot`/`$track_hits` (§3.3) remains for a trial that runs several
 analyses per draw.
 
 **Automatic MC from the model's own statistics — `.option osdimc`.** A
