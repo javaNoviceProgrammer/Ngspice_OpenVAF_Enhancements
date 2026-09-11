@@ -135,8 +135,9 @@ if ok:
     o1 = run("V1 p 0 dc 1\nN1 p 0 mm\n.model mm ds n1=3", "op", "ds", "ds1")
     o2 = run("V1 p 0 dc 1\nN1 p 0 mm\n.model mm ds rset=1.5", "op", "ds", "ds2")
     o3 = run("V1 p 0 dc 1\nN1 p 0 mm\n.model mm ds g=0", "op", "ds", "ds3")
-    check("[3] the out-of-bounds message keeps the set: 'range from {1, 2, 4}'",
-          "Parameter n1 of 'mm' is out of bounds; range from {1, 2, 4}!" in o1,
+    # Enhancement-601: an integer's refusal shows its value like a real's
+    check("[3] the out-of-bounds message keeps the set: '(value 3; range from {1, 2, 4})'",
+          "Parameter n1 of 'mm' is out of bounds (value 3; range from {1, 2, 4})!" in o1,
           [l for l in o1.splitlines() if "out of bounds" in l][:1])
     check("[3] a real set: '(value 1.5; range from {0.5, 1.0, 2.0})'",
           "out of bounds (value 1.5; range from {0.5, 1.0, 2.0})!" in o2,

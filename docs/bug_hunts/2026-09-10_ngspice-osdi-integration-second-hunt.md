@@ -241,6 +241,11 @@ the transient, and beside a `.dc` a `.meas tran` loses the dc; only `.save all` 
 control block rescues it. The E-594 fix made `ft_getSaves`'s dedup respect the analysis;
 this is the same defect one level up, at insert time, and the fix is the same test.
 
+**Status (2026-09-11):** D3 and D4 resolved by Enhancement-601 -- a read-only entry of
+the instance table is named as an operating-point quantity, read and write, on the model
+and on the instance; an integer or string out of range shows its value; the
+duplicate-plus-alias line reaches the alias error since Enhancement-597.
+
 ## What held
 
 | area | probes | result |

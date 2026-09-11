@@ -139,6 +139,9 @@ static int handle_init_info(OsdiInitInfo info, const OsdiDescriptor *descr,
        * bounds (value 1.2)` named the parameter that did NOT move, while
        * `lmin`, altered to 1.5, was the whole story. */
       char range[512];
+      uint32_t ty = descr->param_opvar[id].flags & PARA_TY_MASK;
+      bool scalar_int = ty == PARA_TY_INT && descr->param_opvar[id].len == 0;
+      bool scalar_str = ty == PARA_TY_STR && descr->param_opvar[id].len == 0;
       osdi_range_note(descr, inst, model, id, range, sizeof range);
       if (scalar_real && src) {
         double v;
@@ -146,6 +149,22 @@ static int handle_init_info(OsdiInitInfo info, const OsdiDescriptor *descr,
         printf("Parameter %s of '%s' is out of bounds (value %g%s)!\n", param,
                handle && handle->name ? (char *)handle->name : descr->name, v,
                range);
+      } else if (scalar_int && src) {
+        /* Enhancement-601 (D4 of the 2026-09-10 hunt): an INTEGER parameter
+         * was refused without its value -- for one the deck gave as a real
+         * (`k=0.4`, rounded to 0 with a warning) the rounded value is the
+         * whole question. Same shape as the real case. */
+        int32_t v;
+        memcpy(&v, src, sizeof(int32_t));
+        printf("Parameter %s of '%s' is out of bounds (value %d%s)!\n", param,
+               handle && handle->name ? (char *)handle->name : descr->name, v,
+               range);
+      } else if (scalar_str && src) {
+        char *v;
+        memcpy(&v, src, sizeof(char *));
+        printf("Parameter %s of '%s' is out of bounds (value \"%s\"%s)!\n", param,
+               handle && handle->name ? (char *)handle->name : descr->name,
+               v ? v : "", range);
       } else {
         printf("Parameter %s of '%s' is out of bounds%s!\n", param,
                handle && handle->name ? (char *)handle->name : descr->name,

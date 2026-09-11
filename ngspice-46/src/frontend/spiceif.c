@@ -1393,9 +1393,36 @@ say_instance_level(IFdevice *device, const char *model, const char *param,
 {
     GENinstance *dummy = NULL;
     const char *card = NULL;
-    if (!param || !model
-        || !parmlookup(device, &dummy, (char *) param, 0, writing ? 1 : 0))
+    IFparm *ip;
+    if (!param || !model)
         return 0;
+    ip = parmlookup(device, &dummy, (char *) param, 0, writing ? 1 : 0);
+    if (!ip && writing) {
+        /* Enhancement-601: a write to something the instances only COMPUTE */
+        IFparm *ro = parmlookup(device, &dummy, (char *) param, 0, 0);
+        if (ro && !(ro->dataType & IF_SET)) {
+            fprintf(cp_err, "Error: '%s' is an operating-point quantity of the "
+                            "instances of model '%s' -- a value each instance computes, "
+                            "read-only -- so nothing can set it, on the model or on an "
+                            "instance.\n", param, model);
+            return 1;
+        }
+    }
+    if (!ip)
+        return 0;
+    /* Enhancement-601 (D3 of the 2026-09-10 hunt): a READ-ONLY instance
+     * quantity -- an operating-point variable a Verilog-A model publishes
+     * with a `desc` attribute, or a terminal current -- is not a parameter
+     * at all, and the "declared (* type="instance" *)" text sent the reader
+     * looking for a declaration that does not exist. */
+    if (!writing && !(ip->dataType & IF_SET)) {
+        fprintf(cp_err, "Error: '%s' is an operating-point quantity of the "
+                        "instances of model '%s' -- a value each instance computes "
+                        "(an operating-point variable, or a terminal current), not a "
+                        "parameter -- so the model has none. Read it from an "
+                        "instance: @<instance>[%s].\n", param, model, param);
+        return 1;
+    }
     /* Enhancement-599: the card's own default for it, when the card set one */
     if (mod) {
         wordlist *w = card_default_entry(device, mod, param);
@@ -1573,12 +1600,20 @@ if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_
              * "no such parameter r." denied the existence of something one
              * keyword away. */
             GENinstance *dummy = NULL;
+            IFparm *ro;
             if (parmlookup(device, &dummy, param, 1 /*model*/, 1))
                 fprintf(cp_err, "Error: '%s' is a MODEL parameter of model "
                         "'%s'; `alter` sets instance parameters. Use "
                         "`altermod %s %s=...` instead.\n",
                         param, (char *) dev->GENmodPtr->GENmodName,
                         (char *) dev->GENmodPtr->GENmodName, param);
+            else if ((ro = parmlookup(device, &dummy, param, 0, 0)) != NULL
+                     && !(ro->dataType & IF_SET))
+                /* Enhancement-601: it exists, and is computed, not set */
+                fprintf(cp_err, "Error: '%s' is an operating-point quantity of "
+                        "%s -- a value the instance computes (an operating-point "
+                        "variable, or a terminal current), read-only -- so nothing "
+                        "can set it.\n", param, *name);
             else
                 fprintf(cp_err, "Error: no such parameter %s.\n", param);
         } else if (param) {
