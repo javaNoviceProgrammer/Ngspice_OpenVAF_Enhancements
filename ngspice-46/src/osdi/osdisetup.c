@@ -2712,6 +2712,49 @@ void OSDImcNoteUserWrite(int typecode, GENinstance *dev, GENmodel *mdl,
   }
 }
 
+/* Enhancement-616 (hunt F18): a loop command's fast path re-drew the
+ * netlist's own random expression of a parameter and wrote it in place
+ * (`.model rm rstat r={agauss(1000,300,3)}` under `montecarlo`). The
+ * re-source path composes the two channels -- the re-capture after the
+ * internal reset takes the fresh netlist draw as the nominal and the trial's
+ * delta goes on top -- and the fast path must agree (E-320). It did not: the
+ * machine write pinned the entry, `montecarlo` runs without a hold so the
+ * pin was cleared at the run, and the trial's delta was applied over the
+ * FIRST sample's netlist value on every sample: the device ran at
+ * 1033.69 + delta while the record said 909.89 for the netlist draw. The
+ * write is the new nominal; the pin goes (under a `sweep`'s hold it would
+ * have kept the model's statistics off this parameter for the whole sweep,
+ * where the reset path applies them at every point). */
+void OSDImcNoteRedraw(int typecode, GENinstance *dev, GENmodel *mdl,
+                      int param_id, double value) {
+  const void *owner;
+  OsdiMcNominal *e;
+
+  if (!osdi_devtype_is_osdi(typecode) || param_id < 0)
+    return;
+  if (dev) {
+    OsdiRegistryEntry *entry = osdi_reg_entry_inst(dev);
+    const OsdiDescriptor *descr = entry->descriptor;
+    if ((uint32_t)param_id >= descr->num_instance_params)
+      return;
+    owner = osdi_instance_data(entry, dev);
+  } else if (mdl) {
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(mdl);
+    const OsdiDescriptor *descr = entry->descriptor;
+    if ((uint32_t)param_id < descr->num_instance_params ||
+        (uint32_t)param_id >= descr->num_params)
+      return;
+    owner = osdi_model_data(mdl);
+  } else {
+    return;
+  }
+  e = osdimc_find(owner, (uint32_t)param_id);
+  if (e) {
+    e->nominal = value;
+    e->pinned = false;
+  }
+}
+
 /* Write value into one statistical parameter through the descriptor's
  * ordinary setter (the exact channel OSDIparam/OSDImParam use). */
 /* bug-hunt F13: a huge sigma can overflow Box-Muller to +-inf; a non-finite

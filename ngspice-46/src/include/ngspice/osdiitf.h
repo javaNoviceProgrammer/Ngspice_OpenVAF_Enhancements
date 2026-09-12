@@ -223,6 +223,15 @@ extern void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx);
 extern void OSDImcNoteUserWrite(int typecode, GENinstance *dev, GENmodel *mdl,
                                 int param_id, double value);
 
+/* Enhancement-616 (hunt F18): the netlist's own random draw of a parameter
+ * was re-evaluated in place by a loop command's fast path (`montecarlo`,
+ * `sweep`: com_sweep.c's sw_fp_apply) -- the draw IS the parameter's nominal
+ * for this sample, exactly as the re-source path's re-capture takes it, so
+ * the model's own statistics compose on top of it. Recenters and unpins;
+ * nothing else a user write does. */
+extern void OSDImcNoteRedraw(int typecode, GENinstance *dev, GENmodel *mdl,
+                             int param_id, double value);
+
 /* bug-hunt F2: the deck was (re)loaded -- every stored nominal's owner
  * pointer is stale; drop the table. Called by inp_dodeck. */
 extern void OSDImcCircuitChanged(void);

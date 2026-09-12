@@ -2132,6 +2132,12 @@ void sw_fp_apply(char *const *sw, const double *vals, int nsw)
                 ft_sim->setModelParm(ckt, b->modp, b->parmid, &val, NULL);
             else
                 ft_sim->setInstanceParm(ckt, b->inst, b->parmid, &val, NULL);
+            /* Enhancement-616 (hunt F18): the netlist's draw is the nominal
+             * the model's own `(* std *)` statistics sit on for this sample,
+             * as the reset path has it; the machine write above pinned it */
+            if (b->rnd)
+                OSDImcNoteRedraw(b->devtype, b->mod ? NULL : b->inst,
+                                 b->mod ? b->modp : NULL, b->parmid, v);
             touched[b->devtype] = 1;
             any_direct = 1;
         } else {                         /* textual fallback (unresolvable binds) */

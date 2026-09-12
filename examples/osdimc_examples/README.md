@@ -65,4 +65,15 @@ that (the draw itself is the same pure function of seed, trial, owner and
 id). A parameter the user gave is not re-resolved, and `unset osdimc`
 restores the user's value rather than the default (hunt F3).
 
-Run `python3 verify_osdimc.py` — 36 checks, both solvers.
+Enhancement-616 (checks 37–39): one parameter on both channels — `.model mm
+smcres r={agauss(1000,300,3)}` with `(* std *)` on `r`. The re-source path
+composed them (the re-capture after each sample's reset takes the fresh
+netlist draw as the nominal); `montecarlo`'s fast path did not — its in-place
+write pinned the entry, the pin was cleared at the run, and the model's delta
+was applied over the *first* sample's draw on every sample, the record
+contradicting itself. The fast path's re-draw is now the sample's nominal
+(`OSDImcNoteRedraw`): `@mm[r] = mm:r + delta` on every row, the same delta
+per sample on both paths; under `sweep` the sweep's one trial delta sits on
+each point's fresh draw instead of being pinned off for the whole sweep.
+
+Run `python3 verify_osdimc.py` — 39 checks, both solvers.

@@ -933,6 +933,17 @@ Row 1 is the `op` — the osdimc baseline (0, 0, 1000) — and rows 2–4 the th
 samples: `r1` and `c.x1.c1` re-drawn per sample on the fast path, `x1.c` empty
 there, the model's `r` shared by `N1` and `N2`, their `dr` independent.
 
+**One parameter on both channels.** `.model rm rstat r={agauss(1000,300,3)}`
+with `(* std=25 *)` on `r`: the netlist's draw is the sample's nominal and the
+model's δ sits on it, so the row reads `@rm[r]` = `rm:r` + δ — on `montecarlo`'s
+fast path as on its re-source path
+([E-616](../../../enhancements_doc/Enhancement-616.md); the fast path used to
+apply δ over the *first* sample's draw on every sample). Which loop varies
+what: `montecarlo` varies both channels; a `repeat … reset … op` loop varies
+the netlist channel only — a user `reset` restarts the trial sequence, so the
+model channel is its baseline on every pass (E-535) — and a `repeat … op` loop
+without the `reset` varies the model channel only.
+
 ### 8.1 Results onto the same row — `writemc`
 
 The row is written the moment the run ends; what the `.control` block computes

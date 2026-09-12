@@ -36,6 +36,11 @@ What this suite pins:
     setup and the draw sits on the new value; a parameter the USER gave is
     not re-resolved, and `unset osdimc` restores the user's value, not the
     default;
+  * (Enhancement-616, hunt F18) one parameter on both channels -- `.model mm
+    smcres r={agauss(1000,300,3)}` with `(* std *)` on r: a loop command's
+    fast path (montecarlo, sweep) re-draws the netlist expression in place,
+    and that draw is the nominal the model's delta sits on for the sample,
+    as the re-source path has it; the savemc row reads @mm[r] = mm:r + delta;
   * switching the option off restores every drawn parameter to nominal;
   * a model without statistics attributes is untouched by the option;
   * diagnostics: unknown dist / non-real param / localparam / dist-without-
@@ -663,6 +668,90 @@ check("[36] F2: `altermod tm rl=2k` while the option is off: 2000 off, the basel
       "when it is set again, then draws around 2000",
       len(c1) == 3 and c1[0] == 2000.0 and c1[1] == 2000.0 and abs(c1[2] - 2000) < 100 and c1[2] != 2000.0,
       f"c1={c1}")
+
+# ---- [11] Enhancement-616 (hunt F18): one parameter on both channels ------
+# `.model rm rstat r={agauss(1000,300,3)}` with `(* std *)` on r: the netlist
+# draws r per sample, the model's own statistics put a delta on top. The
+# re-source path composed them (the re-capture after the internal reset takes
+# the fresh draw as the nominal); montecarlo's fast path did not -- its
+# in-place write pinned the entry, the pin was cleared at the run, and the
+# delta was applied over the FIRST sample's draw on every sample.
+print("\nEnhancement-616: the netlist's draw is the nominal the model's delta sits on:")
+
+
+def mc_rows(csv):
+    with open(csv) as f:
+        lines = [l.rstrip("\n") for l in f if l.strip()]
+    head = lines[0].split(",")
+    rows = [l.split(",") for l in lines[1:]]
+    col = lambda n: head.index(n) if n in head else None
+    ir, iR, idr, iD = col("mm:r"), col("@mm[r]"), col("n1:dr"), col("@n1[dr]")
+    val = lambda r, i: float(r[i]) if i is not None and r[i] else float("nan")
+    return [(val(r, ir), val(r, iR), val(r, idr), val(r, iD)) for r in rows]
+
+
+def verbose_nominals(out, name):
+    return [(float(m.group(1)), float(m.group(2)))
+            for m in re.finditer(rf"osdimc: trial \d+: {re.escape(name)} = (\S+) \(nominal (\S+)\)", out)]
+
+
+BOTH = f"""osdimc both channels {{tag}}
+V1 a 0 1
+N1 a 0 mm dr={{{{agauss(0,30,3)}}}}
+.model mm smcres r={{{{agauss(1000,300,3)}}}}
+{{extra}}.option osdimc mcseed=1 savemc=_mc_{{tag}}.csv osdimc_verbose
+.control
+pre_osdi {os.path.basename(OSDI)}
+montecarlo 4 -analysis op -expr rr=@mm[r]
+.endc
+.end
+"""
+csv_fast = os.path.join(HERE, "_mc_fast.csv")
+csv_reset = os.path.join(HERE, "_mc_reset.csv")
+out_fast = run_deck(BOTH.format(tag="fast", extra=""), "fast")
+out_reset = run_deck(BOTH.format(tag="reset", extra="B1 b 0 v=agauss(0,1,1)\n"), "reset")   # a bare draw disarms the fast path
+fast = mc_rows(csv_fast) if os.path.exists(csv_fast) else []
+rst = mc_rows(csv_reset) if os.path.exists(csv_reset) else []
+nom_fast = verbose_nominals(out_fast, "mm:r")
+ok = ("fast path armed" in out_fast and len(fast) == 4 and len(nom_fast) == 4
+      and len({round(r[0], 6) for r in fast}) == 4                         # the netlist drew 4 values
+      and all(abs(nom_fast[i][1] - fast[i][0]) < 1e-5 * fast[i][0] for i in range(4))   # each sample's nominal is
+      and all(abs(nom_fast[i][0] - fast[i][1]) < 1e-5 * fast[i][1] for i in range(4))   # its draw (6 printed digits),
+                                                                                       # the device ran on draw + delta
+      and all(abs(fast[i][1] - fast[i][0]) > 1e-3 for i in range(4)))
+check("[37] F18: montecarlo's fast path -- each sample's netlist draw of r is the nominal its delta sits on: "
+      "the row's @mm[r] = mm:r + delta, the nominal in the verbose line is the row's draw",
+      ok, "" if ok else f"rows={fast} nominals={nom_fast} {out_fast[-200:]}")
+ok = ("fast path armed" not in out_reset and len(rst) == 4 and len(fast) == 4
+      and all(abs((fast[i][1] - fast[i][0]) - (rst[i][1] - rst[i][0])) < 1e-6 for i in range(4))
+      and all(abs((fast[i][3] - fast[i][2]) - (rst[i][3] - rst[i][2])) < 1e-6 for i in range(4)))
+check("[38] F18: ...and the re-source path agrees: the same delta on sample k for r (model) and dr (instance), "
+      "whatever the netlist drew on each path",
+      ok, "" if ok else f"fast={[round(r[1]-r[0],4) for r in fast]} reset={[round(r[1]-r[0],4) for r in rst]}")
+
+SWEEP = f"""osdimc sweep with a random model bind
+V1 a 0 1
+N1 a 0 mm dr={{k}}
+.model mm smcres r={{agauss(1000,300,3)}}
+.param k = 0
+.option osdimc mcseed=1 savemc=_mc_swp.csv osdimc_verbose
+.control
+pre_osdi {os.path.basename(OSDI)}
+op
+sweep k 0 20 10 op
+.endc
+.end
+"""
+out = run_deck(SWEEP, "swp")
+csv_swp = os.path.join(HERE, "_mc_swp.csv")
+rows = mc_rows(csv_swp) if os.path.exists(csv_swp) else []
+deltas = [r[1] - r[0] for r in rows[1:]]
+ok = ("fast .param path armed" in out and len(rows) == 4 and len({round(r[0], 6) for r in rows[1:]}) == 3
+      and all(abs(d - deltas[0]) < 1e-6 for d in deltas) and abs(deltas[0]) > 1e-3
+      and [r[3] for r in rows[1:]] == [0.0, 10.0, 20.0])
+check("[39] F18: `sweep` on the fast path -- a random model bind is re-drawn per point and the sweep's ONE trial "
+      "delta sits on each draw (it was pinned off for the whole sweep); the swept dr itself stays pinned at 0/10/20",
+      ok, "" if ok else f"rows={rows} {out[-200:]}")
 
 # ----------------------------------------------------------------------------
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks}")
