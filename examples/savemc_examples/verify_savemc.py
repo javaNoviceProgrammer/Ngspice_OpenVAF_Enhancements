@@ -35,6 +35,14 @@ Checks:
   [9] two decks within one second get distinct names; a second deck sourced
       in one session gets its own file and the first stays complete
   [10] no "unknown option" warning for the four spellings
+  [11] (Enhancement-612) the file name keeps its case: savemc=MixedCase/Draws.csv
+      writes exactly that, the note names it, and the other options on the
+      same card (osdimc mcseed=5) are still folded and honoured
+  [12] (Enhancement-612) a quoted name keeps its spaces, a non-ASCII name its
+      bytes: savemc="dir with space/My Draws.csv", savemc=Résumé_MC.csv
+  [13] (Enhancement-612) automc_save=MixedCase/Osdi.TXT (the extension picks
+      the writer, case-insensitively), the `option` command of a .control
+      block, and savemc=CSV still meaning the format
 """
 import glob
 import os
@@ -78,7 +86,8 @@ if r.returncode != 0:
 
 def clean():
     for f in glob.glob(os.path.join(WORK, "mcparams_*")) + glob.glob(os.path.join(RUNDIR, "mcparams_*")) \
-            + glob.glob(os.path.join(WORK, "myrun.*")):
+            + glob.glob(os.path.join(WORK, "myrun.*")) + glob.glob(os.path.join(WORK, "MixedCase", "*")) \
+            + glob.glob(os.path.join(WORK, "dir with space", "*")) + glob.glob(os.path.join(WORK, "R*sum*.csv")):
         os.remove(f)
 
 
@@ -257,6 +266,51 @@ clean()
 out = run(".option savemc nosavemc automc_save osdimc_save\n" + OSDI, "t10", "op")
 check("[10] no 'unknown option' warning for savemc, nosavemc, automc_save, osdimc_save; nosavemc turns it off",
       "unknown option" not in out and not files() and NOTE not in out, out[-300:])
+
+# ------------------------------------------------------------ [11] ---
+# Enhancement-612: the value of a file-name option keeps its bytes. The deck
+# reader folded it to lower case and inp_casefix() replaced every non-ASCII
+# byte with `_`, so `savemc=MyRun/Draws.csv` wrote `myrun/draws.csv` and
+# `Résumé.csv` was written as `r__sum__.csv`.
+clean()
+os.makedirs(os.path.join(WORK, "MixedCase"), exist_ok=True)
+os.makedirs(os.path.join(WORK, "dir with space"), exist_ok=True)
+out = run(".option savemc=MixedCase/Draws.csv OSDIMC MCSEED=5\n" + OSDI, "t11", "op\nop\nlisting")
+path = os.path.join(WORK, "MixedCase", "Draws.csv")
+ok = os.path.exists(path) and NOTE in out and "MixedCase/Draws.csv" in out
+head, rows = read_csv(path) if ok else ([], [])
+col = head.index(f"{A}sm[r]") if f"{A}sm[r]" in head else -1
+check("[11] savemc=MixedCase/Draws.csv: the file has exactly that name, the note and the listing show it",
+      ok and " .option savemc=MixedCase/Draws.csv osdimc mcseed=5" in out, out[-400:] if not ok else "")
+check("[11] the other options on the card are still folded and honoured: osdimc drew on trial 2",
+      col >= 0 and len(rows) == 2 and rows[0][col] == "1000" and rows[1][col] != "1000", f"{head} {rows}")
+
+# ------------------------------------------------------------ [12] ---
+clean()
+out = run('.option savemc="dir with space/My Draws.csv"\n' + DIV, "t12a", "op")
+path = os.path.join(WORK, "dir with space", "My Draws.csv")
+check('[12] savemc="dir with space/My Draws.csv": a quoted name keeps its spaces (one file, two rows)',
+      os.path.exists(path) and len(read_csv(path)[1]) == 1 and "dir with space/My Draws.csv" in out,
+      out[-300:] if not os.path.exists(path) else "")
+out = run(".option savemc=R\u00e9sum\u00e9_MC.csv\n" + DIV, "t12b", "op")
+path = os.path.join(WORK, "R\u00e9sum\u00e9_MC.csv")
+check("[12] savemc=Résumé_MC.csv: a non-ASCII name keeps its bytes",
+      os.path.exists(path) and "R\u00e9sum\u00e9_MC.csv" in out, out[-300:] if not os.path.exists(path) else "")
+
+# ------------------------------------------------------------ [13] ---
+clean()
+out = run(".option automc_save=MixedCase/Osdi.TXT osdimc\n" + OSDI, "t13a", "op")
+path = os.path.join(WORK, "MixedCase", "Osdi.TXT")
+head = read_csv(path, "\t")[0] if os.path.exists(path) else []
+check("[13] automc_save=MixedCase/Osdi.TXT: the name kept, the .TXT extension picks the tab-separated writer",
+      head == ["trial", "analysis", "status", f"{A}n1[dr]", f"{A}sm[r]"], f"{head} {out[-200:] if not head else ''}")
+out = run(DIV, "t13b", "option savemc=MixedCase/FromControl.csv\nop")
+ok = os.path.exists(os.path.join(WORK, "MixedCase", "FromControl.csv"))
+check("[13] the `option` command of a .control block keeps the name too", ok, "" if ok else out[-300:])
+clean()
+out = run(".option savemc=CSV\n" + DIV, "t13c", "op")
+check("[13] savemc=CSV is still the format keyword (a dated mcparams_ file)",
+      len(files()) == 1 and not os.path.exists(os.path.join(WORK, "CSV")), str(files()))
 
 clean()
 print(f"\n{passed}/{checks} checks passed")

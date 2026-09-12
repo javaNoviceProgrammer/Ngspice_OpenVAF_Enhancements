@@ -12,4 +12,8 @@ devices as `@<model>[<param>]` / `@<instance>[<param>]`. `.option automc_save`
 file (every `montecarlo` sample is a row), a different deck starts another; a
 failed run is a row marked `failed`; `excel` writes a genuine `.xlsx`.
 
-Run: `python3 verify_savemc.py` (17 checks per solver, both solvers).
+Since Enhancement-612 the file name keeps its case and its bytes, and a quoted
+name its spaces: `savemc=MixedCase/Draws.csv`, `savemc="dir with space/My
+Draws.csv"`, `savemc=Résumé_MC.csv` write exactly those (checks 11–13).
+
+Run: `python3 verify_savemc.py` (24 checks per solver, both solvers).

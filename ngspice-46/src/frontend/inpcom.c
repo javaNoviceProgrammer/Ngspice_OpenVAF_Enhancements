@@ -399,6 +399,74 @@ static char *keep_case_in_quotes(char *buffer)
     return s;
 }
 
+/* Enhancement-612: the value of a FILE-NAME option keeps its bytes.
+ *
+ * `.option savemc=<name>` (and `automc_save=`, `osdimc_save=`, Enhancement-610)
+ * names a file, and a file name is data: the deck's case folding turned
+ * `savemc=MyRun/Draws.csv` into `myrun/draws.csv` -- a directory that does not
+ * exist on a case-sensitive volume -- and inp_casefix(), which inp_getopts()
+ * runs over every .option card, replaced every byte of a non-ASCII name with
+ * `_` (`Résumé.csv` was written as `r__sum__.csv`). Both passes now leave the
+ * value alone; a quoted value keeps its quotes too, so that a path with a
+ * space survives the lexer as one word (cp_unquote strips them). The option
+ * NAME is still folded, and everything else on the card with it. */
+static const char *const inp_file_options[] = {
+    "savemc=", "automc_save=", "osdimc_save="
+};
+
+/* If `p` (a position inside `line`) starts one of the file-name options,
+ * return the first character of its value; otherwise NULL. */
+static char *inp_file_option_value(char *p, const char *line)
+{
+    size_t i;
+    if (p > line && !isspace_c(p[-1]))
+        return NULL;                        /* `nosavemc=`, `xsavemc=` ... */
+    for (i = 0; i < NUMELEMS(inp_file_options); i++)
+        if (ciprefix(inp_file_options[i], p))
+            return p + strlen(inp_file_options[i]);
+    return NULL;
+}
+
+/* The end of such a value: past the closing quote of a quoted one, else the
+ * first white space (or the end of the line). */
+static char *inp_file_option_value_end(char *v)
+{
+    if (*v == '"') {
+        char *e = strchr(v + 1, '"');
+        return e ? e + 1 : v + strlen(v);
+    }
+    while (*v && *v != '\n' && !isspace_c(*v))
+        v++;
+    return v;
+}
+
+static bool inp_has_file_option(const char *line)
+{
+    const char *p;
+    for (p = line; *p && *p != '\n'; p++)
+        if (inp_file_option_value((char *) p, line))
+            return TRUE;
+    return FALSE;
+}
+
+/* Fold an .option card to lower case except the file-name values. */
+static char *keep_case_of_file_options(char *buffer)
+{
+    char *s = buffer;
+    while (*s && *s != '\n') {
+        char *v = inp_file_option_value(s, buffer);
+        if (v) {
+            for (; s < v; s++)
+                *s = tolower_c(*s);         /* the name and its `=` */
+            s = inp_file_option_value_end(v);
+            continue;
+        }
+        *s = tolower_c(*s);
+        s++;
+    }
+    return s;
+}
+
 static char* make_lower_case_copy(char* inbuf)
 {
     char* s = NULL;
@@ -2053,6 +2121,13 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
             else if (!is_control && !comfile && isalpha_c(buffer[0])
                      && strstr(buffer, "=\"")) {
                 s = keep_case_in_quotes(buffer);
+            }
+            /* Enhancement-612: an .option card -- or the `option` command of
+             * a .control block or .spiceinit -- naming a file keeps the name */
+            else if (((!is_control && !comfile && ciprefix(".opt", buffer)) ||
+                      ((is_control || comfile) && ciprefix("option", buffer)))
+                     && inp_has_file_option(buffer)) {
+                s = keep_case_of_file_options(buffer);
             }
             /* no lower case letters for lines beginning with: */
             else if (!(ciprefix(".lib", buffer) || ciprefix(".inc", buffer) ||
@@ -5140,6 +5215,11 @@ void inp_casefix(char *string)
     }
     if (string) {
         bool keepquotes;
+        /* Enhancement-612: inp_getopts() runs this over every .option card;
+         * the value of a file-name option is skipped whole -- no quote
+         * removal, no `_` for a non-ASCII byte, no folding */
+        const char *line_start = string;
+        const bool is_opt = ciprefix(".opt", string);
 
 #ifdef XSPICE
         char* tmpstr = NULL;
@@ -5167,6 +5247,15 @@ void inp_casefix(char *string)
         keepquotes = keepquotes || (isalpha_c(*string) && strstr(string, "=\""));
 
         while (*string) {
+            if (is_opt) {
+                char *v = inp_file_option_value(string, line_start);
+                if (v) {
+                    for (; string < v; string++)
+                        *string = tolower_c(*string);
+                    string = inp_file_option_value_end(v);
+                    continue;
+                }
+            }
 #ifdef XSPICE
             /* exclude file name inside of quotes from getting lower case,
                keep quotes to enable spaces in file path */

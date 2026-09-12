@@ -329,7 +329,9 @@ inlines a random `.param` into each use, so each use is its own draw), named
 devices as `@sm[r]` / `@n1[dr]`. Every `montecarlo` sample is a row (on the
 fast path a subcircuit's own value is not re-derived and its column is empty
 there; the device slots it feeds are recorded). `savemc=txt` is tab-separated,
-`savemc=excel` a genuine `.xlsx`, `savemc=<name>.<ext>` names the file; a
+`savemc=excel` a genuine `.xlsx`, `savemc=<name>.<ext>` names the file — the
+name keeps its case and its bytes, and a quoted one its spaces
+(`savemc="My Runs/Draws.csv"`), since E-612; a
 `reset` continues the file, a different deck starts another; `.option
 automc_save` (alias `osdimc_save`) records the OSDI parameters only.
 [`examples/savemc_examples/`](../../examples/savemc_examples/). What the
