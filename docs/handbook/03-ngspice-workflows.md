@@ -405,7 +405,11 @@ command replays the same draws whatever ran before it (2026-09-05 hunt,
 F13); `alter`/`altermod` recenter a
 parameter's nominal (machine writes — `.dc` parameter sweeps, the `sweep`
 command's points and restores, sensitivity perturbations — deliberately do
-not); dropping the option restores nominals on the next run;
+not), and a statistical parameter the deck never gave, whose default reads
+the written one (`leaf #(.r(rl)) c1` in a hierarchy, `parameter real rb =
+rl`), is re-resolved by the next setup so its draws sit on the new value
+(E-614); dropping the option restores nominals on the next run — a value
+the user gave, not the default (E-614);
 `.option osdimc_verbose` prints every draw. A draw that violates the
 parameter's `from` range fails that run with the device's own range error,
 exactly as the same `alter` would — size the sigmas accordingly.

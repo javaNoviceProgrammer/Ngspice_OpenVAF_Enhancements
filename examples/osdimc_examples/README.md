@@ -53,4 +53,16 @@ restarts the MC deterministically; a non-finite draw (sigma too large) is
 refused with a named warning and the parameter stays at nominal; `alter`
 refuses non-representable values outright.
 
-Run `python3 verify_osdimc.py` — 29 checks, both solvers.
+Enhancement-614 (checks 30–36, `smcdep.va`): a statistical parameter the
+deck never gave is resolved by the model's setup from its default
+expression, and that expression may read another parameter — a child's
+binding in a hierarchy (`leaf #(.r(rl)) c1`, flattened to `c1__r`), a plain
+`rb = rl`, an instance default from an instance parameter, a default from an
+integer. `altermod`/`alter` of the parameter it reads now moves the nominal
+the draws sit on: the entry is marked stale, its given flag cleared, the
+next setup re-resolves the default and the trial's draws are applied after
+that (the draw itself is the same pure function of seed, trial, owner and
+id). A parameter the user gave is not re-resolved, and `unset osdimc`
+restores the user's value rather than the default (hunt F3).
+
+Run `python3 verify_osdimc.py` — 36 checks, both solvers.

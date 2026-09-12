@@ -28,6 +28,14 @@ What this suite pins:
     uniform draws fill exactly [nominal-std, nominal+std], std_rel scales
     with the nominal, and an unset parameter recenters on its DEFAULT;
   * `alter` RECENTERS a statistical parameter's nominal;
+  * (Enhancement-614, hunt F2/F3) a statistical parameter the deck never
+    gave, whose default reads another parameter (`leaf #(.r(rl)) c1` in a
+    hierarchy, `parameter real rb = rl`, an instance default from an
+    instance parameter, a default from an integer), follows `altermod` /
+    `alter` of that parameter: its nominal is re-resolved by the next
+    setup and the draw sits on the new value; a parameter the USER gave is
+    not re-resolved, and `unset osdimc` restores the user's value, not the
+    default;
   * switching the option off restores every drawn parameter to nominal;
   * a model without statistics attributes is untouched by the option;
   * diagnostics: unknown dist / non-real param / localparam / dist-without-
@@ -485,6 +493,176 @@ check("[29] `alter` refuses a non-representable value (1e400) instead of "
       "is not a finite number; not applied" in out
       and seq(out, "@n1[dr]") == [0.0],
       f"dr={seq(out, '@n1[dr]')}")
+
+# ---- [10] Enhancement-614 (hunt F2/F3): a default that reads another ------
+# parameter is re-resolved after that parameter is written. The nominal of a
+# never-given statistical parameter was captured at the FIRST setup and never
+# again, so `leaf #(.r(rl)) c1` drew around 1000 after `altermod tm rl=500`
+# (the device ran at 950 where 500 was set), and so did `parameter real rb =
+# rl`. A `montecarlo` loop was right (its internal re-source drops the table);
+# a plain run after the write was not.
+print("\nEnhancement-614: a never-given parameter follows the parameter its default reads:")
+rc, out, DEP = compile_va("smcdep.va")
+check("[30] the hierarchy/dependency model compiles", rc == 0, out[-300:])
+
+HIER = f"""osdimc hierarchy binding
+V1 a 0 1
+N1 a 0 tm
+.model tm top rl=1k
+.option osdimc mcseed=1
+.control
+pre_osdi {os.path.basename(DEP)}
+set numdgt=10
+op
+op
+print @tm[c1__r] @tm[c2__r]
+altermod tm rl=500
+op
+print @tm[rl] @tm[c1__r] @tm[c2__r] i(v1)
+unset osdimc
+op
+print @tm[rl] @tm[c1__r] @tm[c2__r]
+.endc
+.end
+"""
+out = run_deck(HIER, "hier")
+c1 = seq(out, "@tm[c1__r]")
+c2 = seq(out, "@tm[c2__r]")
+iv = seq(out, "i(v1)")
+ok = (len(c1) == 3 and len(c2) == 3 and abs(c1[0] - 1000.0) < 100 and c1[0] != 1000.0
+      and abs(c1[1] - 500.0) < 100 and c1[1] != 500.0 and abs(c2[1] - 1000.0) < 100
+      and c1[2] == 500.0 and c2[2] == 1000.0)
+check("[31] F2: `leaf #(.r(rl)) c1` -- after `altermod tm rl=500` c1__r draws around 500 "
+      "(c2__r still around 1000); `unset osdimc` restores 500 and 1000 exactly",
+      ok, f"c1={c1} c2={c2}")
+check("[31] ...and the device ran on the draw: i(v1) = -1/(c1__r+c2__r)",
+      len(iv) == 1 and len(c1) == 3 and abs(iv[0] + 1.0 / (c1[1] + c2[1])) < 1e-12, f"i={iv}")
+
+# the draw is the same delta wherever the nominal sits: trial 3's c1__r in a
+# deck without the altermod, minus 1000, equals trial 3's here minus 500
+REF = HIER.replace("altermod tm rl=500\n", "")
+c1_ref = seq(run_deck(REF, "hierref"), "@tm[c1__r]")
+check("[32] F2: the draw is a pure function of (seed, trial, owner, id): trial 3's delta "
+      "is the same with the nominal at 500 as at 1000",
+      len(c1_ref) == 3 and len(c1) == 3 and abs((c1[1] - 500.0) - (c1_ref[1] - 1000.0)) < 1e-6,   # 10 printed digits
+      f"with={c1[1] - 500.0 if len(c1) == 3 else None} without={c1_ref[1] - 1000.0 if len(c1_ref) == 3 else None}")
+
+PLAIN = f"""osdimc plain default dependencies
+V1 a 0 1
+N1 a 0 dm
+.model dm dep rl=1k
+.option osdimc mcseed=1
+.control
+pre_osdi {os.path.basename(DEP)}
+set numdgt=10
+op
+op
+print @dm[rb] @dm[rn] @n1[dr]
+altermod dm rl=500
+altermod dm nseg=4
+alter @n1[mult]=3
+op
+print @dm[rb] @dm[rn] @n1[dr]
+unset osdimc
+op
+print @dm[rb] @dm[rn] @n1[dr]
+.endc
+.end
+"""
+out = run_deck(PLAIN, "plain")
+rb, rn, dr = seq(out, "@dm[rb]"), seq(out, "@dm[rn]"), seq(out, "@n1[dr]")
+ok = (len(rb) == 3 and len(rn) == 3 and len(dr) == 3
+      and abs(rb[0] - 1000) < 100 and abs(rn[0] - 100) < 20 and abs(dr[0] - 100) < 40
+      and abs(rb[1] - 500) < 100 and rb[1] != 500 and abs(rn[1] - 400) < 20 and rn[1] != 400
+      and abs(dr[1] - 300) < 40 and dr[1] != 300
+      and rb[2] == 500 and rn[2] == 400 and dr[2] == 300)
+check("[33] F2: `rb = rl` follows `altermod dm rl=500`, `rn = 100*nseg` follows the INTEGER "
+      "`altermod dm nseg=4`, the instance `dr = 100*mult` follows `alter @n1[mult]=3`; "
+      "off restores 500/400/300",
+      ok, f"rb={rb} rn={rn} dr={dr}")
+
+GIVEN = f"""osdimc a user-given parameter survives a sibling write
+V1 a 0 1
+N1 a 0 tm
+.model tm top rl=1k
+.option osdimc mcseed=1
+.control
+pre_osdi {os.path.basename(DEP)}
+set numdgt=10
+op
+altermod tm c1__r=700
+op
+print @tm[c1__r]
+altermod tm rl=300
+op
+print @tm[c1__r] @tm[c2__r]
+unset osdimc
+op
+print @tm[c1__r] @tm[c2__r]
+.endc
+.end
+"""
+out = run_deck(GIVEN, "given")
+c1 = seq(out, "@tm[c1__r]")
+c2 = seq(out, "@tm[c2__r]")
+ok = (len(c1) == 3 and abs(c1[0] - 700) < 100 and abs(c1[1] - 700) < 100 and c1[2] == 700.0
+      and len(c2) == 2 and abs(c2[0] - 1000) < 100 and c2[1] == 1000.0)
+check("[34] F2: `altermod tm c1__r=700` then `altermod tm rl=300` -- the user-given c1__r "
+      "keeps drawing around 700 (not re-resolved from rl), and off restores 700",
+      ok, f"c1={c1} c2={c2}")
+
+F3_DECK = f"""osdimc F3: unset restores the user's value of a never-given parameter
+V1 a 0 1
+N1 a 0 mm
+.model mm smcres
+.option osdimc mcseed=1
+.control
+pre_osdi {os.path.basename(OSDI)}
+set numdgt=10
+op
+alter @n1[dr]=50
+op
+print @n1[dr]
+unset osdimc
+op
+print @n1[dr]
+.endc
+.end
+"""
+out = run_deck(F3_DECK, "f3")
+d = seq(out, "@n1[dr]")
+check("[35] F3: `alter @n1[dr]=50` of a parameter the deck never gave, then `unset osdimc`: "
+      "50 is restored, not the default 0",
+      len(d) == 2 and abs(d[0] - 50) < 40 and d[0] != 50.0 and d[1] == 50.0, f"dr={d}")
+
+OFFWRITE = f"""osdimc a write while the option is off
+V1 a 0 1
+N1 a 0 tm
+.model tm top rl=1k
+.option osdimc mcseed=1
+.control
+pre_osdi {os.path.basename(DEP)}
+set numdgt=10
+op
+op
+unset osdimc
+altermod tm rl=2k
+op
+print @tm[c1__r]
+set osdimc
+op
+print @tm[c1__r]
+op
+print @tm[c1__r]
+.endc
+.end
+"""
+out = run_deck(OFFWRITE, "offwrite")
+c1 = seq(out, "@tm[c1__r]")
+check("[36] F2: `altermod tm rl=2k` while the option is off: 2000 off, the baseline 2000 "
+      "when it is set again, then draws around 2000",
+      len(c1) == 3 and c1[0] == 2000.0 and c1[1] == 2000.0 and abs(c1[2] - 2000) < 100 and c1[2] != 2000.0,
+      f"c1={c1}")
 
 # ----------------------------------------------------------------------------
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks}")

@@ -1,0 +1,36 @@
+// Enhancement-614 (hunt F2): a statistical parameter the deck never gives is
+// resolved by the model's setup from its DEFAULT expression, and that
+// expression may read another parameter -- a child's binding in a hierarchy,
+// or a plain `= rl`. `altermod`/`alter` of the parameter it reads must move
+// the nominal the draws sit on.
+`include "disciplines.vams"
+
+// hierarchy: top binds the child's r to its own rl
+module leaf(p, n);
+  inout p, n;
+  electrical p, n;
+  (* std=25.0 *) parameter real r = 1000.0 from (0:inf);
+  analog I(p, n) <+ V(p, n) / r;
+endmodule
+
+module top(p, n);
+  inout p, n;
+  electrical p, n, m;
+  parameter real rl = 1000.0;
+  leaf #(.r(rl)) c1(p, m);      // c1__r defaults to rl
+  leaf c2(m, n);                // c2__r defaults to 1000
+endmodule
+
+// plain defaults: a model parameter from a model parameter, an instance
+// parameter from an instance parameter, a model parameter from an integer
+module dep(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real rl = 1000.0;
+  parameter integer nseg = 1;
+  (* std=25.0 *) parameter real rb = rl from (0:inf);
+  (* std=5.0 *) parameter real rn = 100.0 * nseg from (0:inf);
+  (* type="instance" *) parameter real mult = 1.0;
+  (* type="instance", std=10.0 *) parameter real dr = 100.0 * mult;
+  analog I(p, n) <+ V(p, n) / (rb + dr + rn);
+endmodule

@@ -1944,6 +1944,11 @@ typedef struct OsdiMcNominal {
   int given;         /* E-555: the given flag when the nominal was captured
                         (0/1; -1 when the object has no entry point) */
   bool gated_noted;  /* E-555: the "not drawn" note was printed once */
+  bool stale;        /* Enhancement-614 (hunt F2): the deck never gave this
+                        parameter and a user wrote another parameter of its
+                        device, so the default it was resolved from may have
+                        moved -- the model's setup re-resolves it on the next
+                        run and osdimc_capture reads the new nominal */
 } OsdiMcNominal;
 
 static OsdiMcNominal *osdimc_tbl;
@@ -2348,6 +2353,21 @@ static void osdimc_insert(const void *owner, uint32_t id, double nominal,
       .owner = owner, .id = id, .nominal = nominal, .given = given};
 }
 
+/* Enhancement-614 (hunt F2): a stale entry takes the nominal the model's
+ * setup has just re-resolved */
+static void osdimc_refresh(OsdiMcNominal *e, double nominal, int given) {
+  e->nominal = nominal;
+  e->given = given;
+  e->stale = false;
+}
+
+static bool osdimc_any_stale(void) {
+  for (int i = 0; i < osdimc_tbl_len; i++)
+    if (osdimc_tbl[i].stale)
+      return true;
+  return false;
+}
+
 /* Enhancement-555: the given flag of one parameter through the object's
  * entry point; -1 when the object has none. */
 static int osdimc_query_given(const OsdiRegistryEntry *entry, void *inst,
@@ -2393,6 +2413,26 @@ static void osdimc_restore_given(const OsdiRegistryEntry *entry, void *inst,
 static void osdimc_clear_pins(void) {
   for (int i = 0; i < osdimc_tbl_len; i++)
     osdimc_tbl[i].pinned = false;
+}
+
+/* Enhancement-614 (hunt F2): mark the never-given statistical parameters of
+ * one object (its data pointer `inst`, or the model's when inst is NULL)
+ * stale, and clear their given flag so the model's setup re-resolves each
+ * one's default on the next run. The parameter the user just wrote
+ * (written_owner, written_id) is given now and is left alone. */
+static void osdimc_stale_owner(const OsdiRegistryEntry *entry, void *inst,
+                               void *model, const void *written_owner,
+                               uint32_t written_id) {
+  const void *owner = inst ? inst : model;
+  for (int i = 0; i < osdimc_tbl_len; i++) {
+    OsdiMcNominal *e = &osdimc_tbl[i];
+    if (e->owner != owner || e->given != 0)
+      continue;
+    if (owner == written_owner && e->id == written_id)
+      continue;
+    e->stale = true;
+    osdimc_restore_given(entry, inst, model, e->id, e);
+  }
 }
 
 /* E-535 fix (hunt bug 14): OSDIparam/OSDImParam report every successful
@@ -2545,27 +2585,35 @@ static void osdimc_capture(const OsdiRegistryEntry *entry, GENmodel *inModel) {
     for (uint32_t s = 0; s < entry->num_stat_params; s++) {
       uint32_t id = infos[s].param_id;
       if (id >= descr->num_instance_params) { /* model parameter */
-        if (!osdimc_find(model, id)) {
+        OsdiMcNominal *e = osdimc_find(model, id);
+        if (!e || e->stale) {
           double val;
           void *src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
           if (src) {
             memcpy(&val, src, sizeof(double));
-            osdimc_insert(model, id, val,
-                          osdimc_query_given(entry, NULL, model, id));
+            if (e)          /* Enhancement-614: the re-resolved default */
+              osdimc_refresh(e, val, osdimc_query_given(entry, NULL, model, id));
+            else
+              osdimc_insert(model, id, val,
+                            osdimc_query_given(entry, NULL, model, id));
           }
         }
       } else { /* instance parameter */
         for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
              gen_inst = gen_inst->GENnextInstance) {
           void *inst = osdi_instance_data((OsdiRegistryEntry *)entry, gen_inst);
-          if (!osdimc_find(inst, id)) {
+          OsdiMcNominal *e = osdimc_find(inst, id);
+          if (!e || e->stale) {
             double val;
             void *src = descr->access(inst, model, id,
                                       ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
             if (src) {
               memcpy(&val, src, sizeof(double));
-              osdimc_insert(inst, id, val,
-                            osdimc_query_given(entry, inst, model, id));
+              if (e)        /* Enhancement-614: the re-resolved default */
+                osdimc_refresh(e, val, osdimc_query_given(entry, inst, model, id));
+              else
+                osdimc_insert(inst, id, val,
+                              osdimc_query_given(entry, inst, model, id));
             }
           }
         }
@@ -2630,6 +2678,37 @@ void OSDImcNoteUserWrite(int typecode, GENinstance *dev, GENmodel *mdl,
   e = osdimc_find(owner, (uint32_t)param_id);
   if (e) {
     e->nominal = value;
+    /* Enhancement-614 (hunt F3): the user gave it now. The option-off
+     * restore used to clear the given flag of a parameter the DECK never
+     * gave and the model's setup then put back the default, losing the
+     * user's value (`alter @n1[dr]=50`, `unset osdimc` -> 0). */
+    if (e->given == 0)
+      e->given = 1;
+  }
+
+  /* Enhancement-614 (hunt F2): a parameter the deck never gave was resolved
+   * by the model's setup from its default expression, and that expression
+   * may read the parameter just written -- `leaf #(.r(rl)) c1` binds the
+   * child's r to the parent's rl; `parameter real rb = rl`. The captured
+   * nominal is the FIRST setup's value, so after `altermod tm rl=500` the
+   * child still drew around 1000. Every never-given statistical parameter of
+   * the written device -- the model's own and, for a model write, those of
+   * each of its instances -- is marked stale and its given flag cleared, so
+   * the next run's setup re-resolves the default and osdimc_capture reads
+   * the new nominal before the trial's draws are applied. The parameter
+   * just written is not stale: it is given now. */
+  if (mdl) {
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(mdl);
+    void *model = osdi_model_data(mdl);
+    osdimc_stale_owner(entry, NULL, model, owner, (uint32_t)param_id);
+    for (GENinstance *gi = mdl->GENinstances; gi; gi = gi->GENnextInstance)
+      osdimc_stale_owner(entry, osdi_instance_data(entry, gi), model, owner,
+                         (uint32_t)param_id);
+  } else {
+    OsdiRegistryEntry *entry = osdi_reg_entry_inst(dev);
+    osdimc_stale_owner(entry, osdi_instance_data(entry, dev),
+                       osdi_model_data_from_inst(dev), owner,
+                       (uint32_t)param_id);
   }
 }
 
@@ -2770,7 +2849,8 @@ void OSDImcNewRun(CKTcircuit *ckt) {
             if (id >= descr->num_instance_params) {
               OsdiMcNominal *e = osdimc_find(model, id);
               if (e) {
-                osdimc_write(descr, NULL, model, id, e->nominal);
+                if (!e->stale)  /* Enhancement-614: the setup re-resolves a stale one */
+                  osdimc_write(descr, NULL, model, id, e->nominal);
                 osdimc_restore_given(entry, NULL, model, id, e); /* E-555 */
               }
             } else {
@@ -2779,7 +2859,8 @@ void OSDImcNewRun(CKTcircuit *ckt) {
                 void *inst = osdi_instance_data(entry, gen_inst);
                 OsdiMcNominal *e = osdimc_find(inst, id);
                 if (e) {
-                  osdimc_write(descr, inst, model, id, e->nominal);
+                  if (!e->stale)
+                    osdimc_write(descr, inst, model, id, e->nominal);
                   osdimc_restore_given(entry, inst, model, id, e); /* E-555 */
                 }
               }
@@ -2834,7 +2915,10 @@ void OSDImcNewRun(CKTcircuit *ckt) {
    * nominals (deck defaults included) are resolvable only after one setup
    * pass -- the draws cannot land here. Flag them pending; OSDIsetup captures
    * and applies them before OSDItemp evaluates the init-resident code. */
-  if (osdimc_tbl_len == 0) {
+  /* Enhancement-614 (hunt F2): a stale nominal (a user wrote a parameter
+   * that a never-given one's default may read) is re-resolved by the setup
+   * and re-read there, so this run's draws land there too. */
+  if (osdimc_tbl_len == 0 || osdimc_any_stale()) {
     osdimc_apply_pending = true;
     return;
   }

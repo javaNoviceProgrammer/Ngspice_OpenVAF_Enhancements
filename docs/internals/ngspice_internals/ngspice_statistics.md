@@ -668,9 +668,16 @@ owner (model-card or instance name) and the parameter id. Consequences:
   trial 2 of any other command sequence with the same seed (§7.4 shows it).
 - **`.option mcseed=<int>` swaps the whole ensemble**; the default is 1.
 - **`alter`/`altermod` recentre**: a stored value becomes the new nominal, and
-  draws stay `nominal + δ` — never a random walk.
+  draws stay `nominal + δ` — never a random walk. A statistical parameter the
+  deck never gave, whose default reads the written one — a child's binding in
+  a hierarchy (`leaf #(.r(rl)) c1`, flattened to `c1__r`), a plain
+  `parameter real rb = rl`, an instance default from an instance parameter —
+  is re-resolved by the next setup and its draws sit on the new value
+  ([E-614](../../../enhancements_doc/Enhancement-614.md)); `altermod tm rl=500`
+  moves `c1__r` from `1000 + δ` to `500 + δ`, the same δ.
 - **turning the option off** (`unset osdimc`, or `.option noosdimc` /
-  `noautomc`) restores every drawn parameter to its nominal on the next run; a
+  `noautomc`) restores every drawn parameter to its nominal on the next run —
+  a value the user gave by `alter`, not the deck's default (E-614); a
   re-`source` invalidates the table.
 
 A seed that is not an integer is truncated and said; one that is not a number is

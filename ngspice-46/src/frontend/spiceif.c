@@ -1283,8 +1283,12 @@ doset_user(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod,
 
     err = doset(ckt, typecode, dev, mod, opt, val);
 
+    /* Enhancement-614 (hunt F2): an integer write is reported too -- it
+     * recenters nothing (a statistical parameter is real) but a never-given
+     * real parameter's default may read it, and the hook re-resolves those. */
     if (err == OK &&
-        (opt->dataType & (IF_VARTYPES & ~IF_VECTOR)) == IF_REAL &&
+        ((opt->dataType & (IF_VARTYPES & ~IF_VECTOR)) == IF_REAL ||
+         (opt->dataType & (IF_VARTYPES & ~IF_VECTOR)) == IF_INTEGER) &&
         !(opt->dataType & IF_VECTOR) && val && val->v_realdata) {
         OSDImcNoteUserWrite(typecode, dev, mod, opt->id, val->v_realdata[0]);
     }
