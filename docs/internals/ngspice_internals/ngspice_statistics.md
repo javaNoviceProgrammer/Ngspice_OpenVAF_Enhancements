@@ -677,8 +677,11 @@ owner (model-card or instance name) and the parameter id. Consequences:
   moves `c1__r` from `1000 + δ` to `500 + δ`, the same δ.
 - **turning the option off** (`unset osdimc`, or `.option noosdimc` /
   `noautomc`) restores every drawn parameter to its nominal on the next run —
-  a value the user gave by `alter`, not the deck's default (E-614); a
-  re-`source` invalidates the table.
+  a value the user gave by `alter`, not the deck's default (E-614) — and
+  leaves alone what a loop command has just pushed, so `unset osdimc` followed
+  by `sweep rr 500 1500 500` reads 500, 1000, 1500
+  ([E-618](../../../enhancements_doc/Enhancement-618.md)); a re-`source`
+  invalidates the table.
 
 A seed that is not an integer is truncated and said; one that is not a number is
 refused and said, each once ([E-572](../../../enhancements_doc/Enhancement-572.md)):

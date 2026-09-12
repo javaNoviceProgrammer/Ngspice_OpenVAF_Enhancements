@@ -219,6 +219,17 @@ cols_prune_for_new_owner(void)
     ncols = k;
 }
 
+/* Enhancement-618: does the file already carry OSDI columns? */
+static int
+cols_have_osdi(void)
+{
+    int i;
+    for (i = 0; i < ncols; i++)
+        if (cols[i].osdi)
+            return 1;
+    return 0;
+}
+
 static void
 osdi_cb(const char *owner_name, const char *param, double value, int is_model,
         void *ctx)
@@ -855,8 +866,12 @@ MCSAVErun(const char *analysis, int ok)
     if (first)
         cols_prune_for_new_owner();
 
-    /* the OSDI parameters with declared statistics, as the devices hold them */
-    if (ft_curckt->ci_ckt && OSDImcEnabled()) {
+    /* the OSDI parameters with declared statistics, as the devices hold them.
+     * Enhancement-618 (hunt F19): once the file has OSDI columns they are
+     * read on every row, option on or off -- after `unset osdimc` the rows
+     * used to repeat the last trial's draws while the devices had been put
+     * back to their nominals (or swept). */
+    if (ft_curckt->ci_ckt && (OSDImcEnabled() || cols_have_osdi())) {
         OSDImcSnapshot(ft_curckt->ci_ckt, osdi_cb, NULL);
     } else if (ft_curckt->ci_ckt && !noted_osdimc_off && OSDImcHasStats(ft_curckt->ci_ckt)) {
         fprintf(cp_err, "Note: savemc: the deck's OSDI models declare statistics, but "

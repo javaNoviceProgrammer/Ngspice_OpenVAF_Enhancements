@@ -41,6 +41,11 @@ What this suite pins:
     fast path (montecarlo, sweep) re-draws the netlist expression in place,
     and that draw is the nominal the model's delta sits on for the sample,
     as the re-source path has it; the savemc row reads @mm[r] = mm:r + delta;
+  * (Enhancement-618, hunt F19) the restore the option-off run performs
+    keeps a value a bracketed loop command has just pushed (`unset osdimc`
+    then `sweep rr 500 1500 500` reads 500, 1000, 1500, not 1000, 1000,
+    1500), still restores over a completed command's leftovers, and the
+    savemc rows after `unset osdimc` read the devices;
   * switching the option off restores every drawn parameter to nominal;
   * a model without statistics attributes is untouched by the option;
   * diagnostics: unknown dist / non-real param / localparam / dist-without-
@@ -752,6 +757,86 @@ ok = ("fast .param path armed" in out and len(rows) == 4 and len({round(r[0], 6)
 check("[39] F18: `sweep` on the fast path -- a random model bind is re-drawn per point and the sweep's ONE trial "
       "delta sits on each draw (it was pinned off for the whole sweep); the swept dr itself stays pinned at 0/10/20",
       ok, "" if ok else f"rows={rows} {out[-200:]}")
+
+# ---- [12] Enhancement-618 (hunt F19): the option-off restore and a loop's push
+# `unset osdimc` then `sweep rr 500 1500 500`: the sweep's first point pushed
+# 500 through the machine setter, and the restore that the option-off run
+# performs wrote the nominal 1000 over it -- readback 1000, 1000, 1500. A
+# value a bracketed loop command has just pushed is kept now; a pin left by a
+# completed command (a .dc sweep) still lets the restore proceed. And the
+# savemc rows after `unset osdimc` read the devices instead of repeating the
+# last trial's draws.
+print("\nEnhancement-618: the restore after `unset osdimc` keeps a loop command's push:")
+F19 = f"""osdimc F19
+V1 a 0 1
+N1 a 0 mm
+.model mm smcres r={{rr}}
+.param rr = 1000
+.option osdimc mcseed=1 savemc=_mc_f19.csv
+.control
+pre_osdi {os.path.basename(OSDI)}
+op
+op
+unset osdimc
+sweep rr 500 1500 500 -output r=@mm[r] -analysis op
+print r[0] r[1] r[2]
+.endc
+.end
+"""
+out = run_deck(F19, "f19")
+r = seq(out, "r[0]") + seq(out, "r[1]") + seq(out, "r[2]")
+csv = os.path.join(HERE, "_mc_f19.csv")
+rows = mc_rows(csv) if os.path.exists(csv) else []
+ok = (r == [500.0, 1000.0, 1500.0] and len(rows) == 5
+      and [x[1] for x in rows[2:]] == [500.0, 1000.0, 1500.0] and [x[3] for x in rows[2:]] == [0.0, 0.0, 0.0]
+      and rows[1][1] != 1000.0)
+check("[40] F19: `unset osdimc` then `sweep rr 500 1500 500`: the sweep reads 500, 1000, 1500 (the first point's "
+      "push is kept); dr is restored to 0 at that point; the savemc rows carry those values, not the last draw",
+      ok, "" if ok else f"r={r} rows={rows} {out[-300:]}")
+
+DCOFF = f"""osdimc F19 counter-case
+V1 a 0 1
+N1 a 0 mm
+.model mm smcres r=1k
+.option osdimc mcseed=1
+.control
+pre_osdi {os.path.basename(OSDI)}
+op
+op
+dc @mm[r] 900 1100 100
+unset osdimc
+op
+print @mm[r] @n1[dr]
+.endc
+.end
+"""
+out = run_deck(DCOFF, "dcoff")
+ok = seq(out, "@mm[r]") == [1000.0] and seq(out, "@n1[dr]") == [0.0]
+check("[41] F19: a completed `.dc @mm[r]` sweep (its pins are leftovers) before `unset osdimc`: the restore still "
+      "puts 1000 and 0 back",
+      ok, "" if ok else f"r={seq(out, '@mm[r]')} dr={seq(out, '@n1[dr]')}")
+
+MCOFF = f"""osdimc F19 montecarlo after unset
+V1 a 0 1
+N1 a 0 mm
+.model mm smcres r={{agauss(1000,300,3)}}
+.option osdimc mcseed=1 savemc=_mc_mcoff.csv
+.control
+pre_osdi {os.path.basename(OSDI)}
+op
+op
+unset osdimc
+montecarlo 3 -analysis op -expr r=@mm[r]
+.endc
+.end
+"""
+out = run_deck(MCOFF, "mcoff")
+csv = os.path.join(HERE, "_mc_mcoff.csv")
+rows = mc_rows(csv) if os.path.exists(csv) else []
+ok = (len(rows) == 5 and all(abs(x[1] - x[0]) < 1e-9 for x in rows[2:]) and len({round(x[0], 6) for x in rows[2:]}) == 3
+      and [x[3] for x in rows[2:]] == [0.0, 0.0, 0.0])
+check("[42] F19: `montecarlo` right after `unset osdimc` (no hold): each sample runs at its netlist draw, dr at 0",
+      ok, "" if ok else f"rows={rows} {out[-300:]}")
 
 # ----------------------------------------------------------------------------
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks}")

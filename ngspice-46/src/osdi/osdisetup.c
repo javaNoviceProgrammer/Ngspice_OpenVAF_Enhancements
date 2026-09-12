@@ -2872,7 +2872,17 @@ void OSDImcNewRun(CKTcircuit *ckt) {
   }
 
   if (!osdimc_enabled()) {
-    /* option switched off: put every drawn parameter back to its nominal */
+    /* option switched off: put every drawn parameter back to its nominal.
+     * Enhancement-618 (hunt F19): not over a value a loop command has just
+     * pushed. `unset osdimc` followed by `sweep rr 500 1500 500`: the
+     * sweep's first point wrote 500 through the machine setter -- which
+     * pins the entry -- and this restore, running at that point's analysis,
+     * wrote the nominal 1000 over it (readback 1000, 1000, 1500). Under an
+     * open hold the pins are the bracketed command's own writes and the
+     * command restores what it pushed when it ends; outside a hold a pin
+     * is a leftover of a command that has completed (a .dc sweep restored
+     * the DRAWN value it found), so the restore proceeds. */
+    const bool keep_pushed = osdimc_hold_depth > 0;
     if (osdimc_active) {
       for (int type = 0; type < DEVmaxnum; type++) {
         if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type)) {
@@ -2892,7 +2902,8 @@ void OSDImcNewRun(CKTcircuit *ckt) {
             if (id >= descr->num_instance_params) {
               OsdiMcNominal *e = osdimc_find(model, id);
               if (e) {
-                if (!e->stale)  /* Enhancement-614: the setup re-resolves a stale one */
+                if (!e->stale &&  /* Enhancement-614: the setup re-resolves a stale one */
+                    !(keep_pushed && e->pinned))         /* Enhancement-618 */
                   osdimc_write(descr, NULL, model, id, e->nominal);
                 osdimc_restore_given(entry, NULL, model, id, e); /* E-555 */
               }
@@ -2902,7 +2913,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
                 void *inst = osdi_instance_data(entry, gen_inst);
                 OsdiMcNominal *e = osdimc_find(inst, id);
                 if (e) {
-                  if (!e->stale)
+                  if (!e->stale && !(keep_pushed && e->pinned))
                     osdimc_write(descr, inst, model, id, e->nominal);
                   osdimc_restore_given(entry, inst, model, id, e); /* E-555 */
                 }

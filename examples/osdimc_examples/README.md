@@ -76,4 +76,14 @@ contradicting itself. The fast path's re-draw is now the sample's nominal
 per sample on both paths; under `sweep` the sweep's one trial delta sits on
 each point's fresh draw instead of being pinned off for the whole sweep.
 
-Run `python3 verify_osdimc.py` — 39 checks, both solvers.
+Enhancement-618 (checks 40–42): the restore that the first run after `unset
+osdimc` performs wrote the nominal over a value a loop command had just
+pushed — `sweep rr 500 1500 500` right after the `unset` read 1000, 1000,
+1500. Under an open hold a pinned entry is the bracketed command's own write
+and is kept (the command restores what it pushed when it ends); outside a
+hold a pin is a completed command's leftover and the restore proceeds (a
+`.dc` sweep before the `unset` still gets its nominal back). The `savemc`
+rows after `unset osdimc` read the devices instead of repeating the last
+trial's draws.
+
+Run `python3 verify_osdimc.py` — 42 checks, both solvers.
