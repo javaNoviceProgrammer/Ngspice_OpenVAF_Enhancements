@@ -389,6 +389,74 @@ mcs_note_write_fail(void)
     noted_write_fail = 1;
 }
 
+/* Enhancement-615 (hunt F17): the names this session has written, each with
+ * the title of the deck that wrote it. A later deck that names the same file
+ * used to replace it without a word -- E-610's "a different deck starts its
+ * own file" was an overwrite when the name is fixed. Such a deck now gets
+ * `<stem>_2.<ext>` (the first not written by this session) and says so. A
+ * name from an earlier ngspice run is not protected: a fixed name means the
+ * same file on every run, as for any output file. */
+static struct mcs_used {
+    char *path;
+    char *title;
+} *used;
+static int nused, capused;
+
+static const char *
+mcs_used_by(const char *p)
+{
+    int i;
+    for (i = 0; i < nused; i++)
+        if (eq(used[i].path, p))
+            return used[i].title;
+    return NULL;
+}
+
+static void
+mcs_note_used(const char *p, const char *title)
+{
+    if (nused == capused) {
+        capused = capused ? 2 * capused : 8;
+        used = TREALLOC(struct mcs_used, used, capused);
+    }
+    used[nused].path = copy(p);
+    used[nused].title = copy(title && *title ? title : "(untitled)");
+    nused++;
+}
+
+static void
+mcs_free_used(void)
+{
+    int i;
+    for (i = 0; i < nused; i++) {
+        tfree(used[i].path);
+        tfree(used[i].title);
+    }
+    tfree(used);
+    nused = capused = 0;
+}
+
+/* `<stem>_<k>.<ext>` for the smallest k >= 2 this session has not written */
+static char *
+mcs_unused_variant(const char *p)
+{
+    const char *base = strrchr(p, '/');
+#if defined(_WIN32)
+    const char *bs = strrchr(p, '\\');
+    if (bs && (!base || bs > base))
+        base = bs;
+#endif
+    const char *dot = strrchr(base ? base : p, '.');
+    int k;
+    for (k = 2; ; k++) {
+        char *cand = dot ? tprintf("%.*s_%d%s", (int) (dot - p), p, k, dot)
+                         : tprintf("%s_%d", p, k);
+        if (!mcs_used_by(cand))
+            return cand;
+        tfree(cand);
+    }
+}
+
 /* ------------------------------------------------------------ csv / txt */
 
 static void
@@ -743,6 +811,7 @@ MCSAVEfinish(void)
 {
     mcs_complete();
     mcs_reset_file();
+    mcs_free_used();                            /* Enhancement-615 */
 }
 
 void
@@ -800,6 +869,19 @@ MCSAVErun(const char *analysis, int ok)
         owner_file = copy(ft_curckt->ci_filename ? ft_curckt->ci_filename : "");
         owner_name = copy(ft_curckt->ci_name ? ft_curckt->ci_name : "");
         path = mcs_path(given);
+        /* Enhancement-615 (hunt F17): a name another deck wrote in this
+         * session is kept; this deck gets the next free variant */
+        if (given) {
+            const char *by = mcs_used_by(path);
+            if (by) {
+                char *alt = mcs_unused_variant(path);
+                fprintf(cp_out, "Note: savemc: %s holds the rows of '%s' from earlier in "
+                                "this session and is kept; this deck's rows go to %s\n",
+                        path, by, alt);
+                tfree(path);
+                path = alt;
+            }
+        }
         /* Enhancement-613: a given name's directories are made; a name that
          * still cannot be opened is reported with the reason and the rows go
          * to the dated default beside the netlist; when that fails too the
@@ -827,6 +909,7 @@ MCSAVErun(const char *analysis, int ok)
             tfree(given);
             return;
         }
+        mcs_note_used(path, owner_name);        /* Enhancement-615 */
         fprintf(cp_out, "Note: savemc: recording the %d parameter%s with statistics, "
                         "one row per analysis run, to %s\n",
                 n, n == 1 ? "" : "s", path);

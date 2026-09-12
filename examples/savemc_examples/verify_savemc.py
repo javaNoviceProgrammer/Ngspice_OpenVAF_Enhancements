@@ -52,6 +52,10 @@ Checks:
   [16] (Enhancement-613) the directory removed while the file is open: the
       next rewrite says so once, the rows are kept in memory, and the file is
       complete once the directory is back
+  [17] (Enhancement-615) a second deck sourced in one session with the SAME
+      fixed name goes to <stem>_2.<ext> and says whose rows the first file
+      holds; a third to _3; the first file keeps its rows. A separate ngspice
+      run with the same fixed name replaces the file, as any output file
 """
 import glob
 import os
@@ -97,7 +101,8 @@ def clean():
     for f in glob.glob(os.path.join(WORK, "mcparams_*")) + glob.glob(os.path.join(RUNDIR, "mcparams_*")) \
             + glob.glob(os.path.join(WORK, "myrun.*")) + glob.glob(os.path.join(WORK, "MixedCase", "*")) \
             + glob.glob(os.path.join(WORK, "dir with space", "*")) + glob.glob(os.path.join(WORK, "R*sum*.csv")) \
-            + glob.glob(os.path.join(WORK, "NewDir", "*", "*")) + glob.glob(os.path.join(WORK, "NewDir", "*.xlsx")):
+            + glob.glob(os.path.join(WORK, "NewDir", "*", "*")) + glob.glob(os.path.join(WORK, "NewDir", "*.xlsx")) \
+            + glob.glob(os.path.join(WORK, "Shared*.csv")):
         os.remove(f)
 
 
@@ -377,6 +382,34 @@ ok = (len(rows) == 4 and head[-3:] == ["ia", "ib", "ic"] and rows[0][-3] and row
 check("[16] ...and the file is complete once the directory is back: four rows, ia/ib/ic columns filled where written",
       ok, "" if ok else f"{head} {rows}")
 shutil.rmtree(os.path.join(WORK, "NewDir"), ignore_errors=True)
+
+# ------------------------------------------------------------ [17] ---
+# Enhancement-615: a second deck sourced in one session with the same fixed
+# name replaced the first deck's file without a word.
+clean()
+with open(os.path.join(WORK, "other.cir"), "w") as f:
+    f.write("* savemc other deck\n.option savemc=Shared.csv\nv1 in 0 dc 1\nr1 in out {agauss(3k, 50, 1)}\n"
+            "r2 out 0 1k\n.control\nop\n.endc\n.end\n")
+with open(os.path.join(WORK, "first.cir"), "w") as f:
+    f.write("* savemc first deck\n.option savemc=Shared.csv\n" + DIV + ".control\nop\nreset\nop\n.endc\n.end\n")
+out = run("v1 in 0 dc 1\nr1 in 0 1k\n", "t17",
+          f"source {os.path.join(WORK, 'first.cir')}\nsource {os.path.join(WORK, 'other.cir')}\n"
+          f"source {os.path.join(WORK, 'first.cir')}")
+p1, p2, p3 = (os.path.join(WORK, n) for n in ("Shared.csv", "Shared_2.csv", "Shared_3.csv"))
+rows = [len(read_csv(p)[1]) if os.path.exists(p) else -1 for p in (p1, p2, p3)]
+heads = [read_csv(p)[0][3:] if os.path.exists(p) else [] for p in (p1, p2, p3)]
+note2 = f"Note: savemc: {p1} holds the rows of '* savemc first deck' from earlier in this session and is kept; this deck's rows go to {p2}"
+note3 = f"holds the rows of '* savemc first deck' from earlier in this session and is kept; this deck's rows go to {p3}"
+ok = rows[0] == 2 and rows[1] == 1 and heads[1] == ["r1"] and note2 in out
+check("[17] the same fixed name from a second deck: Shared_2.csv, the note names the first deck; the first file keeps its two rows",
+      ok, "" if ok else f"rows={rows} heads={heads} {out[-400:]}")
+ok = rows[2] == 2 and heads[2] == heads[0] and note3 in out and out.count(NOTE) == 3
+check("[17] ...the first deck sourced again after it: Shared_3.csv (its own file is kept too), with its two rows",
+      ok, "" if ok else f"rows={rows} {out[-300:]}")
+out = run(".option savemc=Shared.csv\n" + DIV, "t17b", "op")
+ok = os.path.exists(p1) and len(read_csv(p1)[1]) == 1 and "holds the rows of" not in out
+check("[17] a separate ngspice run with the same fixed name replaces the file, without the note (one row now)",
+      ok, "" if ok else out[-300:])
 
 clean()
 print(f"\n{passed}/{checks} checks passed")

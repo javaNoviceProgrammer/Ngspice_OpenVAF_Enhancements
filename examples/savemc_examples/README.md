@@ -18,6 +18,9 @@ Draws.csv"`, `savemc=Résumé_MC.csv` write exactly those (checks 11–13). Sinc
 Enhancement-613 the directories of a name are made (`savemc=NewDir/Sub/Rows.csv`
 creates both levels), a name that cannot be opened is reported with the reason
 and the rows go to the dated default beside the deck, and a later open that
-fails is said once with the rows kept for the next try (checks 14–16).
+fails is said once with the rows kept for the next try (checks 14–16). Since
+Enhancement-615 a different deck sourced in the same session with the same
+fixed name goes to `<stem>_2.<ext>` with a note naming the first deck, instead
+of replacing its file; a separate ngspice run still replaces it (check 17).
 
-Run: `python3 verify_savemc.py` (30 checks per solver, both solvers).
+Run: `python3 verify_savemc.py` (33 checks per solver, both solvers).

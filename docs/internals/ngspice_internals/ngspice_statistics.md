@@ -891,7 +891,9 @@ for a named file (an absolute path is taken as is; the name keeps its case and
 its bytes, and a quoted name its spaces — E-612; its directories are made, and
 a name that cannot be opened is said with the reason and the rows go to the
 dated default beside the netlist instead — E-613). One file per deck: a `reset`
-continues it, every `montecarlo` sample is a row, `nosavemc` turns it off.
+continues it, every `montecarlo` sample is a row, `nosavemc` turns it off; a
+different deck sourced in the same session with the same fixed name gets
+`<stem>_2.<ext>` and a note saying whose rows the first file holds (E-615).
 **`.option automc_save`** (alias `osdimc_save`, same values) records the OSDI
 draws only.
 
