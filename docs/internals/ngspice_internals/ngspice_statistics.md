@@ -889,9 +889,13 @@ Columns are fixed by the first row and grow if a later row brings a new name.
 The file is `mcparams_<YYYYMMDD>_<HHMMSS>.<ext>` beside the netlist (the working
 directory for a deck not read from a file), made unique within a second;
 `savemc=csv` (default), `savemc=txt` (tab-separated), `savemc=excel` (a genuine
-`.xlsx`, rewritten every 25 rows and at exit; a model parameter's name — `rm:r`,
-`@rm[r]` — is bold in the header and an instance parameter's regular, E-617) or
-`savemc=<name>.<csv|txt|xlsx>`
+`.xlsx`, rewritten every 25 rows and at exit; in the header a model parameter's
+name — `rm:r`, `@rm[r]` — is bold, an instance parameter's regular and a
+`writemc` column's blue, E-617/E-619; `.option savemc_font="Times New Roman"
+savemc_fontsize=12 savemc_model=bold+navy savemc_instance=italic
+savemc_writemc=red+underline` set the font and the three styles — a style is
+`bold`, `italic`, `underline`, `regular`, a colour name or a hex `RRGGBB`,
+joined with `+`) or `savemc=<name>.<csv|txt|xlsx>`
 for a named file (an absolute path is taken as is; the name keeps its case and
 its bytes, and a quoted name its spaces — E-612; its directories are made, and
 a name that cannot be opened is said with the reason and the rows go to the

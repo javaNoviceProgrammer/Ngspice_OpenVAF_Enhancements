@@ -11,8 +11,11 @@ devices as `@<model>[<param>]` / `@<instance>[<param>]`. `.option automc_save`
 (alias `osdimc_save`) records the OSDI parameters only. A `reset` continues the
 file (every `montecarlo` sample is a row), a different deck starts another; a
 failed run is a row marked `failed`; `excel` writes a genuine `.xlsx`, whose
-header sets a model parameter's name in bold and an instance parameter's in the
-regular font (Enhancement-617, check 18).
+header sets a model parameter's name in bold, an instance parameter's in the
+regular font (Enhancement-617, check 18) and a `writemc` column's in blue;
+`.option savemc_font`, `savemc_fontsize`, `savemc_model`, `savemc_instance`
+and `savemc_writemc` set the font and the three styles — `bold+navy`,
+`italic`, `red+underline`, a hex `RRGGBB` (Enhancement-619, check 19).
 
 Since Enhancement-612 the file name keeps its case and its bytes, and a quoted
 name its spaces: `savemc=MixedCase/Draws.csv`, `savemc="dir with space/My
@@ -25,4 +28,4 @@ Enhancement-615 a different deck sourced in the same session with the same
 fixed name goes to `<stem>_2.<ext>` with a note naming the first deck, instead
 of replacing its file; a separate ngspice run still replaces it (check 17).
 
-Run: `python3 verify_savemc.py` (34 checks per solver, both solvers).
+Run: `python3 verify_savemc.py` (36 checks per solver, both solvers).

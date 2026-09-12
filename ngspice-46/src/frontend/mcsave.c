@@ -652,8 +652,9 @@ cell_ref(DSTRING *d, int col0, int row1)
     ds_cat_printf(d, "%d", row1);
 }
 
-/* Enhancement-617: style 1 is the bold font, for a model parameter's name
- * in the header row (an instance parameter's stays regular) */
+/* Enhancement-617: a header cell's style tells a model parameter's name
+ * (bold) from an instance parameter's (regular); Enhancement-619 adds the
+ * writemc columns (blue) and the options that set the three */
 static void
 xlsx_str_cell_style(DSTRING *d, int col0, int row1, const char *s, int style)
 {
@@ -680,6 +681,141 @@ xlsx_num_cell(DSTRING *d, int col0, int row1, double v)
     ds_cat_str(d, "<c r=\"");
     cell_ref(d, col0, row1);
     ds_cat_printf(d, "\"><v>%.12g</v></c>", v);
+}
+
+/* ------------------------------------------------------------ Enhancement-619:
+ * the workbook's fonts. `.option savemc_font=<name>` (Calibri) and
+ * `savemc_fontsize=<pt>` (11) set the font of every cell; the header row
+ * tells the three kinds of column apart by style -- `savemc_model` (bold),
+ * `savemc_instance` (regular), `savemc_writemc` (blue) -- each a list of
+ * `bold`, `italic`, `underline`, `regular`, a colour name (black blue red
+ * green orange gray purple teal navy brown magenta cyan yellow white) or a
+ * hex `RRGGBB`, joined with `+` (`bold+navy`; `/`, `:` and `|` do as well --
+ * the .option card's lexer splits a value at a comma). An unknown token is
+ * said once and ignored. */
+enum { STYLE_BASE, STYLE_MODEL, STYLE_INSTANCE, STYLE_WRITEMC, NSTYLES };
+
+struct mcs_font {
+    int bold, italic, underline;
+    char color[7];                  /* RRGGBB, or "" for the default */
+};
+
+static const struct { const char *name; const char *rgb; } mcs_colors[] = {
+    { "black", "000000" }, { "blue", "0000FF" }, { "red", "FF0000" },
+    { "green", "008000" }, { "orange", "FFA500" }, { "gray", "808080" },
+    { "grey", "808080" }, { "purple", "800080" }, { "teal", "008080" },
+    { "navy", "000080" }, { "brown", "A52A2A" }, { "magenta", "FF00FF" },
+    { "cyan", "00FFFF" }, { "yellow", "FFFF00" }, { "white", "FFFFFF" },
+};
+
+static int
+mcs_is_hex6(const char *t)
+{
+    int i;
+    for (i = 0; i < 6; i++)
+        if (!isxdigit((unsigned char) t[i]))
+            return 0;
+    return t[6] == '\0';
+}
+
+/* parse one style spec into f, starting from the kind's default */
+static void
+mcs_font_parse(const char *opt, const char *spec, struct mcs_font *f)
+{
+    static char *said[NSTYLES * 4];         /* the tokens already complained about */
+    static int nsaid;
+    const char *p = spec;
+
+#define MCS_STYLE_SEP(c) ((c) == '+' || (c) == ',' || (c) == '/' || (c) == ':' || \
+                          (c) == '|' || isspace_c(c))
+    while (*p) {
+        char tok[64];
+        int n = 0, i, known = 0;
+        while (*p && MCS_STYLE_SEP(*p))
+            p++;
+        while (*p && !MCS_STYLE_SEP(*p) && n < (int) sizeof tok - 1)
+            tok[n++] = (char) tolower_c(*p++);
+        tok[n] = '\0';
+        if (!n)
+            continue;
+        if (eq(tok, "bold")) {
+            f->bold = 1; known = 1;
+        } else if (eq(tok, "italic")) {
+            f->italic = 1; known = 1;
+        } else if (eq(tok, "underline")) {
+            f->underline = 1; known = 1;
+        } else if (eq(tok, "regular") || eq(tok, "plain") || eq(tok, "normal")) {
+            f->bold = f->italic = f->underline = 0; f->color[0] = '\0'; known = 1;
+        } else if (mcs_is_hex6(tok + (tok[0] == '#'))) {
+            const char *h = tok + (tok[0] == '#');
+            for (i = 0; i < 6; i++)
+                f->color[i] = (char) toupper_c(h[i]);
+            f->color[6] = '\0';
+            known = 1;
+        } else {
+            for (i = 0; i < (int) (sizeof mcs_colors / sizeof mcs_colors[0]); i++)
+                if (eq(tok, mcs_colors[i].name)) {
+                    strcpy(f->color, mcs_colors[i].rgb);
+                    known = 1;
+                    break;
+                }
+        }
+        if (!known) {
+            for (i = 0; i < nsaid; i++)
+                if (eq(said[i], tok))
+                    break;
+            if (i == nsaid && nsaid < (int) (sizeof said / sizeof said[0])) {
+                fprintf(cp_err, "Warning: .option %s: '%s' is not a style -- bold, italic, "
+                                "underline, regular, a colour name or RRGGBB, joined with "
+                                "+; ignored\n", opt, tok);
+                said[nsaid++] = copy(tok);
+            }
+        }
+    }
+}
+
+/* the four fonts as the options have them now */
+static void
+mcs_fonts(char *name, size_t namesz, double *size, struct mcs_font f[NSTYLES])
+{
+    static const char *const optname[NSTYLES] = {
+        NULL, "savemc_model", "savemc_instance", "savemc_writemc" };
+    static const char *const dflt[NSTYLES] = { "", "bold", "regular", "blue" };
+    char spec[256];
+    int k;
+
+    if (!cp_getvar("savemc_font", CP_STRING, name, namesz) || !name[0])
+        (void) snprintf(name, namesz, "%s", "Calibri");
+    if (!cp_getvar("savemc_fontsize", CP_REAL, size, 0) || !(*size > 0.0)) {
+        int n;
+        *size = cp_getvar("savemc_fontsize", CP_NUM, &n, 0) && n > 0 ? (double) n : 11.0;
+    }
+    for (k = 0; k < NSTYLES; k++) {
+        memset(&f[k], 0, sizeof f[k]);
+        if (!optname[k])
+            continue;
+        mcs_font_parse(optname[k], dflt[k], &f[k]);
+        if (cp_getvar(optname[k], CP_STRING, spec, sizeof spec))
+            mcs_font_parse(optname[k], spec, &f[k]);
+    }
+}
+
+static void
+xlsx_font_xml(DSTRING *d, const struct mcs_font *f, const char *name, double size)
+{
+    ds_cat_str(d, "<font>");
+    if (f->bold)
+        ds_cat_str(d, "<b/>");
+    if (f->italic)
+        ds_cat_str(d, "<i/>");
+    if (f->underline)
+        ds_cat_str(d, "<u/>");
+    ds_cat_printf(d, "<sz val=\"%g\"/>", size);
+    if (f->color[0])
+        ds_cat_printf(d, "<color rgb=\"FF%s\"/>", f->color);
+    ds_cat_str(d, "<name val=\"");
+    xml_text(d, name);
+    ds_cat_str(d, "\"/></font>");
 }
 
 static void
@@ -710,22 +846,38 @@ xlsx_write(void)
         "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>"
         "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>"
         "</Relationships>";
-    static const char *styles =
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-        "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
-        "<fonts count=\"2\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font>"
-        "<font><b/><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>"
-        "<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills>"
-        "<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>"
-        "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>"
-        "<cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>"
-        "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyFont=\"1\"/></cellXfs>"
-        "<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>"
-        "</styleSheet>";
     DS_CREATE(sheet, 4096);
+    DS_CREATE(styles, 2048);
     struct zent z[6];
     FILE *f;
     int r, i, c;
+    char fname[128];
+    double fsize;
+    struct mcs_font fonts[NSTYLES];
+
+    /* Enhancement-619: font 0 is every cell's; 1, 2, 3 the header row's
+     * styles for a model, an instance and a writemc column */
+    mcs_fonts(fname, sizeof fname, &fsize, fonts);
+    ds_cat_str(&styles,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
+        "<fonts count=\"4\">");
+    for (i = 0; i < NSTYLES; i++)
+        xlsx_font_xml(&styles, &fonts[i], fname, fsize);
+    ds_cat_str(&styles,
+        "</fonts>"
+        "<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills>"
+        "<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>"
+        "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>"
+        "<cellXfs count=\"4\">");
+    for (i = 0; i < NSTYLES; i++)
+        ds_cat_printf(&styles,
+            "<xf numFmtId=\"0\" fontId=\"%d\" fillId=\"0\" borderId=\"0\" xfId=\"0\"%s/>",
+            i, i ? " applyFont=\"1\"" : "");
+    ds_cat_str(&styles,
+        "</cellXfs>"
+        "<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>"
+        "</styleSheet>");
 
     ds_cat_str(&sheet,
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
@@ -736,7 +888,9 @@ xlsx_write(void)
     xlsx_str_cell(&sheet, 2, 1, "status");
     for (i = 0, c = 3; i < ncols; i++)
         if (col_wanted(i))
-            xlsx_str_cell_style(&sheet, c++, 1, cols[i].name, cols[i].model ? 1 : 0);
+            xlsx_str_cell_style(&sheet, c++, 1, cols[i].name,
+                                cols[i].written ? STYLE_WRITEMC :
+                                cols[i].model ? STYLE_MODEL : STYLE_INSTANCE);
     ds_cat_str(&sheet, "</row>");
     for (r = 0; r < nrows; r++) {
         ds_cat_printf(&sheet, "<row r=\"%d\">", r + 2);
@@ -754,6 +908,7 @@ xlsx_write(void)
     if (!f) {
         mcs_note_write_fail();
         ds_free(&sheet);
+        ds_free(&styles);
         return;
     }
     noted_write_fail = 0;
@@ -761,11 +916,12 @@ xlsx_write(void)
     zip_entry(f, &z[1], "_rels/.rels", rels, strlen(rels));
     zip_entry(f, &z[2], "xl/workbook.xml", workbook, strlen(workbook));
     zip_entry(f, &z[3], "xl/_rels/workbook.xml.rels", wbrels, strlen(wbrels));
-    zip_entry(f, &z[4], "xl/styles.xml", styles, strlen(styles));
+    zip_entry(f, &z[4], "xl/styles.xml", ds_get_buf(&styles), ds_get_length(&styles));
     zip_entry(f, &z[5], "xl/worksheets/sheet1.xml", ds_get_buf(&sheet), ds_get_length(&sheet));
     zip_finish(f, z, 6);
     fclose(f);
     ds_free(&sheet);
+    ds_free(&styles);
 }
 
 /* ------------------------------------------------------------ the rows */

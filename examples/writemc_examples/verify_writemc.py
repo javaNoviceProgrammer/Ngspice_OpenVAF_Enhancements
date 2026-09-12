@@ -183,8 +183,8 @@ ok = False
 if fs:
     z = zipfile.ZipFile(fs[0]); x = z.read("xl/worksheets/sheet1.xml").decode()
     xrows = re.findall(r'<row r="(\d+)">(.*?)</row>', x)
-    cells = [[c[0] or c[1] for c in re.findall(r'<c r="[A-Z]+\d+"(?: t="inlineStr")?>(?:<is><t>(.*?)</t></is>|<v>(.*?)</v>)</c>', b)]
-             for _, b in xrows]
+    cells = [[c[0] or c[1] for c in re.findall(r'<c r="[A-Z]+\d+"(?: s="\d+")?(?: t="inlineStr")?>(?:<is><t>(.*?)</t></is>|<v>(.*?)</v>)</c>', b)]
+             for _, b in xrows]     # E-617/E-619: a header cell may carry a style
     ok = z.testzip() is None and cells[0] == ["trial", "analysis", "status", "r1", "pk"] and len(cells) == 9 \
         and all(len(c) == 5 for c in cells[1:])
 check("[6] savemc=excel: every row's writemc value is in the .xlsx at exit", ok, str(fs))

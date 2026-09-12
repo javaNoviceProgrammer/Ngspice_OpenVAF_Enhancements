@@ -60,6 +60,12 @@ Checks:
       name in bold -- a `.model` card's slot (`rm:r`), an OSDI model parameter
       (`@rm[r]`) -- and an instance parameter's (`r1`, `n1:dr`, `x1.c`,
       `@n1[dr]`) in the regular font
+  [19] (Enhancement-619) a writemc / -writemc column's header is blue; the
+      workbook's fonts are options: savemc_font (a name, quoted when it has
+      spaces), savemc_fontsize, and savemc_model / savemc_instance /
+      savemc_writemc as `+`-joined style lists (bold+navy, italic,
+      red+underline, a hex RRGGBB); an unknown token is said once; none of
+      the five draws an "unknown option" warning
 """
 import glob
 import os
@@ -106,7 +112,8 @@ def clean():
             + glob.glob(os.path.join(WORK, "myrun.*")) + glob.glob(os.path.join(WORK, "MixedCase", "*")) \
             + glob.glob(os.path.join(WORK, "dir with space", "*")) + glob.glob(os.path.join(WORK, "R*sum*.csv")) \
             + glob.glob(os.path.join(WORK, "NewDir", "*", "*")) + glob.glob(os.path.join(WORK, "NewDir", "*.xlsx")) \
-            + glob.glob(os.path.join(WORK, "Shared*.csv")) + glob.glob(os.path.join(WORK, "Bold.xlsx")):
+            + glob.glob(os.path.join(WORK, "Shared*.csv")) + glob.glob(os.path.join(WORK, "Bold.xlsx")) \
+            + glob.glob(os.path.join(WORK, "Fonts*.xlsx")):
         os.remove(f)
 
 
@@ -419,23 +426,69 @@ check("[17] a separate ngspice run with the same fixed name replaces the file, w
 # Enhancement-617: the xlsx header tells a model parameter from an instance
 # parameter by its font -- bold for a model card's (a `.model` slot drawn in
 # the netlist, an OSDI model parameter), regular for the rest.
+# Enhancement-619: a writemc column's header is blue; the fonts are options.
+
+
+def xlsx_fonts(path):
+    """header name -> (bold, italic, underline, rgb, font name, size), from the sheet and styles"""
+    out = {}
+    if not (os.path.exists(path) and zipfile.is_zipfile(path)):
+        return out
+    with zipfile.ZipFile(path) as z:
+        st = z.read("xl/styles.xml").decode()
+        fonts = re.findall(r"<font>(.*?)</font>", st)
+        xfs = re.findall(r'<xf [^>]*fontId="(\d+)"[^>]*/>', re.search(r"<cellXfs.*?</cellXfs>", st).group(0))
+        row1 = re.search(r'<row r="1">(.*?)</row>', z.read("xl/worksheets/sheet1.xml").decode()).group(1)
+        for style, name in re.findall(r'<c r="[A-Z]+1"(?: s="(\d+)")? t="inlineStr"><is><t>(.*?)</t>', row1):
+            fx = fonts[int(xfs[int(style or 0)])]
+            m = re.search(r'<color rgb="FF([0-9A-F]{6})"/>', fx)
+            out[name] = ("<b/>" in fx, "<i/>" in fx, "<u/>" in fx, m.group(1) if m else None,
+                         re.search(r'<name val="(.*?)"/>', fx).group(1), float(re.search(r'<sz val="(.*?)"/>', fx).group(1)))
+    return out
+
+
 clean()
 MIXED = (".param rr = agauss(20, 3, 3)\n.subckt load a b c=1u\nC1 a b {c}\n.ends\nv1 in 0 dc 1\nR1 in m {rr}\n"
          "x1 m 0 load c={gauss(1u, 0.1, 1)}\nN1 m 0 sm dr={agauss(0,30,3)}\nN2 m 0 sm\n"
          ".model sm st r={agauss(1000,300,3)}\n")
 out = run(".option savemc=Bold.xlsx osdimc mcseed=1\n" + PRE + MIXED, "t18", "op\nreset\nop")
-path = os.path.join(WORK, "Bold.xlsx")
-bold, plain, has_font = [], [], False
-if os.path.exists(path) and zipfile.is_zipfile(path):
-    with zipfile.ZipFile(path) as z:
-        has_font = "<font><b/>" in z.read("xl/styles.xml").decode()
-        row1 = re.search(r'<row r="1">(.*?)</row>', z.read("xl/worksheets/sheet1.xml").decode()).group(1)
-        for st, name in re.findall(r'<c r="[A-Z]+1"( s="1")? t="inlineStr"><is><t>(.*?)</t>', row1):
-            (bold if st else plain).append(name)
-ok = (has_font and sorted(bold) == sorted(["sm:r", f"{A}sm[r]"])
-      and sorted(plain) == sorted(["trial", "analysis", "status", "r1", "x1.c", "c.x1.c1", "n1:dr", f"{A}n2[dr]", f"{A}n1[dr]"]))
+fx = xlsx_fonts(os.path.join(WORK, "Bold.xlsx"))
+bold = sorted(n for n, f in fx.items() if f[0])
+plain = sorted(n for n, f in fx.items() if not f[0])
+ok = (bold == sorted(["sm:r", f"{A}sm[r]"])
+      and plain == sorted(["trial", "analysis", "status", "r1", "x1.c", "c.x1.c1", "n1:dr", f"{A}n2[dr]", f"{A}n1[dr]"])
+      and all(f[1:4] == (False, False, None) for f in fx.values()))
 check("[18] savemc=Bold.xlsx: the header sets sm:r and @sm[r] (model) in bold, r1 / x1.c / c.x1.c1 / n1:dr / @n1[dr] / @n2[dr] (instance) regular",
-      ok, "" if ok else f"bold={bold} plain={plain} font={has_font} {out[-200:]}")
+      ok, "" if ok else f"bold={bold} plain={plain} {out[-200:]}")
+
+# ------------------------------------------------------------ [19] ---
+clean()
+WMC = (".param rr = agauss(20, 3, 3)\nv1 in 0 dc 1\nR1 in m {rr}\nN1 m 0 sm dr={agauss(0,30,3)}\n"
+       ".model sm st r={agauss(1000,300,3)}\n")
+out = run(".option savemc=Fonts.xlsx osdimc mcseed=1\n" + PRE + WMC, "t19a",
+          "op\nwritemc ia=i(v1)\nmontecarlo 2 -analysis op -expr rr=@sm[r] -writemc pk=v(m)")
+fx = xlsx_fonts(os.path.join(WORK, "Fonts.xlsx"))
+ok = (set(fx) == {"trial", "analysis", "status", "r1", "n1:dr", "sm:r", f"{A}n1[dr]", f"{A}sm[r]", "ia", "pk"}
+      and fx["ia"] == (False, False, False, "0000FF", "Calibri", 11.0) and fx["pk"] == fx["ia"]
+      and fx["sm:r"] == (True, False, False, None, "Calibri", 11.0) and fx["r1"] == (False, False, False, None, "Calibri", 11.0)
+      and fx["trial"] == fx["r1"])
+check("[19] the defaults: a writemc column (`writemc ia=`) and a -writemc column (`-writemc pk=`) are blue in the header; "
+      "model bold, instance and the fixed three regular; Calibri 11 throughout",
+      ok, "" if ok else f"{fx} {out[-300:]}")
+out = run('.option savemc=Fonts2.xlsx osdimc mcseed=1 savemc_font="Times New Roman" savemc_fontsize=12\n'
+          ".option savemc_model=bold+navy savemc_instance=italic savemc_writemc=red+underline+shiny+1A2B3C\n" + PRE + WMC,
+          "t19b", "op\nwritemc ia=i(v1)")
+fx = xlsx_fonts(os.path.join(WORK, "Fonts2.xlsx"))
+ok = (fx.get("sm:r") == (True, False, False, "000080", "Times New Roman", 12.0)
+      and fx.get("r1") == (False, True, False, None, "Times New Roman", 12.0)
+      and fx.get("ia") == (False, False, True, "1A2B3C", "Times New Roman", 12.0)
+      and fx.get("trial") == (False, False, False, None, "Times New Roman", 12.0)
+      and out.count("Warning: .option savemc_writemc: 'shiny' is not a style") == 1
+      and "unknown option" not in out)
+check('[19] savemc_font="Times New Roman" savemc_fontsize=12 savemc_model=bold+navy savemc_instance=italic '
+      "savemc_writemc=red+underline+shiny+1A2B3C: the styles land (the last colour wins), 'shiny' is said once, "
+      "no 'unknown option' warning for the five names",
+      ok, "" if ok else f"{fx} {out[-400:]}")
 
 clean()
 print(f"\n{passed}/{checks} checks passed")

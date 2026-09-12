@@ -529,6 +529,9 @@ if_is_option(const char *name)
         "osdimc", "automc", "mcseed", "osdimc_verbose",
         /* Enhancement-610: read through cp_getvar by mcsave.c */
         "savemc", "nosavemc", "automc_save", "osdimc_save",
+        /* Enhancement-619: the workbook's fonts, read by mcsave.c's xlsx writer */
+        "savemc_font", "savemc_fontsize", "savemc_model", "savemc_instance",
+        "savemc_writemc",
         /* Enhancement-572: the documented OFF spellings of these options were
            honoured but reported as unknown, the defect E-511 removed for
            osdicache and seedinfo. */
