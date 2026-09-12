@@ -146,7 +146,7 @@ def main():
             "-V", "mainfont=STIX Two Text", "-V", "monofont=Menlo",
             "-V", "fontsize=11pt", "-V", "colorlinks=true",
             "-V", "title=Statistical Simulation in ngspice",
-            "-V", "subtitle=Monte Carlo, Latin-Hypercube, high-sigma, correlations, and yield",
+            "-V", "subtitle=Monte Carlo, Latin-Hypercube, high-sigma, correlations, yield, model-declared statistics, and the record of every draw",
             "-V", "author=Ngspice + OpenVAF Enhancements project",
             "-V", f"date={datetime.date.today():%B %Y}",
         ], capture_output=True, text=True)

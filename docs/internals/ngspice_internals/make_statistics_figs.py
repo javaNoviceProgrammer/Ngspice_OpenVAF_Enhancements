@@ -3,7 +3,8 @@
 
 Usage:  python3 docs/internals/ngspice_internals/make_statistics_figs.py
 Writes PNGs into ngspice_statistics_figs/. Needs matplotlib + numpy and the
-committed ngspice binary (which has mcsample / highsigma / mccorr / montecarlo).
+committed ngspice binary (which has mcsample / highsigma / mccorr / montecarlo)
+and, for the two .option osdimc figures, the committed openvaf-r.
 """
 import os
 import re
@@ -273,6 +274,148 @@ R2 out 0 {{r2}}
     print("  yield_vs_corr.png")
 
 
+# ---------------------------------------------------------------------------
+# .option osdimc: model-declared statistics (E-530, E-554, E-538)
+
+OPENVAF = os.path.join(ROOT, "bin", "macos", "apple-silicon", "openvaf-r")
+
+RDIST_VA = """// one parameter per distribution shape, for .option osdimc
+`include "disciplines.vams"
+module rdist(p, n);
+inout p, n;
+electrical p, n;
+(* std=25.0 *)                       parameter real rg = 1000.0;               // gauss
+(* dist="uniform", std=25.0 *)       parameter real ru = 1000.0;               // uniform, std = half-width
+(* dist="lognormal", std_rel=0.05 *) parameter real rl = 1000.0 from (0:inf);  // never crosses zero
+(* dist="tgauss", std=25.0 *)        parameter real rt = 1000.0;               // gauss confined to +-3 sigma
+(* std=25.0, trunc=1.0 *)            parameter real r1 = 1000.0;               // gauss confined to +-1 sigma
+analog I(p, n) <+ V(p, n) / rg + 0.0 * (ru + rl + rt + r1) * V(p, n);
+endmodule
+"""
+
+RSTAT_VA = """// a resistor whose model declares its statistics
+`include "disciplines.vams"
+module rstat(p, n);
+inout p, n;
+electrical p, n;
+(* std=25.0 *)                  parameter real r  = 1000.0 from (0:inf);
+(* type="instance", std=10.0 *) parameter real dr = 0.0;
+analog I(p, n) <+ V(p, n) / (r + dr);
+endmodule
+"""
+
+
+def compile_va(name, src):
+    with open(os.path.join(TMP, name + ".va"), "w") as f:
+        f.write(src)
+    subprocess.run([OPENVAF, name + ".va", "-o", name + ".osdi"], cwd=TMP,
+                   capture_output=True, text=True, timeout=600, check=True)
+    return os.path.join(TMP, name + ".osdi")
+
+
+def fig_osdimc_shapes():
+    """The four shapes a (* std *) parameter can draw from, 3000 osdimc trials
+    each, straight off the device through montecarlo -expr."""
+    osdi = compile_va("rdist", RDIST_VA)
+    n = 3000
+    run(f"""* the shapes
+.option osdimc mcseed=3
+V1 a 0 DC 1
+N1 a 0 dm
+.model dm rdist
+.control
+  pre_osdi {osdi}
+  set numdgt=10
+  set width=250
+  montecarlo {n} -analysis op -expr rg=@dm[rg] -expr ru=@dm[ru] -expr rl=@dm[rl] -expr rt=@dm[rt] -expr r1=@dm[r1]
+  print rg ru rl rt r1 > shapes.txt
+.endc
+.end
+""")
+    rg, ru, rl, rt, r1 = read_cols("shapes.txt", 5)
+    fig, axes = plt.subplots(2, 2, figsize=(10, 6.4))
+    x = np.linspace(900, 1100, 400)
+    panels = [
+        (axes[0, 0], rg, '(* std=25 *)  gauss', BLUE,
+         norm.pdf(x, 1000, 25)),
+        (axes[0, 1], ru, '(* dist="uniform", std=25 *)  uniform on [975, 1025]', GREEN,
+         np.where(np.abs(x - 1000) <= 25, 1 / 50.0, 0.0)),
+        (axes[1, 0], rl, '(* dist="lognormal", std_rel=0.05 *)  lognormal', PURPLE,
+         norm.pdf(np.log(x / 1000.0), 0, 0.05) / x),
+        (axes[1, 1], rt, '(* dist="tgauss" *) / (* trunc=1 *)  truncated gauss', ORANGE,
+         None),
+    ]
+    for ax, v, title, col, pdf in panels:
+        ax.hist(v, bins=60, range=(900, 1100), density=True, color=col, alpha=0.55,
+                label=f"{len(v)} draws: mean {v.mean():.1f}, sd {v.std():.1f}")
+        if pdf is not None:
+            ax.plot(x, pdf, color=GREY, lw=1.6, label="declared density")
+        ax.set_title(title, fontsize=10)
+        ax.set_xlim(900, 1100)
+    ax = axes[1, 1]
+    ax.hist(r1, bins=60, range=(900, 1100), density=True, color=RED, alpha=0.45,
+            label=f"trunc=1: within +-25, sd {r1.std():.1f}")
+    ax.plot(x, norm.pdf(x, 1000, 25) / (norm.cdf(3) - norm.cdf(-3)), color=GREY, lw=1.6)
+    for ax in axes.flat:
+        ax.legend(fontsize=8, loc="upper right")
+        ax.set_yticks([])
+    axes[1, 0].set_xlabel("drawn value of the parameter (nominal 1000)")
+    axes[1, 1].set_xlabel("drawn value of the parameter (nominal 1000)")
+    fig.suptitle(".option osdimc -- the simulator draws what the Verilog-A declares", fontsize=11)
+    fig.savefig(os.path.join(FIGS, "osdimc_shapes.png")); plt.close(fig)
+    print("osdimc_shapes.png")
+
+
+def fig_inflate():
+    """highsigma -scale over an increasing number of bystander mismatch
+    dimensions: the importance weight collapses unless -inflate scopes it."""
+    osdi = compile_va("rstat", RSTAT_VA)
+    counts = [0, 2, 5, 10, 20]
+    p_all, p_scoped, ess_all, ess_scoped = [], [], [], []
+    for nb in counts:
+        bys = "".join(f"N{k+2} {10+k} {11+k} bys\n" for k in range(nb))
+        tail = f"R{nb+2} {10+nb} 0 1k\nV2 10 0 DC 1\n" if nb else ""
+        deck = f"""* bystanders
+.option osdimc
+V1 1 0 DC 1
+N1 1 2 mm
+R1 2 0 1k
+.model mm rstat r=1k
+{bys}{tail}.model bys rstat r=1k
+.control
+  pre_osdi {osdi}
+  highsigma 3000 -scale 2.5 -seed 1 -analysis op -metric v(2) -min 0.487
+  print highsigma_pfail highsigma_ess
+  highsigma 3000 -scale 2.5 -seed 1 -analysis op -inflate @mm[r] -inflate @n1[dr] -metric v(2) -min 0.487
+  print highsigma_pfail highsigma_ess
+.endc
+.end
+"""
+        log = run(deck)
+        vals = [float(v) for v in re.findall(r"highsigma_pfail\s*=\s*(\S+)", log)]
+        p_all.append(vals[0]); p_scoped.append(vals[1])
+        ess = [float(v) for v in re.findall(r"highsigma_ess\s*=\s*(\S+)", log)]
+        ess_all.append(ess[0]); ess_scoped.append(ess[1])
+    true_p = norm.sf(53.4 / np.sqrt(25.0**2 + 10.0**2))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.9))
+    ax1.semilogy(counts, p_all, "o-", color=RED, label="-scale 2.5, every dimension inflated")
+    ax1.semilogy(counts, p_scoped, "s-", color=BLUE, label="-inflate @mm[r] -inflate @n1[dr]")
+    ax1.axhline(true_p, color=GREY, ls="--", label=f"analytic P(fail) = {true_p:.4f}")
+    ax1.set_xlabel("bystander devices (one mismatch dimension each)")
+    ax1.set_ylabel("reported P(fail)")
+    ax1.set_title("the same 3000 samples, two weightings", fontsize=10)
+    ax1.legend(fontsize=8)
+    ax2.semilogy(counts, ess_all, "o-", color=RED, label="every dimension inflated")
+    ax2.semilogy(counts, ess_scoped, "s-", color=BLUE, label="scoped: two dimensions, whatever the count")
+    ax2.axhline(300, color=GREY, ls=":", label="N/10: the collapse warning")
+    ax2.set_xlabel("bystander devices")
+    ax2.set_ylabel("effective sample size")
+    ax2.set_title("why: the weight is a product over inflated dimensions", fontsize=10)
+    ax2.legend(fontsize=8)
+    fig.savefig(os.path.join(FIGS, "inflate_ess.png")); plt.close(fig)
+    print("inflate_ess.png", p_all, p_scoped, ess_all, ess_scoped)
+
+
 if __name__ == "__main__":
     print("generating ngspice statistics figures...")
     fig_distribution()
@@ -280,4 +423,6 @@ if __name__ == "__main__":
     fig_highsigma()
     fig_correlation()
     fig_yield()
+    fig_osdimc_shapes()
+    fig_inflate()
     print("done ->", FIGS)

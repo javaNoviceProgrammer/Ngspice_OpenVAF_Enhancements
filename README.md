@@ -766,8 +766,12 @@ ngspice](docs/internals/ngspice_internals/ngspice_statistics.md)
 ([PDF](docs/internals/ngspice_internals/ngspice_statistics.pdf)) is a complete,
 plotted guide to the whole suite — the random `.param` functions, ordinary Monte
 Carlo, Latin-Hypercube sampling (`mcsample`), high-sigma rare-event estimation
-(`highsigma`), native process/mismatch correlations (`mccorr`/`mvnorm`), and the
-packaged yield command (`montecarlo`) — with worked examples and figures
+(`highsigma`, scoped with `-inflate`), native process/mismatch correlations
+(`mccorr`/`mvnorm`), the packaged yield command (`montecarlo` with `-expr`,
+`-track` and tracked-quantity specs), worst-case distance and design centring,
+statistics declared in the Verilog-A model itself (`.option osdimc`, `mcseed`,
+the gauss/uniform/lognormal/truncated shapes), and the record of every draw and
+result (`.option savemc`, `writemc`) — with worked examples and figures
 generated from real ngspice runs.
 
 For time-domain noise, [Transient noise in
