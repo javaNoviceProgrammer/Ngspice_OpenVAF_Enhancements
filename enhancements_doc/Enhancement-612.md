@@ -21,7 +21,8 @@ every other word of a netlist:
 - **the case was folded.** `savemc=MyRun/Draws.csv` wrote `myrun/draws.csv`. On the
   default macOS volume that is the same file; on a case-sensitive volume — Linux, or an
   APFS volume formatted that way — `myrun/` does not exist, and with the recorder's
-  silence on a directory it cannot open (F7 of the same hunt, open) every row is lost
+  silence on a directory it cannot open (F7 of the same hunt, since fixed in
+  [Enhancement-613](Enhancement-613.md)) every row is lost
   without a word. Under KiCad, whose netlist carries an absolute path, the note read
   `to /private/tmp/claude-501/-users-meisam-git-ngspice-openvaf-enhancements/…/host.csv`
   while the `pre_osdi` line beside it kept its case — the reader exempts `pre_osdi`,

@@ -43,6 +43,15 @@ Checks:
   [13] (Enhancement-612) automc_save=MixedCase/Osdi.TXT (the extension picks
       the writer, case-insensitively), the `option` command of a .control
       block, and savemc=CSV still meaning the format
+  [14] (Enhancement-613) a name whose directories do not exist: they are
+      created (two levels), the csv holds the rows and the writemc column;
+      the same for an .xlsx
+  [15] (Enhancement-613) a name that cannot be opened (it is a directory):
+      a warning with the reason, and the rows go to the dated default beside
+      the deck instead -- the note names that file
+  [16] (Enhancement-613) the directory removed while the file is open: the
+      next rewrite says so once, the rows are kept in memory, and the file is
+      complete once the directory is back
 """
 import glob
 import os
@@ -87,7 +96,8 @@ if r.returncode != 0:
 def clean():
     for f in glob.glob(os.path.join(WORK, "mcparams_*")) + glob.glob(os.path.join(RUNDIR, "mcparams_*")) \
             + glob.glob(os.path.join(WORK, "myrun.*")) + glob.glob(os.path.join(WORK, "MixedCase", "*")) \
-            + glob.glob(os.path.join(WORK, "dir with space", "*")) + glob.glob(os.path.join(WORK, "R*sum*.csv")):
+            + glob.glob(os.path.join(WORK, "dir with space", "*")) + glob.glob(os.path.join(WORK, "R*sum*.csv")) \
+            + glob.glob(os.path.join(WORK, "NewDir", "*", "*")) + glob.glob(os.path.join(WORK, "NewDir", "*.xlsx")):
         os.remove(f)
 
 
@@ -311,6 +321,62 @@ clean()
 out = run(".option savemc=CSV\n" + DIV, "t13c", "op")
 check("[13] savemc=CSV is still the format keyword (a dated mcparams_ file)",
       len(files()) == 1 and not os.path.exists(os.path.join(WORK, "CSV")), str(files()))
+
+# ------------------------------------------------------------ [14] ---
+# Enhancement-613: a name whose directory does not exist was announced and
+# then nothing was written -- no error, every row and writemc value lost.
+# The directories are made now (each level), and a name that still cannot
+# be opened is reported with the reason and the rows go to the dated
+# default beside the deck.
+clean()
+import shutil  # noqa: E402
+shutil.rmtree(os.path.join(WORK, "NewDir"), ignore_errors=True)
+out = run(".option savemc=NewDir/Sub/Rows.csv\n" + DIV, "t14a", "op\nwritemc ia=i(v1)\nreset\nop\nwritemc ia=i(v1)")
+path = os.path.join(WORK, "NewDir", "Sub", "Rows.csv")
+head, rows = read_csv(path) if os.path.exists(path) else ([], [])
+ok = (len(rows) == 2 and head[-1] == "ia" and all(r[-1] for r in rows) and "NewDir/Sub/Rows.csv" in out
+      and "Warning: savemc" not in out and "Error: savemc" not in out)
+check("[14] savemc=NewDir/Sub/Rows.csv with no NewDir: both levels created, two rows, the writemc column, no warning",
+      ok, "" if ok else f"{head} {out[-300:]}")
+shutil.rmtree(os.path.join(WORK, "NewDir"), ignore_errors=True)
+out = run(".option savemc=NewDir/Book.xlsx\n" + DIV, "t14b", "op\nreset\nop")
+path = os.path.join(WORK, "NewDir", "Book.xlsx")
+ok = False
+if os.path.exists(path) and zipfile.is_zipfile(path):
+    with zipfile.ZipFile(path) as z:
+        ok = len(re.findall(r"<row ", z.read("xl/worksheets/sheet1.xml").decode())) == 3
+check("[14] savemc=NewDir/Book.xlsx with no NewDir: the directory created, a valid workbook with the header and two rows",
+      ok, out[-300:] if not ok else "")
+
+# ------------------------------------------------------------ [15] ---
+clean()
+os.makedirs(os.path.join(WORK, "IsADir.csv"), exist_ok=True)
+out = run(".option savemc=IsADir.csv\n" + DIV, "t15", "op")
+fs = files()
+m = re.search(r"Warning: savemc: cannot open \S*IsADir\.csv \((.+?)\); recording to (\S+) instead", out)
+check("[15] savemc=IsADir.csv (a directory): the warning gives the reason and the fallback, the note names the fallback",
+      bool(m) and len(fs) == 1 and m.group(2) == os.path.join(WORK, os.path.basename(fs[0]))
+      and (NOTE + " 4 parameters with statistics, one row per analysis run, to " + m.group(2)) in out,
+      out[-400:] if not m else f"{m.group(1)}; {fs}")
+check("[15] ...and the fallback holds the row", len(fs) == 1 and len(read_csv(fs[0])[1]) == 1)
+os.rmdir(os.path.join(WORK, "IsADir.csv"))
+
+# ------------------------------------------------------------ [16] ---
+clean()
+shutil.rmtree(os.path.join(WORK, "NewDir"), ignore_errors=True)
+out = run(".option savemc=NewDir/Late.csv\n" + DIV, "t16",
+          "op\nwritemc ia=i(v1)\nshell rm -r NewDir\nreset\nop\nwritemc ib=i(v1)\nreset\nop\nwritemc ib=i(v1)\n"
+          "shell mkdir NewDir\nreset\nop\nwritemc ic=i(v1)", cwd=WORK)
+path = os.path.join(WORK, "NewDir", "Late.csv")
+head, rows = read_csv(path) if os.path.exists(path) else ([], [])
+ok = out.count("Error: savemc: cannot write") == 1 and "rows so far are kept" in out
+check("[16] the directory removed while the file is open: 'cannot write ... rows so far are kept' said once",
+      ok, "" if ok else out[-300:])
+ok = (len(rows) == 4 and head[-3:] == ["ia", "ib", "ic"] and rows[0][-3] and rows[1][-2] and rows[2][-2]
+      and rows[3][-1] and not rows[0][-1] and not rows[3][-3])
+check("[16] ...and the file is complete once the directory is back: four rows, ia/ib/ic columns filled where written",
+      ok, "" if ok else f"{head} {rows}")
+shutil.rmtree(os.path.join(WORK, "NewDir"), ignore_errors=True)
 
 clean()
 print(f"\n{passed}/{checks} checks passed")

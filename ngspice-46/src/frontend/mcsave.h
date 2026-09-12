@@ -33,7 +33,8 @@ extern int MCSAVEactive(void);
 
 /* Enhancement-611: a value computed after the run, onto the run's row --
  * `writemc` and montecarlo's -writemc. 0 done; -1 no run to attach to;
- * -2 the recorder is off. */
+ * -2 the recorder is off; -3 (Enhancement-613) no file could be opened for
+ * this circuit. */
 extern int MCSAVEappend(const char *name, double value);
 
 /* the `writemc` command: writemc [name=]<expr> ... */

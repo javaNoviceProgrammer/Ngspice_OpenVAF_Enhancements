@@ -14,6 +14,10 @@ failed run is a row marked `failed`; `excel` writes a genuine `.xlsx`.
 
 Since Enhancement-612 the file name keeps its case and its bytes, and a quoted
 name its spaces: `savemc=MixedCase/Draws.csv`, `savemc="dir with space/My
-Draws.csv"`, `savemc=Résumé_MC.csv` write exactly those (checks 11–13).
+Draws.csv"`, `savemc=Résumé_MC.csv` write exactly those (checks 11–13). Since
+Enhancement-613 the directories of a name are made (`savemc=NewDir/Sub/Rows.csv`
+creates both levels), a name that cannot be opened is reported with the reason
+and the rows go to the dated default beside the deck, and a later open that
+fails is said once with the rows kept for the next try (checks 14–16).
 
-Run: `python3 verify_savemc.py` (24 checks per solver, both solvers).
+Run: `python3 verify_savemc.py` (30 checks per solver, both solvers).

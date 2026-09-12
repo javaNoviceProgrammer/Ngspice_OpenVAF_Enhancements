@@ -44,6 +44,17 @@
 #include <io.h>
 #define ftruncate(fd, len) _chsize(fd, (long) (len))
 #endif
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+/* Enhancement-613: mkdir() as com_dl.c spells it for the three toolchains
+ * (a mode on POSIX; _mkdir() from <direct.h> on Windows) */
+#if defined(_WIN32)
+#include <direct.h>
+#define NG_MKDIR(p) _mkdir(p)
+#else
+#define NG_MKDIR(p) mkdir((p), 0777)
+#endif
 
 enum { FMT_CSV, FMT_TXT, FMT_XLSX };
 
@@ -79,6 +90,8 @@ static int header_cols;             /* columns the csv/txt header was written wi
 static long lastrow_off = -1;       /* Enhancement-611: where the last row begins, to rewrite it */
 static int noted_nothing;
 static int noted_osdimc_off;
+static int unwritable;              /* Enhancement-613: no file could be opened for this circuit */
+static int noted_write_fail;        /* Enhancement-613: a later open failed (said once) */
 
 /* ------------------------------------------------------------ the draws */
 
@@ -311,6 +324,71 @@ mcs_path(const char *given)
     }
 }
 
+/* Enhancement-613: create the missing directories of a file name, each
+ * component in turn like `mkdir -p`. 0, or -1 with `*why` the reason the
+ * first directory that is still missing afterwards could not be made. */
+static int
+mcs_mkdirs(const char *file, char **why)
+{
+    char *p, *s;
+    int rc = 0;
+
+    *why = NULL;
+    p = copy(file);
+    for (s = p + 1; *s; s++) {
+        char sep = *s;
+        if (sep != '/'
+#if defined(_WIN32)
+            && sep != '\\'
+#endif
+            )
+            continue;
+        *s = '\0';                 /* p is now the directory up to here */
+        if (s[-1] != ':' && NG_MKDIR(p) != 0 && errno != EEXIST) {
+            int e = errno;
+            struct stat st;
+            if (stat(p, &st) != 0 || !S_ISDIR(st.st_mode)) {
+                *why = tprintf("cannot create directory %s: %s", p, strerror(e));
+                rc = -1;
+                *s = sep;
+                break;
+            }
+        }
+        *s = sep;
+    }
+    tfree(p);
+    return rc;
+}
+
+/* can the file be written? A try at the first row, so that a name that
+ * cannot be opened is found then and not never; the file is created empty
+ * and the row that follows writes it. */
+static int
+mcs_can_open(const char *file, char **why)
+{
+    FILE *f = fopen(file, fmt == FMT_XLSX ? "wb" : "w");
+    if (f) {
+        fclose(f);
+        *why = NULL;
+        return 1;
+    }
+    *why = tprintf("%s", strerror(errno));
+    return 0;
+}
+
+/* a later open of the file failed (a directory removed, a disk full):
+ * said once per file, and the rows stay in memory for the next try */
+static void
+mcs_note_write_fail(void)
+{
+    if (noted_write_fail)
+        return;
+    fprintf(cp_err, "Error: savemc: cannot write %s (%s); the rows so far are kept and "
+                    "written when the file can be opened again\n",
+            path, strerror(errno));
+    noted_write_fail = 1;
+}
+
 /* ------------------------------------------------------------ csv / txt */
 
 static void
@@ -381,8 +459,11 @@ text_rewrite(void)
     if (fp)
         fclose(fp);
     fp = fopen(path, "w");
-    if (!fp)
+    if (!fp) {
+        mcs_note_write_fail();
         return;
+    }
+    noted_write_fail = 0;
     text_header(fp);
     for (r = 0; r < nrows; r++) {
         if (r == nrows - 1)
@@ -575,9 +656,11 @@ xlsx_write(void)
 
     f = fopen(path, "wb");
     if (!f) {
+        mcs_note_write_fail();
         ds_free(&sheet);
         return;
     }
+    noted_write_fail = 0;
     zip_entry(f, &z[0], "[Content_Types].xml", ctypes, strlen(ctypes));
     zip_entry(f, &z[1], "_rels/.rels", rels, strlen(rels));
     zip_entry(f, &z[2], "xl/workbook.xml", workbook, strlen(workbook));
@@ -613,6 +696,8 @@ mcs_reset_file(void)
     lastrow_off = -1;
     noted_nothing = 0;
     noted_osdimc_off = 0;
+    unwritable = 0;
+    noted_write_fail = 0;
 }
 
 static void
@@ -676,6 +761,10 @@ MCSAVErun(const char *analysis, int ok)
         mcs_complete();
         mcs_reset_file();
     }
+    if (owner && unwritable) {                  /* said at the first row; nothing more */
+        tfree(given);
+        return;
+    }
     first = !owner;
     if (first)
         cols_prune_for_new_owner();
@@ -705,10 +794,39 @@ MCSAVErun(const char *analysis, int ok)
     }
 
     if (first) {
+        char *why = NULL;
+        int ok = 0;
         owner = 1;
         owner_file = copy(ft_curckt->ci_filename ? ft_curckt->ci_filename : "");
         owner_name = copy(ft_curckt->ci_name ? ft_curckt->ci_name : "");
         path = mcs_path(given);
+        /* Enhancement-613: a given name's directories are made; a name that
+         * still cannot be opened is reported with the reason and the rows go
+         * to the dated default beside the netlist; when that fails too the
+         * recorder says so and records nothing for this circuit */
+        if (given) {
+            char *mkwhy = NULL;
+            (void) mcs_mkdirs(path, &mkwhy);
+            ok = mcs_can_open(path, &why);
+            if (!ok) {
+                char *fallback = mcs_path(NULL);
+                fprintf(cp_err, "Warning: savemc: cannot open %s (%s); recording to %s "
+                                "instead\n",
+                        path, mkwhy ? mkwhy : why, fallback);
+                tfree(why);
+                tfree(path);
+                path = fallback;
+            }
+            tfree(mkwhy);
+        }
+        if (!ok && !mcs_can_open(path, &why)) {
+            fprintf(cp_err, "Error: savemc: cannot open %s (%s); nothing is recorded for "
+                            "this circuit\n", path, why);
+            tfree(why);
+            unwritable = 1;
+            tfree(given);
+            return;
+        }
         fprintf(cp_out, "Note: savemc: recording the %d parameter%s with statistics, "
                         "one row per analysis run, to %s\n",
                 n, n == 1 ? "" : "s", path);
@@ -769,6 +887,8 @@ MCSAVEappend(const char *name, double value)
 
     if (!MCSAVEactive())
         return -2;
+    if (owner && unwritable)
+        return -3;
     if (!owner || nrows == 0)
         return -1;
     c = col_find(name);
@@ -867,7 +987,7 @@ mcs_split_item(const char *word, char **name, char **expr)
 void
 com_writemc(wordlist *wl)
 {
-    static int said_off;
+    static int said_off, said_nofile;
     wordlist *w;
 
     if (!wl) {
@@ -896,6 +1016,11 @@ com_writemc(wordlist *wl)
             if (r == -1)
                 fprintf(cp_err, "writemc: no analysis has run yet, so there is no row to "
                                 "put %s on\n", name);
+            else if (r == -3 && !said_nofile)
+                fprintf(cp_err, "writemc: savemc could not open a file for this circuit "
+                                "(said above), so %s is not recorded (said once)\n", name);
+            if (r == -3)
+                said_nofile = 1;
         }
         tfree(name);
         tfree(expr);
