@@ -2115,7 +2115,7 @@ void sw_fp_apply(char *const *sw, const double *vals, int nsw)
             {
                 char *nm = b->param ? tprintf("%s:%s", b->name, b->param)
                                     : copy(b->name);
-                MCSAVEparam(nm, v);
+                MCSAVEparam(nm, v, b->mod);
                 tfree(nm);
             }
         } else {

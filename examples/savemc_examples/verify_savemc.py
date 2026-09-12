@@ -56,6 +56,10 @@ Checks:
       fixed name goes to <stem>_2.<ext> and says whose rows the first file
       holds; a third to _3; the first file keeps its rows. A separate ngspice
       run with the same fixed name replaces the file, as any output file
+  [18] (Enhancement-617) savemc=excel: the header row sets a MODEL parameter's
+      name in bold -- a `.model` card's slot (`rm:r`), an OSDI model parameter
+      (`@rm[r]`) -- and an instance parameter's (`r1`, `n1:dr`, `x1.c`,
+      `@n1[dr]`) in the regular font
 """
 import glob
 import os
@@ -102,7 +106,7 @@ def clean():
             + glob.glob(os.path.join(WORK, "myrun.*")) + glob.glob(os.path.join(WORK, "MixedCase", "*")) \
             + glob.glob(os.path.join(WORK, "dir with space", "*")) + glob.glob(os.path.join(WORK, "R*sum*.csv")) \
             + glob.glob(os.path.join(WORK, "NewDir", "*", "*")) + glob.glob(os.path.join(WORK, "NewDir", "*.xlsx")) \
-            + glob.glob(os.path.join(WORK, "Shared*.csv")):
+            + glob.glob(os.path.join(WORK, "Shared*.csv")) + glob.glob(os.path.join(WORK, "Bold.xlsx")):
         os.remove(f)
 
 
@@ -196,8 +200,8 @@ if fs:
     names = z.namelist()
     x = z.read("xl/worksheets/sheet1.xml").decode()
     xrows = re.findall(r'<row r="(\d+)">(.*?)</row>', x)
-    cells = [[c[0] or c[1] for c in re.findall(r'<c r="[A-Z]+\d+"(?: t="inlineStr")?>(?:<is><t>(.*?)</t></is>|<v>(.*?)</v>)</c>', b)]
-             for _, b in xrows]
+    cells = [[c[0] or c[1] for c in re.findall(r'<c r="[A-Z]+\d+"(?: s="\d+")?(?: t="inlineStr")?>(?:<is><t>(.*?)</t></is>|<v>(.*?)</v>)</c>', b)]
+             for _, b in xrows]     # E-617: a header cell may carry a style
     ok = (bad is None and "xl/workbook.xml" in names and "xl/styles.xml" in names
           and cells[0] == ["trial", "analysis", "status", "r1", f"{A}n1[dr]", f"{A}sm[r]"] and len(cells) == 31
           and close(float(cells[3][3]), vals(out, "montecarlo1.rr[2]")[0])
@@ -410,6 +414,28 @@ out = run(".option savemc=Shared.csv\n" + DIV, "t17b", "op")
 ok = os.path.exists(p1) and len(read_csv(p1)[1]) == 1 and "holds the rows of" not in out
 check("[17] a separate ngspice run with the same fixed name replaces the file, without the note (one row now)",
       ok, "" if ok else out[-300:])
+
+# ------------------------------------------------------------ [18] ---
+# Enhancement-617: the xlsx header tells a model parameter from an instance
+# parameter by its font -- bold for a model card's (a `.model` slot drawn in
+# the netlist, an OSDI model parameter), regular for the rest.
+clean()
+MIXED = (".param rr = agauss(20, 3, 3)\n.subckt load a b c=1u\nC1 a b {c}\n.ends\nv1 in 0 dc 1\nR1 in m {rr}\n"
+         "x1 m 0 load c={gauss(1u, 0.1, 1)}\nN1 m 0 sm dr={agauss(0,30,3)}\nN2 m 0 sm\n"
+         ".model sm st r={agauss(1000,300,3)}\n")
+out = run(".option savemc=Bold.xlsx osdimc mcseed=1\n" + PRE + MIXED, "t18", "op\nreset\nop")
+path = os.path.join(WORK, "Bold.xlsx")
+bold, plain, has_font = [], [], False
+if os.path.exists(path) and zipfile.is_zipfile(path):
+    with zipfile.ZipFile(path) as z:
+        has_font = "<font><b/>" in z.read("xl/styles.xml").decode()
+        row1 = re.search(r'<row r="1">(.*?)</row>', z.read("xl/worksheets/sheet1.xml").decode()).group(1)
+        for st, name in re.findall(r'<c r="[A-Z]+1"( s="1")? t="inlineStr"><is><t>(.*?)</t>', row1):
+            (bold if st else plain).append(name)
+ok = (has_font and sorted(bold) == sorted(["sm:r", f"{A}sm[r]"])
+      and sorted(plain) == sorted(["trial", "analysis", "status", "r1", "x1.c", "c.x1.c1", "n1:dr", f"{A}n2[dr]", f"{A}n1[dr]"]))
+check("[18] savemc=Bold.xlsx: the header sets sm:r and @sm[r] (model) in bold, r1 / x1.c / c.x1.c1 / n1:dr / @n1[dr] / @n2[dr] (instance) regular",
+      ok, "" if ok else f"bold={bold} plain={plain} font={has_font} {out[-200:]}")
 
 clean()
 print(f"\n{passed}/{checks} checks passed")

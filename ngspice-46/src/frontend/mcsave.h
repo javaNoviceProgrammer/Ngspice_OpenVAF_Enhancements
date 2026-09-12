@@ -11,8 +11,11 @@ struct circ;        /* a `struct circ *` in a prototype below, whatever is inclu
  * random function (agauss, gauss, unif, aunif, limit, mvnorm), scoped
  * `x1.name` inside a subcircuit instance; a device line's own brace draw,
  * `<instance>:{<expression>}`. Recorded whenever it is evaluated, whatever the
- * option says, so that the row a run emits carries the value in force. */
-extern void MCSAVEparam(const char *name, double value);
+ * option says, so that the row a run emits carries the value in force.
+ * Enhancement-617: `model` is 1 for a `.model` card's slot, 0 for a device's,
+ * a subcircuit call's or a .param -- the xlsx header sets a model parameter's
+ * name in bold. */
+extern void MCSAVEparam(const char *name, double value, int model);
 
 /* was this name recorded as a draw (a .param or subcircuit value with statistics)? */
 extern int MCSAVEis_stochastic(const char *name);

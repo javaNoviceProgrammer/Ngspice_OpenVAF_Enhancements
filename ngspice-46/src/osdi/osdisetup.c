@@ -2825,7 +2825,7 @@ void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx) {
         if (id >= descr->num_instance_params) {
           void *src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
           if (src)
-            fn((char *)gen_model->GENmodName, pname, *(double *)src, ctx);
+            fn((char *)gen_model->GENmodName, pname, *(double *)src, 1, ctx);
         } else {
           for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
                gen_inst = gen_inst->GENnextInstance) {
@@ -2833,7 +2833,7 @@ void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx) {
             void *src = descr->access(inst, model, id,
                                       ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
             if (src)
-              fn((char *)gen_inst->GENname, pname, *(double *)src, ctx);
+              fn((char *)gen_inst->GENname, pname, *(double *)src, 0, ctx);
           }
         }
       }

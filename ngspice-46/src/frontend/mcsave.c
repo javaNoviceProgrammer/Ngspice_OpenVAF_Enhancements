@@ -61,6 +61,9 @@ enum { FMT_CSV, FMT_TXT, FMT_XLSX };
 struct mcs_col {
     char *name;
     int osdi;                       /* an OSDI parameter, read per row */
+    int model;                      /* Enhancement-617: a model card's parameter (the xlsx
+                                       header sets its name in bold); 0 for an instance's,
+                                       a subcircuit call's, a .param, a writemc value */
     int written;                    /* Enhancement-611: a writemc value, put on the row after the run */
     double value;                   /* the value in force */
     int set;
@@ -131,7 +134,7 @@ col_find(const char *name)
 }
 
 static struct mcs_col *
-col_add(const char *name, int osdi)
+col_add(const char *name, int osdi, int model)
 {
     if (ncols == capcols) {
         capcols = capcols ? 2 * capcols : 16;
@@ -139,6 +142,7 @@ col_add(const char *name, int osdi)
     }
     cols[ncols].name = copy(name);
     cols[ncols].osdi = osdi;
+    cols[ncols].model = model;
     cols[ncols].written = 0;
     cols[ncols].value = NAN;
     cols[ncols].set = 0;
@@ -147,22 +151,22 @@ col_add(const char *name, int osdi)
 }
 
 static void
-col_set(const char *name, double value, int osdi)
+col_set(const char *name, double value, int osdi, int model)
 {
     struct mcs_col *c = col_find(name);
     if (!c)
-        c = col_add(name, osdi);
+        c = col_add(name, osdi, model);
     c->value = value;
     c->set = 1;
     c->gen = gen;
 }
 
 void
-MCSAVEparam(const char *name, double value)
+MCSAVEparam(const char *name, double value, int model)
 {
     if (!name || !*name)
         return;
-    col_set(name, value, 0);
+    col_set(name, value, 0, model);
 }
 
 int
@@ -216,11 +220,12 @@ cols_prune_for_new_owner(void)
 }
 
 static void
-osdi_cb(const char *owner_name, const char *param, double value, void *ctx)
+osdi_cb(const char *owner_name, const char *param, double value, int is_model,
+        void *ctx)
 {
     char *name = tprintf("@%s[%s]", owner_name, param);
     NG_IGNORE(ctx);
-    col_set(name, value, 1);
+    col_set(name, value, 1, is_model);
     tfree(name);
 }
 
@@ -636,14 +641,24 @@ cell_ref(DSTRING *d, int col0, int row1)
     ds_cat_printf(d, "%d", row1);
 }
 
+/* Enhancement-617: style 1 is the bold font, for a model parameter's name
+ * in the header row (an instance parameter's stays regular) */
 static void
-xlsx_str_cell(DSTRING *d, int col0, int row1, const char *s)
+xlsx_str_cell_style(DSTRING *d, int col0, int row1, const char *s, int style)
 {
     ds_cat_str(d, "<c r=\"");
     cell_ref(d, col0, row1);
+    if (style)
+        ds_cat_printf(d, "\" s=\"%d", style);
     ds_cat_str(d, "\" t=\"inlineStr\"><is><t>");
     xml_text(d, s);
     ds_cat_str(d, "</t></is></c>");
+}
+
+static void
+xlsx_str_cell(DSTRING *d, int col0, int row1, const char *s)
+{
+    xlsx_str_cell_style(d, col0, row1, s, 0);
 }
 
 static void
@@ -687,11 +702,13 @@ xlsx_write(void)
     static const char *styles =
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
         "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
-        "<fonts count=\"1\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>"
+        "<fonts count=\"2\"><font><sz val=\"11\"/><name val=\"Calibri\"/></font>"
+        "<font><b/><sz val=\"11\"/><name val=\"Calibri\"/></font></fonts>"
         "<fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills>"
         "<borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders>"
         "<cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs>"
-        "<cellXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/></cellXfs>"
+        "<cellXfs count=\"2\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>"
+        "<xf numFmtId=\"0\" fontId=\"1\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyFont=\"1\"/></cellXfs>"
         "<cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles>"
         "</styleSheet>";
     DS_CREATE(sheet, 4096);
@@ -708,7 +725,7 @@ xlsx_write(void)
     xlsx_str_cell(&sheet, 2, 1, "status");
     for (i = 0, c = 3; i < ncols; i++)
         if (col_wanted(i))
-            xlsx_str_cell(&sheet, c++, 1, cols[i].name);
+            xlsx_str_cell_style(&sheet, c++, 1, cols[i].name, cols[i].model ? 1 : 0);
     ds_cat_str(&sheet, "</row>");
     for (r = 0; r < nrows; r++) {
         ds_cat_printf(&sheet, "<row r=\"%d\">", r + 2);
@@ -976,7 +993,7 @@ MCSAVEappend(const char *name, double value)
         return -1;
     c = col_find(name);
     if (!c) {
-        c = col_add(name, 0);
+        c = col_add(name, 0, 0);
         c->written = 1;
         newcol = 1;
     } else if (!c->written) {

@@ -1536,11 +1536,12 @@ mcs_frag_reads_draw(dico_t *dico, const char *b, const char *e)
  * it stands now -- expansion has renamed a subcircuit's `r1` to `r.x1.r1`
  * there, and that is the name the slot is known by. */
 static char *
-mcs_slot_name(const char *line, const char *card, const char *at)
+mcs_slot_name(const char *line, const char *card, const char *at, int *is_model)
 {
     const char *w = card ? card : line, *e, *k;
     char *inst, *name;
 
+    *is_model = 0;
     while (*w && isspace_c(*w))
         w++;
     if (!*w || *w == '*')
@@ -1553,6 +1554,7 @@ mcs_slot_name(const char *line, const char *card, const char *at)
          * other dot card has no slot. */
         if (strncasecmp(w, ".model", 6) != 0 || !isspace_c(w[6]))
             return NULL;
+        *is_model = 1;                          /* Enhancement-617 */
         w += 6;
         while (*w && isspace_c(*w))
             w++;
@@ -1679,9 +1681,10 @@ nupa_substitute(dico_t *dico, const char *s, char **lp)
              * Named by the slot, `<instance>` or `<instance>:<key>`, as
              * montecarlo's fast path names it, for `.option savemc`. */
             if (MCSAVEexpr_is_random(s) || mcs_frag_reads_draw(dico, s, kptr)) {
-                char *name = mcs_slot_name(line0, dico->cardline, s);
+                int is_model;
+                char *name = mcs_slot_name(line0, dico->cardline, s, &is_model);
                 if (name) {
-                    MCSAVEparam(name, strtod(ds_get_buf(&qstr), NULL));
+                    MCSAVEparam(name, strtod(ds_get_buf(&qstr), NULL), is_model);
                     tfree(name);
                 }
             }
@@ -1852,10 +1855,10 @@ nupa_assignment(dico_t *dico, const char *s, char mode)
                                    ? dico->inst_name[dico->stack_depth] : NULL;
                 if (inst && *inst) {
                     char *scoped = tprintf("%s.%s", inst, ds_get_buf(&tstr));
-                    MCSAVEparam(scoped, rval);
+                    MCSAVEparam(scoped, rval, 0);
                     tfree(scoped);
                 } else {
-                    MCSAVEparam(ds_get_buf(&tstr), rval);
+                    MCSAVEparam(ds_get_buf(&tstr), rval, 0);
                 }
             }
         } else if (dtype == NUPA_STRING) {

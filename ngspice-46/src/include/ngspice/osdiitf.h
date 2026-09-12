@@ -209,9 +209,10 @@ extern void OSDIdcpathEdges(CKTcircuit *ckt, int type,
  * it restores any drawn parameter to its nominal and is otherwise free.
  * Defined in src/osdi/osdisetup.c. */
 extern void OSDImcNewRun(CKTcircuit *ckt);
-/* Enhancement-610: for `.option savemc` (frontend/mcsave.c) */
+/* Enhancement-610: for `.option savemc` (frontend/mcsave.c); Enhancement-617:
+ * `is_model` is 1 when the owner is a model card, 0 for an instance */
 typedef void (*OSDImcSnapshotFn)(const char *owner, const char *param,
-                                 double value, void *ctx);
+                                 double value, int is_model, void *ctx);
 extern bool OSDImcEnabled(void);
 extern bool OSDImcHasStats(CKTcircuit *ckt);
 extern void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx);
