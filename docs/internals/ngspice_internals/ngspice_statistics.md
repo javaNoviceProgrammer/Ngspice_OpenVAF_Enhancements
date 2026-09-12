@@ -609,6 +609,14 @@ the model/instance split the language already has.
 | `dist="tgauss"` | gauss with `trunc=3` |
 | `type="instance"` | composes with all of the above: an instance parameter draws per device (mismatch), a model parameter once per `.model` card (process) |
 
+A sigma that can never vary is said rather than drawn as 0 in silence: `std=0`
+is a compiler warning and is not exported; `std_rel` on a parameter whose
+default is 0 — a mismatch parameter's natural default — is a compiler warning
+too, and at the draw the simulator says once per parameter `declares
+std_rel=0.1 on a nominal of 0: the sigma is 0 and the parameter never varies`
+(the deck's `dr=50` on the line draws around 50; use an absolute `std` for a
+parameter that lives around 0 — [E-620](../../../enhancements_doc/Enhancement-620.md)).
+
 A negative or non-literal sigma and `std` beside `std_rel` are located compile
 errors; an unknown distribution, statistics on a non-real parameter or a
 `localparam`, `dist` without a sigma, or `trunc` on a uniform are warnings. The

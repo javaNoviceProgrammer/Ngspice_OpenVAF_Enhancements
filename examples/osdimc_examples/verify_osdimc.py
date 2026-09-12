@@ -46,6 +46,10 @@ What this suite pins:
     then `sweep rr 500 1500 500` reads 500, 1000, 1500, not 1000, 1000,
     1500), still restores over a completed command's leftovers, and the
     savemc rows after `unset osdimc` read the devices;
+  * (Enhancement-620, hunt F16) statistics that can never vary are said:
+    the compiler warns on `std=0` / `std_rel=0` (not exported) and on a
+    `std_rel` whose parameter defaults to 0; the simulator says once per
+    parameter when a relative sigma meets a nominal of 0 at the draw;
   * switching the option off restores every drawn parameter to nominal;
   * a model without statistics attributes is untouched by the option;
   * diagnostics: unknown dist / non-real param / localparam / dist-without-
@@ -837,6 +841,54 @@ ok = (len(rows) == 5 and all(abs(x[1] - x[0]) < 1e-9 for x in rows[2:]) and len(
       and [x[3] for x in rows[2:]] == [0.0, 0.0, 0.0])
 check("[42] F19: `montecarlo` right after `unset osdimc` (no hold): each sample runs at its netlist draw, dr at 0",
       ok, "" if ok else f"rows={rows} {out[-300:]}")
+
+# ---- [13] Enhancement-620 (hunt F16): statistics that can never vary --------
+print("\nEnhancement-620: a sigma that resolves to 0 is said, at compile time and at the draw:")
+rc, out, ZERO = compile_va("smczero.va")
+ok = (rc == 0 and out.count("is relative to the nominal and the default of") == 2
+      and "the default of 'dr' is 0" in out and "the default of 'dg' is 0" in out
+      and "'std' attribute is 0: the parameter declares statistics with no width" in out
+      and "'std_rel' attribute is 0: the parameter declares statistics with no width" in out
+      and "generated 4 warning" in out)
+check("[43] the compiler: std_rel on a default of 0 (dr, dg) and std=0 / std_rel=0 (z1, z2) each WARN, "
+      "located; the plain std_rel (ok) does not; the model compiles",
+      ok, "" if ok else f"rc={rc} {out[-600:]}")
+
+ZDECK = f"""osdimc zero sigma at the draw
+V1 a 0 1
+N1 a 0 zm dg=50
+N2 a 0 zm
+.model zm smczero
+.option osdimc mcseed=1 osdimc_verbose
+.control
+pre_osdi {os.path.basename(ZERO)}
+op
+op
+op
+print @n1[dr] @n1[dg] @n2[dr] @n2[dg] @zm[ok]
+altermod zm ok=0
+op
+print @zm[ok]
+altermod zm ok=3
+op
+print @zm[ok]
+.endc
+.end
+"""
+out = run_deck(ZDECK, "zero")
+note = "on a nominal of 0: the sigma is 0 and the parameter never varies"
+noted = sorted(re.findall(r"osdimc: (\S+) declares std_rel=\S+ " + re.escape(note), out))
+dg1 = seq(out, "@n1[dg]")
+okv = seq(out, "@zm[ok]")
+ok = (noted == ["n1:dr", "n2:dg", "n2:dr", "zm:ok"] and out.count(note) == 4
+      and seq(out, "@n1[dr]") == [0.0] and seq(out, "@n2[dr]") == [0.0] and seq(out, "@n2[dg]") == [0.0]
+      and len(dg1) == 1 and dg1[0] != 50.0 and abs(dg1[0] - 50.0) < 25
+      and len(okv) == 3 and okv[0] != 2.0 and okv[1] == 0.0 and okv[2] != 3.0 and abs(okv[2] - 3.0) < 1
+      and "z1" not in out and "z2" not in out)
+check("[44] the draw: n1:dr, n2:dr and n2:dg (nominal 0) are said ONCE each and stay 0; n1:dg=50 on the "
+      "line draws around 50; `altermod zm ok=0` is said once and stays 0, `altermod zm ok=3` draws again; "
+      "z1/z2 (sigma 0) are not exported",
+      ok, "" if ok else f"noted={noted} dr={seq(out, '@n1[dr]')} dg={dg1} ok={okv} {out[-400:]}")
 
 # ----------------------------------------------------------------------------
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks}")

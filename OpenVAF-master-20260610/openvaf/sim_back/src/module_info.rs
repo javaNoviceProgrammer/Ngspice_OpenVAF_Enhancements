@@ -349,6 +349,23 @@ impl ModuleInfo {
                             (None, None) => (None, false),
                         };
 
+                        // Enhancement-620 (hunt F16): a zero sigma, and a
+                        // relative sigma on a default of 0, are said here --
+                        // both draw exactly 0 on every trial, in silence
+                        if let Some(0.0) = sigma {
+                            let attr = param
+                                .get_attr(db, &ast, "std")
+                                .or_else(|| param.get_attr(db, &ast, "std_rel"))
+                                .unwrap();
+                            add_diagnostic(attr.clone(), &ZeroSigma { attr });
+                        } else if rel && sigma.is_some() && param.default_const(db) == Some(0.0) {
+                            let attr = param.get_attr(db, &ast, "std_rel").unwrap();
+                            add_diagnostic(
+                                attr.clone(),
+                                &RelSigmaOnZeroDefault { attr, name: name.to_string() },
+                            );
+                        }
+
                         match sigma {
                             // a zero sigma declares statistics with no width;
                             // exporting it would only produce exact-zero draws
@@ -820,6 +837,67 @@ impl Diagnostic for DistWithoutSigma {
                 file_id: file,
                 range: range.into(),
                 message: "no sigma is declared for this parameter".to_owned(),
+            }])
+    }
+}
+
+/// Enhancement-620 (2026-09-12 hunt F16): `(* std=0 *)` / `(* std_rel=0 *)`
+/// -- statistics with no width. The parameter is not exported (a zero sigma
+/// would only produce exact-zero draws) and the deck would never learn why
+/// it does not vary; say so at compile time.
+struct ZeroSigma {
+    attr: ast::Attr,
+}
+
+impl Diagnostic for ZeroSigma {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::warning()
+            .with_message(format!(
+                "'{}' attribute is 0: the parameter declares statistics with no width and \
+                 will not vary under .option osdimc; give it a sigma or drop the attribute",
+                self.attr.name().unwrap(),
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "a zero sigma is not exported".to_owned(),
+            }])
+    }
+}
+
+/// Enhancement-620 (2026-09-12 hunt F16): `(* std_rel=<f> *)` on a parameter
+/// whose default is the constant 0 -- a mismatch parameter's natural default.
+/// The sigma is relative to the nominal, so with the default in force it is
+/// 0 and the parameter never varies; the deck can still give a value, so the
+/// statistics are exported and the simulator says so once per parameter when
+/// it happens (osdisetup.c).
+struct RelSigmaOnZeroDefault {
+    attr: ast::Attr,
+    name: String,
+}
+
+impl Diagnostic for RelSigmaOnZeroDefault {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::warning()
+            .with_message(format!(
+                "'std_rel' is relative to the nominal and the default of '{}' is 0: with the \
+                 default in force the sigma is 0 and the parameter will not vary under \
+                 .option osdimc; give '{}' a value on the card or line, or declare an \
+                 absolute 'std'",
+                self.name, self.name,
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "relative to a default of 0".to_owned(),
             }])
     }
 }

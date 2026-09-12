@@ -1,0 +1,19 @@
+// Enhancement-620 (2026-09-12 hunt F16): statistics that can never vary.
+// `std_rel` is relative to the nominal, so on a mismatch parameter's natural
+// default of 0 the sigma is 0 -- the parameter drew exactly 0 on every trial
+// without a word. A `std=0` compiled and simply never appeared. Both are said
+// at compile time now, and the simulator says the first once per parameter
+// when it happens (the deck may give the value).
+`include "disciplines.vams"
+
+module smczero(p, n);
+  inout p, n;
+  electrical p, n;
+  (* std=25.0 *) parameter real r = 1000.0 from (0:inf);
+  (* type="instance", std_rel=0.1 *) parameter real dr = 0.0;    // relative on a default of 0
+  (* type="instance", std_rel=0.1 *) parameter real dg = 0.0;    // the same, given by the deck
+  (* std=0.0 *)   parameter real z1 = 5.0;                        // no width
+  (* std_rel=0 *) parameter real z2 = 5.0;                        // no width, relative
+  (* std_rel=0.05 *) parameter real ok = 2.0;                     // fine
+  analog I(p, n) <+ V(p, n) / (r + dr + dg) + 0.0 * (z1 + z2 + ok) * V(p, n);
+endmodule

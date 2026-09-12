@@ -1944,6 +1944,7 @@ typedef struct OsdiMcNominal {
   int given;         /* E-555: the given flag when the nominal was captured
                         (0/1; -1 when the object has no entry point) */
   bool gated_noted;  /* E-555: the "not drawn" note was printed once */
+  bool zero_noted;   /* Enhancement-620 (hunt F16): the "sigma is 0" note was printed once */
   bool stale;        /* Enhancement-614 (hunt F2): the deck never gave this
                         parameter and a user wrote another parameter of its
                         device, so the default it was resolved from may have
@@ -2399,6 +2400,33 @@ static void osdimc_say_gated(OsdiMcNominal *e, const char *owner,
           "branch instead of varying it -- not drawn. Give it on the card, "
           "or altermod it, to vary it.\n",
           owner, param, param);
+}
+
+/* Enhancement-620 (2026-09-12 hunt F16): a relative sigma on a nominal of 0
+ * -- a mismatch parameter's natural default -- resolves to 0, and the
+ * parameter drew exactly 0 on every trial without a word (`osdimc_verbose`
+ * printed `= 0 (nominal 0)` forever). Said once per parameter; the draw is
+ * skipped, the value stays the nominal. The compiler warns at the
+ * declaration when the default is a constant 0 (sim_back/module_info.rs);
+ * this catches the value the deck gave. */
+static double osdimc_sigma(const OsdiStatParam *info, double nominal);
+static bool osdimc_zero_sigma(const OsdiStatParam *info, OsdiMcNominal *e,
+                              const char *owner, const char *param) {
+  if (osdimc_sigma(info, e->nominal) != 0.0)
+    return false;
+  if (!e->zero_noted) {
+    e->zero_noted = true;
+    if (info->std == 0.0)
+      fprintf(stderr,
+              "osdimc: %s:%s declares a sigma of 0: the parameter never varies "
+              "(said once)\n", owner, param);
+    else
+      fprintf(stderr,
+              "osdimc: %s:%s declares std_rel=%g on a nominal of 0: the sigma is 0 "
+              "and the parameter never varies; give it a nonzero value, or declare "
+              "an absolute std (said once)\n", owner, param, info->std);
+  }
+  return true;
 }
 
 /* Enhancement-555: after a nominal is written back (option off), a parameter
@@ -3035,6 +3063,9 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
                              descr->param_opvar[id].name[0]);
             continue;
           }
+          if (osdimc_zero_sigma(&infos[s], e, (char *)gen_model->GENmodName,
+                                descr->param_opvar[id].name[0]))
+            continue;                                   /* Enhancement-620 */
           double val, z = 0.0;
           if (osdimc_walk_on) {                       /* MC hunt F3 */
             val = osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
@@ -3069,6 +3100,9 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
                                descr->param_opvar[id].name[0]);
               continue;
             }
+            if (osdimc_zero_sigma(&infos[s], e, (char *)gen_inst->GENname,
+                                  descr->param_opvar[id].name[0]))
+              continue;                                 /* Enhancement-620 */
             double val, z = 0.0;
             if (osdimc_walk_on) {                     /* MC hunt F3 */
               val = osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);

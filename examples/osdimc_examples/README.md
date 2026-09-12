@@ -86,4 +86,12 @@ hold a pin is a completed command's leftover and the restore proceeds (a
 rows after `unset osdimc` read the devices instead of repeating the last
 trial's draws.
 
-Run `python3 verify_osdimc.py` — 42 checks, both solvers.
+Enhancement-620 (checks 43–44, `smczero.va`): `std_rel` is relative to the
+nominal, so on a mismatch parameter's natural default of 0 the sigma is 0 and
+the parameter drew exactly 0 on every trial without a word; a `std=0` compiled
+and simply never appeared. The compiler now warns on both (a zero sigma is not
+exported; a `std_rel` on a default of 0 is, since the deck may give the value),
+and the simulator says once per parameter when a relative sigma meets a
+nominal of 0 at the draw — the deck's own 0, or an `altermod` to 0.
+
+Run `python3 verify_osdimc.py` — 44 checks, both solvers.
