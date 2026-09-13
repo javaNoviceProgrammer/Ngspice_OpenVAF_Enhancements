@@ -233,6 +233,27 @@ if_inpdeck(struct card *deck, INPtables **tab)
  * and 1 if there was a reason to interrupt the circuit (interrupt
  * typed at the keyboard, error in the simulation, etc). args should
  * be the entire command line, e.g. "tran 1 10 20 uic" */
+/* Enhancement-632 (hunt F20): the circuit was built against an OSDI object
+ * that `osdi -f` has since replaced -- say so and return TRUE. `what` names
+ * the command that asked (NULL for the analysis itself). Used by if_run and,
+ * up front, by the loop commands (montecarlo, highsigma, sweep, wcd): those
+ * used to run every sample or point on the stale circuit, or through its
+ * refusals, while a plain `op` was refused. */
+bool
+if_refuse_stale(const char *what)
+{
+    if (!ft_curckt || !ft_curckt->ci_osdi_stale)
+        return FALSE;
+    fprintf(cp_err, "Error: %s%scircuit \"%s\" was built against \"%s\" before "
+                    "`osdi -f` reloaded it, and cannot run on the new "
+                    "object's code; `reset` (or re-`source`) the deck to "
+                    "rebuild it against the reloaded object\n",
+            what ? what : "", what ? ": " : "",
+            ft_curckt->ci_name ? ft_curckt->ci_name : "?",
+            ft_curckt->ci_osdi_stale_path ? ft_curckt->ci_osdi_stale_path : "?");
+    return TRUE;
+}
+
 int
 if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
 {
@@ -245,16 +266,17 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
 
     /* hunt F16 (2026-09-05): the circuit was built against an OSDI object
      * that `osdi -f` has since replaced; running it would execute the new
-     * object's code on the old layout's data (see OSDIreloadedType). */
-    if (ft_curckt && ft_curckt->ci_osdi_stale && ft_curckt->ci_ckt == ckt) {
-        fprintf(cp_err, "Error: circuit \"%s\" was built against \"%s\" before "
-                        "`osdi -f` reloaded it, and cannot run on the new "
-                        "object's code; `reset` (or re-`source`) the deck to "
-                        "rebuild it against the reloaded object\n",
-                ft_curckt->ci_name ? ft_curckt->ci_name : "?",
-                ft_curckt->ci_osdi_stale_path ? ft_curckt->ci_osdi_stale_path : "?");
-        return 1;
-    }
+     * object's code on the old layout's data (see OSDIreloadedType).
+     * Enhancement-632 (hunt F20 of 2026-09-12): the refusal is a run that did
+     * NOT START (3), not an interrupt (1) -- dosim() took 1 for an interrupt
+     * and left `sim_status` clean, so a loop command's inner runs were
+     * refused one by one while the loop read them as successes: `sweep`
+     * reported three points of stale values, `wcd` turned the refusals into
+     * a "zero gradient". The message is shared with the loop commands, which
+     * now refuse up front. */
+    if (ft_curckt && ft_curckt->ci_osdi_stale && ft_curckt->ci_ckt == ckt &&
+        if_refuse_stale(NULL))
+        return 3;
 
     /* `.option osdimc`: every run-class command starts a new Monte-Carlo
      * trial; `resume` continues the current one and must not redraw. */

@@ -8,6 +8,8 @@
 
 CKTcircuit * if_inpdeck(struct card *deck, INPtables **tab);
 int if_run(CKTcircuit *t, char *what, wordlist *args, INPtables *tab);
+/* Enhancement-632 (hunt F20): the circuit is stale after `osdi -f` -- said, TRUE */
+bool if_refuse_stale(const char *what);
 int if_option(CKTcircuit *ckt, char *name, enum cp_types type, void *value);
 void if_dump(CKTcircuit *ckt, FILE *file);
 void if_cktfree(CKTcircuit *ckt, INPtables *tab);

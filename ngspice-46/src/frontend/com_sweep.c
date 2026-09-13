@@ -56,6 +56,7 @@ analyses is suppressed via `ft_optimizing`.
 #include "ngspice/const.h"   /* Enhancement-488: CONSTCtoK for the `temp` knob */
 
 #include "numparam/numpaif.h"
+#include "spiceif.h"            /* Enhancement-632: if_refuse_stale */
 #include "ngspice/randnumb.h"
 #include "ngspice/devdefs.h"      /* Enhancement-320: DEVices[]/DEVmaxnum direct set */
 #include "com_sweep.h"
@@ -3139,6 +3140,8 @@ void com_sweep(wordlist *wl)
         fprintf(cp_err, "sweep: no circuit loaded\n");
         return;
     }
+    if (if_refuse_stale("sweep"))               /* Enhancement-632 (hunt F20) */
+        return;
     if (!wl || !wl->wl_word) {
         fprintf(cp_err, "usage: sweep <knob> (<start> <stop> <step> | "
                         "lin|dec|oct <N> <start> <stop> | list <v> ...) "
@@ -4204,6 +4207,8 @@ void com_highsigma(wordlist *wl)
         fprintf(cp_err, "highsigma: no circuit loaded\n");
         return;
     }
+    if (if_refuse_stale("highsigma"))           /* Enhancement-632 (hunt F20) */
+        return;
 
     {
         char spec[128] = "";
@@ -4973,6 +4978,8 @@ void com_montecarlo(wordlist *wl)
         fprintf(cp_err, "montecarlo: no circuit loaded\n");
         return;
     }
+    if (if_refuse_stale("montecarlo"))          /* Enhancement-632 (hunt F20) */
+        return;
 
     if (nspec > 0)
         fprintf(cp_out, "montecarlo: %d %s samples, analysis '%s', %d spec%s, seed %u%s\n",
@@ -5832,6 +5839,8 @@ void com_wcd(wordlist *wl)
         fprintf(cp_err, "wcd: no circuit loaded\n");
         return;
     }
+    if (if_refuse_stale("wcd"))                 /* Enhancement-632 (hunt F20) */
+        return;
 
     ft_optimizing = TRUE;
     /* Enhancement-535: the whole worst-case search is ONE osdimc sample --

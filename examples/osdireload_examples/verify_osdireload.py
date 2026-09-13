@@ -22,6 +22,14 @@ which is the same reason the feature is chiefly for Linux/macOS developers).
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title).
 
+Enhancement-632 (F20 of the 2026-09-12 hunt): the loop commands used to bypass
+the stale-circuit refusal -- montecarlo and highsigma ran every sample on the
+circuit built against the previous object (or through its refusals), sweep
+reported its points of stale values and wcd turned the refusals into a "zero
+gradient", because the refusal returned as an interrupt and left sim_status
+clean. It is a run that did not start now, and montecarlo, highsigma, sweep
+and wcd refuse up front with the same message; after `reset` they run.
+
 Enhancement-629 (F12 of the 2026-09-12 hunt): a path with spaces is written in
 quotes, and the double-quoted spelling -- the one a schematic tool writes --
 reached the loader with its quotes on (`Error opening osdi lib ""dir with
@@ -113,6 +121,39 @@ check("hunt F16: the reload names the circuit built against the previous object,
       "was built against the previous" in out and "cannot run on the new object's code" in out
       and len(vals) >= 3 and abs(vals[1] - (-0.5e-3)) < 1e-6,
       f"vals={vals} note={'was built against the previous' in out} refused={'cannot run on the new' in out}")
+
+# Enhancement-632 (hunt F20): the loop commands stop on the stale circuit too
+shutil.copy(os.path.join(D, "mv1.osdi"), os.path.join(D, "m.osdi"))
+with open(os.path.join(D, "mc.cir"), "w") as f:
+    f.write("* osdi reload mc\nN1 a 0 rmod\nV1 a 0 1\n.model rmod vares\n.option osdimc mcseed=3\n.end\n")
+script = "\n".join([
+    "osdi m.osdi", "source mc.cir", "op",
+    "shell %s mv2.osdi m.osdi" % CP, "osdi -f m.osdi",
+    "op",
+    "montecarlo 3 -seed 1 -analysis op -expr rr=i(v1)",
+    "highsigma 3 -analysis op -metric i(v1) -max 0 -seed 1",
+    "sweep v1 0.5 1.5 0.5 -analysis op -output ii=i(v1)",
+    "wcd -analysis op -metric i(v1) -max 0",
+    "echo plots-before $plots",
+    "reset", "montecarlo 2 -seed 1 -analysis op -expr rr=i(v1)", "print montecarlo1.rr",
+    "quit", ""])
+r = subprocess.run([NGSPICE, "-p"], input=script, capture_output=True, text=True,
+                   cwd=D, errors="replace", timeout=120)
+out = (r.stdout or "") + (r.stderr or "")
+refused = re.findall(r"^Error: (montecarlo|highsigma|sweep|wcd): circuit \"\* osdi reload mc\" was built against \"m\.osdi\" "
+                     r"before `osdi -f` reloaded it, and cannot run on the new object's code", out, re.M)
+check("hunt F20: montecarlo, highsigma, sweep and wcd on the stale circuit are refused up front, each with the message, "
+      "and no sample, point or gradient is produced",
+      refused == ["montecarlo", "highsigma", "sweep", "wcd"] and "random samples" not in out.split("echo plots-before")[0]
+      and "points into plot" not in out and "zero gradient" not in out
+      and re.search(r"^plots-before .*sweep1", out, re.M) is None,
+      f"refused={refused} {out[-400:]}")
+check("hunt F20: ...the plain op's refusal is a run that did not start (sim_status set), not an interrupt",
+      "op simulation not started" in out and "op simulation interrupted" not in out, out[-300:])
+vals2 = [float(x) for x in re.findall(r"^\d+\s+(-?[\d.]+e[-+]\d+)\s*$", out, re.M)]
+check("hunt F20: ...after `reset` montecarlo runs on the rebuilt circuit (2 samples of i(v1) around -0.5 mA, the 2k object)",
+      "2 random samples" in out and len(vals2) >= 2 and all(-1e-3 < v < 0 for v in vals2[-2:]),
+      f"vals={vals2} {out[-300:]}")
 
 # Enhancement-629 (hunt F12): a path with spaces, in either kind of quotes
 SP = os.path.join(D, "dir with space")
