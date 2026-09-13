@@ -536,6 +536,242 @@ void mc_sample_advance(void)
      * Gaussian draws any single pass consumed, which is the dimensionality. */
 }
 
+/* -----------------------------------------------------------------------
+ * Enhancement-622 (2026-09-12 hunt F4): the -inflate scope.
+ *
+ * `highsigma -scale L -inflate <spec>...` inflates only the named dimensions
+ * (Enhancement-538) -- but the scope table lived with the OSDI draws, and the
+ * netlist draws above inflated every Gaussian whatever the specs said: a
+ * netlist `.param` stayed inflated at full scale while the run reported that
+ * NOTHING matched, and ten netlist bystanders beside an OSDI metric collapsed
+ * the weights to an ESS of 6 of 3000 with no way to scope them out. One table
+ * now, consulted by both; the evaluator names the dimension it is about to
+ * draw (mc_dim_push) so a netlist draw can be matched by name.
+ * ----------------------------------------------------------------------- */
+typedef struct {
+    char *owner;    /* a model card, an instance, a subcircuit call; "*" for any */
+    char *param;
+} mc_scope_spec;
+
+static mc_scope_spec *mc_scope;
+static int mc_scope_n, mc_scope_cap;
+static int mc_scope_hit_count;
+
+#define MC_DIM_DEPTH 8
+static const char *mc_dim[MC_DIM_DEPTH];
+static int mc_dim_n;
+
+/* `.param name -> slot`, recorded by the inliner (see randnumb.h) */
+typedef struct { char *param; char *slot; } mc_dim_alias;
+static mc_dim_alias *mc_aliases;
+static int mc_alias_n, mc_alias_cap;
+
+void mc_dim_alias_clear(void)
+{
+    int i;
+    for (i = 0; i < mc_alias_n; i++) {
+        tfree(mc_aliases[i].param);
+        tfree(mc_aliases[i].slot);
+    }
+    mc_alias_n = 0;
+}
+
+void mc_dim_alias_add(const char *param, const char *slot)
+{
+    int i;
+    if (!param || !*param || !slot || !*slot)
+        return;
+    for (i = 0; i < mc_alias_n; i++)
+        if (cieq(mc_aliases[i].param, (char *) param) && cieq(mc_aliases[i].slot, (char *) slot))
+            return;
+    if (mc_alias_n == mc_alias_cap) {
+        mc_alias_cap = mc_alias_cap ? 2 * mc_alias_cap : 16;
+        mc_aliases = TREALLOC(mc_dim_alias, mc_aliases, mc_alias_cap);
+    }
+    mc_aliases[mc_alias_n].param = copy(param);
+    mc_aliases[mc_alias_n].slot = copy(slot);
+    mc_alias_n++;
+}
+
+static int mc_scope_add_one(const char *owner, const char *param);
+
+int mc_scope_add(const char *spec)
+{
+    const char *owner = "*", *param;
+    char buf[256], *lb, *rb;
+
+    if (!spec || !*spec)
+        return 0;
+    if (*spec == '@') {
+        if (strlen(spec) >= sizeof buf)
+            return 0;
+        strcpy(buf, spec + 1);
+        lb = strchr(buf, '[');
+        rb = strrchr(buf, ']');
+        if (!lb || !rb || rb <= lb + 1 || lb == buf)
+            return 0;
+        *lb = '\0';
+        *rb = '\0';
+        owner = buf;
+        param = lb + 1;
+    } else {
+        if (strchr(spec, '[') || strchr(spec, ']'))
+            return 0;
+        param = spec;
+    }
+    if (!*param)
+        return 0;
+    mc_scope_add_one(owner, param);
+    /* a bare name that is a .param the inliner dissolved: the slots that
+     * read it are what draws, so they join the scope (a derived .param it
+     * feeds is an alias too, and that one's own readers follow) */
+    if (owner[0] == '*' && owner[1] == '\0') {
+        int i, guard;
+        for (guard = 0; guard < 4; guard++) {
+            int before = mc_scope_n;
+            for (i = 0; i < mc_alias_n; i++) {
+                int k, have = 0;
+                for (k = 0; k < mc_scope_n; k++)
+                    if (mc_scope[k].owner[0] == '*' && cieq(mc_scope[k].param, mc_aliases[i].param))
+                        break;
+                if (k == mc_scope_n)
+                    continue;               /* the alias's .param is not in scope */
+                for (k = 0; k < mc_scope_n; k++)
+                    if (mc_scope[k].owner[0] == '*' && cieq(mc_scope[k].param, mc_aliases[i].slot))
+                        have = 1;
+                if (!have)
+                    mc_scope_add_one("*", mc_aliases[i].slot);
+            }
+            if (mc_scope_n == before)
+                break;
+        }
+    }
+    return 1;
+}
+
+static int mc_scope_add_one(const char *owner, const char *param)
+{
+    if (mc_scope_n == mc_scope_cap) {
+        mc_scope_cap = mc_scope_cap ? 2 * mc_scope_cap : 8;
+        mc_scope = TREALLOC(mc_scope_spec, mc_scope, mc_scope_cap);
+    }
+    mc_scope[mc_scope_n].owner = copy(owner);
+    mc_scope[mc_scope_n].param = copy(param);
+    mc_scope_n++;
+    return 1;
+}
+
+void mc_scope_clear(void)
+{
+    int i;
+    for (i = 0; i < mc_scope_n; i++) {
+        tfree(mc_scope[i].owner);
+        tfree(mc_scope[i].param);
+    }
+    mc_scope_n = 0;
+    mc_scope_hit_count = 0;
+}
+
+int mc_scope_len(void)  { return mc_scope_n; }
+int mc_scope_hits(void) { return mc_scope_hit_count; }
+
+/* `name` equals `want`, or ends in `.want` -- a subcircuit's `r1` is known as
+ * `r.x1.r1` once expanded, and the deck names it by its own name */
+static int mc_name_is(const char *name, const char *want)
+{
+    size_t n, w;
+    if (!name || !want)
+        return 0;
+    if (cieq((char *) name, (char *) want))
+        return 1;
+    n = strlen(name);
+    w = strlen(want);
+    return n > w + 1 && name[n - w - 1] == '.' && strncasecmp(name + n - w, want, w) == 0;
+}
+
+/* does (owner, param) fall in the scope? owner NULL: match on param alone */
+static int mc_scope_test(const char *owner, const char *param)
+{
+    int i;
+    for (i = 0; i < mc_scope_n; i++) {
+        const mc_scope_spec *sp = &mc_scope[i];
+        if (!mc_name_is(param, sp->param))
+            continue;
+        if (sp->owner[0] == '*' && sp->owner[1] == '\0')
+            return 1;
+        if (owner && mc_name_is(owner, sp->owner))
+            return 1;
+    }
+    return 0;
+}
+
+int mc_scope_match(const char *owner, const char *param)
+{
+    if (mc_scope_test(owner, param)) {
+        mc_scope_hit_count++;
+        return 1;
+    }
+    return 0;
+}
+
+/* a netlist dimension by its savemc name: `rr` (a .param), `r1` (a device's
+ * value), `r1:key`, `rm:r` (a model card's slot), `x1.p` (a subcircuit
+ * call's own parameter). Tried whole against the spec's param with any
+ * owner, and split at its last `:` or `.` into owner and param. */
+static int mc_dim_name_in_scope(const char *name)
+{
+    const char *sep;
+    if (mc_scope_test(NULL, name))
+        return 1;
+    sep = strrchr(name, ':');
+    if (!sep)
+        sep = strrchr(name, '.');
+    if (sep && sep > name && sep[1]) {
+        char owner[256];
+        size_t n = (size_t) (sep - name);
+        if (n < sizeof owner) {
+            memcpy(owner, name, n);
+            owner[n] = '\0';
+            if (mc_scope_test(owner, sep + 1))
+                return 1;
+        }
+    }
+    return 0;
+}
+
+/* worth naming the dimension: a scoped SSS run is under way */
+int mc_dim_wanted(void)
+{
+    return lhs_mode == MC_MODE_SSS && mc_scope_n > 0;
+}
+
+void mc_dim_push(const char *name)
+{
+    if (mc_dim_n < MC_DIM_DEPTH)
+        mc_dim[mc_dim_n] = name;
+    mc_dim_n++;
+}
+
+void mc_dim_pop(void)
+{
+    if (mc_dim_n > 0)
+        mc_dim_n--;
+}
+
+/* is the dimension being drawn in scope? Any name on the stack will do --
+ * the device slot, or the .param it reads. An unnamed draw (none pushed) is
+ * out of scope: the specs name what inflates, and it was not named. */
+static int mc_dim_in_scope(void)
+{
+    int i, n = mc_dim_n < MC_DIM_DEPTH ? mc_dim_n : MC_DIM_DEPTH;
+    for (i = n - 1; i >= 0; i--)
+        if (mc_dim[i] && mc_dim_name_in_scope(mc_dim[i])) {
+            mc_scope_hit_count++;
+            return 1;
+        }
+    return 0;
+}
+
 /* Next uniform in [0,1) for the current draw. LHS returns the stratified value;
  * SSS and out-of-range fall back to a plain PRNG uniform (uniform .params are
  * bounded, so SSS does not inflate them -- they carry weight 1). */
@@ -578,7 +814,12 @@ double mc_sample_gauss(void)
         return z;
     }
     if (lhs_mode == MC_MODE_SSS && lhs_sample >= 0 && lhs_sample < lhs_N) {
-        double z = sss_lambda * gauss1();
+        double z;
+        /* Enhancement-622: a scoped run inflates the named dimensions only;
+         * the others draw at their nominal spread and weigh 1 */
+        if (mc_scope_n > 0 && !mc_dim_in_scope())
+            return gauss1();
+        z = sss_lambda * gauss1();
         /* log w_d = log(lambda) - (z^2/2)(1 - 1/lambda^2) */
         sss_logw += log(sss_lambda) -
                     0.5 * z * z * (1.0 - 1.0 / (sss_lambda * sss_lambda));

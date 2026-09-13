@@ -531,7 +531,12 @@ twenty statistically-declared bystander devices had dragged a true P(fail) of
 for bit the answer from a deck that never had those devices. Without
 `-inflate` every parameter still inflates, exactly as before. A spec that
 matches nothing, or one that is malformed, is reported rather than silently
-widening the scope back to everything:
+widening the scope back to everything. The scope reaches the netlist's own
+Gaussian `.param`s too (E-622): name the `.param` (`-inflate rr`) or the slot
+its draw lands in (`r1`, `r1:key`, `x1.p`, `rm:r`, as `savemc` names them), and
+an unnamed netlist dimension draws at its nominal spread — the OSDI-metric-plus-
+netlist-bystanders deck that collapsed to an ESS of 6 estimates with an ESS in
+the hundreds once its two model parameters alone are named:
 
 ```spice
 highsigma 2000 -scale 3 -inflate vth0 -inflate @nmod[u0] \

@@ -64,4 +64,28 @@ extern void mc_wcd_off(void);
 extern double mc_corr_component(int idx);   /* i-th correlated normal (1-based)  */
 extern int    mc_corr_size(void);           /* k of the registered matrix, 0 if none */
 
+/* Enhancement-622 (2026-09-12 hunt F4): the `-inflate` scope of `highsigma
+ * -scale` -- which statistical dimensions the sigma inflation applies to --
+ * kept here so the netlist draws (mc_sample_gauss) and the OSDI draws
+ * (osdisetup.c) consult one table. A spec is a parameter name, or the
+ * accessor spelling `@owner[param]` (`*` for any owner); a netlist dimension
+ * is named as `.option savemc` names it: `r1`, `r1:key`, `x1.p`, `rm:r`, the
+ * `.param` whose value it is, or the model card's slot. The evaluator says
+ * which dimension is being drawn through mc_dim_push/pop. */
+extern int  mc_scope_add(const char *spec);          /* 0 on a shape not recognised */
+extern void mc_scope_clear(void);
+extern int  mc_scope_len(void);
+extern int  mc_scope_match(const char *owner, const char *param);   /* counts a hit */
+extern int  mc_scope_hits(void);
+extern int  mc_dim_wanted(void);            /* is naming the dimension worth the work now? */
+extern void mc_dim_push(const char *name);
+extern void mc_dim_pop(void);
+/* a random .param is inlined into the lines that read it (inpcom.c's
+ * inp_fix_agauss_in_param), so its draw happens under the slot's name; the
+ * inliner records `.param name -> slot` here so a spec may still name the
+ * .param. Cleared when a new deck is read (a `reset` keeps the table: the
+ * reload has no .param lines left to record from). */
+extern void mc_dim_alias_clear(void);
+extern void mc_dim_alias_add(const char *param, const char *slot);
+
 #endif

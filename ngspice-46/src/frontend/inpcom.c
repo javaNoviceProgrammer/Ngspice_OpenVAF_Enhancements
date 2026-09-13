@@ -19,6 +19,7 @@ Author: 1985 Wayne A. Christopher
 #endif
 
 #include "ngspice/ngspice.h"
+#include "ngspice/randnumb.h"    /* Enhancement-622: the .param -> slot aliases */
 
 #include "ngspice/compatmode.h"
 #include "ngspice/cpdefs.h"
@@ -1417,6 +1418,7 @@ struct card *inp_readall(FILE *fp, const char *dir_name, const char* file_name,
         static char *statfcn[] = {
                 "agauss", "gauss", "aunif", "unif", "limit", "mvnorm"};
         int ii;
+        mc_dim_alias_clear();                   /* Enhancement-622: a new deck */
         for (ii = 0; ii < (int) (sizeof statfcn / sizeof statfcn[0]); ii++)
             inp_fix_agauss_in_param(working, statfcn[ii]);
 
@@ -10293,6 +10295,104 @@ static void inp_fix_temper_in_param(struct card *deck)
  * eval_agauss() in inp.c).
  */
 
+/* Enhancement-622 (2026-09-12 hunt F4): the random .param `name` was turned
+ * into a function and `line` is a rewritten reader of it -- record where its
+ * draw now happens, named as `.option savemc` names the slot: `r1` for a
+ * device's value, `r1:key` for a keyed one, `x1.key` for a subcircuit call's
+ * own parameter, `rm:key` for a model card's slot, and the LHS of a derived
+ * `.param` (that one draws under its own name). A B-source line has no
+ * per-sample dimension (its draw is fixed at load) and records nothing. */
+static void inp_stat_alias_register(const char *name, const char *line)
+{
+    const char *tp = line, *b, *ne;
+    char inst[256];
+    int is_model, is_param, is_x, i;
+    size_t nlen = strlen(name);
+
+    while (*tp && isspace_c(*tp))
+        tp++;
+    if (!*tp || *tp == '*')
+        return;
+    is_model = ciprefix(".model", tp);
+    is_param = ciprefix(".param", tp);
+    if (*tp == '.' && !is_model && !is_param)
+        return;
+    if (*tp == 'b' || *tp == 'B')
+        return;
+    if (is_param) {
+        /* `.param k=<expr calling name()>`: the LHS names the dimension */
+        const char *q = tp + 6, *nb;
+        while (*q && isspace_c(*q))
+            q++;
+        nb = q;
+        while (*q && (isalnum_c(*q) || *q == '_'))
+            q++;
+        if (q > nb && (size_t) (q - nb) < sizeof inst) {
+            for (i = 0; i < q - nb; i++)
+                inst[i] = tolower_c(nb[i]);
+            inst[q - nb] = '\0';
+            if (!cieq(inst, (char *) name))
+                mc_dim_alias_add(name, inst);
+        }
+        return;
+    }
+    is_x = (*tp == 'x' || *tp == 'X');
+    ne = is_model ? tp + 6 : tp;
+    while (*ne && isspace_c(*ne))
+        ne++;
+    b = ne;
+    while (*ne && !isspace_c(*ne) && *ne != '(')
+        ne++;
+    if (ne == b || (size_t) (ne - b) >= sizeof inst)
+        return;
+    for (i = 0; i < ne - b; i++)
+        inst[i] = tolower_c(b[i]);
+    inst[ne - b] = '\0';
+
+    for (b = ne; (b = strchr(b, '{')) != NULL; ) {
+        const char *e = b + 1, *p, *k;
+        int nest = 1, calls = 0;
+        while (*e && nest) {
+            if (*e == '{') nest++;
+            else if (*e == '}') nest--;
+            e++;
+        }
+        if (nest)
+            return;
+        for (p = b + 1; p + nlen < e; p++)
+            if (strncasecmp(p, name, nlen) == 0 && p[nlen] == '(' &&
+                (p == b + 1 || !(isalnum_c(p[-1]) || p[-1] == '_'))) {
+                calls = 1;
+                break;
+            }
+        if (calls) {
+            char key[128] = "", slot[512];
+            k = b;
+            while (k > ne && isspace_c(k[-1]))
+                k--;
+            if (k > ne && k[-1] == '=') {
+                const char *kb, *ke = k - 1;
+                while (ke > ne && isspace_c(ke[-1]))
+                    ke--;
+                kb = ke;
+                while (kb > ne && (isalnum_c(kb[-1]) || kb[-1] == '_'))
+                    kb--;
+                if (ke > kb && (size_t) (ke - kb) < sizeof key) {
+                    for (i = 0; i < ke - kb; i++)
+                        key[i] = tolower_c(kb[i]);
+                    key[ke - kb] = '\0';
+                }
+            }
+            if (key[0])
+                (void) snprintf(slot, sizeof slot, "%s%c%s", inst, is_x ? '.' : ':', key);
+            else
+                (void) snprintf(slot, sizeof slot, "%s", inst);
+            mc_dim_alias_add(name, slot);
+        }
+        b = e;
+    }
+}
+
 static void inp_fix_agauss_in_param(struct card *deck, char *fcn)
 {
     int skip_control = 0, subckt_depth = 0, j, *sub_count;
@@ -10480,6 +10580,10 @@ static void inp_fix_agauss_in_param(struct card *deck, char *fcn)
             /* restore first part of the line */
             new_str = INPstrCat(firsttok_str, ' ', new_str);
             new_str = inp_remove_ws(new_str);
+
+            /* Enhancement-622: remember which slot the .param's draw now
+             * lives in, so `highsigma -inflate <param>` can still name it */
+            inp_stat_alias_register(f->funcname, new_str);
 
             *card->line = '*';
             /* Enter new line into deck */

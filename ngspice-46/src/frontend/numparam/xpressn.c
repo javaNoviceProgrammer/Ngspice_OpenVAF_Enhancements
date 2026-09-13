@@ -1648,7 +1648,20 @@ nupa_substitute(dico_t *dico, const char *s, char **lp)
                               "braces are empty)\n");
                 goto Lend;
             } else {
+                /* Enhancement-622: the slot's name for a scoped `highsigma
+                 * -inflate` draw (`r1`, `r1:key`, `rm:r`) */
+                char *dimname = NULL;
+                if (mc_dim_wanted()) {
+                    int is_model;
+                    dimname = mcs_slot_name(line0, dico->cardline, s, &is_model);
+                    if (dimname)
+                        mc_dim_push(dimname);
+                }
                 err = evaluate_expr(dico, &qstr, s, kptr);
+                if (dimname) {
+                    mc_dim_pop();
+                    tfree(dimname);
+                }
                 if (err) {
                     /* Enhancement-590: `s=b` on a card is read as the expression
                        {b}; when the fragment is a bare word, say the two things
@@ -1840,7 +1853,22 @@ nupa_assignment(dico_t *dico, const char *s, char mode)
 
         tmp = ds_get_buf(&ustr);
         if (dtype == NUPA_REAL) {
+            /* Enhancement-622: under a scoped `highsigma -inflate` the draw
+             * wants the dimension's name -- the parameter's, scoped by the
+             * subcircuit instance whose parameter it is, as savemc names it */
+            char *dimname = NULL;
+            if (mc_dim_wanted()) {
+                const char *inst = dico->stack_depth > 0 && dico->inst_name
+                                   ? dico->inst_name[dico->stack_depth] : NULL;
+                dimname = inst && *inst ? tprintf("%s.%s", inst, ds_get_buf(&tstr))
+                                        : copy(ds_get_buf(&tstr));
+                mc_dim_push(dimname);
+            }
             rval = formula(dico, tmp, tmp + strlen(tmp), &error);
+            if (dimname) {
+                mc_dim_pop();
+                tfree(dimname);
+            }
             if (error) {
                 message(dico,
                         " Formula() error.\n"

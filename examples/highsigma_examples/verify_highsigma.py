@@ -25,6 +25,15 @@ solver-independent feature, so it is Sparse-only per _setup.SPARSE_ONLY):
   [3] two-sided spec (-max and -min) doubles the tail probability
   [4] reproducibility -- same seed gives the identical estimate
   [5] multi-parameter -- two independent Gaussians combine as N(.,sqrt(s1^2+s2^2))
+  [9] (Enhancement-622, 2026-09-12 hunt F4) -inflate scopes the NETLIST
+      dimensions too: `-inflate rr` (the .param, resolved to the slot its
+      draw was inlined into) and `-inflate r1` (the slot) reproduce the
+      unscoped estimate; a spec matching nothing inflates nothing and says so
+      -- the same deck used to inflate everything whatever the spec and print
+      the "NOTHING was inflated" note; the scope survives the resets
+  [10] an OSDI metric beside netlist bystanders: `-inflate @mm[r] -inflate
+      @n1[dr]` leaves the bystanders at their nominal spread, so the weights
+      no longer collapse (ESS 6 of 3000 -> hundreds) and P(fail) is on target
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
@@ -198,6 +207,49 @@ lo_s = re.search(r"-min ([-\d.]+)", d).group(1); hi_s = re.search(r"-max ([-\d.]
 log = run(d.replace(f"-max {hi_s} -min {lo_s}", f"-max {lo_s} -min {hi_s}"))
 check("swapped limits: refused as contradictory, no estimate",
       "the limits are contradictory" in log and not re.search(r"P\(fail\)\s+:", log), "")
+
+# --- [9] Enhancement-622: -inflate reaches the netlist dimensions ----------
+print("[9] -inflate scopes the netlist .param draws (2026-09-12 hunt F4)")
+d = one_param_deck(2000, 3.0, 4.5, seed=1)
+ctl_all = re.search(r"  highsigma .*\n", d).group(0)
+ctl_rr = ctl_all.replace("-analysis op", "-inflate rr -analysis op")
+ctl_r1 = ctl_all.replace("-analysis op", "-inflate r1 -analysis op")
+ctl_no = ctl_all.replace("-analysis op", "-inflate nosuch -analysis op")
+d4 = d.replace(ctl_all, ctl_all + ctl_rr + ctl_r1 + ctl_no)
+log = run(d4)
+nf = re.findall(r"failures observed\s*:\s*(\d+) / \d+", log)
+pf = re.findall(r"P\(fail\)\s*:\s*(\S+)", log)
+notes = log.count("NOTHING was inflated")
+check("-inflate rr (the .param) and -inflate r1 (its slot) reproduce the unscoped run exactly, after the resets",
+      len(nf) == 4 and nf[0] == nf[1] == nf[2] and int(nf[0]) > 50 and len(pf) == 4 and pf[0] == pf[1] == pf[2],
+      f"failures={nf} pfail={pf}")
+check("a spec matching nothing inflates nothing: 0 failures at the nominal spread, and the note says so once",
+      len(nf) == 4 and nf[3] == "0" and notes == 1,
+      f"failures={nf} notes={notes}")
+
+# --- [10] an OSDI metric with netlist bystanders --------------------------
+print("[10] an OSDI metric beside ten netlist bystanders: scoping rescues the weights")
+va = os.path.join(SCRATCH, "rst.va")
+with open(va, "w") as f:
+    f.write('`include "disciplines.vams"\nmodule rst(p, n);\ninout p, n; electrical p, n;\n'
+            '(* std=25.0 *) parameter real r = 1000.0 from (0:inf);\n'
+            '(* type="instance", std=10.0 *) parameter real dr = 0.0;\n'
+            'analog I(p,n) <+ V(p,n)/(r+dr);\nendmodule\n')
+from _setup import VAF
+subprocess.run([VAF, va, "-o", os.path.join(SCRATCH, "rst.osdi")], capture_output=True, text=True, timeout=300)
+by = "".join(f".param b{i} = agauss(1000, 100, 3)\nRb{i} q{i} 0 {{b{i}}}\nVb{i} q{i} 0 dc 0\n" for i in range(1, 11))
+hs = "highsigma 3000 -scale 3.0 -seed 1 -analysis op %s-metric -1/i(v1) -max 1090\necho ESS $&highsigma_ess\n"
+log = run("* OSDI metric, netlist bystanders\n.option osdimc mcseed=1\n.control\npre_osdi rst.osdi\n.endc\n"
+          "V1 a 0 dc 1\nN1 a 0 mm\n.model mm rst r=1k\n" + by + ".control\nop\n" + hs % "" +
+          hs % "-inflate @mm[r] -inflate @n1[dr] " + ".endc\n.end\n")
+ess = [float(x) for x in re.findall(r"^ESS (\S+)", log, re.M)]
+pf = [float(x) for x in re.findall(r"P\(fail\)\s*:\s*(\S+)", log)]
+true_p = Phi(-90.0 / math.sqrt(25.0 ** 2 + 10.0 ** 2))
+check("unscoped: ten inflated bystanders collapse the weights (ESS < 20 of 3000, flagged)",
+      len(ess) == 2 and ess[0] < 20 and "weights have collapsed" in log, f"ess={ess}")
+check(f"scoped to @mm[r] and @n1[dr]: ESS in the hundreds and P(fail) within 35% of Phi(-3.35) = {true_p:.3g}",
+      len(ess) == 2 and ess[1] > 200 and len(pf) == 2 and abs(pf[1] - true_p) < 0.35 * true_p,
+      f"ess={ess} pfail={pf}")
 
 import shutil
 shutil.rmtree(SCRATCH, ignore_errors=True)

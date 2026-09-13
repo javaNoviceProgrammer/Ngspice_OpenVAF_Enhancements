@@ -73,6 +73,13 @@ python3 verify_highsigma.py
   [Enhancement-149](../lhs_examples/) (Latin-Hypercube sampling) began: LHS lowers
   the variance of a *whole-distribution* estimate; `highsigma` reaches the *rare
   tail* that plain MC cannot.
+- `-inflate <param>` (E-538) scopes the inflation, and since Enhancement-622
+  the scope reaches the netlist dimensions as well as the model's: `-inflate rr`
+  (the `.param`) or `-inflate r1` (the slot its draw was inlined into) reproduce
+  the unscoped estimate, a spec matching nothing inflates nothing and says so,
+  and an OSDI metric beside netlist bystanders is estimated with
+  `-inflate @mm[r] -inflate @n1[dr]` where the unscoped weights collapse
+  (checks 9–10).
 - `highsigma` inflates **Gaussian** `.param`s (`agauss`/`gauss`); bounded uniform
   params (`aunif`/`unif`) are drawn at their nominal spread (weight 1), since a
   uniform has no tail to reach.

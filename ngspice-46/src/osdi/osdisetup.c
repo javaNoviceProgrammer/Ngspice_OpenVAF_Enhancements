@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "ngspice/fteext.h"      /* E-555: ft_curckt for OSDIparamGivenByName */
+#include "ngspice/randnumb.h"    /* Enhancement-622: the shared -inflate scope */
 #include "ngspice/stringutil.h"  /* E-555: cieq */
 #include <string.h>
 
@@ -2127,82 +2128,23 @@ void OSDImcSeedOffset(unsigned s) {
  * case-insensitive, as everywhere else in the name surface.
  *
  * With no specs the behaviour is exactly what it was: everything inflates. */
-typedef struct {
-  char *owner; /* model-card or instance name, or "*" */
-  char *param;
-} OsdiMcScope;
+/* Enhancement-622 (hunt F4): the table moved to maths/misc/randnumb.c so the
+ * netlist draws consult the same specs; these are the OSDI entry points E-538
+ * declared, now views on it. The hit count covers both kinds of draw. */
+void OSDImcScaleScopeClear(void) { mc_scope_clear(); }
 
-static OsdiMcScope *osdimc_scope;
-static int osdimc_scope_len, osdimc_scope_cap;
-static int osdimc_scope_hits; /* how many draws the specs actually matched */
+int OSDImcScaleScopeHits(void) { return mc_scope_hits(); }
 
-void OSDImcScaleScopeClear(void) {
-  int i;
-  for (i = 0; i < osdimc_scope_len; i++) {
-    tfree(osdimc_scope[i].owner);
-    tfree(osdimc_scope[i].param);
-  }
-  osdimc_scope_len = 0;
-  osdimc_scope_hits = 0;
-}
-
-int OSDImcScaleScopeHits(void) { return osdimc_scope_hits; }
-
-/* Parse one spec. Returns false (and says nothing) on a shape this does not
- * recognise; the caller reports, since it knows the command name. */
-bool OSDImcScaleScopeAdd(const char *spec) {
-  const char *owner = "*", *param = NULL;
-  char buf[256], *lb, *rb;
-
-  if (!spec || !*spec)
-    return false;
-  if (*spec == '@') {
-    if (strlen(spec) >= sizeof buf)
-      return false;
-    strcpy(buf, spec + 1);
-    lb = strchr(buf, '[');
-    rb = strrchr(buf, ']');
-    if (!lb || !rb || rb <= lb + 1 || lb == buf)
-      return false;
-    *lb = '\0';
-    *rb = '\0';
-    owner = buf;
-    param = lb + 1;
-  } else {
-    if (strchr(spec, '[') || strchr(spec, ']'))
-      return false;
-    param = spec;
-  }
-  if (!*param)
-    return false;
-
-  if (osdimc_scope_len == osdimc_scope_cap) {
-    osdimc_scope_cap = osdimc_scope_cap ? 2 * osdimc_scope_cap : 8;
-    osdimc_scope = TREALLOC(OsdiMcScope, osdimc_scope, osdimc_scope_cap);
-  }
-  osdimc_scope[osdimc_scope_len].owner = copy(owner);
-  osdimc_scope[osdimc_scope_len].param = copy(param);
-  osdimc_scope_len++;
-  return true;
-}
+bool OSDImcScaleScopeAdd(const char *spec) { return mc_scope_add(spec) != 0; }
 
 /* The inflation factor for ONE parameter: the command's lambda when it is in
  * scope, 1.0 (no inflation, and hence weight 1) when it is not. */
 static double osdimc_scale_for(const char *owner, const char *param) {
-  int i;
-  if (osdimc_scale == 1.0 || osdimc_scope_len == 0)
+  if (osdimc_scale == 1.0 || mc_scope_len() == 0)
     return osdimc_scale;        /* unscoped: everything, exactly as before */
   if (!param)
     return 1.0;
-  for (i = 0; i < osdimc_scope_len; i++) {
-    if (!cieq(osdimc_scope[i].param, (char *) param))
-      continue;
-    if (osdimc_scope[i].owner[0] == '*' && osdimc_scope[i].owner[1] == '\0')
-      return osdimc_scale;
-    if (owner && cieq(osdimc_scope[i].owner, (char *) owner))
-      return osdimc_scale;
-  }
-  return 1.0;
+  return mc_scope_match(owner, param) ? osdimc_scale : 1.0;
 }
 
 /* E-537 (hunt O): is `.option osdimc` drawing for this circuit? The frontend
@@ -3073,8 +3015,6 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
             /* E-538: this parameter's own inflation (1.0 when out of scope) */
             double sc = osdimc_scale_for((char *)gen_model->GENmodName,
                                          descr->param_opvar[id].name[0]);
-            if (sc != 1.0)
-              osdimc_scope_hits++;
             val = osdimc_value(osdimc_mix(kmodel ^ id), &infos[s], e->nominal,
                                sc, &z);
           }
@@ -3111,8 +3051,6 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
                   osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_inst->GENname));
               double sc = osdimc_scale_for((char *)gen_inst->GENname,
                                            descr->param_opvar[id].name[0]);
-              if (sc != 1.0)
-                osdimc_scope_hits++;
               val = osdimc_value(osdimc_mix(kinst ^ id), &infos[s], e->nominal,
                                  sc, &z);
             }

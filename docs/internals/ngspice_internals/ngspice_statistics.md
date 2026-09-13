@@ -278,7 +278,15 @@ is not arithmetic but scope: **`-inflate <param>`**
 ([E-538](../../../enhancements_doc/Enhancement-538.md)), repeatable, restricts
 the inflation (and so the weight) to the parameters the failure actually turns
 on — a bare name (`r`, wherever it occurs) or the accessor spelling
-`@owner[param]`, `*` allowed as the owner.
+`@owner[param]`, `*` allowed as the owner. The scope covers the **netlist**
+dimensions as well as the model's ([E-622](../../../enhancements_doc/Enhancement-622.md)):
+a netlist draw is named as `savemc` names it — `r1` for a device's value,
+`r1:key`, `x1.p` for a subcircuit call's parameter, `rm:r` for a model card's
+slot — and by the `.param` it came from (`-inflate rr` reaches the slots that
+read `rr`, since ngspice inlines a random `.param` into them). A netlist
+`.param` out of scope draws at its nominal spread and weighs 1, which is what
+lets an OSDI metric be estimated beside netlist bystanders; before E-622 every
+netlist Gaussian inflated whatever the specs said.
 
 ```spice
 * the metric depends on N1 alone; ten bystanders elsewhere each add a mismatch dimension
