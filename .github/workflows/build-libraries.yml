@@ -198,16 +198,34 @@ jobs:
           mkdir -p "$dest/codemodels"
           libs="$NGSPICE_DIR/ci-build-shared/src/.libs"
           cp "$libs"/libngspice-0.dll "$dest/"
-          # The library depends on the MSYS2 runtime DLLs of its environment
-          # (libwinpthread, libgcc/libclang_rt, ...): copy every non-Windows
-          # dependency ldd reports beside it, as build-binaries.yml does for
-          # the executable, so it loads without MSYS2 installed.
-          ldd "$dest/libngspice-0.dll" \
-            | grep -iv '/c/windows\|/C/Windows\|not found' \
-            | awk '{print $3}' | grep -v '^$' \
-            | xargs -I{} cp -n {} "$dest/" 2>/dev/null || true
           find "$NGSPICE_DIR/ci-build-shared/src/xspice/icm" -name '*.cm' -exec cp {} "$dest/codemodels/" \;
-          for f in "$dest"/*.dll; do strip --strip-all "$f" 2>/dev/null || true; done
+          # The library depends on the MSYS2 runtime DLLs of its environment
+          # (libstdc++-6, libgcc_s, libwinpthread-1 under MINGW64; libc++
+          # under CLANGARM64): copy every DLL its import table names that
+          # lives in the environment's bin/, and theirs in turn, so it loads
+          # without MSYS2 installed. Read the import tables rather than run
+          # ldd: MSYS2's ldd is an x86_64 msys program that cannot load a
+          # native ARM64 DLL, so on windows-11-arm it reported nothing and
+          # the arm library was staged without its libc++.dll.
+          OBJDUMP="$(command -v objdump || command -v llvm-objdump)"
+          bindir="${MSYSTEM_PREFIX:-/$(echo "$MSYSTEM" | tr 'A-Z' 'a-z')}/bin"
+          copy_deps() {
+            local dll src
+            for dll in $("$OBJDUMP" -p "$1" | awk '/DLL Name:/ {print $3}'); do
+              src="$bindir/$dll"
+              [ -f "$src" ] || continue            # a Windows system DLL
+              [ -f "$dest/$dll" ] && continue      # already staged
+              cp "$src" "$dest/"
+              copy_deps "$src"
+            done
+          }
+          copy_deps "$dest/libngspice-0.dll"
+          for cm in "$dest"/codemodels/*.cm; do copy_deps "$cm"; done
+          STRIP="$(command -v strip || command -v llvm-strip || true)"
+          if [ -n "$STRIP" ]; then
+            for f in "$dest"/*.dll; do "$STRIP" --strip-all "$f" 2>/dev/null || true; done
+          fi
+          echo "runtime DLLs staged from $bindir: $(cd "$dest" && ls *.dll | grep -v '^libngspice-0.dll$' | tr '\n' ' ')"
           echo "=== staged ${{ matrix.lib }} ==="
           ls -lh "$dest/" "$dest/codemodels/"
 

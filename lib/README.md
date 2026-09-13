@@ -13,7 +13,7 @@ the result here as `ci: update prebuilt libraries [skip ci]`.
 |---|---|---|
 | `macos/apple-silicon/`, `macos/intel/` | `libngspice.0.dylib` — install name `@rpath/../PlugIns/sim/libngspice.0.dylib` (KiCad's own), ad-hoc signed, deployment target macOS 12 | `codemodels/*.cm` |
 | `linux/intel/`, `linux/arm/` | `libngspice.so.0` — built on Ubuntu 22.04, no glibc symbol newer than 2.35 | `codemodels/*.cm` |
-| `windows/intel/`, `windows/arm/` | `libngspice-0.dll` — MSYS2 MINGW64 / CLANGARM64, with the runtime DLLs it needs beside it | `codemodels/*.cm` |
+| `windows/intel/`, `windows/arm/` | `libngspice-0.dll` — MSYS2 MINGW64 / CLANGARM64, with the runtime DLLs it imports beside it (`libstdc++-6`, `libgcc_s_seh-1`, `libwinpthread-1` on intel; `libc++` on arm) | `codemodels/*.cm` |
 
 The configure line is the executable's minus the interactive front end —
 `--with-ngshared --disable-debug --enable-klu --disable-openmp --without-x
