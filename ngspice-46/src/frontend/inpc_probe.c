@@ -11,8 +11,12 @@
 #include "ngspice/inpdefs.h"
 #include "ngspice/wordlist.h"
 #include "ngspice/stringskip.h"
+#include "ngspice/ifsim.h"          /* Enhancement-628: IFdevice terminal names */
+#include "inp.h"                    /* Enhancement-628: inp_autobus_of_deck */
+#include "subckt.h"                 /* Enhancement-628: inp_osdi_port_widths */
 
 void inp_probe(struct card* card);
+void inp_probe_osdi(struct card* deck);   /* Enhancement-628 */
 void modprobenames(INPtables* tab);
 
 extern struct card* insert_new_line(
@@ -64,6 +68,96 @@ probe_reject_token(const char *line, const char *tok)
 
 static int check_for_nodes(char* instance, int numnodes);
 
+/* Enhancement-628 (hunt F11): `.probe alli` on an OSDI device whose line is in
+ * autobus shorthand -- `N2 /mid /out vares` for two 4-bit bus ports.
+ *
+ * The pass counted the line's node tokens (2), took the device for a
+ * two-terminal one and spliced its measuring source into the SECOND TOKEN:
+ * `n2 /mid probe_int_/out_n2 vares` plus `vcurr_... probe_int_/out_n2 /out 0`.
+ * Autobus then expanded the base `probe_int_/out_n2` into four bits nothing
+ * else touched, the source sat on the plain node, and the bits floated: 0 V
+ * on every output, gmin on every bit, and a warning about the node the pass
+ * itself had invented (E-572's "also uses ... as a plain node"). KiCad adds
+ * `.probe alli` to every run by default, so under KiCad every bus device
+ * read 0 V.
+ *
+ * The pre-pass now knows a bus port when it sees one: `pre_osdi` has already
+ * registered the module and the deck's own `.model` cards name it, so the
+ * port widths are the same ones INP2N will use (E-464's lookup). A line with
+ * one token per PORT is written out here -- each token becomes its bits, in
+ * the deck's own spelling (`/out_0_ .. /out_3_` under `.option autobus=kicad`,
+ * `/out[0] ..` otherwise, E-572's one-bit rule included) -- and every bit
+ * gets its own measuring source, so autobus finds nothing left to expand
+ * and each terminal current is a vector: `n2:p_0_#branch .. n2:n_3_#branch`.
+ * An OSDI line already written out gets the model's terminal names on its
+ * currents too (they were all `nn`); a two-terminal scalar device keeps
+ * `<inst>#branch`. */
+#define PROBE_MAXPORT 256
+static bool probe_osdi_pending;     /* `alli` met an OSDI line during the deck read */
+
+/* the model's terminal name as a vector name can carry it: `p[0]` -> `p_0_` */
+static char *probe_term_name(const char *tn)
+{
+    char buf[128];
+    INPbusBitSuffix(tn ? tn : "nn", TRUE, buf, sizeof buf);
+    return copy(buf);
+}
+
+/* the ports of an OSDI instance line's model; -1 when it cannot be resolved */
+static int probe_osdi_ports(struct card *deck, const char *line, int *start, int *cnt,
+                            IFdevice **dev)
+{
+    char *model = inp_model_of_line(line);
+    int np = inp_osdi_port_widths(deck, model, start, cnt, PROBE_MAXPORT, dev);
+    tfree(model);
+    return np;
+}
+
+/* the line's node tokens in shorthand (one per port) written out as bits, in
+ * the deck's spelling; the rest of the line (the model name, parameters)
+ * follows. NULL when the tokens do not go one per port. */
+static char *probe_expand_bus_line(const char *nodes, int np, const int *start,
+                                   const int *cnt, IFdevice *dev, bool kicad)
+{
+    DS_CREATE(out, 256);
+    char *scan = (char *) nodes, *tok;
+    int p, k;
+    char *res;
+
+    for (p = 0; p < np; p++) {
+        tok = gettok_instance(&scan);
+        if (!tok || !*tok) {
+            tfree(tok);
+            ds_free(&out);
+            return NULL;
+        }
+        if (cnt[p] > 1 && (strchr(tok, '[') || strcmp(tok, "0") == 0 ||
+                           INPbusTokenIndexed(tok, strlen(tok), kicad))) {
+            tfree(tok);                 /* E-445 / E-490: not a shorthand token */
+            ds_free(&out);
+            return NULL;
+        }
+        for (k = 0; k < cnt[p]; k++) {
+            const char *tn = dev->termNames[start[p] + k];
+            const char *lb = tn ? strchr(tn, '[') : NULL;
+            if (p || k)
+                ds_cat_char(&out, ' ');
+            ds_cat_str(&out, tok);
+            if (lb && strcmp(tok, "0") != 0 && strcasecmp(tok, "gnd") != 0) {
+                char sfx[64];
+                INPbusBitSuffix(lb, kicad, sfx, sizeof sfx);
+                ds_cat_str(&out, sfx);
+            }
+        }
+        tfree(tok);
+    }
+    ds_cat_char(&out, ' ');
+    ds_cat_str(&out, scan);             /* the model name and any parameters */
+    res = copy(ds_get_buf(&out));
+    ds_free(&out);
+    return res;
+}
+
 /* Find any line starting with .probe: assemble all parameters like
    <empty>     add V(0) current measure sources to all device nodes in addition to .save all
    alli        add V(0) current measure sources to all device nodes in addition to .save all
@@ -93,6 +187,431 @@ probe_head(struct card *deck)
         while (at->nextcard && !ciprefix(".endc", at->line))
             at = at->nextcard;
     return at;
+}
+
+/* Enhancement-628: the splice itself -- one measuring source per node of the
+ * device line, the line rewritten onto the sources' inner nodes, the device's
+ * currents put on a .save card after it. `thisline` is the line's node tokens
+ * (and what follows them), `curr_line` the same for the messages; `osdi_terms`
+ * names the terminals of an OSDI device whose model resolved (NULL otherwise:
+ * the generic per-device names). Returns the last card inserted. */
+static struct card *
+probe_splice(struct card *card, char *instname, char *thisline, char *curr_line,
+             int numnodes, char **osdi_terms, NGHASHPTR instances)
+{
+    struct card *prevcard = card;
+    wordlist *allsaves = NULL;
+    int nn = 0, i;
+
+    /* all elements with 2 nodes: add a voltage source to the second node in the elements line */
+    if (numnodes == 2) {
+        char *strnode1, *strnode2, *nodename2;
+        strnode1 = gettok(&thisline);
+        strnode2 = gettok(&thisline);
+
+        if (!strnode2 || *strnode2 == '\0') {
+            fprintf(stderr, "Warning: Cannot read 2 nodes in line %s\n", curr_line);
+            fprintf(stderr, "    Instance not ready for .probe command\n");
+            tfree(strnode1);
+            tfree(strnode2);
+            return card;
+        }
+
+        /* Enhancement-628: an OSDI terminal (or a subcircuit formal) by name */
+        nodename2 = osdi_terms ? probe_term_name(osdi_terms[1])
+                               : get_terminal_name(instname, "2", instances);
+
+        char* newnode = tprintf("probe_int_%s_%s", strnode2, instname);
+        char* vline = tprintf("vcurr_%s:%s_%s %s %s 0", instname, nodename2, strnode2, newnode, strnode2);
+        char *newline = tprintf("%s %s %s %s", instname, strnode1, newnode, thisline);
+
+        char* nodesaves = tprintf("%s#branch", instname);
+        allsaves = wl_cons(nodesaves, allsaves);
+
+        tfree(card->line);
+        card->line = newline;
+
+        card = insert_new_line(card, vline, 0, card->linenum_orig, card->linesource);
+
+        tfree(strnode1);
+        tfree(strnode2);
+        tfree(newnode);
+        tfree(nodename2);
+
+    }
+    else {
+        char* nodename;
+        DS_CREATE(dnewline, 200);
+        sadd(&dnewline, instname);
+        cadd(&dnewline, ' ');
+        for (i = 1; i <= numnodes; i++) {
+            char* thisnode;
+            char nodebuf[20];
+            thisnode = gettok(&thisline);
+            if (!thisnode || *thisnode == '\0') {
+                fprintf(stderr, "Warning: Cannot read node %d in line %s\n", i, curr_line);
+                fprintf(stderr, "    Instance not ready for .probe command\n");
+                tfree(thisnode);
+                continue;
+            }
+            char* newnode = tprintf("probe_int_%s_%s_%d", thisnode, instname, i);
+            sadd(&dnewline, newnode);
+            cadd(&dnewline, ' ');
+            /* to make the nodes unique */
+            snprintf(nodebuf, 12, "%d", i);
+            /* Enhancement-628: an OSDI terminal by the model's name */
+            nodename = osdi_terms ? probe_term_name(osdi_terms[i - 1])
+                                  : get_terminal_name(instname, nodebuf, instances);
+            if (!nodename || *nodename == '\0') {
+                fprintf(stderr, "Warning: Cannot find node name %d in line %s\n", i, curr_line);
+                fprintf(stderr, "    Instance not ready for .probe command\n");
+                tfree(thisnode);
+                continue;
+            }
+            char* vline = tprintf("vcurr_%s:%s:%s_%s %s %s 0", instname, nodename, thisnode, nodebuf, thisnode, newnode);
+            card = insert_new_line(card, vline, 0, card->linenum_orig, card->linesource);
+            /* special for KiCad: add shunt resistor if thisnode contains 'unconnected' */
+            if (*instname == 'x' && strstr(thisnode, "unconnected")) {
+                /* nn makes the resistor name unique for a device with multiple unconnected nodes */
+                char *rline = tprintf("r%s%d %s 0 1e15", thisnode, nn++, thisnode);
+                card = insert_new_line(card, rline, 0, card->linenum_orig, card->linesource);
+            }
+            char* nodesaves = tprintf("%s:%s#branch", instname, nodename);
+            allsaves = wl_cons(nodesaves, allsaves);
+
+            tfree(newnode);
+            tfree(nodename);
+        }
+        sadd(&dnewline, thisline);
+        tfree(prevcard->line);
+        prevcard->line = copy(ds_get_buf(&dnewline));
+        ds_free(&dnewline);
+    }
+    if (allsaves) {
+        allsaves = wl_cons(copy(".save"), allsaves);
+        char* newline = wl_flatten(allsaves);
+        wl_free(allsaves);
+        allsaves = NULL;
+        card = insert_new_line(card, newline, 0, card->linenum_orig, card->linesource);
+    }
+    return card;
+}
+
+/* Enhancement-628 (hunt F11): a subcircuit call's formal may be a bus base
+ * INSIDE the subcircuit -- `.subckt va_res_block in out` with `N2 /mid out
+ * vares` in it, `out` standing for four bits. The probe used to put its one
+ * source on the X line's token, `probe_int_/out_x1`, which the subcircuit
+ * then expanded into four bits the source never touched. The width a formal
+ * is used with is found by looking inside: an OSDI shorthand line that names
+ * it on a bus port, or a nested call that passes it on. */
+#define PROBE_MAXDEPTH 8
+
+/* the `.subckt <name>` card, or NULL */
+static struct card *probe_subckt_card(struct card *deck, const char *name)
+{
+    struct card *c;
+    for (c = deck; c; c = c->nextcard) {
+        char *line = c->line, *tok, *nm;
+        if (!line || !ciprefix(".subckt", line))
+            continue;
+        tok = gettok(&line);            /* .subckt */
+        tfree(tok);
+        nm = gettok(&line);
+        if (nm && cieq(nm, name)) {
+            tfree(nm);
+            return c;
+        }
+        tfree(nm);
+    }
+    return NULL;
+}
+
+/* the formals of a .subckt card: the tokens up to `params:` or a `k=v` */
+static char **probe_subckt_formals(struct card *sc, int *n)
+{
+    char *line = sc->line, *tok, **f = NULL;
+    int cap = 0;
+    *n = 0;
+    tok = gettok(&line); tfree(tok);   /* .subckt */
+    tok = gettok(&line); tfree(tok);   /* the name */
+    while ((tok = gettok(&line)) != NULL && *tok) {
+        if (search_plain_identifier(tok, "params:") || strchr(tok, '=')) {
+            tfree(tok);
+            break;
+        }
+        if (*n == cap) {
+            cap = cap ? 2 * cap : 8;
+            f = TREALLOC(char *, f, cap);
+        }
+        f[(*n)++] = tok;
+    }
+    return f;
+}
+
+static void probe_free_formals(char **f, int n)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        tfree(f[i]);
+    tfree(f);
+}
+
+/* the bits formal `fidx` of subcircuit `sname` is used with inside it: the
+ * terminal names of the OSDI bus port a shorthand line puts it on (found
+ * through nested calls too); 0 when it is a plain node there. *terms points
+ * into the device's own table. */
+static int probe_formal_bits(struct card *deck, const char *sname, int fidx,
+                             char ***terms, int depth)
+{
+    struct card *sc = probe_subckt_card(deck, sname), *c;
+    char **formals;
+    int nf, found = 0, nest = 0;
+
+    if (!sc || depth > PROBE_MAXDEPTH)
+        return 0;
+    formals = probe_subckt_formals(sc, &nf);
+    if (fidx >= nf) {
+        probe_free_formals(formals, nf);
+        return 0;
+    }
+    for (c = sc->nextcard; c && !found; c = c->nextcard) {
+        char *line = c->line, *inst, *tok;
+        int numnodes, i;
+        if (!line)
+            continue;
+        if (ciprefix(".subckt", line)) { nest++; continue; }
+        if (ciprefix(".ends", line)) { if (nest-- == 0) break; continue; }
+        if (nest > 0 || *line == '*' || *line == '.' || *line == '\0')
+            continue;
+        if (*line != 'n' && *line != 'x')
+            continue;
+        inst = gettok_instance(&line);
+        if (!inst)
+            continue;
+        numnodes = get_number_terminals(c->line);
+        if (*inst == 'n') {
+            int pstart[PROBE_MAXPORT], pcnt[PROBE_MAXPORT];
+            IFdevice *dev = NULL;
+            int np = probe_osdi_ports(deck, c->line, pstart, pcnt, &dev);
+            if (np > 0 && dev && dev->terms && numnodes == np && np < *dev->terms) {
+                for (i = 0; i < np && !found; i++) {
+                    tok = gettok_instance(&line);
+                    if (!tok)
+                        break;
+                    if (pcnt[i] > 1 && cieq(tok, formals[fidx])) {
+                        *terms = dev->termNames + pstart[i];
+                        found = pcnt[i];
+                    }
+                    tfree(tok);
+                }
+            }
+        } else {
+            char **actuals = TMALLOC(char *, numnodes > 0 ? numnodes : 1);
+            char *sub = NULL;
+            int na = 0;
+            for (i = 0; i < numnodes; i++) {
+                tok = gettok_instance(&line);
+                if (!tok)
+                    break;
+                actuals[na++] = tok;
+            }
+            sub = gettok_instance(&line);
+            for (i = 0; i < na && !found && sub; i++)
+                if (cieq(actuals[i], formals[fidx]))
+                    found = probe_formal_bits(deck, sub, i, terms, depth + 1);
+            for (i = 0; i < na; i++)
+                tfree(actuals[i]);
+            tfree(actuals);
+            tfree(sub);
+        }
+        tfree(inst);
+    }
+    probe_free_formals(formals, nf);
+    return found;
+}
+
+/* the splice of a subcircuit call: a formal that is a bus base inside keeps
+ * its base token on the X line (the subcircuit expands it into the bits) and
+ * gets one measuring source per bit, bridging `<actual><bit>` to
+ * `probe_int_<actual>_<inst>_<i><bit>`; a plain formal is spliced as any
+ * node. Two plain nodes keep the `<inst>#branch` form. */
+static struct card *probe_splice_x(struct card *deck, struct card *card, char *instname,
+                                   char *thisline, int numnodes, bool kicad)
+{
+    struct card *prevcard = card;
+    wordlist *allsaves = NULL;
+    char *scan = thisline, *sname, *rest;
+    char **actuals = TMALLOC(char *, numnodes > 0 ? numnodes : 1);
+    char **formals = NULL;
+    struct card *sc;
+    int nf = 0, i, na = 0, nn = 0;
+    bool anybus = FALSE;
+    DS_CREATE(dnewline, 200);
+
+    for (i = 0; i < numnodes; i++) {
+        char *tok = gettok_instance(&scan);
+        if (!tok || !*tok) {
+            tfree(tok);
+            break;
+        }
+        actuals[na++] = tok;
+    }
+    rest = scan;
+    {
+        char *r = rest;
+        sname = gettok_instance(&r);
+    }
+    sc = sname ? probe_subckt_card(deck, sname) : NULL;
+    if (sc)
+        formals = probe_subckt_formals(sc, &nf);
+    if (na != numnodes || !sc || nf < na) {
+        /* not a call this pass can read: the generic splice, formals unknown */
+        struct card *r = probe_splice(card, instname, thisline, thisline, numnodes, NULL, NULL);
+        for (i = 0; i < na; i++) tfree(actuals[i]);
+        tfree(actuals); tfree(sname);
+        probe_free_formals(formals, nf);
+        ds_free(&dnewline);
+        return r;
+    }
+    for (i = 0; i < na && !anybus; i++) {
+        char **terms = NULL;
+        if (probe_formal_bits(deck, sname, i, &terms, 0) > 1)
+            anybus = TRUE;
+    }
+    if (!anybus) {
+        /* every formal a plain node: as before, the formal names on the currents */
+        struct card *r;
+        char **fn = TMALLOC(char *, na);
+        for (i = 0; i < na; i++)
+            fn[i] = formals[i];
+        r = probe_splice(card, instname, thisline, thisline, numnodes, fn, NULL);
+        tfree(fn);
+        for (i = 0; i < na; i++) tfree(actuals[i]);
+        tfree(actuals); tfree(sname);
+        probe_free_formals(formals, nf);
+        ds_free(&dnewline);
+        return r;
+    }
+
+    sadd(&dnewline, instname);
+    cadd(&dnewline, ' ');
+    for (i = 0; i < na; i++) {
+        char **terms = NULL;
+        int bits = probe_formal_bits(deck, sname, i, &terms, 0);
+        char *inner = tprintf("probe_int_%s_%s_%d", actuals[i], instname, i + 1);
+        sadd(&dnewline, inner);
+        cadd(&dnewline, ' ');
+        if (bits > 1) {
+            int k;
+            for (k = 0; k < bits; k++) {
+                const char *lb = terms[k] ? strchr(terms[k], '[') : NULL;
+                char sfx[64], usfx[64];
+                INPbusBitSuffix(lb ? lb : "", kicad, sfx, sizeof sfx);
+                INPbusBitSuffix(lb ? lb : "", TRUE, usfx, sizeof usfx);
+                char *vline = tprintf("vcurr_%s:%s%s:%s%s_%d %s%s %s%s 0", instname, formals[i], usfx,
+                                      actuals[i], sfx, i + 1, actuals[i], sfx, inner, sfx);
+                card = insert_new_line(card, vline, 0, card->linenum_orig, card->linesource);
+                allsaves = wl_cons(tprintf("%s:%s%s#branch", instname, formals[i], usfx), allsaves);
+            }
+        } else {
+            char *vline = tprintf("vcurr_%s:%s:%s_%d %s %s 0", instname, formals[i], actuals[i], i + 1,
+                                  actuals[i], inner);
+            card = insert_new_line(card, vline, 0, card->linenum_orig, card->linesource);
+            if (strstr(actuals[i], "unconnected")) {   /* KiCad's open pin */
+                char *rline = tprintf("r%s%d %s 0 1e15", actuals[i], nn++, actuals[i]);
+                card = insert_new_line(card, rline, 0, card->linenum_orig, card->linesource);
+            }
+            allsaves = wl_cons(tprintf("%s:%s#branch", instname, formals[i]), allsaves);
+        }
+        tfree(inner);
+    }
+    sadd(&dnewline, rest);
+    tfree(prevcard->line);
+    prevcard->line = copy(ds_get_buf(&dnewline));
+    ds_free(&dnewline);
+    if (allsaves) {
+        char *newline;
+        allsaves = wl_cons(copy(".save"), allsaves);
+        newline = wl_flatten(allsaves);
+        wl_free(allsaves);
+        card = insert_new_line(card, newline, 0, card->linenum_orig, card->linesource);
+    }
+    for (i = 0; i < na; i++) tfree(actuals[i]);
+    tfree(actuals); tfree(sname);
+    probe_free_formals(formals, nf);
+    return card;
+}
+
+/* Enhancement-628 (hunt F11): the `.probe alli` pass over the deck's OSDI
+ * lines, run from inp_spsource once the pre_ commands have loaded the .osdi
+ * objects and the autobus option has been resolved -- so a shorthand line
+ * can be written out against its model's ports and every terminal current
+ * measured under the model's own terminal name. A line whose model does not
+ * resolve is spliced as the generic pass would have. */
+void inp_probe_osdi(struct card *deck)
+{
+    struct card *card;
+    int skip_control = 0, skip_subckt = 0;
+    bool kicad = FALSE, autobus;
+
+    if (!probe_osdi_pending)
+        return;
+    probe_osdi_pending = FALSE;
+    autobus = inp_get_autobus(&kicad);
+
+    for (card = deck; card; card = card->nextcard) {
+        char *curr_line = card->line, *instname, *thisline, *expanded = NULL;
+        char **osdi_terms = NULL;
+        int numnodes;
+
+        if (ciprefix(".control", curr_line)) { skip_control++; continue; }
+        if (ciprefix(".endc", curr_line)) { skip_control--; continue; }
+        if (skip_control > 0) continue;
+        if (ciprefix(".subckt", curr_line)) { skip_subckt++; continue; }
+        if (ciprefix(".ends", curr_line)) { skip_subckt--; continue; }
+        if (skip_subckt > 0) continue;
+        if (*curr_line == '*' || *curr_line == '.' || *curr_line == '\0')
+            continue;
+        if (*curr_line != 'n' && *curr_line != 'x')
+            continue;
+        if (*curr_line == 'x' && cp_getvar("probe_alli_nox", CP_BOOL, NULL, 0))
+            continue;                   /* as the generic pass has it */
+        instname = gettok_instance(&curr_line);
+        if (!instname)
+            continue;
+        numnodes = get_number_terminals(card->line);
+        if (check_for_nodes(card->line, numnodes)) {
+            fprintf(stderr, "Error: Not enough tokens in line %d\n%s\n", card->linenum_orig, card->line);
+            fprintf(stderr, "    Please correct your input file\n");
+            controlled_exit(EXIT_BAD);
+        }
+        thisline = curr_line;
+        if (*instname == 'x') {
+            card = probe_splice_x(deck, card, instname, thisline, numnodes, kicad);
+            tfree(instname);
+            continue;
+        }
+        {
+            int pstart[PROBE_MAXPORT], pcnt[PROBE_MAXPORT];
+            IFdevice *dev = NULL;
+            int np = probe_osdi_ports(deck, card->line, pstart, pcnt, &dev);
+            if (np > 0 && dev && dev->terms) {
+                int terms = *dev->terms;
+                if (numnodes == np && np < terms && autobus) {
+                    expanded = probe_expand_bus_line(thisline, np, pstart, pcnt, dev, kicad);
+                    if (expanded) {
+                        thisline = expanded;
+                        numnodes = terms;
+                    }
+                }
+                if (numnodes == terms)
+                    osdi_terms = dev->termNames;
+            }
+        }
+        card = probe_splice(card, instname, thisline, curr_line, numnodes, osdi_terms, NULL);
+        tfree(expanded);
+        tfree(instname);
+    }
 }
 
 void inp_probe(struct card* deck)
@@ -261,13 +780,11 @@ void inp_probe(struct card* deck)
     if (haveall || probeparams == NULL) {
         /* Either we have 'alli' among the .probe parameters, or we have a single .probe command without parameters:
            Add current measure voltage sources for all devices, add differential E sources only for selected devices. */
-        int numnodes, i;
+        int numnodes;
 
         for (card = deck; card; card = card->nextcard) {
 
             char* curr_line = card->line;
-            struct card* prevcard = NULL;
-            int nn = 0;
 
             /* exclude any command inside .control ... .endc */
             if (ciprefix(".control", curr_line)) {
@@ -337,94 +854,21 @@ void inp_probe(struct card* deck)
             }
 
             char* thisline = curr_line;
-            prevcard = card;
-            /* all elements with 2 nodes: add a voltage source to the second node in the elements line */
-            if (numnodes == 2) {
-                char *strnode1, *strnode2, *nodename2;
-                strnode1 = gettok(&thisline);
-                strnode2 = gettok(&thisline);
 
-                if (!strnode2 || *strnode2 == '\0') {
-                    fprintf(stderr, "Warning: Cannot read 2 nodes in line %s\n", curr_line);
-                    fprintf(stderr, "    Instance not ready for .probe command\n");
-                    tfree(strnode1);
-                    tfree(strnode2);
-                    continue;
-                }
-
-                nodename2 = get_terminal_name(instname, "2", instances);
-
-                char* newnode = tprintf("probe_int_%s_%s", strnode2, instname);
-                char* vline = tprintf("vcurr_%s:%s_%s %s %s 0", instname, nodename2, strnode2, newnode, strnode2);
-                char *newline = tprintf("%s %s %s %s", instname, strnode1, newnode, thisline);
-
-                char* nodesaves = tprintf("%s#branch", instname);
-                allsaves = wl_cons(nodesaves, allsaves);
-
-                tfree(card->line);
-                card->line = newline;
-
-                card = insert_new_line(card, vline, 0, card->linenum_orig, card->linesource);
-
-                tfree(strnode1);
-                tfree(strnode2);
-                tfree(newnode);
-                tfree(nodename2);
-
+#ifdef OSDI
+            /* Enhancement-628 (hunt F11): an OSDI line, and a subcircuit call
+             * (whose formals may stand for OSDI bus ports inside), are left to
+             * inp_probe_osdi(), which runs once `pre_osdi` has registered the
+             * modules and the deck's .model cards can name their ports --
+             * here, during the deck read, nothing is registered yet */
+            if (*instname == 'n' || *instname == 'x') {
+                probe_osdi_pending = TRUE;
+                tfree(instname);
+                continue;
             }
-            else {
-                char* nodename;
-                DS_CREATE(dnewline, 200);
-                sadd(&dnewline, instname);
-                cadd(&dnewline, ' ');
-                for (i = 1; i <= numnodes; i++) {
-                    char* thisnode;
-                    char nodebuf[20];
-                    thisnode = gettok(&thisline);
-                    if (!thisnode || *thisnode == '\0') {
-                        fprintf(stderr, "Warning: Cannot read node %d in line %s\n", i, curr_line);
-                        fprintf(stderr, "    Instance not ready for .probe command\n");
-                        tfree(thisnode);
-                        continue;
-                    }
-                    char* newnode = tprintf("probe_int_%s_%s_%d", thisnode, instname, i);
-                    sadd(&dnewline, newnode);
-                    cadd(&dnewline, ' ');
-                    /* to make the nodes unique */
-                    snprintf(nodebuf, 12, "%d", i);
-                    nodename = get_terminal_name(instname, nodebuf, instances);
-                    if (!nodename || *nodename == '\0') {
-                        fprintf(stderr, "Warning: Cannot find node name %d in line %s\n", i, curr_line);
-                        fprintf(stderr, "    Instance not ready for .probe command\n");
-                        tfree(thisnode);
-                        continue;
-                    }
-                    char* vline = tprintf("vcurr_%s:%s:%s_%s %s %s 0", instname, nodename, thisnode, nodebuf, thisnode, newnode);
-                    card = insert_new_line(card, vline, 0, card->linenum_orig, card->linesource);
-                    /* special for KiCad: add shunt resistor if thisnode contains 'unconnected' */
-                    if (*instname == 'x' && strstr(thisnode, "unconnected")) {
-                        /* nn makes the resistor name unique for a device with multiple unconnected nodes */
-                        char *rline = tprintf("r%s%d %s 0 1e15", thisnode, nn++, thisnode);
-                        card = insert_new_line(card, rline, 0, card->linenum_orig, card->linesource);
-                    }
-                    char* nodesaves = tprintf("%s:%s#branch", instname, nodename);
-                    allsaves = wl_cons(nodesaves, allsaves);
-
-                    tfree(newnode);
-                    tfree(nodename);
-                }
-                sadd(&dnewline, thisline);
-                tfree(prevcard->line);
-                prevcard->line = copy(ds_get_buf(&dnewline));
-                ds_free(&dnewline);
-            }
-            if (allsaves) {
-                allsaves = wl_cons(copy(".save"), allsaves);
-                char* newline = wl_flatten(allsaves);
-                wl_free(allsaves);
-                allsaves = NULL;
-                card = insert_new_line(card, newline, 0, card->linenum_orig, card->linesource);
-            }
+#endif
+            card = probe_splice(card, instname, thisline, curr_line, numnodes, NULL, instances);
+            tfree(instname);
         }
     }
 

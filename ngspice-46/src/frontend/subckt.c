@@ -1206,6 +1206,16 @@ static bool sc_autobus_kicad = FALSE;
    first, and only if no card mentions `autobus` does a `set autobus` from
    .spiceinit decide. It used to be OR'd here, so a deck saying
    `.option autobus=0` could not switch off what an init file had turned on. */
+/* Enhancement-628 (hunt F11): what inp_set_autobus() last published, for the
+ * .probe pass over the OSDI lines that runs after it */
+bool
+inp_get_autobus(bool *kicad)
+{
+    if (kicad)
+        *kicad = sc_autobus_kicad;
+    return sc_autobus;
+}
+
 void
 inp_set_autobus(bool onoff, bool kicad)
 {
@@ -1229,18 +1239,20 @@ inp_set_autobus(bool onoff, bool kicad)
  * device, a model defined elsewhere, an .osdi not yet loaded): callers then
  * behave exactly as before.
  */
-static int
-e464_port_widths(const char *modelname, int *start, int *cnt, int maxp,
-                 IFdevice **devout)
+/* Enhancement-628 (hunt F11): the lookup itself, on any deck -- the .probe
+ * pre-pass asks it before flattening, when e464_deck is not set yet */
+int
+inp_osdi_port_widths(struct card *deck, const char *modelname, int *start, int *cnt,
+                     int maxp, IFdevice **devout)
 {
     struct card *c;
     char *module = NULL;
     int type, np;
     IFdevice *dev;
 
-    if (!modelname || !e464_deck)
+    if (!modelname || !deck)
         return -1;
-    for (c = e464_deck; c; c = c->nextcard) {
+    for (c = deck; c; c = c->nextcard) {
         char *line = c->line, *tok;
         if (!line || !ciprefix(".model", line))
             continue;
@@ -1265,6 +1277,13 @@ e464_port_widths(const char *modelname, int *start, int *cnt, int maxp,
     if (devout)
         *devout = dev;
     return np;
+}
+
+static int
+e464_port_widths(const char *modelname, int *start, int *cnt, int maxp,
+                 IFdevice **devout)
+{
+    return inp_osdi_port_widths(e464_deck, modelname, start, cnt, maxp, devout);
 }
 
 /* Enhancement-467: the bit spelling has to be asked, not assumed.
@@ -1351,9 +1370,10 @@ e464_is_formal_bus(const char *name)
     return FALSE;
 }
 
-/* the model name of an instance line: the last token that is not `k=v` */
-static char *
-e464_model_of(const char *line)
+/* the model name of an instance line: the last token that is not `k=v`
+ * (Enhancement-628: exported for the .probe pre-pass) */
+char *
+inp_model_of_line(const char *line)
 {
     char *c = (char *) line, *tok, *last = NULL, *skip;
 
@@ -1850,7 +1870,7 @@ translate(struct card *deck, char *formal, int flen, char *actual, char *scname,
                 IFdevice *pw_dev = NULL;
                 bool e464_mixed = FALSE;
                 if (sc_autobus && osdi_line) {
-                    char *mdl = e464_model_of(c->line);
+                    char *mdl = inp_model_of_line(c->line);
                     char *scan = s;
                     int p, formals = 0, localbus = 0;
                     pw_np = e464_port_widths(mdl, pw_start, pw_cnt, E449_MAXBITS,

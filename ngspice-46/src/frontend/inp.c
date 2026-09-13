@@ -84,6 +84,7 @@ extern void comment_out_unused_subckt_models(struct card *deck);
 extern void inp_rem_unused_models(struct nscope *root, struct card *deck);
 
 extern void modprobenames(INPtables * tab);
+extern void inp_probe_osdi(struct card *deck);    /* Enhancement-628 */
 
 #ifdef SHARED_MODULE
 extern void exec_controls(wordlist *controls);
@@ -887,6 +888,54 @@ static int e451_opt_flag(char *line, const char *name)
 }
 
 
+/* Enhancement-628 (hunt F11): `.option autobus` and its spelling as the deck's
+ * own cards decide them, for the .probe pre-pass -- which runs before the
+ * option cards are split out, so the readers below (which see the split
+ * lists) cannot serve it. The same precedence: a deck card wins, a later card
+ * over an earlier one; only when no card mentions autobus does a `set autobus`
+ * from .spiceinit apply. */
+bool
+inp_autobus_of_deck(struct card *deck, bool *kicad)
+{
+    struct card *c;
+    bool ab = FALSE, spoke = FALSE, kic = FALSE;
+    int skip = 0;
+    char sv[64];
+
+    for (c = deck; c; c = c->nextcard) {
+        bool on;
+        char *v;
+        if (!c->line)
+            continue;
+        if (ciprefix(".control", c->line)) { skip++; continue; }
+        if (ciprefix(".endc", c->line)) { skip--; continue; }
+        if (skip > 0 || !ciprefix(".option", c->line))
+            continue;
+        if (e454_opt_onoff(c->line, "autobus", &on)) {
+            ab = on;
+            spoke = TRUE;
+        }
+        v = e451_opt_value(c->line, "autobus");
+        if (v) {
+            char w[64];
+            int n = 0;
+            while (v[n] && !isspace_c(v[n]) && n < (int) sizeof(w) - 1) {
+                w[n] = v[n];
+                n++;
+            }
+            w[n] = '\0';
+            kic = cieq(w, "kicad");
+        }
+    }
+    if (!spoke) {
+        ab = e454_autobus_var();
+        if (cp_getvar("autobus", CP_STRING, sv, sizeof(sv)))
+            kic = cieq(sv, "kicad");
+    }
+    *kicad = kic;
+    return ab;
+}
+
 /* Check for .option seed=[val|random] and set the random number generator.
    Check for .option cshunt=val and set a global variable
    Input is the option deck (already sorted for .option) */
@@ -1616,6 +1665,13 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                 inp_set_saveused(as);
                 }
             }
+
+            /* Enhancement-628 (hunt F11): `.probe alli` over the OSDI lines,
+               now that the pre_ commands have loaded the objects and the
+               autobus option is resolved -- a bus port in shorthand is
+               written out against its model's ports before the measuring
+               sources go in (inp_probe left those lines alone). */
+            inp_probe_osdi(deck->nextcard);
 
             /* Parsing the circuit 4.
                This is the next major step:
