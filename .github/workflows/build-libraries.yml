@@ -1,0 +1,271 @@
+name: Build libraries
+
+# Builds this project's ngspice as a SHARED LIBRARY (libngspice, the
+# `--with-ngshared` build that KiCad's simulator loads instead of running an
+# ngspice executable) natively on each platform and drops the result into
+# lib/<os>/<arch>/, beside the XSPICE code models built with it. A sibling of
+# build-binaries.yml: same runners, same containers, same collect-and-commit
+# step, but only ngspice is built (no openvaf-r, no Rust, no LLVM), so a run
+# is short. See lib/README.md for what each bundle holds and how it is
+# installed into KiCad.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'lib/**'        # library commits made by this workflow must not retrigger it
+      - 'bin/**'        # nor the binary commits made by build-binaries.yml
+      - '**/*.md'
+
+permissions:
+  contents: write       # the collect job commits libraries back into lib/
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NGSPICE_DIR: ngspice-46
+  # The configure line of the shared build, the same on every platform: what
+  # the regular executable is built with (build-binaries.yml) minus the
+  # interactive front end -- no X plotting, no readline, which a library does
+  # not want and which would pull terminal dependencies into KiCad's process.
+  NGSPICE_SHARED_CONFIGURE: --with-ngshared --disable-debug --enable-klu --disable-openmp --without-x --with-readline=no
+  # KiCad's own libngspice.0.dylib carries this install name; ours is set to
+  # the same so it is a drop-in inside KiCad.app (see lib/README.md).
+  KICAD_DYLIB_ID: '@rpath/../PlugIns/sim/libngspice.0.dylib'
+
+jobs:
+  # ------------------------------------------------------------------ Unix
+  build-unix:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # Linux legs build inside ubuntu:22.04 (jammy) so the library links
+    # against glibc 2.35 and loads on Ubuntu 22.04+ / Debian 12+ -- the same
+    # reasoning as build-binaries.yml, guarded below in the same way.
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-intel,         os: ubuntu-latest,    container: "ubuntu:22.04", lib: linux/intel }
+          - { name: linux-arm,           os: ubuntu-24.04-arm, container: "ubuntu:22.04", lib: linux/arm }
+          - { name: macos-apple-silicon, os: macos-14,         lib: macos/apple-silicon }
+          # macos-26-intel: the current standard-tier Intel macOS image (see the
+          # note in build-binaries.yml; Intel macOS runners retire in 2027).
+          - { name: macos-intel,         os: macos-26-intel,   lib: macos/intel }
+    steps:
+      - name: Prepare container (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          retry() { i=1; while [ "$i" -le 5 ]; do "$@" && return 0; echo "::warning::retry $i/5 (sleep $((i*15))s): $*"; sleep $((i*15)); i=$((i+1)); done; echo "::error::gave up: $*"; return 1; }
+          retry apt-get -o Acquire::Retries=3 update
+          retry apt-get -o Acquire::Retries=3 install -y --no-install-recommends git ca-certificates
+
+      - uses: actions/checkout@v7
+
+      - name: Install build deps (Linux)
+        if: runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -e
+          retry() { i=1; while [ "$i" -le 5 ]; do "$@" && return 0; echo "::warning::retry $i/5 (sleep $((i*15))s): $*"; sleep $((i*15)); i=$((i+1)); done; echo "::error::gave up: $*"; return 1; }
+          # No LLVM, no X, no readline: the library needs the C toolchain and
+          # the autotools only (binutils for strip/objdump comes with
+          # build-essential).
+          retry apt-get -o Acquire::Retries=3 update
+          retry apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+            build-essential automake autoconf libtool bison flex pkg-config
+
+      - name: Install build deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew untap aws/tap 2>/dev/null || true
+          brew update
+          brew install automake autoconf libtool bison flex
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+          # Apple's clang, as the local shared build uses (full SDK, system
+          # libs). The deployment target keeps the dylib loadable by the KiCad
+          # releases that still run on older macOS; KiCad's own library says
+          # `minos` of the OS it was built on.
+          echo "NGSPICE_CC=CC=/usr/bin/clang CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=12.0" >> "$GITHUB_ENV"
+
+      - name: Build libngspice
+        working-directory: ${{ env.NGSPICE_DIR }}
+        run: |
+          ./autogen.sh
+          mkdir -p ci-build-shared && cd ci-build-shared
+          ../configure $NGSPICE_SHARED_CONFIGURE $NGSPICE_CC \
+            || { echo "===== config.log (tail) ====="; tail -80 config.log; exit 1; }
+          make -j"$(getconf _NPROCESSORS_ONLN)"
+          ls -l src/.libs/ | grep -i ngspice
+
+      - name: Stage library
+        run: |
+          set -e
+          dest="out/lib/${{ matrix.lib }}"
+          mkdir -p "$dest"
+          libs="$NGSPICE_DIR/ci-build-shared/src/.libs"
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            # src/.libs/libngspice.0.dylib is the real file (libngspice.dylib a
+            # symlink to it); KiCad's bundle holds it under that name.
+            cp "$libs/libngspice.0.dylib" "$dest/libngspice.0.dylib"
+            strip -x "$dest/libngspice.0.dylib" || true
+            install_name_tool -id "$KICAD_DYLIB_ID" "$dest/libngspice.0.dylib"
+            # ad-hoc signature, as KiCad's install procedure re-signs anyway;
+            # an unsigned dylib is refused outright on Apple silicon
+            codesign -s - --force "$dest/libngspice.0.dylib"
+            echo "install name: $(otool -D "$dest/libngspice.0.dylib" | tail -1)"
+            otool -l "$dest/libngspice.0.dylib" | grep -A4 LC_BUILD_VERSION | grep -E 'minos|sdk' || true
+            [ "$(otool -D "$dest/libngspice.0.dylib" | tail -1)" = "$KICAD_DYLIB_ID" ] \
+              || { echo "::error::install name not set"; exit 1; }
+          else
+            # libtool's real file is libngspice.so.0.0.<n>; ship it under its
+            # soname, which is what KiCad (and the dynamic loader) asks for.
+            real="$(readlink -f "$libs/libngspice.so.0")"
+            cp "$real" "$dest/libngspice.so.0"
+            strip "$dest/libngspice.so.0" || true
+            echo "soname: $(objdump -p "$dest/libngspice.so.0" | grep SONAME)"
+            # Portability guard: no glibc symbol newer than jammy's 2.35.
+            MAX="$(objdump -T "$dest/libngspice.so.0" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)"
+            echo "max glibc symbol version required: $MAX"
+            if [ "$(printf '%s\n' "$MAX" GLIBC_2.35 | sort -V | tail -1)" != "GLIBC_2.35" ]; then
+              echo "::error::the library requires $MAX > 2.35 -- not portable to Ubuntu 22.04"
+              exit 1
+            fi
+          fi
+          # The XSPICE code models built with this library, so a KiCad install
+          # can replace its own copies with matching ones (PlugIns/sim/ngspice
+          # on macOS, the ngspice directory beside the dll on Windows,
+          # /usr/lib/ngspice on Linux).
+          mkdir -p "$dest/codemodels"
+          find "$NGSPICE_DIR/ci-build-shared/src/xspice/icm" -name '*.cm' -exec cp {} "$dest/codemodels/" \;
+          echo "staged $(ls "$dest/codemodels" | wc -l) code models"
+          chmod +x "$dest"/libngspice*
+          ls -lh "$dest/" "$dest/codemodels/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: lib-${{ matrix.name }}
+          path: out/
+          if-no-files-found: error
+
+  # --------------------------------------------------------------- Windows
+  # MSYS2: MINGW64 (gcc) for Intel, CLANGARM64 for ARM -- libtool names the
+  # library libngspice-0.dll, which is the name KiCad's Windows build loads.
+  build-windows:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-intel, os: windows-latest,  msystem: MINGW64,   pkg: mingw-w64-x86_64,        lib: windows/intel }
+          - { name: windows-arm,   os: windows-11-arm,  msystem: CLANGARM64, pkg: mingw-w64-clang-aarch64, lib: windows/arm }
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          install: >-
+            base-devel git autoconf automake libtool bison flex
+            ${{ matrix.pkg }}-toolchain
+
+      - name: Build libngspice (MSYS2)
+        shell: msys2 {0}
+        working-directory: ${{ env.NGSPICE_DIR }}
+        run: |
+          ./autogen.sh
+          mkdir -p ci-build-shared && cd ci-build-shared
+          ../configure $NGSPICE_SHARED_CONFIGURE \
+            || { echo "===== config.log (tail) ====="; tail -80 config.log; exit 1; }
+          make -j"$(nproc)"
+          ls -l src/.libs/ | grep -i ngspice
+
+      - name: Stage library + runtime DLLs
+        shell: msys2 {0}
+        run: |
+          set -e
+          dest="out/lib/${{ matrix.lib }}"
+          mkdir -p "$dest/codemodels"
+          libs="$NGSPICE_DIR/ci-build-shared/src/.libs"
+          cp "$libs"/libngspice-0.dll "$dest/"
+          # The library depends on the MSYS2 runtime DLLs of its environment
+          # (libwinpthread, libgcc/libclang_rt, ...): copy every non-Windows
+          # dependency ldd reports beside it, as build-binaries.yml does for
+          # the executable, so it loads without MSYS2 installed.
+          ldd "$dest/libngspice-0.dll" \
+            | grep -iv '/c/windows\|/C/Windows\|not found' \
+            | awk '{print $3}' | grep -v '^$' \
+            | xargs -I{} cp -n {} "$dest/" 2>/dev/null || true
+          find "$NGSPICE_DIR/ci-build-shared/src/xspice/icm" -name '*.cm' -exec cp {} "$dest/codemodels/" \;
+          for f in "$dest"/*.dll; do strip --strip-all "$f" 2>/dev/null || true; done
+          echo "=== staged ${{ matrix.lib }} ==="
+          ls -lh "$dest/" "$dest/codemodels/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: lib-${{ matrix.name }}
+          path: out/
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- Collect
+  # Download every platform's artifact and commit the libraries into lib/.
+  collect:
+    name: Commit libraries to lib/
+    needs: [build-unix, build-windows]
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      # Only the legs that finished green uploaded an artifact, so whatever
+      # lands here is exactly the set of platforms that built -- a partial
+      # run commits the platforms it has.
+      - name: Download successful platform artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: _artifacts
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Stage libraries from successful platforms
+        run: |
+          if [ ! -d _artifacts/lib ]; then
+            echo "No platform produced a library this run -- nothing to commit."
+            exit 0
+          fi
+          cp -R _artifacts/lib/. lib/
+          # The artifact round-trip drops the executable bit; a dylib/.so is
+          # loaded, not executed, but keep the mode the build gave it.
+          find lib -type f \( -name 'libngspice*' -o -name '*.cm' \) -exec chmod +x {} +
+          echo "Libraries provided by the platforms that built successfully:"
+          find _artifacts/lib -type f | sed 's#_artifacts/##; s/^/  /'
+
+      - name: Commit & push
+        run: |
+          if [ -z "$(git status --porcelain lib/)" ]; then
+            echo "No library changes to commit (successful platforms already up to date)."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/
+          # the root .gitignore's global *.cm rule is negated for lib/, but
+          # force-add the code models too, as build-binaries.yml does for bin/
+          git add -f 'lib/**/*.cm' 2>/dev/null || true
+          git commit -m "ci: update prebuilt libraries [skip ci]"
+          git pull --rebase --autostash origin main
+          git push origin main
+          echo "Pushed updated libraries for the platforms that built."

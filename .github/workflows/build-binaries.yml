@@ -10,6 +10,7 @@ on:
     branches: [main]
     paths-ignore:
       - 'bin/**'        # binary commits made by this workflow must not retrigger it
+      - 'lib/**'        # nor the library commits made by build-libraries.yml
       - '**/*.md'
 
 permissions:
