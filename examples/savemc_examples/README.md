@@ -27,5 +27,11 @@ fails is said once with the rows kept for the next try (checks 14–16). Since
 Enhancement-615 a different deck sourced in the same session with the same
 fixed name goes to `<stem>_2.<ext>` with a note naming the first deck, instead
 of replacing its file; a separate ngspice run still replaces it (check 17).
+Since Enhancement-626 a `dc` that sweeps a recorded parameter itself
+(`dc @sm[r] 900 1100 100`, `dc r1 ...`, `dc @m1[w] ...`, nested, or a `run`
+with such a `.dc` card) leaves that cell empty on its row and says once which
+parameters and their levels -- the device ran at each level, not at the draw
+the row used to report; a per-point `sweep ... -analysis tran` still records
+the pushed level on each point's row (check 20).
 
-Run: `python3 verify_savemc.py` (36 checks per solver, both solvers).
+Run: `python3 verify_savemc.py` (37 checks per solver, both solvers).

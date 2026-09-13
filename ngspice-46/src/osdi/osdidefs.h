@@ -305,10 +305,13 @@ extern OsdiRegistryEntry *osdi_reg_entry_inst(const GENinstance *inst);
  * applier leaves a machine-written value (a sweep point, a `.dc` level, a
  * `sens` perturbation) alone until the writing command's bracket ends --
  * E-535 fix, hunt bug 14. Recentering on USER writes lives elsewhere
- * (doset_user -> OSDImcNoteUserWrite, frontend/spiceif.c). */
+ * (doset_user -> OSDImcNoteUserWrite, frontend/spiceif.c). Enhancement-626
+ * (hunt F10): `dst` is the stored parameter, read back so the writes an
+ * analysis makes within one run (a `.dc` over the parameter) are counted
+ * and ranged for the savemc snapshot. */
 extern void osdimc_capture_chain(const OsdiRegistryEntry *entry,
                                  GENmodel *inModel);
-extern void OSDImcNoteParamWrite(const void *owner, uint32_t id);
+extern void OSDImcNoteParamWrite(const void *owner, uint32_t id, const void *dst);
 
 typedef struct OsdiNgspiceHandle {
   uint32_t kind;

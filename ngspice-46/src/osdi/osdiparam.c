@@ -245,7 +245,7 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
   {
     int err535 = osdi_write_param(dst, value, param, descr);
     if (err535 == OK)
-      OSDImcNoteParamWrite(inst, (uint32_t)param);
+      OSDImcNoteParamWrite(inst, (uint32_t)param, dst);
     return err535;
   }
 }
@@ -276,7 +276,7 @@ extern int OSDImParam(int param, IFvalue *value, GENmodel *modelPtr) {
   {
     int err535 = osdi_write_param(dst, value, param, descr);
     if (err535 == OK)
-      OSDImcNoteParamWrite(model, (uint32_t)param);
+      OSDImcNoteParamWrite(model, (uint32_t)param, dst);
     return err535;
   }
 }

@@ -66,6 +66,13 @@ Checks:
       savemc_writemc as `+`-joined style lists (bold+navy, italic,
       red+underline, a hex RRGGBB); an unknown token is said once; none of
       the five draws an "unknown option" warning
+  [20] (Enhancement-626, hunt F10) a `dc` that sweeps a recorded parameter
+      itself leaves that cell empty on the row, said once with the levels:
+      `dc @sm[r] 900 1100 100` (the OSDI model parameter), `dc r1 ...` (a
+      resistor whose value draws), `dc @m1[w] ...` (an instance slot), a
+      nested `dc` over two, `run` with a `.dc` card; `dc v1 ...` and a
+      per-point `sweep ... -analysis tran` keep every value (the pushed
+      level on each point's row)
 """
 import glob
 import os
@@ -489,6 +496,35 @@ check('[19] savemc_font="Times New Roman" savemc_fontsize=12 savemc_model=bold+n
       "savemc_writemc=red+underline+shiny+1A2B3C: the styles land (the last colour wins), 'shiny' is said once, "
       "no 'unknown option' warning for the five names",
       ok, "" if ok else f"{fx} {out[-400:]}")
+
+# ------------------------------------------------------------ [20] ---
+# Enhancement-626 (hunt F10): a dc that sweeps a recorded parameter itself
+clean()
+F10 = PRE + ("v1 in 0 dc 1\nr1 in out {agauss(1k, 50, 1)}\nn1 out 0 sm\n.model sm st r=1k\n"
+             "m1 in g 0 0 nm w={agauss(1u, 0.1u, 1)} l=1u\nvg g 0 1.5\n.model nm nmos level=1\n.dc @sm[r] 950 1050 50\n")
+out = run(".option savemc osdimc mcseed=5\n" + F10, "t20",
+          "op\ndc @sm[r] 900 1100 100\ndc r1 900 1100 100\ndc @m1[w] 2u 4u 1u\ndc v1 0 1 0.5\n"
+          "dc @sm[r] 900 1100 100 @n1[dr] -10 10 10\nrun\nsweep @sm[r] 900 1100 100 -analysis \"tran 1u 3u\"\nop")
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+def cell(r, name):
+    v = rows[r][head.index(name)] if name in head and head.index(name) < len(rows[r]) else None
+    return None if v in (None, "") else float(v)
+notes = re.findall(r"Note: savemc: row (\d+) \((\w+)\) sweeps (.*?): the device ran at each level, not at a draw, "
+                   r"so that cell is left empty on the row \(said once\)", out)
+ok = (len(rows) == 11 and [r[1] for r in rows] == ["op", "dc", "dc", "dc", "dc", "dc", "run", "tran", "tran", "tran", "op"]
+      and cell(1, f"{A}sm[r]") is None and cell(1, "r1") is not None and cell(1, "m1:w") is not None and cell(1, f"{A}n1[dr]") is not None
+      and cell(2, "r1") is None and cell(2, f"{A}sm[r]") is not None and cell(2, "m1:w") is not None
+      and cell(3, "m1:w") is None and cell(3, "r1") is not None and cell(3, f"{A}sm[r]") is not None
+      and all(cell(4, n) is not None for n in ("r1", "m1:w", f"{A}sm[r]", f"{A}n1[dr]"))
+      and cell(5, f"{A}sm[r]") is None and cell(5, f"{A}n1[dr]") is None and cell(5, "r1") is not None
+      and cell(6, f"{A}sm[r]") is None and cell(6, "r1") is not None
+      and [cell(k, f"{A}sm[r]") for k in (7, 8, 9)] == [900.0, 1000.0, 1100.0]
+      and cell(10, f"{A}sm[r]") is not None and cell(10, f"{A}sm[r]") != 1000.0
+      and notes == [("2", "dc", f"{A}sm[r] (3 levels, 900 to 1100)")])
+check("[20] dc over @sm[r], r1, @m1[w]: that cell empty on its row, the others kept; dc v1 keeps all; the nested dc "
+      "empties both; run with a .dc card empties @sm[r]; the per-point sweep rows carry 900/1000/1100; the note once, "
+      "with the levels",
+      ok, "" if ok else f"{head} {rows} {notes} {out[-300:]}")
 
 clean()
 print(f"\n{passed}/{checks} checks passed")

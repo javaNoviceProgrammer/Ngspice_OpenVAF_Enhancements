@@ -36,7 +36,12 @@
 #include "ngspice/stringskip.h"
 #include "ngspice/dvec.h"
 #include "ngspice/fteparse.h"
+#include "ngspice/cktdefs.h"        /* Enhancement-626: CKTcurJob */
+#include "ngspice/jobdefs.h"
+#include "ngspice/trcvdefs.h"       /* Enhancement-626: the dc job's swept names */
+#include "ngspice/ifsim.h"
 #include "mcsave.h"
+extern char *spice_analysis_get_name(int index);
 #include <time.h>
 #include <ctype.h>
 #include <math.h>
@@ -239,13 +244,173 @@ cols_have_osdi(void)
     return 0;
 }
 
+/* Enhancement-626 (hunt F10): the parameters a `dc` swept on the row being
+ * made. A `dc` over a recorded parameter -- `dc @rm[r] 900 1100 100`, `dc r1
+ * ...`, `dc @m1[w] ...` -- writes every level through the machine setter and
+ * ends by putting back what it found: the draw the sweep pinned away (OSDI),
+ * or the draw the expansion wrote into the slot (netlist). The device ran at
+ * the levels, not at that draw, and no one number is the value in force, so
+ * the cell is left empty and the row says so once. The OSDI side reports
+ * the entries the run actually wrote (the snapshot's write count, which
+ * catches a wildcard family too); the netlist slots come from the dc job's
+ * own swept names. Other analyses' machine writes -- a `sens` perturbation,
+ * restored before the end -- leave the device at the draw, which is then the
+ * value: only a dc row is read this way. */
+struct mcs_swept {
+    char *name;
+    double lo, hi;
+    int points;
+};
+static struct mcs_swept *swept;
+static int nswept;
+static int noted_swept;
+
+/* `points` is the level count when known (the dc job's), 0 when only the
+ * span is: the OSDI side counts writes, and a nested sweep re-writes the
+ * outer parameter once per inner pass */
 static void
-osdi_cb(const char *owner_name, const char *param, double value, int is_model,
-        void *ctx)
+mcs_swept_add(const char *name, double lo, double hi, int points)
 {
-    char *name = tprintf("@%s[%s]", owner_name, param);
-    NG_IGNORE(ctx);
-    col_set(name, value, 1, is_model);
+    int i;
+    for (i = 0; i < nswept; i++)
+        if (eq(swept[i].name, name)) {
+            if (points > 0 && swept[i].points == 0) {
+                swept[i].points = points;
+                swept[i].lo = lo;
+                swept[i].hi = hi;
+            }
+            return;
+        }
+    swept = TREALLOC(struct mcs_swept, swept, nswept + 1);
+    swept[nswept].name = copy(name);
+    swept[nswept].lo = lo;
+    swept[nswept].hi = hi;
+    swept[nswept].points = points;
+    nswept++;
+}
+
+static int
+mcs_is_swept(const char *name)
+{
+    int i;
+    for (i = 0; i < nswept; i++)
+        if (eq(swept[i].name, name))
+            return 1;
+    return 0;
+}
+
+static void
+mcs_swept_clear(void)
+{
+    int i;
+    for (i = 0; i < nswept; i++)
+        tfree(swept[i].name);
+    tfree(swept);
+    nswept = 0;
+}
+
+/* the dc job this row's run was: a `dc`, or a `run` whose last job is one */
+static TRCV *
+mcs_dc_job(const char *analysis)
+{
+    JOB *job;
+    const char *nm;
+    if (!analysis || !(eq(analysis, "dc") || eq(analysis, "run")))
+        return NULL;
+    if (!ft_curckt || !ft_curckt->ci_ckt || !(job = ft_curckt->ci_ckt->CKTcurJob))
+        return NULL;
+    nm = spice_analysis_get_name(job->JOBtype);
+    return nm && eq(nm, "DC") ? (TRCV *) job : NULL;
+}
+
+/* a netlist slot the dc job swept: the column of that name, if it is one */
+static void
+mcs_swept_slot(const char *name, double lo, double hi, int points)
+{
+    struct mcs_col *c = name ? col_find(name) : NULL;
+    if (c && !c->osdi && !c->written)
+        mcs_swept_add(name, lo, hi, points);
+}
+
+/* the keyword of a device's parameter id, instance or model side */
+static const char *
+mcs_parm_keyword(int type, int id, int model)
+{
+    IFdevice *d = ft_sim && type >= 0 && type < ft_sim->numDevices ? ft_sim->devices[type] : NULL;
+    int n, i;
+    IFparm *p;
+    if (!d)
+        return NULL;
+    n = model ? (d->numModelParms ? *d->numModelParms : 0) : (d->numInstanceParms ? *d->numInstanceParms : 0);
+    p = model ? d->modelParms : d->instanceParms;
+    for (i = 0; i < n; i++)
+        if (p[i].id == id)
+            return p[i].keyword;
+    return NULL;
+}
+
+/* the netlist slots the dc job swept, from its own resolved names */
+static void
+mcs_swept_from_job(const TRCV *dc)
+{
+    int i;
+    for (i = 0; i <= dc->TRCVnestLevel && i < TRCVNESTLEVEL; i++) {
+        double a = dc->TRCVvStart[i], b = dc->TRCVvStop[i];
+        double lo = a < b ? a : b, hi = a < b ? b : a;
+        int points = dc->TRCVnTotal[i] > 0 ? dc->TRCVnTotal[i]
+                     : dc->TRCVvStep[i] != 0.0 ? (int) (floor(fabs((b - a) / dc->TRCVvStep[i]) + 1.0 + 0.5)) : 1;
+        const char *nm = dc->TRCVvName[i];
+        if (dc->TRCVvType[i] == TEMP_CODE || !nm)
+            continue;
+        if (dc->TRCVvType[i] == PARAM_CODE || dc->TRCVvType[i] == XPARAM_CODE) {
+            /* the literal `@owner[param]` (an instance's, or E-534's model
+             * parameter): the slot is `owner:param`. The target list of a
+             * model or wildcard sweep is freed by the sweep's own restore,
+             * so it is only read while it is still there. */
+            const char *lb = strchr(nm, '['), *rb = lb ? strchr(lb, ']') : NULL;
+            int k;
+            if (nm[0] == '@' && lb && rb && rb > lb + 1 && !strchr(nm, '*') && !strchr(nm, '?')) {
+                char *owner = copy_substring(nm + 1, lb);
+                char *param = copy_substring(lb + 1, rb);
+                char *slot = tprintf("%s:%s", owner, param);
+                mcs_swept_slot(slot, lo, hi, points);
+                if (mcs_is_swept(nm))            /* the OSDI column: its level count */
+                    mcs_swept_add(nm, lo, hi, points);
+                tfree(slot); tfree(owner); tfree(param);
+            }
+            for (k = 0; dc->TRCVvType[i] == XPARAM_CODE && k < dc->TRCVxN[i]; k++) {
+                const DCTxtarget *t = &dc->TRCVxTarg[i][k];
+                const char *owner = t->inst ? t->inst->GENname : t->mod ? t->mod->GENmodName : NULL;
+                const char *kw = mcs_parm_keyword(t->type, t->set_id, t->inst == NULL);
+                if (owner && kw) {
+                    char *slot = tprintf("%s:%s", owner, kw);
+                    char *osdi = tprintf("@%s[%s]", owner, kw);
+                    mcs_swept_slot(slot, lo, hi, points);
+                    if (mcs_is_swept(osdi))      /* the OSDI column: its level count */
+                        mcs_swept_add(osdi, lo, hi, points);
+                    tfree(slot); tfree(osdi);
+                }
+            }
+        } else {
+            mcs_swept_slot(nm, lo, hi, points);   /* a source or resistor: its value slot */
+        }
+    }
+}
+
+/* Enhancement-626 (hunt F10): the snapshot is taken for this row */
+struct mcs_snap_ctx {
+    int dc;                             /* the row's run was a dc job */
+};
+
+static void
+osdi_cb(const OSDImcSnapshotItem *it, void *ctx)
+{
+    const struct mcs_snap_ctx *sc = (const struct mcs_snap_ctx *) ctx;
+    char *name = tprintf("@%s[%s]", it->owner, it->param);
+
+    col_set(name, it->value, 1, it->is_model);
+    if (sc && sc->dc && it->writes > 0)         /* Enhancement-626 (hunt F10) */
+        mcs_swept_add(name, it->lo, it->hi, 0);
     tfree(name);
 }
 
@@ -1039,6 +1204,7 @@ MCSAVErun(const char *analysis, int ok)
 {
     char *given = NULL;
     int i, n, first;
+    TRCV *dcjob;
 
     if (!ft_curckt)
         return;
@@ -1063,8 +1229,12 @@ MCSAVErun(const char *analysis, int ok)
      * read on every row, option on or off -- after `unset osdimc` the rows
      * used to repeat the last trial's draws while the devices had been put
      * back to their nominals (or swept). */
+    mcs_swept_clear();                          /* Enhancement-626 (hunt F10) */
+    dcjob = mcs_dc_job(analysis);
     if (ft_curckt->ci_ckt && (OSDImcEnabled() || cols_have_osdi())) {
-        OSDImcSnapshot(ft_curckt->ci_ckt, osdi_cb, NULL);
+        struct mcs_snap_ctx sc;
+        sc.dc = dcjob != NULL;
+        OSDImcSnapshot(ft_curckt->ci_ckt, osdi_cb, &sc);
     } else if (ft_curckt->ci_ckt && !noted_osdimc_off && OSDImcHasStats(ft_curckt->ci_ckt)) {
         fprintf(cp_err, "Note: savemc: the deck's OSDI models declare statistics, but "
                         "`.option osdimc` is off, so they are not drawn and not recorded\n");
@@ -1150,9 +1320,33 @@ MCSAVErun(const char *analysis, int ok)
         rowplot = TREALLOC(struct plot *, rowplot, caprows);
         rowpl = TREALLOC(char *, rowpl, caprows);
     }
+    /* Enhancement-626 (hunt F10): the slots the dc job swept, then the row;
+     * a swept column's cell is empty on this row, said once */
+    if (dcjob)
+        mcs_swept_from_job(dcjob);
+    if (nswept > 0 && !noted_swept) {
+        DS_CREATE(what, 256);
+        int k;
+        for (k = 0; k < nswept; k++) {
+            char *one = swept[k].points > 0
+                ? tprintf("%s%s (%d level%s, %g to %g)", k ? (k == nswept - 1 ? " and " : ", ") : "",
+                          swept[k].name, swept[k].points, swept[k].points == 1 ? "" : "s",
+                          swept[k].lo, swept[k].hi)
+                : tprintf("%s%s (%g to %g)", k ? (k == nswept - 1 ? " and " : ", ") : "",
+                          swept[k].name, swept[k].lo, swept[k].hi);
+            ds_cat_str(&what, one);
+            tfree(one);
+        }
+        fprintf(cp_out, "Note: savemc: row %d (%s) sweeps %s: the device ran at each level, not at "
+                        "a draw, so that cell is left empty on the row (said once)\n",
+                nrows + 1, analysis ? analysis : "?", ds_get_buf(&what));
+        ds_free(&what);
+        noted_swept = 1;
+    }
     rows[nrows] = TMALLOC(double, ncols);
     for (i = 0; i < ncols; i++)
-        rows[nrows][i] = cols[i].set && !cols[i].written ? cols[i].value : NAN;
+        rows[nrows][i] = cols[i].set && !cols[i].written && !(nswept > 0 && mcs_is_swept(cols[i].name))
+                         ? cols[i].value : NAN;
     rowcols[nrows] = ncols;
     rowan[nrows] = copy(analysis ? analysis : "?");
     rowst[nrows] = copy(ok == MCS_PAUSED ? "paused" : ok ? "ok" : "failed");

@@ -210,9 +210,22 @@ extern void OSDIdcpathEdges(CKTcircuit *ckt, int type,
  * Defined in src/osdi/osdisetup.c. */
 extern void OSDImcNewRun(CKTcircuit *ckt);
 /* Enhancement-610: for `.option savemc` (frontend/mcsave.c); Enhancement-617:
- * `is_model` is 1 when the owner is a model card, 0 for an instance */
-typedef void (*OSDImcSnapshotFn)(const char *owner, const char *param,
-                                 double value, int is_model, void *ctx);
+ * `is_model` is 1 when the owner is a model card, 0 for an instance.
+ * Enhancement-626 (hunt F10): `writes` counts the machine writes the
+ * parameter took during the run that just ended (a `.dc` over the parameter
+ * writes each level, then the value it found; a `sweep` point's push comes
+ * BEFORE its run and is not counted); `lo`/`hi` span those writes but the
+ * last, which is the analysis's restore, `points` is their number. */
+typedef struct OSDImcSnapshotItem {
+    const char *owner;
+    const char *param;
+    double value;
+    int is_model;
+    int writes;
+    int points;
+    double lo, hi;
+} OSDImcSnapshotItem;
+typedef void (*OSDImcSnapshotFn)(const OSDImcSnapshotItem *it, void *ctx);
 extern bool OSDImcEnabled(void);
 extern bool OSDImcHasStats(CKTcircuit *ckt);
 extern void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx);

@@ -1951,6 +1951,11 @@ typedef struct OsdiMcNominal {
                         device, so the default it was resolved from may have
                         moved -- the model's setup re-resolves it on the next
                         run and osdimc_capture reads the new nominal */
+  int run_writes;    /* Enhancement-626 (hunt F10): machine writes since this
+                        run began (OSDImcNewRun zeroes it) -- a `.dc` over the
+                        parameter writes every level and then what it found */
+  double w_last;     /* the latest of those writes ... */
+  double w_lo, w_hi; /* ... and the span of the ones before it */
 } OsdiMcNominal;
 
 static OsdiMcNominal *osdimc_tbl;
@@ -2421,10 +2426,31 @@ static void osdimc_stale_owner(const OsdiRegistryEntry *entry, void *inst,
  * observable on the very next run, exactly as check 19 pins). Writes made
  * before the first capture find no entry and pin nothing, so deck parsing
  * and re-sourcing stay untouched. */
-void OSDImcNoteParamWrite(const void *owner, uint32_t id) {
+void OSDImcNoteParamWrite(const void *owner, uint32_t id, const void *dst) {
   OsdiMcNominal *e = osdimc_find(owner, id);
-  if (e)
-    e->pinned = true;
+  if (!e)
+    return;
+  e->pinned = true;
+  /* Enhancement-626 (hunt F10): count the run's writes and span all but the
+   * latest -- a `.dc` over the parameter ends by restoring what it found,
+   * and that write is not a level the device ran at */
+  if (dst) {
+    double v = *(const double *)dst;
+    if (e->run_writes == 1) {
+      e->w_lo = e->w_hi = e->w_last;
+    } else if (e->run_writes > 1) {
+      if (e->w_last < e->w_lo) e->w_lo = e->w_last;
+      if (e->w_last > e->w_hi) e->w_hi = e->w_last;
+    }
+    e->w_last = v;
+    e->run_writes++;
+  }
+}
+
+/* Enhancement-626: a run begins -- the write counts start over */
+static void osdimc_clear_run_writes(void) {
+  for (int i = 0; i < osdimc_tbl_len; i++)
+    osdimc_tbl[i].run_writes = 0;
 }
 
 static bool osdimc_enabled(void) {
@@ -2838,6 +2864,30 @@ bool OSDImcHasStats(CKTcircuit *ckt) {
   return false;
 }
 
+/* Enhancement-626 (hunt F10): one snapshot item, with the run's machine
+ * writes of the entry (none when the parameter has no entry yet) */
+static void osdimc_snapshot_item(OSDImcSnapshotFn fn, void *ctx,
+                                 const char *owner, const char *param,
+                                 double value, int is_model,
+                                 const OsdiMcNominal *e) {
+  OSDImcSnapshotItem it;
+  it.owner = owner;
+  it.param = param;
+  it.value = value;
+  it.is_model = is_model;
+  it.writes = e ? e->run_writes : 0;
+  it.points = it.writes > 1 ? it.writes - 1 : it.writes;
+  if (it.writes > 1) {
+    it.lo = e->w_lo;
+    it.hi = e->w_hi;
+  } else if (it.writes == 1) {
+    it.lo = it.hi = e->w_last;
+  } else {
+    it.lo = it.hi = value;
+  }
+  fn(&it, ctx);
+}
+
 void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx) {
   if (!ckt || !fn)
     return;
@@ -2858,7 +2908,8 @@ void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx) {
         if (id >= descr->num_instance_params) {
           void *src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
           if (src)
-            fn((char *)gen_model->GENmodName, pname, *(double *)src, 1, ctx);
+            osdimc_snapshot_item(fn, ctx, (char *)gen_model->GENmodName, pname,
+                                 *(double *)src, 1, osdimc_find(model, id));
         } else {
           for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
                gen_inst = gen_inst->GENnextInstance) {
@@ -2866,7 +2917,8 @@ void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx) {
             void *src = descr->access(inst, model, id,
                                       ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
             if (src)
-              fn((char *)gen_inst->GENname, pname, *(double *)src, 0, ctx);
+              osdimc_snapshot_item(fn, ctx, (char *)gen_inst->GENname, pname,
+                                   *(double *)src, 0, osdimc_find(inst, id));
           }
         }
       }
@@ -2903,6 +2955,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
         osdimc_trial = 0;
     }
   }
+  osdimc_clear_run_writes();          /* Enhancement-626 (hunt F10) */
 
   if (!osdimc_enabled()) {
     /* option switched off: put every drawn parameter back to its nominal.

@@ -39,7 +39,8 @@ with statistics:
 - under `.option osdimc`, every **OSDI parameter with declared statistics**, read off the
   devices when the row is made, `@<model>[<param>]` for a process parameter,
   `@<instance>[<param>]` for a mismatch one — so the baseline trial reports the nominal
-  and a pinned or pending draw what the device actually ran with.
+  and a pinned or pending draw what the device actually ran with (a parameter the run's
+  own `dc` swept has no such number: its cell is empty since Enhancement-626).
 
 The numparam draws are recorded as they are evaluated (a source, a `reset`, a sweep's or
 montecarlo's in-place re-evaluation); under montecarlo's fast path a subcircuit call's

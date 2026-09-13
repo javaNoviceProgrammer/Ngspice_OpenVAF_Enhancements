@@ -913,6 +913,7 @@ parameter with statistics:
 | `x1.p` | a subcircuit call's own drawn value (empty on `montecarlo`'s fast path, which does not re-derive it) |
 | `r.x1.r1` | a slot inside a subcircuit that reads a drawn symbol |
 | `@rm[r]`, `@n1[dr]` | under `.option osdimc`, every OSDI parameter with declared statistics, read off the device when the row is made — process ones by model, mismatch ones by instance |
+| *(empty)* | a parameter the run's `dc` swept itself — `dc @rm[r] 900 1100 100`, `dc r1 …`, `dc @m1[w] …`, a `run` with such a `.dc` card: the device ran at each level, not at a draw, so no one number is the value in force; the row says once which parameters and their levels ([E-626](../../../enhancements_doc/Enhancement-626.md)). A `sweep … -analysis …` that runs one analysis per point is one row per point with the pushed level. |
 
 Columns are fixed by the first row and grow if a later row brings a new name.
 The file is `mcparams_<YYYYMMDD>_<HHMMSS>.<ext>` beside the netlist (the working
