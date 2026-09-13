@@ -27,6 +27,14 @@ Every check that matters is a DIFFERENTIAL: the same circuit written in the two
 spellings must give bit-identical answers, and each spelling must produce only
 its own node names -- an expansion that quietly emitted both, or neither, would
 otherwise pass a value check on the nodes that happened to exist.
+
+Enhancement-627 (hunt F15 of 2026-09-12): the deck that wires the OTHER
+spelling of the very bits being expanded -- `V1 a[0] 0 1` beside `N1 a b kb`
+under `autobus=kicad`, or `a_0_` nets (a KiCad export) under the default
+spelling -- used to float those bits with nothing said. Pass 3 now names the
+nodes of the other spelling it found, says the bits float, and gives both
+cures (write the bits in the expansion's spelling, or switch the option). The
+consistent decks above draw no such warning.
 """
 import os
 import re
@@ -232,6 +240,40 @@ _rc, out = run(ladder(KIC, 5) + "\nN1 a b kb", "op", "unknown",
                cards=".option autobus=kicad\n.option nosuchopt=1\n.model kb kbus r=1k")
 check("[E-462] ...and a genuinely unknown option IS still flagged (control)",
       "nosuchopt" in out.lower(), "")
+
+# ------------------------------------------------ Enhancement-627 (hunt F15) --
+print("\nthe other spelling of the bits being expanded is named")
+FLOAT = "bracket spelling of the same bits, a different node from each, so the bits float"
+_rc, out = run("V1 a[0] 0 1\nV2 a[1] 0 2\nV3 a[2] 0 3\nV4 a[3] 0 4\nV5 a[4] 0 5\nRb b 0 1\nN1 a b kb",
+               "op\nprint v(a_0_) v(a_4_) v(a[0])", "otherbrk",
+               cards=".option autobus=kicad\n.model kb kbus r=1k")
+w = re.search(r"Warning: instance n1: 'a' was expanded to the 5 bus bits a_0_ \.\. a_4_ \(the KiCad\s+spelling, "
+              r"\.option autobus=kicad\), but the deck also wires a\[0\], a\[1\], a\[2\], a\[3\], a\[4\] -- the\s+" + FLOAT
+              + r"\.\s+Write them as a_0_ \.\. a_4_, or set `\.option autobus` without `=kicad` to expand to a\[0\] \.\.", out)
+check("[E-627] a[0]..a[4] wired beside `N1 a b kb` under autobus=kicad: the warning names all five, "
+      "says the bits float and gives both cures; the bits do read 0 and a[0] reads 1",
+      w is not None and [float(v) for v in vals(out)] == [0.0, 0.0, 1.0], f"{vals(out)} {out[-500:]}")
+_rc, out = run("V1 a_0_ 0 1\nV2 a1 0 2\nV3 a_2_ 0 3\nRb b 0 1\nN1 a b kb",
+               "op\nprint v(a[0]) v(a[2]) v(a_0_)", "otherkic",
+               cards=".option autobus\n.model kb kbus r=1k")
+w = re.search(r"Warning: instance n1: 'a' was expanded to the 5 bus bits a\[0\] \.\. a\[4\], but the deck\s+also wires "
+              r"a_0_, a_2_ -- KiCad's spelling of the same bits, a different node from\s+each, so the bits float\. "
+              r"Set `\.option autobus=kicad` to expand to a_0_ \.\. a_4_\s+\(what a KiCad export needs\), "
+              r"or write them as a\[0\] \.\.", out)
+check("[E-627] ...the reverse: a_0_ and a_2_ (a KiCad export's spelling) under the default spelling: the warning "
+      "names the two it found and offers autobus=kicad",
+      w is not None and [float(v) for v in vals(out)] == [0.0, 0.0, 1.0], f"{vals(out)} {out[-500:]}")
+_rc, out = run("V1 a_0_ 0 1\nRb b 0 1\nN1 a b kb", "op", "otherone",
+               cards=".option autobus\n.model kb kbus r=1k")
+check("[E-627] ...one node: singular wording ('the bracket'/'KiCad's spelling of the same bit', 'the bit floats')",
+      re.search(r"KiCad's spelling of the same bit, a different node from\s+each, so the bit floats", out) is not None,
+      out[-400:])
+_rc, out_k = run(ladder(KIC, 5) + "\nN1 a b kb", prints(KIC, range(5)), "cleank",
+                 cards=".option autobus=kicad\n.model kb kbus r=1k")
+_rc, out_b = run(ladder(BRK, 5) + "\nN1 a b kb", prints(BRK, range(5)), "cleanb",
+                 cards=".option autobus\n.model kb kbus r=1k")
+check("[E-627] ...and the consistent decks of either spelling draw no such warning",
+      "spelling of the same bit" not in out_k and "spelling of the same bit" not in out_b, "")
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

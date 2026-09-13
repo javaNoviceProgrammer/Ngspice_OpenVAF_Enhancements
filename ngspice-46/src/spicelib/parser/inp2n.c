@@ -343,33 +343,66 @@ static bool autobus_token_ok(const char *tok, const char *instname,
  * is at least held and named as floating, but that names the symptom. The
  * base is noted here, at expansion; the check waits for pass 3, when every
  * node the deck names exists. */
+/* Enhancement-627 (hunt F15 of 2026-09-12): the bits are remembered in BOTH
+ * spellings, so that pass 3 can also say when the deck wires the other one --
+ * `V1 in[0] 0 1` beside `N1 in b kb` under `.option autobus=kicad` puts the
+ * source on `in[0]` and the device on `in_0_`, two nodes, and the bus floated
+ * with nothing said; a KiCad-exported deck run without the option is the
+ * same silence the other way round (`/in_0_` nets, `/in[0]` bits). */
 struct busbase {
     struct busbase *next;
     char *inst;                 /* owned */
     char *base;                 /* owned: the token as written */
     char *first;                /* owned: the first bit's spelling */
+    char *last;                 /* owned: the last bit's spelling */
+    char **bit;                 /* owned: every bit, in the spelling used */
+    char **other;               /* owned: every bit, in the other spelling */
     int bits;
+    bool kicad;
 };
 static struct busbase *busbases;
 
 static void autobus_note_base(const char *inst, const char *tok,
-                              const char *firstterm, int bits, bool kicad)
+                              const char *const *terms, int bits, bool kicad)
 {
     struct busbase *b = TMALLOC(struct busbase, 1);
-    const char *lb = firstterm ? strchr(firstterm, '[') : NULL;
-    DS_CREATE(f, 64);
+    int k;
     if (!b)
         return;
-    ds_cat_str(&f, tok);
-    if (lb)
-        autobus_cat_index(&f, lb, kicad);
+    b->bit = TMALLOC(char *, bits > 0 ? bits : 1);
+    b->other = TMALLOC(char *, bits > 0 ? bits : 1);
+    for (k = 0; k < bits; k++) {
+        const char *lb = terms && terms[k] ? strchr(terms[k], '[') : NULL;
+        DS_CREATE(f, 64);
+        DS_CREATE(o, 64);
+        ds_cat_str(&f, tok);
+        ds_cat_str(&o, tok);
+        if (lb) {
+            autobus_cat_index(&f, lb, kicad);
+            autobus_cat_index(&o, lb, !kicad);
+        }
+        b->bit[k] = copy(ds_get_buf(&f));
+        b->other[k] = copy(ds_get_buf(&o));
+        ds_free(&f);
+        ds_free(&o);
+    }
     b->inst = copy(inst ? inst : "?");
     b->base = copy(tok);
-    b->first = copy(ds_get_buf(&f));
+    b->first = copy(bits > 0 ? b->bit[0] : tok);
+    b->last = copy(bits > 0 ? b->bit[bits - 1] : tok);
     b->bits = bits;
+    b->kicad = kicad;
     b->next = busbases;
     busbases = b;
-    ds_free(&f);
+}
+
+static bool autobus_node_exists(CKTcircuit *ckt, const char *name)
+{
+    CKTnode *nd;
+    for (nd = ckt->CKTnodes; nd; nd = nd->next)
+        if (nd->number != 0 && nd->name && strcmp(nd->name, name) == 0)
+            return TRUE;
+    return FALSE;
 }
 
 int INPreportBusBases(CKTcircuit *ckt)
@@ -396,9 +429,56 @@ int INPreportBusBases(CKTcircuit *ckt)
                     n++;
                     break;
                 }
+        /* Enhancement-627 (hunt F15): the deck wires the OTHER spelling of
+         * these bits -- `in[0]` where the bits became `in_0_` under
+         * `.option autobus=kicad`, or `in_0_` (a KiCad export) where they
+         * became `in[0]` under the default spelling. Each such node is a
+         * different node from the bit it names, so the bit floats. */
+        if (!seen && ckt && b->bits > 0) {
+            DS_CREATE(have, 128);
+            int k, nhave = 0;
+            for (k = 0; k < b->bits; k++)
+                if (autobus_node_exists(ckt, b->other[k])) {
+                    if (nhave++)
+                        ds_cat_str(&have, ", ");
+                    ds_cat_str(&have, b->other[k]);
+                }
+            if (nhave > 0) {
+                if (b->kicad)
+                    fprintf(stderr,
+                            "Warning: instance %s: '%s' was expanded to the %d bus bits %s .. %s (the KiCad\n"
+                            "         spelling, .option autobus=kicad), but the deck also wires %s -- the\n"
+                            "         bracket spelling of the same bit%s, a different node from each, so %s float%s.\n"
+                            "         Write %s as %s .. %s, or set `.option autobus` without `=kicad` to expand to %s ..\n",
+                            b->inst, b->base, b->bits, b->first, b->last, ds_get_buf(&have),
+                            nhave == 1 ? "" : "s", nhave == 1 ? "the bit" : "the bits", nhave == 1 ? "s" : "",
+                            nhave == 1 ? "it" : "them", b->first, b->last, b->other[0]);
+                else
+                    fprintf(stderr,
+                            "Warning: instance %s: '%s' was expanded to the %d bus bits %s .. %s, but the deck\n"
+                            "         also wires %s -- KiCad's spelling of the same bit%s, a different node from\n"
+                            "         each, so %s float%s. Set `.option autobus=kicad` to expand to %s .. %s\n"
+                            "         (what a KiCad export needs), or write %s as %s ..\n",
+                            b->inst, b->base, b->bits, b->first, b->last, ds_get_buf(&have),
+                            nhave == 1 ? "" : "s", nhave == 1 ? "the bit" : "the bits", nhave == 1 ? "s" : "",
+                            b->other[0], b->other[b->bits - 1], nhave == 1 ? "it" : "them", b->first);
+                n++;
+            }
+            ds_free(&have);
+        }
+        {
+            int k;
+            for (k = 0; k < b->bits; k++) {
+                tfree(b->bit[k]);
+                tfree(b->other[k]);
+            }
+            tfree(b->bit);
+            tfree(b->other);
+        }
         tfree(b->inst);
         tfree(b->base);
         tfree(b->first);
+        tfree(b->last);
         tfree(b);
     }
     busbases = NULL;
@@ -764,7 +844,7 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
             autobus_cat_index(&nl, lb, kicad);   /* Enhancement-462 */
         }
         if (pcnt[p] > 1)                /* Enhancement-572 */
-          autobus_note_base(name, tok, dev->termNames[pstart[p]], pcnt[p], kicad);
+          autobus_note_base(name, tok, (const char *const *) dev->termNames + pstart[p], pcnt[p], kicad);
         tfree(tok);
       }
       if (p == np && !badtok) {         /* every port got a usable token */
@@ -846,7 +926,7 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
             shortport = dev->termNames[pstart[p]];
             shortbits = pcnt[p];
           }
-          autobus_note_base(name, tok, dev->termNames[pstart[p]], pcnt[p], kicad);  /* E-572 */
+          autobus_note_base(name, tok, (const char *const *) dev->termNames + pstart[p], pcnt[p], kicad);  /* E-572 */
           used++;
           expanded++;
           tfree(tok);
@@ -960,7 +1040,7 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
             strcasecmp(tok, "gnd") != 0 &&
             !INPbusTokenIndexed(tok, strlen(tok), kicad)) {
           autobus_cat_index(&nl, lb, kicad);
-          autobus_note_base(name, tok, tn, 1, kicad);
+          autobus_note_base(name, tok, (const char *const *) dev->termNames + pstart[p], 1, kicad);
           changed = TRUE;
         }
         tfree(tok);
