@@ -104,7 +104,8 @@ preprocessor defines, `--lints` to list tunable lints.)
 Now a SPICE deck, `divider.cir`. Three conventions matter:
 
 1. `pre_osdi <file>.osdi` in the `.control` block loads the compiled model
-   **before the circuit is parsed** (that's what the `pre_` prefix means).
+   **before the circuit is parsed** (that's what the `pre_` prefix means). A
+   path with spaces goes in quotes, either kind (E-629).
 2. OSDI instances use the **`N` device letter**.
 3. The `.model` card's type name is the **Verilog-A module name**
    (`myres`), and the card is where parameters are set.

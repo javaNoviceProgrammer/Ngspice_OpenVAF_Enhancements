@@ -27,12 +27,15 @@
 #ifdef XSPICE
 void com_codemodel(wordlist *wl)
 {
-if (wl && wl->wl_word)
+    /* Enhancement-629 (hunt F12): a double-quoted path -- the spelling a
+     * path with spaces needs -- reached the loader with its quotes on */
+    char *file = wl ? cp_unquote(wl->wl_word) : NULL;
+if (file)
 #ifdef CM_TRACE
-    fprintf(stdout, "Note: loading codemodel %s\n", ww->wl_word);
+    fprintf(stdout, "Note: loading codemodel %s\n", file);
 #endif
-    if (load_opus(wl->wl_word)) {
-        fprintf(stderr, "Error: Library %s couldn't be loaded!\n", wl->wl_word);
+    if (load_opus(file)) {
+        fprintf(stderr, "Error: Library %s couldn't be loaded!\n", file);
         ft_spiniterror = TRUE;
         ft_codemodelerror = TRUE;
         if (ft_stricterror) /* if set in spinit */
@@ -40,9 +43,10 @@ if (wl && wl->wl_word)
     }
 #ifdef CM_TRACE
     else {
-        fprintf(stdout, "Codemodel %s is loaded\n", wl->wl_word);
+        fprintf(stdout, "Codemodel %s is loaded\n", file);
     }
 #endif
+    tfree(file);
 }
 #endif
 
@@ -357,7 +361,13 @@ static char *va_compile(const char *va, bool force)
  * Enhancement-229: a leading `-f` (or `-force`) forces a reload of an already-
  * loaded file, so an edit -> recompile -> re-source loop picks up the new model
  * without restarting ngspice (a plain re-load is skipped, since the device type
- * is already registered). */
+ * is already registered).
+ * Enhancement-629 (hunt F12): a path with spaces is written in quotes -- the
+ * lexer keeps a double-quoted argument as one word WITH its quotes, and the
+ * loader was handed those (`Error opening osdi lib ""dir with space/va
+ * res.osdi""`); only the single-quoted spelling, which the lexer strips,
+ * loaded. Every KiCad project under a directory with a space hit it. Each
+ * file name is unquoted here, as the other file-taking commands do. */
 void com_osdi(wordlist *wl)
 {
     wordlist *ww;
@@ -371,10 +381,13 @@ void com_osdi(wordlist *wl)
             va = TRUE;                        /* Enhancement-500 */
     }
     for (ww = wl; ww; ww = ww->wl_next) {
-        const char *file = ww->wl_word;
+        char *unq = cp_unquote(ww->wl_word);  /* Enhancement-629 */
+        const char *file = unq;
         char *built = NULL;
-        if (eq(file, "-f") || eq(file, "-force") || eq(file, "-va"))
+        if (eq(file, "-f") || eq(file, "-force") || eq(file, "-va")) {
+            tfree(unq);
             continue;
+        }
         /* Enhancement-500: under `-va`, a Verilog-A source is compiled first and
            the object it produces is what gets loaded. Anything that is not a
            `.va` is still taken as an object, so `pre_osdi -va *.va extra.osdi`
@@ -388,6 +401,7 @@ void com_osdi(wordlist *wl)
                     ft_osdierror = TRUE;
                     if (ft_stricterror)
                         controlled_exit(EXIT_BAD);
+                    tfree(unq);
                     continue;
                 }
                 file = built;
@@ -402,6 +416,7 @@ void com_osdi(wordlist *wl)
          }
         if (built)
             tfree(built);
+        tfree(unq);
     }
 }
 #endif

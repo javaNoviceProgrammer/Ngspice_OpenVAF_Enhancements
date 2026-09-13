@@ -21,6 +21,12 @@ a mapped file in place is a POSIX capability; on Windows the file would be locke
 which is the same reason the feature is chiefly for Linux/macOS developers).
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title).
+
+Enhancement-629 (F12 of the 2026-09-12 hunt): a path with spaces is written in
+quotes, and the double-quoted spelling -- the one a schematic tool writes --
+reached the loader with its quotes on (`Error opening osdi lib ""dir with
+space/va res.osdi""`); only single quotes loaded. `pre_osdi`/`osdi` unquote
+each file name now, `-f` and `-va` included, and `codemodel` does the same.
 """
 import os
 import re
@@ -107,6 +113,31 @@ check("hunt F16: the reload names the circuit built against the previous object,
       "was built against the previous" in out and "cannot run on the new object's code" in out
       and len(vals) >= 3 and abs(vals[1] - (-0.5e-3)) < 1e-6,
       f"vals={vals} note={'was built against the previous' in out} refused={'cannot run on the new' in out}")
+
+# Enhancement-629 (hunt F12): a path with spaces, in either kind of quotes
+SP = os.path.join(D, "dir with space")
+os.makedirs(SP, exist_ok=True)
+shutil.copy(os.path.join(D, "mv1.osdi"), os.path.join(SP, "va res.osdi"))
+shutil.copy(os.path.join(D, "mv2.osdi"), os.path.join(SP, "va res2.osdi"))
+with open(os.path.join(SP, "va res.va"), "w") as f:
+    f.write(MOD % 2000)
+for label, want, cmds in (
+        ("`pre_osdi \"dir with space/va res.osdi\"` (double quotes, relative): loads, -1 mA", -1e-3,
+         ['osdi "dir with space/va res.osdi"', "source run.cir", "op", "print i(v1)"]),
+        ("...single quotes still load", -1e-3,
+         ["osdi 'dir with space/va res.osdi'", "source run.cir", "op", "print i(v1)"]),
+        ("...an absolute double-quoted path, then recompiled in place and `-f` on the same quoted path: -0.5 mA", -0.5e-3,
+         ['osdi "%s"' % os.path.join(SP, "va res.osdi"), "source run.cir", "op", "print i(v1)",
+          'shell %s "%s" "%s"' % (CP, os.path.join(SP, "va res2.osdi"), os.path.join(SP, "va res.osdi")),
+          'osdi -f "%s"' % os.path.join(SP, "va res.osdi"), "reset", "op", "print i(v1)"]),
+        ("...`-va` with a double-quoted source in a spaced directory compiles and loads (2k: -0.5 mA)", -0.5e-3,
+         ['osdi -va "dir with space/va res.va"', "source run.cir", "op", "print i(v1)"])):
+    r = subprocess.run([NGSPICE, "-p"], input="\n".join(cmds + ["quit", ""]), capture_output=True, text=True,
+                       cwd=D, errors="replace", timeout=120)
+    out = (r.stdout or "") + (r.stderr or "")
+    vals = [float(x) for x in re.findall(r"i\(v1\)\s*=\s*([-\d.eE+]+)", out)]
+    check(label, len(vals) >= 1 and abs(vals[-1] - want) < 1e-6 and "couldn't be loaded" not in out
+          and 'lib ""' not in out, f"vals={vals} {out[-300:]}")
 
 shutil.rmtree(D, ignore_errors=True)
 print(f"\n{passed}/{checks} checks passed")
