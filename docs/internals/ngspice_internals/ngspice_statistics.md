@@ -184,6 +184,14 @@ mcsample lhs <N> [seed <s>]   engage LHS for the next N reset-driven samples
 mcsample random | off         revert to independent draws
 ```
 
+`montecarlo -lhs` (§6) stratifies **both channels**: the netlist's `.param`
+draws as above, and — since [E-623](../../../enhancements_doc/Enhancement-623.md)
+— the model-declared `(* std *)` draws of `.option osdimc` (§7), each
+dimension's N samples landing one per stratum under a permutation keyed by
+(seed, owner, parameter); the uniform, lognormal and truncated shapes stratify
+on their own uniform. Before E-623 those draws were plain hashes with no
+stratum to land in, and the run said so.
+
 The left panel shows the stratification (the LHS samples land on their quantiles;
 the random ones scatter); the right shows the payoff — the spread of the estimated
 mean over many trials collapses (here ~100× lower variance at the same `N`):

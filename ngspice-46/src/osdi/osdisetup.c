@@ -2017,6 +2017,7 @@ static double osdimc_scale = 1.0; /* sigma inflation, 1.0 = off */
  * been re-sampled. Applied only when the user actually passed -seed, so a deck
  * that never mentions it keeps the draws it has today. */
 static uint32_t osdimc_seed_extra;
+static int osdimc_lhs_n;            /* Enhancement-623: strata per dimension under -lhs; 0 = plain */
 /* 2026-09-05 hunt F13: the trial the seeded command started at. E-537 mixed
  * the command's -seed into the key but left the GLOBAL trial counter in it,
  * so `montecarlo 3 -seed 1` run twice reproduced the netlist half of a deck
@@ -2094,6 +2095,8 @@ void OSDIreloadedType(int type, const char *path) {
 
 void OSDImcSeedOffset(unsigned s) {
   osdimc_seed_extra = (uint32_t) s;
+  if (!s)
+    osdimc_lhs_n = 0;               /* Enhancement-623: -lhs ends with the command */
   if (s) {
     /* hunt F13: sample 1 is a draw, never the nominal baseline (E-537 hunt J
      * gave montecarlo this step; a seeded highsigma/wcd on a fresh deck
@@ -2219,6 +2222,7 @@ void OSDImcInterruptReset(void) {
   osdimc_internal_change = false;
   osdimc_scale = 1.0;
   osdimc_seed_extra = 0;          /* E-537 (hunt P) */
+  osdimc_lhs_n = 0;               /* Enhancement-623 */
   osdimc_seed_trial0 = 0;         /* hunt F13 */
   osdimc_walk_on = false;         /* MC hunt F3 */
   osdimc_walk_n = 0;
@@ -2472,6 +2476,51 @@ static double osdimc_n01(uint64_t key) {
   return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
 }
 
+/* Enhancement-623 (2026-09-12 hunt F5): `montecarlo -lhs` stratifies the
+ * model-declared draws too. The netlist's Latin-Hypercube sampler lands each
+ * dimension's N samples one per stratum; the osdimc draws were pure hashes
+ * of (seed, sample, owner, id) with no stratum to land in, so beside a
+ * stratified `agauss` the `(* std *)` draws clumped (0.71..0.78 six times of
+ * 20) under a banner that said "20 Latin-Hypercube samples". Under -lhs a
+ * draw's uniform is (stratum + jitter) / N: the stratum is this sample's rank
+ * among the N samples' hashes under the DIMENSION's key -- a random
+ * permutation of 0..N-1 as a pure function of (seed, owner, id), nothing
+ * stored, no RNG state -- and the jitter the draw's own hash. The deviate
+ * is the inverse CDF of that uniform (a truncation confines the uniform to
+ * [Phi(-t), Phi(t)] instead of rejecting). Off outside the command. */
+static uint64_t osdimc_lhs_kdim;    /* the dimension being drawn: (seed, owner, id), no sample */
+
+void OSDImcLhs(int nsamples) { osdimc_lhs_n = nsamples > 0 ? nsamples : 0; }
+
+static int osdimc_lhs_stratum(uint64_t kdim, unsigned long sample, int n) {
+  uint64_t hs = osdimc_mix(kdim ^ (uint64_t) sample);
+  int r = 0;
+  unsigned long j;
+  for (j = 1; j <= (unsigned long) n; j++) {
+    uint64_t hj;
+    if (j == sample)
+      continue;
+    hj = osdimc_mix(kdim ^ (uint64_t) j);
+    if (hj < hs || (hj == hs && j < sample))
+      r++;
+  }
+  return r;
+}
+
+/* the stratified uniform of this draw, or the plain one when the sample
+ * lies beyond the N the command declared (it never does inside one) */
+static double osdimc_lhs_u(uint64_t key) {
+  unsigned long sample = osdimc_seed_sample();
+  double jitter = osdimc_u01(osdimc_mix(key ^ 1));
+  if (!osdimc_lhs_n || !osdimc_lhs_kdim || sample < 1 ||
+      sample > (unsigned long) osdimc_lhs_n)
+    return jitter;
+  return ((double) osdimc_lhs_stratum(osdimc_lhs_kdim, sample, osdimc_lhs_n) + jitter)
+         / (double) osdimc_lhs_n;
+}
+
+static bool osdimc_lhs_on(void) { return osdimc_lhs_n > 0 && osdimc_lhs_kdim != 0; }
+
 /* Enhancement-554: the standard-normal deviate of a draw confined to
  * |z| <= t sigmas (t <= 0: unconfined). The first attempt is the plain key's
  * deviate, so declaring a truncation changes only the draws that would have
@@ -2481,7 +2530,20 @@ static double osdimc_n01(uint64_t key) {
  * Shared by the draw and the importance-weight walker, so the two can never
  * disagree about which value was drawn. */
 static double osdimc_z(uint64_t key, double t) {
-  double z = osdimc_n01(key);
+  double z;
+  if (osdimc_lhs_on()) {                        /* Enhancement-623 */
+    double u = osdimc_lhs_u(key);
+    if (t > 0.0) {
+      double lo = 0.5 * erfc(t / M_SQRT2);      /* Phi(-t) */
+      u = lo + u * (1.0 - 2.0 * lo);
+    }
+    if (u < 1e-12)
+      u = 1e-12;
+    else if (u > 1.0 - 1e-12)
+      u = 1.0 - 1e-12;
+    return inv_normal_cdf(u);
+  }
+  z = osdimc_n01(key);
   if (t > 0.0 && fabs(z) > t) {
     int a;
     for (a = 1; a <= 64 && fabs(z) > t; a++)
@@ -2516,7 +2578,8 @@ static double osdimc_value(uint64_t key, const OsdiStatParam *info,
      * not inflate them -- they carry weight 1", randnumb.c). An inflated
      * uniform can land where the TRUE density is zero, which no finite
      * importance weight represents. std is the HALF-WIDTH. */
-    double u1 = osdimc_u01(osdimc_mix(key ^ 1));
+    double u1 = osdimc_lhs_on() ? osdimc_lhs_u(key)          /* Enhancement-623 */
+                                : osdimc_u01(osdimc_mix(key ^ 1));
     if (z_out)
       *z_out = 0.0;
     return nominal + sigma * (2.0 * u1 - 1.0);
@@ -2978,6 +3041,10 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
     }
 
     uint64_t kbase = osdimc_kbase(seed);   /* E-537 (hunt P) */
+    /* Enhancement-623: the per-dimension key of the -lhs permutation --
+     * the seed and nothing of the sample, so all N samples of a dimension
+     * share one permutation */
+    uint64_t kdimbase = osdimc_mix(((uint64_t)(uint32_t)seed << 32) ^ 0x6c6873ull);
     /* MC hunt F3: this type's first walk coordinate is the Gaussian count of
      * the types before it, so the per-type application lands every parameter
      * on the same coordinate whatever order (or how many times) it runs. */
@@ -3015,8 +3082,10 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
             /* E-538: this parameter's own inflation (1.0 when out of scope) */
             double sc = osdimc_scale_for((char *)gen_model->GENmodName,
                                          descr->param_opvar[id].name[0]);
+            osdimc_lhs_kdim = osdimc_mix(kdimbase ^ osdimc_hash_str((char *)gen_model->GENmodName) ^ id);
             val = osdimc_value(osdimc_mix(kmodel ^ id), &infos[s], e->nominal,
                                sc, &z);
+            osdimc_lhs_kdim = 0;
           }
           if (!osdimc_draw_ok(descr, id, val))
             val = e->nominal;
@@ -3051,8 +3120,10 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
                   osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_inst->GENname));
               double sc = osdimc_scale_for((char *)gen_inst->GENname,
                                            descr->param_opvar[id].name[0]);
+              osdimc_lhs_kdim = osdimc_mix(kdimbase ^ osdimc_hash_str((char *)gen_inst->GENname) ^ id);
               val = osdimc_value(osdimc_mix(kinst ^ id), &infos[s], e->nominal,
                                  sc, &z);
+              osdimc_lhs_kdim = 0;
             }
             if (!osdimc_draw_ok(descr, id, val))
               val = e->nominal;

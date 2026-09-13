@@ -23,6 +23,12 @@ solver-independent):
                              LHS is far smaller than under plain random MC.
   [4] reproducibility     -- same seed => identical samples; different seed
                              => different samples.
+  [6] (Enhancement-623, 2026-09-12 hunt F5) both channels -- under
+      `montecarlo -lhs` the model-declared `(* std *)` draws of `.option
+      osdimc` land one per stratum too, beside the netlist's agauss: a model
+      parameter, an instance parameter, and the uniform / lognormal /
+      truncated shapes; the two osdimc permutations are independent; a run
+      without -lhs draws exactly as before
   [5] correctness         -- LHS sample mean/stddev match the analytic
                              distribution (agauss(nom,avar,sig) has sigma=avar/sig;
                              aunif(nom,avar) is uniform on [nom-avar, nom+avar]).
@@ -237,6 +243,59 @@ check("mean within 3*sigma/sqrt(N) of nominal",
 # LHS makes the sample sd a very tight estimate of the true sigma
 check("sample sigma within 15% of avar/sig",
       abs(sd - SD) < 0.15 * SD, f"sigma={sd:.3f} (true {SD:.3f})")
+
+# --- [6] Enhancement-623: -lhs stratifies the model-declared draws too -------
+print("\n[6] montecarlo -lhs over both channels (2026-09-12 hunt F5)")
+from _setup import VAF
+with open(os.path.join(SCRATCH, "lhsmod.va"), "w") as f:
+    f.write('`include "disciplines.vams"\nmodule lhsmod(p, n);\ninout p, n; electrical p, n;\n'
+            '(* std=25.0 *) parameter real r = 1000.0 from (0:inf);\n'
+            '(* type="instance", std=10.0 *) parameter real dr = 0.0;\n'
+            '(* dist="uniform", std=50.0 *) parameter real u = 1000.0;\n'
+            '(* dist="lognormal", std_rel=0.2 *) parameter real l = 1000.0 from (0:inf);\n'
+            '(* dist="tgauss", std=25.0, trunc=2 *) parameter real t = 1000.0;\n'
+            'analog I(p,n) <+ V(p,n)/(r+dr+u+l+t);\nendmodule\n')
+subprocess.run([VAF, os.path.join(SCRATCH, "lhsmod.va"), "-o", os.path.join(SCRATCH, "lhsmod.osdi")],
+               capture_output=True, text=True, timeout=300)
+NL = 20
+BOTH = ("* both channels\n.option osdimc mcseed=1\n.control\npre_osdi lhsmod.osdi\n.endc\n"
+        ".param rr = agauss(1000, 75, 3)\nV1 a 0 dc 1\nR1 a 0 {rr}\nN1 a 0 mm\n.model mm lhsmod\n"
+        ".control\nmontecarlo %d %s-seed 1 -analysis op -expr rn=@r1[resistance] -expr rm=@mm[r] -expr dr=@n1[dr] "
+        "-expr u=@mm[u] -expr l=@mm[l] -expr t=@mm[t]\nset width=300\n"
+        "print montecarlo1.rn montecarlo1.rm montecarlo1.dr montecarlo1.u montecarlo1.l montecarlo1.t > both.txt\n.endc\n.end\n")
+out = run_deck("both.cir", BOTH % (NL, "-lhs "))
+cols = [read_col("both.txt", c) for c in range(1, 7)]
+def strata(us):
+    return sorted(int(x * NL) for x in us)
+full = list(range(NL))
+if all(len(c) == NL for c in cols):
+    rn, rm, dr, u, l, t = cols
+    st = {"rn": strata(norm_cdf(x, 1000, 25) for x in rn), "rm": strata(norm_cdf(x, 1000, 25) for x in rm),
+          "dr": strata(norm_cdf(x, 0, 10) for x in dr), "u": strata((x - 950) / 100 for x in u),
+          "l": strata(norm_cdf(math.log(x / 1000) / 0.2, 0, 1) for x in l)}
+    lo = norm_cdf(-2.0, 0, 1)
+    st["t"] = strata((norm_cdf(x, 1000, 25) - lo) / (1 - 2 * lo) for x in t)
+else:
+    st = {}
+check("netlist rn, model rm, instance dr: each lands one per stratum over 20 samples",
+      st and st["rn"] == full and st["rm"] == full and st["dr"] == full,
+      f"rn={st.get('rn')} rm={st.get('rm')} dr={st.get('dr')}" if st else out[-300:])
+check("the uniform, lognormal and truncated (2 sigma) shapes stratify on their own uniform too",
+      st and st["u"] == full and st["l"] == full and st["t"] == full and all(abs(x - 1000) <= 50 for x in t),
+      f"u={st.get('u')} l={st.get('l')} t={st.get('t')}" if st else "")
+if st:
+    rank = lambda v: [sorted(v).index(x) for x in v]
+    a, b = rank(rm), rank(dr)
+    rho = 1 - 6 * sum((x - y) ** 2 for x, y in zip(a, b)) / (NL * (NL * NL - 1))
+else:
+    rho = 1.0
+check("the per-dimension permutations are independent (|rank correlation rm vs dr| < 0.5)",
+      st and abs(rho) < 0.5, f"rho={rho:.3f}")
+out = run_deck("plain.cir", BOTH.replace("both.txt", "plain.txt") % (NL, ""))
+plain = [read_col("plain.txt", c) for c in range(1, 7)]
+check("without -lhs the osdimc draws are the plain hashes (not stratified: r's strata repeat)",
+      len(plain[1]) == NL and strata(norm_cdf(x, 1000, 25) for x in plain[1]) != full and plain[1] != cols[1],
+      f"plain r strata={strata(norm_cdf(x, 1000, 25) for x in plain[1]) if len(plain[1]) == NL else '?'}")
 
 # drop the whole scratch dir -- nothing is left in the example directory
 import shutil

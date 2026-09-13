@@ -80,5 +80,10 @@ python3 verify_lhs.py
 - The nutmeg-loop Monte Carlo idiom (`sgauss(0)`/`sunif(0)` + `alter`, no `reset`)
   is not affected by `mcsample`; LHS targets the `reset`-driven `.param` idiom,
   which has a well-defined per-sample boundary.
+- `montecarlo -lhs` stratifies the model-declared `(* std *)` draws of
+  `.option osdimc` as well (Enhancement-623, check 6): each dimension's N
+  samples land one per stratum under a permutation keyed by (seed, owner,
+  parameter) — for the gauss, uniform, lognormal and truncated shapes — where
+  they used to be plain hashes with no stratum to land in.
 - Every SPICE deck's first line is the **title** (ignored by the parser); the
   decks here start with a `*` title line accordingly.

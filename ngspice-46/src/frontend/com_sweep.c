@@ -4990,22 +4990,13 @@ void com_montecarlo(wordlist *wl)
 
     if (uselhs) {
         mc_lhs_config(nsamp, seed);
-        /* E-537 (hunt O): Latin-hypercube stratification is applied by the
-         * netlist draw functions (mc_sample_uniform/gauss). osdimc draws are
-         * pure hashes of (mcseed, trial, owner, id) and never pass through
-         * them, so `-lhs` on a deck whose variability is DECLARED IN THE MODELS
-         * -- E-530's headline case, where "the netlist carries no
-         * gauss()/agauss() at all" -- silently degraded to plain random
-         * sampling: measured, the draws were byte-identical with and without
-         * the flag. Say so rather than letting the user believe N stratified
-         * samples cover the space better than N random ones. */
-        if (OSDImcActive())
-            fprintf(cp_err,
-                    "montecarlo: NOTE -- -lhs stratifies the netlist's own random "
-                    ".params; it does NOT cover `.option osdimc` draws, which are "
-                    "keyed per trial.\n"
-                    "            Model-declared (* std *) variability is sampled "
-                    "plainly in this run.\n");
+        /* E-537 (hunt O) said here that -lhs did not reach the osdimc draws,
+         * which were pure hashes with no stratum to land in; Enhancement-623
+         * (2026-09-12 hunt F5) stratifies them too -- each model-declared
+         * dimension's N samples land one per stratum, keyed by (seed, owner,
+         * id) -- so the banner's "Latin-Hypercube samples" now covers both
+         * channels and the note is gone. */
+        OSDImcLhs(nsamp);
     } else {
         char cmd[64];
         snprintf(cmd, sizeof cmd, "setseed %u", seed);

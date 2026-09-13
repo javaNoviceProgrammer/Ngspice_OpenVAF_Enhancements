@@ -503,9 +503,13 @@ whole, `-seed 1` equals it, and `montecarlo_seed` regenerates the ensemble;
 `.option osdimc_verbose` shows the pair as `[sample 2 of -seed 1]`. A
 never-run deck on `montecarlo`'s fast path also draws on its first sample
 now (the first run's new circuit pointer used to restart the count at the
-nominal baseline). **`-lhs` says so** when it cannot reach
-model-declared variability: it stratifies the netlist's own `.param` draws
-only. And every sampling command now **excludes samples that did not solve
+nominal baseline). **`montecarlo -lhs` stratifies the model-declared draws
+too** (E-623; it used to stratify the netlist's own `.param` draws only and
+say so): each `(* std *)` dimension's N samples land one per stratum — a
+random permutation keyed by (seed, owner, parameter), the jitter the draw's
+own hash, still a pure function with no RNG state — for the gauss, uniform,
+lognormal and truncated shapes alike. And every sampling command now
+**excludes samples that did not solve
 and reports them** rather than silently reusing the previous sample's
 numbers — with `-scale` those failures cluster in the tail, so their
 exclusion biases P(fail) low and the run says as much.

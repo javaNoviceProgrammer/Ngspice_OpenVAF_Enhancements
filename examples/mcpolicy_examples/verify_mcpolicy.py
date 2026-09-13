@@ -85,8 +85,9 @@ Enhancement-537 -- a second hunt over the shipped work -- adds [19]-[28]:
   [25] -seed varies the osdimc draws, so independent replications really are
        independent (they were byte-identical, making an estimate look stable
        when nothing had been re-sampled)
-  [26] -lhs says it does not cover osdimc draws (it silently did nothing for
-       model-declared variability)
+  [26] -lhs stratifies the osdimc draws too (Enhancement-623; hunt O had it
+       say that it did not, when they were plain hashes): N samples land one
+       per stratum on the model's r and the instance's dr
   [27] a refused command leaves its result variables UNSET instead of showing
        the previous run's answer to the scripts they exist for
   [28] an out-of-range altermod refuses instead of calling controlled_exit --
@@ -540,13 +541,25 @@ def main():
           rc1 == 0 and rc2 == 0 and d1 and d2 and d1 != d2,
           f"seed 1 -> {d1[:2]}, seed 999 -> {d2[:2]} (were byte-identical)")
 
-    # [26] hunt O: -lhs stratifies the netlist's own draws only. Say so on a
-    # deck whose variability is declared in the models, which is exactly where
-    # a user would expect it to apply.
-    rc, out = run("mcres", "montecarlo 4 -analysis op -lhs -spec v(2) -max 0.9")
-    check("-lhs says it does not cover osdimc draws (hunt O)",
-          rc == 0 and "does NOT cover" in out and "osdimc" in out,
-          f"note present={'does NOT cover' in out}")
+    # [26] hunt O had -lhs SAY that it stratified the netlist's own draws
+    # only; Enhancement-623 (2026-09-12 hunt F5) stratifies the osdimc draws
+    # as well -- each dimension's N samples land one per stratum, keyed by
+    # (seed, owner, id) -- so the note is gone and the strata are checked
+    # instead, on a deck whose variability is declared in the models.
+    rc, out = run("mcres", "montecarlo 16 -analysis op -lhs -seed 5 -expr r=@mm[r] -expr d=@n1[dr]\n"
+                           "set width=250\nprint montecarlo1.r montecarlo1.d")
+    rows = re.findall(r"^\d+\s+(\S+)\s+(\S+)\s*$", out, re.M)
+    try:
+        from statistics import NormalDist
+        Phi = NormalDist().cdf
+        rs = sorted(int(Phi((float(a) - 1000.0) / 25.0) * 16) for a, _ in rows)
+        ds = sorted(int(Phi(float(b) / 10.0) * 16) for _, b in rows)
+    except ValueError:
+        rs = ds = []
+    check("-lhs stratifies the osdimc draws: 16 samples, one per stratum on r and on dr (E-623)",
+          rc == 0 and len(rows) == 16 and rs == list(range(16)) and ds == list(range(16))
+          and "does NOT cover" not in out,
+          f"r strata={rs} dr strata={ds}")
 
     # [27] hunt H: the result variables exist for scripting, so a command that
     # REFUSES must leave them unset rather than showing the last run's answer.

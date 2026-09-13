@@ -72,7 +72,8 @@ size and refuses to present a number it cannot stand behind. Alongside:
 back from a run that never solved; a mistyped `altermod` value refuses
 instead of killing the session; `montecarlo N` draws N samples in every
 session state; `-seed` varies the osdimc draws so replications are really
-independent; `-lhs` says it does not cover them; a weighted P(fail) is
+independent; `-lhs` stratifies them too (since E-623 — it used to say it
+did not cover them); a weighted P(fail) is
 clamped into [0,1] with `n/a` rather than a misleading `0.000` at the
 boundary; a never-varying metric is named instead of blamed on resolution;
 aging's dose no longer recentres a statistical nominal; and a refused command

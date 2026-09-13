@@ -224,6 +224,10 @@ extern void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx);
 extern void OSDImcNoteUserWrite(int typecode, GENinstance *dev, GENmodel *mdl,
                                 int param_id, double value);
 
+/* Enhancement-623 (hunt F5): `montecarlo -lhs` -- stratify the model-declared
+ * draws over N samples (0: plain hashes). Cleared with OSDImcSeedOffset(0). */
+extern void OSDImcLhs(int nsamples);
+
 /* Enhancement-616 (hunt F18): the netlist's own random draw of a parameter
  * was re-evaluated in place by a loop command's fast path (`montecarlo`,
  * `sweep`: com_sweep.c's sw_fp_apply) -- the draw IS the parameter's nominal
