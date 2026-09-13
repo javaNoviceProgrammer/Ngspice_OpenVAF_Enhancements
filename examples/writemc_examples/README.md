@@ -19,4 +19,15 @@ front end, whose nets are spelled `/name` and whose own run is a plain `.op`: `v
 `montecarlo N -analysis op -writemc ...` with nothing else to judge or record
 is a run, not "nothing to do".
 
-Run: `python3 verify_writemc.py` (15 checks per solver, both solvers).
+Enhancement-624 (F8 of the 2026-09-12 hunt): `writemc` lands only on the row
+of the run whose plot it reads. A trial whose `op` was refused at setup (a
+draw outside the model's range) made no plot and left the previous run's plot
+current, so its `failed` row carried the previous trial's value; every row now
+remembers the plot its run made, and a `writemc` whose current plot is not the
+row's own (nor an older one chosen with `setplot`) is refused with the row and
+plot named -- the cell stays empty, as `montecarlo -writemc` leaves it on a
+failed sample. A transient that died part-way keeps its partial plot and still
+records from it; a run stopped at a breakpoint has no row and its plot is
+refused (check [13]).
+
+Run: `python3 verify_writemc.py` (18 checks per solver, both solvers).

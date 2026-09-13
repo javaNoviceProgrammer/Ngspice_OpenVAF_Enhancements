@@ -424,6 +424,7 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
         /*CDHW Run the analysis pointed to by ci_curTask CDHW*/
 
         ft_curckt->ci_curOpt = ft_curckt->ci_defOpt;
+        MCSAVErunBegin();                       /* Enhancement-624: which plot is current now */
         if ((err = ft_sim->doAnalyses (ckt, 1, ft_curckt->ci_curTask)) != OK) {
             /* Enhancement-590 (hunt F7 of 2026-09-07): a Verilog-A $fatal
              * during the operating point is reported in full by CKTop and

@@ -1033,6 +1033,20 @@ index it; element `[0]` of a one-point vector is itself); a name that is a
 draw's (`r1`) lands as `r1*` beside the draw; with `savemc` off the command says
 so once and does nothing, so one loop runs with and without recording.
 
+The row `writemc` lands on is the run whose plot it reads
+([E-624](../../../enhancements_doc/Enhancement-624.md)): every row remembers the
+plot its run made, and the value goes on when the current plot is the row's own
+or an older one chosen with `setplot`. A trial whose `op` was refused at setup
+(a draw outside the model's range) made no plot and left the previous run's
+current, so its `failed` row used to carry the previous trial's value; now the
+command says `row 2 (op) failed before it made a plot, so the current plot op1
+is another run's; nothing is put on that row` and the cell stays empty — what
+`montecarlo -writemc` already did on a failed sample. A run stopped at a
+breakpoint has no row, and a `writemc` after it is refused the same way (`the
+current plot tran1 was made after row 1 (op, plot op1) by a run that has no
+row`). A transient that died part-way keeps its partial plot and still records
+from it, on its `failed` row.
+
 ### 8.2 From a schematic front end
 
 The same machinery runs under a host that loads `libngspice` and hands the

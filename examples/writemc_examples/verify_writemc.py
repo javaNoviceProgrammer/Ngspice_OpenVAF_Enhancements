@@ -46,6 +46,16 @@ Checks:
   [12] `montecarlo N -analysis op -writemc ...` with nothing else to judge
        or record is a run with a result, not "nothing to do"; with savemc
        off it still is nothing to do, said without "the run proceeds"
+  Enhancement-624 (hunt F8 of 2026-09-12): the row a plain writemc lands on
+  must be the run whose plot it reads:
+  [13] after a trial whose `op` failed at setup (a draw outside the model's
+       range) the cell stays empty and the message names the row and the
+       plot that is really current -- the previous run's value used to be
+       copied onto the failed row; a transient that failed part-way keeps
+       its partial plot and still records from it; a `writemc` after a run
+       stopped at a breakpoint (no row) is refused, naming the plot made
+       after the row; a `setplot` back to an older plot is deliberate and
+       writes
 """
 import glob
 import os
@@ -57,7 +67,7 @@ import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from _setup import NG as NGSPICE  # noqa: E402
+from _setup import NG as NGSPICE, VAF  # noqa: E402
 from _setup import check_both_solvers as _check_both_solvers; _check_both_solvers(__file__)  # noqa: E402
 
 checks = passed = 0
@@ -240,6 +250,61 @@ check("[12] ...with savemc off it is nothing to do: both messages, no 'the run p
       "nothing to do" in out and "-writemc [name=]<expression>" in out
       and "-writemc: nothing is recorded -- `.option savemc` is not set" in out
       and "the run proceeds" not in out and "random samples" not in out, out[-400:])
+
+# ------------------------------------------------------------ [13] ---
+# Enhancement-624 (hunt F8): two OSDI resistors -- one whose r may draw outside
+# its (0:inf) range (the op is then refused at setup and makes no plot), one
+# that $fatals past a time (the transient dies with its partial plot in place)
+with open(os.path.join(WORK, "f8.va"), "w") as f:
+    f.write('`include "disciplines.vams"\nmodule f8r(p, n);\ninout p, n; electrical p, n;\n'
+            '(* std=25.0 *) parameter real r = 1000.0 from (0:inf);\n'
+            'parameter real tdie = -1.0;\n'
+            'analog begin\n if (tdie > 0 && $abstime > tdie) $fatal(1, "dies");\n'
+            ' I(p,n) <+ V(p,n)/r;\nend\nendmodule\n')
+r = subprocess.run([VAF, os.path.join(WORK, "f8.va"), "-o", os.path.join(WORK, "f8.osdi")],
+                   capture_output=True, text=True)
+if r.returncode != 0:
+    print(r.stdout + r.stderr)
+    sys.exit(1)
+F8 = "V1 in 0 pulse(0 1 1u 1n 1n 10u 20u)\nN1 in 0 rm\n.model rm f8r r=1000\n"
+clean()
+out = run(".option savemc osdimc mcseed=3\n" + F8.replace("pulse(0 1 1u 1n 1n 10u 20u)", "1").replace("r=1000", "r=10"),
+          "t13", "pre_osdi f8.osdi\nrepeat 12\n  op\n  writemc ia=i(v1)\nend")
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+st = [r[2] for r in rows]
+ia = col(head, rows, "ia") if "ia" in head else []
+failed = [i for i, x in enumerate(st) if x == "failed"]
+msgs = re.findall(r"writemc: row (\d+) \(op\) failed before it made a plot, so the current plot (op\d+) "
+                  r"is another run's; nothing is put on that row", out)
+check("[13] a trial whose op failed at setup: the row's writemc cell is empty, the ok rows have theirs, "
+      "one message per failed row naming it and the plot really current",
+      len(rows) == 12 and len(failed) >= 1 and all(ia[i] is None for i in failed)
+      and all(ia[i] is not None and ia[i] < 0 for i in range(12) if i not in failed)
+      and [int(m[0]) for m in msgs] == [i + 1 for i in failed]
+      and all(m[1] == f"op{sum(1 for j in range(i) if st[j] == 'ok')}" for m, i in zip(msgs, failed)),
+      f"failed rows {failed} ia {ia} msgs {msgs}")
+clean()
+out = run(".option savemc osdimc mcseed=3\n" + F8.replace("r=1000", "tdie=3u"), "t13b",
+          "pre_osdi f8.osdi\ntran 0.5u 6u\nwritemc n=length(time) tlast=time[length(time)-1]")
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+check("[13] ...a transient that died part-way (a $fatal at 3us) is a failed row that keeps its partial plot: "
+      "n and tlast are recorded from it",
+      len(rows) == 1 and rows[0][1:3] == ["tran", "failed"] and "writemc:" not in out
+      and col(head, rows, "n")[0] is not None and col(head, rows, "n")[0] > 5
+      and col(head, rows, "tlast")[0] is not None and 2.5e-6 < col(head, rows, "tlast")[0] <= 3.1e-6,
+      f"{head} {rows} {out[-300:]}")
+clean()
+out = run(".option savemc osdimc mcseed=3\n" + F8, "t13c",
+          "pre_osdi f8.osdi\nop\nstop when time > 2u\ntran 1u 6u\nwritemc n=length(time)\nresume\n"
+          "writemc n=length(time)\nop\nsetplot op1\nwritemc first=i(v1)")
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+refused = re.findall(r"writemc: the current plot tran1 was made after row 1 \(op, plot op1\) by a run that "
+                     r"has no row; nothing is put on that row", out)
+check("[13] ...a run stopped at a breakpoint has no row and its plot is refused (paused and resumed alike); "
+      "a setplot back to op1 writes first=i(v1) onto the later op's row",
+      len(refused) == 2 and len(rows) == 2 and "n" not in head and "first" in head
+      and col(head, rows, "first") == [None, 0.0],
+      f"{head} {rows} refused {len(refused)} {out[-300:]}")
 
 clean()
 print(f"\n{passed}/{checks} checks passed")

@@ -28,8 +28,17 @@ extern void MCSAVEredraw(void);
 /* does this expression text call a random function? (a call, not a bare word) */
 extern int MCSAVEexpr_is_random(const char *e);
 
+/* Enhancement-624 (hunt F8): a run-class command is about to run (which plot
+ * is current now tells whether the run made one of its own) */
+extern void MCSAVErunBegin(void);
 /* a run-class command has finished: emit the row */
 extern void MCSAVErun(const char *analysis, int ok);
+
+/* Enhancement-624 (hunt F8): may a value read off the current plot go onto
+ * the last row? 1 yes; 0 no, with the reason in *why (freed by the caller):
+ * the row's run failed before it made a plot, or the current plot was made
+ * after the row by a run that has none. */
+extern int MCSAVEplotIsRow(char **why);
 
 /* Enhancement-611: is the recorder on (the option set)? */
 extern int MCSAVEactive(void);

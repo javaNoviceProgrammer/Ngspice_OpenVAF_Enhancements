@@ -78,7 +78,13 @@ static double **rows;               /* nrows x (columns at the time), NAN = not 
 static int *rowcols;
 static char **rowan;                /* the analysis name */
 static char **rowst;                /* "ok" / "failed" */
+static struct plot **rowplot;       /* Enhancement-624 (hunt F8): the plot the row's run
+                                       made -- NULL when it failed before making one; a
+                                       pointer for identity only, never dereferenced (the
+                                       plot may have been destroyed since) */
+static char **rowpl;                /* ... and that plot's name, for the messages */
 static int nrows, caprows;
+static struct plot *plot_before;    /* plot_cur when the run began (MCSAVErunBegin) */
 
 /* the circuit whose file this is -- by its file and title, not its struct:
  * a `reset` frees the struct and builds a new one from the same deck (every
@@ -937,8 +943,10 @@ mcs_reset_file(void)
         tfree(rows[r]);
         tfree(rowan[r]);
         tfree(rowst[r]);
+        tfree(rowpl[r]);
     }
     tfree(rows); tfree(rowcols); tfree(rowan); tfree(rowst);
+    tfree(rowplot); tfree(rowpl);
     nrows = caprows = 0;
     tfree(path);
     tfree(owner_file);
@@ -996,6 +1004,14 @@ MCSAVEfinish(void)
     mcs_complete();
     mcs_reset_file();
     mcs_free_used();                            /* Enhancement-615 */
+}
+
+/* Enhancement-624 (hunt F8): a run-class command is about to run; which plot
+ * is current now tells, afterwards, whether the run made one of its own */
+void
+MCSAVErunBegin(void)
+{
+    plot_before = plot_cur;
 }
 
 void
@@ -1111,6 +1127,8 @@ MCSAVErun(const char *analysis, int ok)
         rowcols = TREALLOC(int, rowcols, caprows);
         rowan = TREALLOC(char *, rowan, caprows);
         rowst = TREALLOC(char *, rowst, caprows);
+        rowplot = TREALLOC(struct plot *, rowplot, caprows);
+        rowpl = TREALLOC(char *, rowpl, caprows);
     }
     rows[nrows] = TMALLOC(double, ncols);
     for (i = 0; i < ncols; i++)
@@ -1118,6 +1136,13 @@ MCSAVErun(const char *analysis, int ok)
     rowcols[nrows] = ncols;
     rowan[nrows] = copy(analysis ? analysis : "?");
     rowst[nrows] = copy(ok ? "ok" : "failed");
+    /* Enhancement-624 (hunt F8): a run that completed made the current plot;
+     * a run that failed made one only if the current plot changed under it
+     * (a transient that stopped part-way keeps its partial plot; an operating
+     * point refused at setup leaves the previous run's plot current) */
+    rowplot[nrows] = (ok || plot_cur != plot_before) ? plot_cur : NULL;
+    rowpl[nrows] = copy(rowplot[nrows] && rowplot[nrows]->pl_typename
+                        ? rowplot[nrows]->pl_typename : "");
     nrows++;
 
     if (fmt == FMT_XLSX) {
@@ -1143,6 +1168,45 @@ MCSAVEactive(void)
     int on = mcs_option(&given);
     tfree(given);
     return on;
+}
+
+/* Enhancement-624 (hunt F8): may a value read off the current plot go onto
+ * the last row? Yes when the current plot is the row's own, or an older one
+ * (a `setplot` back to an earlier run is deliberate). No when the row's run
+ * failed before it made a plot -- the current plot is then the previous
+ * successful run's, and `writemc` after a failed trial used to copy that
+ * run's value onto the failed row -- and no when the current plot was made
+ * after the row (a run stopped at a breakpoint has no row yet, hunt F9): the
+ * value belongs to a run this row is not. `*why` says which, for the caller
+ * to print; NULL when the row may be written. */
+int
+MCSAVEplotIsRow(char **why)
+{
+    struct plot *rp, *pl;
+    const char *cur = plot_cur && plot_cur->pl_typename ? plot_cur->pl_typename : "?";
+
+    *why = NULL;
+    if (!owner || nrows == 0)
+        return 1;                       /* MCSAVEappend reports the missing row */
+    rp = rowplot[nrows - 1];
+    if (!rp) {
+        *why = tprintf("row %d (%s) failed before it made a plot, so the current plot "
+                       "%s is another run's", nrows, rowan[nrows - 1], cur);
+        return 0;
+    }
+    if (rp == plot_cur)
+        return 1;
+    for (pl = plot_list; pl; pl = pl->pl_next) {   /* newest first */
+        if (pl == rp)
+            return 1;                   /* the current plot is older than the row's */
+        if (pl == plot_cur) {
+            *why = tprintf("the current plot %s was made after row %d (%s, plot %s) "
+                           "by a run that has no row", cur, nrows, rowan[nrows - 1],
+                           rowpl[nrows - 1]);
+            return 0;
+        }
+    }
+    return 1;                           /* neither on the list: nothing to refuse on */
 }
 
 /* a value computed after the run goes onto the run's row: `writemc` in a
@@ -1272,6 +1336,16 @@ com_writemc(wordlist *wl)
                             "(said once)\n");
         said_off = 1;
         return;
+    }
+    {
+        /* Enhancement-624 (hunt F8): the values are read off the current
+         * plot; the row must be that plot's run */
+        char *why = NULL;
+        if (!MCSAVEplotIsRow(&why)) {
+            fprintf(cp_err, "writemc: %s; nothing is put on that row\n", why);
+            tfree(why);
+            return;
+        }
     }
     for (w = wl; w; w = w->wl_next) {
         char *name, *expr, *why = NULL, *tok = cp_unquote(w->wl_word);

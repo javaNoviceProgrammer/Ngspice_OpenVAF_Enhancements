@@ -345,7 +345,10 @@ automc_save` (alias `osdimc_save`) records the OSDI parameters only.
 [name=]<expr> ...` after a run in a `repeat`/`reset` loop (`writemc pk tr
 overshoot=pk-1`), and `montecarlo ... -writemc pk npk=track1.hits
 tpk=track1.time[0]` per sample, after the tracks, specs and exprs — each a
-scalar, a column added on first use, the csv's last line rewritten in place.
+scalar, a column added on first use, the csv's last line rewritten in place;
+the value lands only on the row of the run whose plot it reads (E-624: a
+trial refused at setup made no plot, and its `failed` row stays empty instead
+of carrying the previous run's value).
 A `.model` card whose parameter draws (`.model rmod va_res R_ohm={agauss(1k,50,3)}`)
 is a column too, `rmod:r_ohm`. From a schematic front end that loads
 `libngspice` and spells every net `/name`: give `savemc` an absolute path in
