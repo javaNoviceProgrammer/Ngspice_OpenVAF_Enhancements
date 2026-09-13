@@ -13,9 +13,12 @@
  * pending draw are reported as the devices actually ran.
  *
  * One row per run-class command (`op`, `tran`, `run`, ... -- what if_run
- * dispatches, `resume` excluded): under `montecarlo`, `sweep` or a `repeat`
- * loop that is one row per sample; a run whose analysis failed is a row too,
- * marked in its status column, since the draw happened. Columns are fixed by
+ * dispatches): under `montecarlo`, `sweep` or a `repeat` loop that is one row
+ * per sample; a run whose analysis failed is a row too, marked in its status
+ * column, since the draw happened; a run stopped at a breakpoint is a row
+ * marked `paused` (Enhancement-625) -- the `resume` that completes it sets
+ * `ok` or `failed` on that same row, and starts no row of its own, since it
+ * draws nothing. Columns are fixed by
  * the first row's set of names and grow if a later row brings a new one (the
  * file is rewritten then). The file is `mcparams_<date>_<time>.<ext>` in the
  * netlist's directory (Infile_Path; the working directory when a deck was not
@@ -561,6 +564,23 @@ text_rewrite(void)
         text_row(fp, r);
     }
     fflush(fp);
+}
+
+/* the last row again, in place (Enhancement-611: a value put on it after the
+ * run; Enhancement-625: its status once a paused run has ended); the whole
+ * file when the offset is unknown or the header is stale */
+static void
+text_rewrite_last(void)
+{
+    if (fp && lastrow_off >= 0 && header_cols == ncols && fseek(fp, lastrow_off, SEEK_SET) == 0) {
+        int fd = fileno(fp);
+        if (ftruncate(fd, lastrow_off) == 0) {
+            text_row(fp, nrows - 1);
+            fflush(fp);
+            return;
+        }
+    }
+    text_rewrite();
 }
 
 /* ------------------------------------------------------------ xlsx */
@@ -1135,12 +1155,13 @@ MCSAVErun(const char *analysis, int ok)
         rows[nrows][i] = cols[i].set && !cols[i].written ? cols[i].value : NAN;
     rowcols[nrows] = ncols;
     rowan[nrows] = copy(analysis ? analysis : "?");
-    rowst[nrows] = copy(ok ? "ok" : "failed");
+    rowst[nrows] = copy(ok == MCS_PAUSED ? "paused" : ok ? "ok" : "failed");
     /* Enhancement-624 (hunt F8): a run that completed made the current plot;
-     * a run that failed made one only if the current plot changed under it
-     * (a transient that stopped part-way keeps its partial plot; an operating
-     * point refused at setup leaves the previous run's plot current) */
-    rowplot[nrows] = (ok || plot_cur != plot_before) ? plot_cur : NULL;
+     * a run that failed or paused made one only if the current plot changed
+     * under it (a transient that stopped part-way keeps its partial plot,
+     * a paused one its plot so far; an operating point refused at setup
+     * leaves the previous run's plot current) */
+    rowplot[nrows] = (ok == MCS_OK || plot_cur != plot_before) ? plot_cur : NULL;
     rowpl[nrows] = copy(rowplot[nrows] && rowplot[nrows]->pl_typename
                         ? rowplot[nrows]->pl_typename : "");
     nrows++;
@@ -1254,20 +1275,39 @@ MCSAVEappend(const char *name, double value)
             xlsx_write();
         return 0;
     }
-    if (newcol || !fp || lastrow_off < 0 || header_cols != ncols) {
+    if (newcol)
         text_rewrite();
-        return 0;
-    }
-    if (fseek(fp, lastrow_off, SEEK_SET) == 0) {
-        int fd = fileno(fp);
-        if (ftruncate(fd, lastrow_off) == 0) {
-            text_row(fp, nrows - 1);
-            fflush(fp);
-            return 0;
-        }
-    }
-    text_rewrite();
+    else
+        text_rewrite_last();
     return 0;
+}
+
+/* Enhancement-625 (hunt F9): the `resume` of a run stopped at a breakpoint
+ * has ended. The run's row was written at the pause, marked `paused`; the
+ * resume drew nothing and made no plot of its own, so it has no row -- the
+ * paused row of the run whose plot is current takes the outcome. A resume
+ * that met no paused row (the recorder was off at the pause, the plot has
+ * been destroyed) records nothing, as before. */
+void
+MCSAVEresumed(int ok)
+{
+    int r;
+
+    if (!owner || nrows == 0 || unwritable)
+        return;
+    for (r = nrows - 1; r >= 0; r--)
+        if (eq(rowst[r], "paused"))
+            break;
+    if (r < 0 || (rowplot[r] && rowplot[r] != plot_cur))
+        return;
+    tfree(rowst[r]);
+    rowst[r] = copy(ok ? "ok" : "failed");
+    if (fmt == FMT_XLSX)
+        return;                         /* in memory; the next full write has it */
+    if (r == nrows - 1)
+        text_rewrite_last();
+    else
+        text_rewrite();
 }
 
 /* evaluate one writemc item on the current plot: a scalar, or the message */

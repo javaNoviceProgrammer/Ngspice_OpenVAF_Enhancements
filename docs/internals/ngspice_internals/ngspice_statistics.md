@@ -908,7 +908,7 @@ parameter with statistics:
 
 | column | what it is |
 |---|---|
-| `trial`, `analysis`, `status` | 1, 2, …; `op`/`tran`/…; `ok`, or `failed` for a run that did not solve (the draw happened) |
+| `trial`, `analysis`, `status` | 1, 2, …; `op`/`tran`/…; `ok`, or `failed` for a run that did not solve (the draw happened), or `paused` for a run stopped at a breakpoint — the `resume` that ends it sets `ok`/`failed` on that same row ([E-625](../../../enhancements_doc/Enhancement-625.md)) |
 | `r1`, `m1:w`, `rmod:r_ohm` | a **device slot** whose value draws (a random `.param` is inlined into each use, so each use is its own draw, named by the slot), a `.model` card's `key={...}` |
 | `x1.p` | a subcircuit call's own drawn value (empty on `montecarlo`'s fast path, which does not re-derive it) |
 | `r.x1.r1` | a slot inside a subcircuit that reads a drawn symbol |
@@ -1041,11 +1041,17 @@ or an older one chosen with `setplot`. A trial whose `op` was refused at setup
 current, so its `failed` row used to carry the previous trial's value; now the
 command says `row 2 (op) failed before it made a plot, so the current plot op1
 is another run's; nothing is put on that row` and the cell stays empty — what
-`montecarlo -writemc` already did on a failed sample. A run stopped at a
-breakpoint has no row, and a `writemc` after it is refused the same way (`the
-current plot tran1 was made after row 1 (op, plot op1) by a run that has no
-row`). A transient that died part-way keeps its partial plot and still records
-from it, on its `failed` row.
+`montecarlo -writemc` already did on a failed sample. A transient that died
+part-way keeps its partial plot and still records from it, on its `failed` row.
+A run stopped at a breakpoint is a row from the pause on
+([E-625](../../../enhancements_doc/Enhancement-625.md)): written `paused` with
+the draws in force, a `writemc` there lands on it (`n=42`, the run so far), and
+the `resume` that completes it turns the same row `ok` — or `failed` — with a
+later `writemc` replacing the value (`n=77`); a resume that pauses again (a
+`stop when time > 2u` holds at its first step; `delete` it) leaves it `paused`.
+One row per trial wherever it stopped on the way. A run the recorder was off
+for has no row, and a `writemc` that reads its plot is refused (`the current
+plot op3 was made after row 2 (op, plot op2) by a run that has no row`).
 
 ### 8.2 From a schematic front end
 

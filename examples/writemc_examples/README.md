@@ -27,7 +27,14 @@ remembers the plot its run made, and a `writemc` whose current plot is not the
 row's own (nor an older one chosen with `setplot`) is refused with the row and
 plot named -- the cell stays empty, as `montecarlo -writemc` leaves it on a
 failed sample. A transient that died part-way keeps its partial plot and still
-records from it; a run stopped at a breakpoint has no row and its plot is
+records from it; a run the recorder was off for has no row and its plot is
 refused (check [13]).
 
-Run: `python3 verify_writemc.py` (18 checks per solver, both solvers).
+Enhancement-625 (F9 of the same hunt): a run stopped at a breakpoint is a row
+from the pause on -- written `paused` with the draws in force, a `writemc`
+there lands on it -- and the `resume` that ends the run sets that same row
+`ok` or `failed` (a resume that pauses again leaves it `paused`); the resume
+starts no row of its own, so a trial is one row wherever it stopped (check
+[14]).
+
+Run: `python3 verify_writemc.py` (21 checks per solver, both solvers).

@@ -27,7 +27,7 @@ a sample's parameter set meant `print`ing every `@dev[param]` by hand in a loop.
 ## What changed
 
 **`.option savemc`** records, for every run-class command (`op`, `tran`, `run`, … — what
-`if_run` dispatches, `resume` excluded), one row with the value in force of every parameter
+`if_run` dispatches; `resume` excluded until Enhancement-625 gave a paused run its row), one row with the value in force of every parameter
 with statistics:
 
 - a **device slot whose value draws** — `r1 in out {agauss(1k,50,1)}`, or a random `.param`

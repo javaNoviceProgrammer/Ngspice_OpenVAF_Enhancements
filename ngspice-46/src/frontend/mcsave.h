@@ -31,8 +31,16 @@ extern int MCSAVEexpr_is_random(const char *e);
 /* Enhancement-624 (hunt F8): a run-class command is about to run (which plot
  * is current now tells whether the run made one of its own) */
 extern void MCSAVErunBegin(void);
-/* a run-class command has finished: emit the row */
+/* a run-class command has finished: emit the row. `ok` is MCS_OK, MCS_FAILED
+ * or (Enhancement-625, hunt F9) MCS_PAUSED -- the run stopped at a breakpoint:
+ * its draws are in force and its plot exists, so it is a row, marked paused */
+enum { MCS_FAILED = 0, MCS_OK = 1, MCS_PAUSED = 2 };
 extern void MCSAVErun(const char *analysis, int ok);
+/* Enhancement-625 (hunt F9): a `resume` has ended -- completed (MCS_OK), or
+ * failed (MCS_FAILED); a resume that pauses again does not call this. The
+ * paused row of the run it continued (the one whose plot is current) takes
+ * that status; nothing is done when no paused row is that run's. */
+extern void MCSAVEresumed(int ok);
 
 /* Enhancement-624 (hunt F8): may a value read off the current plot go onto
  * the last row? 1 yes; 0 no, with the reason in *why (freed by the caller):

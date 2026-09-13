@@ -434,23 +434,25 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
             if (!(err == E_PANIC && CKTvaFatalRaised))
                 ft_sperror(err, "doAnalyses");
             /* wrd_end(); */
-            if (err != E_PAUSE)
-                MCSAVErun(what, 0);         /* Enhancement-610: the draw happened */
+            /* Enhancement-610: the draw happened, failed or (Enhancement-625,
+             * hunt F9) stopped at a breakpoint -- a row either way */
+            MCSAVErun(what, err == E_PAUSE ? MCS_PAUSED : MCS_FAILED);
             if (err == E_PAUSE)
                 return (1);
             else
                 return (2);
         }
-        MCSAVErun(what, 1);                 /* Enhancement-610: one row per run */
+        MCSAVErun(what, MCS_OK);            /* Enhancement-610: one row per run */
     } else if (eq(what, "resume")) {
         if ((err = ft_sim->doAnalyses (ckt, 0, ft_curckt->ci_curTask)) != OK) {
             ft_sperror(err, "doAnalyses");
             /* wrd_end(); */
             if (err == E_PAUSE)
                 return (1);
-            else
-                return (2);
+            MCSAVEresumed(MCS_FAILED);      /* Enhancement-625: the paused row's outcome */
+            return (2);
         }
+        MCSAVEresumed(MCS_OK);              /* Enhancement-625 */
     } else {
         fprintf(cp_err, "if_run: Internal Error: bad run type %s\n", what);
         return (2);

@@ -9,8 +9,8 @@ grows 15 → 18 checks per solver; the
 [statistics guide](../docs/internals/ngspice_internals/ngspice_statistics.md) §8.1, the
 suite README. **ngspice only.** F8 of the
 [2026-09-12 hunt](../docs/bug_hunts/2026-09-12_statistics-record-and-kicad-hunt.md); the
-misattribution half of F9 falls with it (a paused run's plot is refused; that run still
-has no row).
+misattribution half of F9 falls with it (a paused run's plot is refused; that run got
+its row in Enhancement-625).
 
 **Suites:** [`writemc_examples`](../examples/writemc_examples/) 18 of 18 per solver, both
 solvers; `savemc_examples` 36 of 36; full sweep 505 of 505.

@@ -52,10 +52,16 @@ Checks:
        range) the cell stays empty and the message names the row and the
        plot that is really current -- the previous run's value used to be
        copied onto the failed row; a transient that failed part-way keeps
-       its partial plot and still records from it; a `writemc` after a run
-       stopped at a breakpoint (no row) is refused, naming the plot made
-       after the row; a `setplot` back to an older plot is deliberate and
-       writes
+       its partial plot and still records from it; a `writemc` whose current
+       plot was made after the row by a run that has none (the recorder was
+       off for it) is refused, naming both; a `setplot` back to an older plot
+       is deliberate and writes
+  Enhancement-625 (hunt F9): a run stopped at a breakpoint is a row:
+  [14] `stop when time > 2u; tran` writes the trial's row at the pause,
+       status `paused`, and a `writemc` there lands on it; the `resume` that
+       completes the run turns that row `ok` (a later `writemc` replaces the
+       value), a `resume` that fails turns it `failed` -- one row for the
+       trial, no row for the resume; a run left paused stays `paused`
 """
 import glob
 import os
@@ -294,17 +300,54 @@ check("[13] ...a transient that died part-way (a $fatal at 3us) is a failed row 
       and col(head, rows, "tlast")[0] is not None and 2.5e-6 < col(head, rows, "tlast")[0] <= 3.1e-6,
       f"{head} {rows} {out[-300:]}")
 clean()
-out = run(".option savemc osdimc mcseed=3\n" + F8, "t13c",
-          "pre_osdi f8.osdi\nop\nstop when time > 2u\ntran 1u 6u\nwritemc n=length(time)\nresume\n"
-          "writemc n=length(time)\nop\nsetplot op1\nwritemc first=i(v1)")
+out = run(".option osdimc mcseed=3\n" + F8, "t13c",
+          "pre_osdi f8.osdi\nset savemc\nop\nop\nsetplot op1\nwritemc first=i(v1)\nsetplot op2\n"
+          "unset savemc\nop\nset savemc\nwritemc late=i(v1)")
 fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
-refused = re.findall(r"writemc: the current plot tran1 was made after row 1 \(op, plot op1\) by a run that "
+refused = re.findall(r"writemc: the current plot op3 was made after row 2 \(op, plot op2\) by a run that "
                      r"has no row; nothing is put on that row", out)
-check("[13] ...a run stopped at a breakpoint has no row and its plot is refused (paused and resumed alike); "
-      "a setplot back to op1 writes first=i(v1) onto the later op's row",
-      len(refused) == 2 and len(rows) == 2 and "n" not in head and "first" in head
-      and col(head, rows, "first") == [None, 0.0],
+check("[13] ...a setplot back to op1 writes first=i(v1) onto the later op's row; a run the recorder was off "
+      "for has no row, and a writemc that reads its plot (made after row 2) is refused, naming both",
+      len(rows) == 2 and "first" in head and "late" not in head and col(head, rows, "first") == [None, 0.0]
+      and len(refused) == 1,
       f"{head} {rows} refused {len(refused)} {out[-300:]}")
+
+# ------------------------------------------------------------ [14] ---
+# Enhancement-625 (hunt F9): a run stopped at a breakpoint is a row
+clean()
+out = run(".option savemc osdimc mcseed=3\n" + F8, "t14a",
+          "pre_osdi f8.osdi\nop\nstop when time > 2u\ntran 1u 6u\nwritemc n=length(time)")
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+check("[14] a run stopped at a breakpoint is a row at the pause, status paused, with its draws; "
+      "the writemc there lands on it",
+      len(rows) == 2 and rows[1][1:3] == ["tran", "paused"] and "writemc:" not in out
+      and col(head, rows, "n") == [None, col(head, rows, "n")[1]] and 5 < col(head, rows, "n")[1] < 60
+      and float(rows[1][head.index(f"{A}rm[r]")]) != 1000.0,
+      f"{head} {rows} {out[-200:]}")
+npause = col(head, rows, "n")[1]
+clean()
+out = run(".option savemc osdimc mcseed=3\n" + F8, "t14b",
+          "pre_osdi f8.osdi\nop\nstop when time > 2u\ntran 1u 6u\nwritemc n=length(time)\nresume\n"
+          "writemc n=length(time)\ndelete all\nresume\nwritemc n=length(time)\nop")
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+check("[14] ...the resume that completes the run turns that row ok (a resume that pauses again -- the level "
+      "condition holds at its first step -- leaves it paused, no row of its own); the last writemc "
+      "replaces n; the next op is a new row",
+      len(rows) == 3 and rows[1][1:3] == ["tran", "ok"] and rows[2][1:3] == ["op", "ok"]
+      and "writemc:" not in out and out.count("pause requested") == 2
+      and col(head, rows, "n")[1] is not None and col(head, rows, "n")[1] > npause
+      and col(head, rows, "n")[2] is None,
+      f"{head} {rows} npause {npause} {out[-200:]}")
+clean()
+out = run(".option savemc osdimc mcseed=3\n" + F8.replace("r=1000", "tdie=3u"), "t14c",
+          "pre_osdi f8.osdi\nop\nstop when time > 2u\ntran 0.5u 6u\nwritemc n=length(time)\n"
+          "delete all\nresume\nwritemc n=length(time)")
+fs = files(); head, rows = read_csv(fs[0]) if fs else ([], [])
+check("[14] ...a resume that fails ($fatal at 3us) turns the paused row failed; the writemc after it "
+      "still reads the run's own partial plot",
+      len(rows) == 2 and rows[1][1:3] == ["tran", "failed"] and "writemc:" not in out
+      and col(head, rows, "n")[1] is not None and col(head, rows, "n")[1] > npause,
+      f"{head} {rows} {out[-200:]}")
 
 clean()
 print(f"\n{passed}/{checks} checks passed")
