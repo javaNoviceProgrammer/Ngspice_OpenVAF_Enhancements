@@ -30,10 +30,20 @@ extern int PPparse(char **, struct pnode **);
 
 void db_print_pnode_tree(struct pnode *p, char *print);
 
+/* Enhancement-630 (hunt F13): the token PPlex returned last, so that a '/'
+ * where an OPERAND is expected -- the start of the expression, after '(' or
+ * ',' or an operator -- can be read as the first character of a vector name
+ * rather than as a division that has nothing to divide. A schematic tool
+ * spells every net `/name`; `v(/out)` had E-611's quoting, but `vdb(/out)`,
+ * `vm`, `vp`, `vr`, `ph(/out)`, `track v(/out) ...` and any bare `/out` in
+ * an expression still met PPerror. Reset at the top of each parse. */
+static int PPlex_prev = -1;
+
 struct pnode *ft_getpnames_from_string(const char *sz, bool check)
 {
     struct pnode *pn;
 
+    PPlex_prev = -1;                    /* Enhancement-630 */
     /* The first argument to PPparse is not const char **, but it does not
      * appear to modify the string that is being parsed */
     if (PPparse((char **) &sz, &pn) != 0) {
@@ -952,6 +962,28 @@ int PPlex(YYSTYPE *lvalp, struct PPltype *llocp, char **line)
         }
     }
 
+    case '/':
+        /* Enhancement-630 (hunt F13): `/name` where an operand is expected is
+         * a vector name (a schematic tool's net), not a division -- nothing
+         * stands to its left to divide. Reads on through the name, further
+         * '/' included (`/sheet1/out`), to the next special. */
+        if ((isalpha_c(sbuf[1]) || sbuf[1] == '_') &&
+            (PPlex_prev == -1 || PPlex_prev == '(' || PPlex_prev == ',' ||
+             PPlex_prev == '+' || PPlex_prev == '-' || PPlex_prev == '*' ||
+             PPlex_prev == '/' || PPlex_prev == '%' || PPlex_prev == '^' ||
+             PPlex_prev == '=' || PPlex_prev == '&' || PPlex_prev == '|' ||
+             PPlex_prev == '~' || PPlex_prev == '?' || PPlex_prev == ':' ||
+             PPlex_prev == '<' || PPlex_prev == '>' || PPlex_prev == '[' ||
+             PPlex_prev == TOK_GE || PPlex_prev == TOK_LE || PPlex_prev == TOK_NE)) {
+            char *start = sbuf;
+            sbuf++;
+            while (*sbuf && (!strchr(specials, *sbuf) || *sbuf == '/') && *sbuf != '[')
+                sbuf++;
+            lvalp->str = copy_substring(start, sbuf);
+            lexer_return(TOK_STR, 0);
+        }
+        lexer_return(*sbuf, 1);
+
     case '?':
     case ':':
     case ',':
@@ -959,7 +991,6 @@ int PPlex(YYSTYPE *lvalp, struct PPltype *llocp, char **line)
     case '-':
     case '*':
     case '%':
-    case '/':
     case '^':
     case '(':
     case ')':
@@ -1096,6 +1127,7 @@ done:
 
     *line = sbuf;
     llocp->stop = sbuf;
+    PPlex_prev = token;                 /* Enhancement-630 */
     return token;
 } /* end of function PPlex */
 

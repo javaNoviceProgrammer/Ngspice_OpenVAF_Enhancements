@@ -1064,7 +1064,11 @@ circuit over as text — KiCad's simulator, driven through its GUI in the
 when the circuit is loaded, *before* the host's own analysis, so a `writemc`
 meant for that run waits behind `set controlswait`; and every root-sheet net is
 spelled `/name`, which `v(/mid)/v(/in)` now parses everywhere an expression is
-evaluated. A `.model` card whose parameter draws — `.model rmod va_res
+evaluated — and since [E-630](../../../enhancements_doc/Enhancement-630.md) a
+`/name` is a vector name wherever an operand is expected, so `track v(/out)
+…`, `vdb(/out)`, `vm`, `vp`, `ph(/out)` and a bare `/out` parse too (a `/`
+inside a name continues it: `/sheet1/out`; divide one with a space or
+parentheses). A `.model` card whose parameter draws — `.model rmod va_res
 R_ohm={agauss(1k,50,3)}`, the natural place for process variation — is a
 `rmod:r_ohm` column on both the fast path and a plain run.
 

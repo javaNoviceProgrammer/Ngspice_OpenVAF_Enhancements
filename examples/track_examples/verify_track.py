@@ -24,6 +24,13 @@ are also `let` functions returning the x positions.
   8. refusals: zero hits (no plot made, `track failed!`), -which out of range, an
      unknown option, a locator on two samples, -edge/-at/-prominence on the wrong
      spec kind, a nested dc sweep; `define` composes; an unquoted <= spec parses
+  9. $track_plot and $track_hits
+  10. (Enhancement-630, F13 of the 2026-09-12 hunt) a schematic tool's `/name`
+     nets: `track v(/out) -spec localmax` and `-spec v(/out)>0.5` parse and
+     hit; `print vdb(/out) vm(/out) vp(/out) vr(/out) ph(/out)`, a bare
+     `/out`, `-/out`, `(/out)/2`, `/out*2` and `v(/out)/v(/in)` all evaluate --
+     a '/' where an operand is expected begins a vector name, a '/' after one
+     is still a division; `montecarlo -track "v(/out) -spec localmax"` records
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
@@ -253,6 +260,38 @@ def main():
           re.search(r"^Index\s+npk", out, re.M) is not None and "no such plot" not in out, "")
     check("a refusal after the loop clears both (no track plot exists after the destroys)",
           "after-a-refusal hits=0 plot=[]" in out, "")
+
+    print("[10] a schematic tool's /name nets (Enhancement-630, hunt F13)")
+    body = "V1 /in 0 dc 1 ac 1 sin(0 1 1k)\nR1 /in /out 1k\nC1 /out 0 10n\n"
+    ctl = ("ac dec 2 1 1meg\nprint vdb(/out)[3] vm(/out)[3] vp(/out)[3] vr(/out)[3] ph(/out)[3] vi(/out)[3]\n"
+           "tran 1u 5m\ntrack v(/out) -spec localmax\ntrack v(/out) -spec v(/out)>0.5\n"
+           "print /out[250]\nprint -/out[250]\nprint (/out)[250]/2\nprint /out[250]*2\n"
+           "print v(/out)[250]/v(/in)[250]\nprint v(/out)[250] / v(/in)[250]\nprint 2/v(/in)[250]\n"
+           "let y = /out + v(/in)\nprint y[250]\n"
+           "montecarlo 2 -seed 1 -analysis \"tran 1u 2m\" -track \"v(/out) -spec localmax\" -expr pk=maximum(v(/out))\n"
+           "print montecarlo1.pk")
+    out = ngspice(deck(body, ctl))
+    t1 = re.search(r"^track1: (\d+) hits? of localmax on tran1 \(applied to v\(/out\)\)", out, re.M)
+    t2 = re.search(r"^track2: (\d+) (?:region|hit)", out, re.M)
+    check("track v(/out) -spec localmax parses and hits (5 maxima of a 1 kHz sine over 5 ms)",
+          t1 is not None and int(t1.group(1)) == 5 and "cannot parse" not in out, out[-400:])
+    check("track v(/out) -spec v(/out)>0.5: the boolean spec with /names parses and finds regions",
+          t2 is not None and int(t2.group(1)) >= 4, out[-300:])
+    vals = {n: float(v) for n, v in re.findall(r"^(\S.*?) = (-?[\d.]+e[-+]\d+)$", out, re.M)}
+    check("vdb/vm/vp/vr/vi/ph(/out) evaluate on the ac plot (vdb = 20 log10 vm, vp = ph)",
+          all(k in vals for k in ("vdb(/out)[3]", "vm(/out)[3]", "vp(/out)[3]", "vr(/out)[3]", "ph(/out)[3]", "vi(/out)[3]"))
+          and near(vals["vdb(/out)[3]"], 20 * math.log10(vals["vm(/out)[3]"]), 1e-6)
+          and near(vals["vp(/out)[3]"], vals["ph(/out)[3]"], 1e-9), f"{sorted(vals)[:8]}")
+    v_out, v_in = vals.get("/out[250]"), vals.get("v(/out)[250]/v(/in)[250]")
+    check("a bare /out, -/out, (/out)/2, /out*2 and v(/out)/v(/in) evaluate; 2/v(/in) and v(/out) / v(/in) are still divisions",
+          v_out is not None and near(vals.get("-/out[250]", 0), -v_out, 1e-9) and near(vals.get("(/out)[250]/2", 0), v_out / 2, 1e-9)
+          and near(vals.get("/out[250]*2", 0), 2 * v_out, 1e-9) and v_in is not None
+          and near(vals.get("v(/out)[250] / v(/in)[250]", 0), v_in, 1e-9) and "2/v(/in)[250]" in vals
+          and near(vals.get("y[250]", 0), v_out + v_out / v_in, 1e-6), f"{sorted(vals)}")
+    check("montecarlo -track \"v(/out) -spec localmax\" -expr pk=maximum(v(/out)) records on both samples",
+          re.search(r"^Index\s+montecarlo1\.pk", out, re.M) is not None and "cannot parse" not in out
+          and "not available" not in out and "hits in 2 of 2 samples" in out,
+          out[-400:])
 
     print("\nALL PASSED" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)

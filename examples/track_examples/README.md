@@ -34,4 +34,6 @@ after the source scale. The locators are also `let` functions returning the posi
 python3 verify_track.py
 ```
 
-40 checks per solver, all PASS.
+45 checks per solver, all PASS. Section [10] (Enhancement-630, F13 of the
+2026-09-12 hunt): a schematic tool's `/name` nets parse in `track`, in
+`vdb/vm/vp/vr/vi/ph()`, bare, and in `montecarlo -track`.
