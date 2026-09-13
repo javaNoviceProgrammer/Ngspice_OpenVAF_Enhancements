@@ -860,18 +860,14 @@ esac
 AM_CONDITIONAL([NO_X], [test "x$has_no_x" = xtrue])
 AM_CONDITIONAL([NO_HELP], [test "x$has_no_help" = xtrue])
 
-# Additional libs of hicum group.
-# Build-libraries CI (windows-arm): the C++ runtime is libstdc++ on a GCC
-# toolchain and libc++ on a clang one (MSYS2's CLANGARM64, which has no
-# libstdc++ at all). src/Makefile.am links libngspice against $(CXX_STDLIB),
-# whichever of the two this toolchain has, where it used to name -lstdc++
-# outright -- libtool then found no shared libstdc++, dropped the dependency
-# and, the library being -no-undefined, built only the static archive.
-CXX_STDLIB=""
-AC_CHECK_LIB(stdc++, main, [XTRALIBS="$XTRALIBS -lstdc++"; CXX_STDLIB="-lstdc++"],
-  [AC_CHECK_LIB(c++, main, [XTRALIBS="$XTRALIBS -lc++"; CXX_STDLIB="-lc++"],,)],)
+# Additional libs of hicum group (the executable is linked by the C compiler
+# and hicum2 is C++). Note this probe cannot tell which C++ runtime the
+# toolchain has: clang rewrites -lstdc++ into its default C++ library (libc++
+# on MSYS2 CLANGARM64 and macOS), so the link test passes there as well.
+# That is fine for the executable, where the name is only handed to the
+# compiler; libngspice does not use it -- see src/Makefile.am.
+AC_CHECK_LIB(stdc++, main, XTRALIBS="$XTRALIBS -lstdc++",,)
 AC_SUBST(XTRALIBS, $XTRALIBS)
-AC_SUBST(CXX_STDLIB)
 
 LIBS="$LIBS $XTRALIBS"
 

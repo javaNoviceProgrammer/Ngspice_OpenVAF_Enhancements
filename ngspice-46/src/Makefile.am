@@ -592,9 +592,17 @@ endif
 libngspice_la_CFLAGS = -shared
 
 libngspice_la_LDFLAGS =  -shared
-## the toolchain's C++ runtime: -lstdc++ (GCC) or -lc++ (clang, e.g. MSYS2
-## CLANGARM64, which has no libstdc++) -- decided by configure.ac
-libngspice_la_LDFLAGS +=  $(CXX_STDLIB)
+## hicum2 is C++, but it reaches libngspice through a convenience library, so
+## automake would pick the C linker and the library would have to name the
+## C++ runtime itself -- upstream links -lstdc++ here. That name breaks the
+## shared build on a clang toolchain that has only libc++ (MSYS2 CLANGARM64):
+## the compiler silently maps -lstdc++ to libc++, so configure cannot tell
+## the two apart, while libtool looks for a real libstdc++ file before it
+## trusts a -l dependency of a -no-undefined library, finds none, drops it
+## and builds the static archive alone. The never-compiled C++ source below
+## is automake's way of asking for the C++ linker: g++/clang++ add their own
+## runtime, and libtool takes those (its "postdeps") on trust.
+nodist_EXTRA_libngspice_la_SOURCES = dummy.cxx
 
 if SHWIN
 libngspice_la_LDFLAGS += -Wl,--output-def=ngspice.def  -Wl,--out-implib=ngspice.dll.a
