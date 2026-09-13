@@ -592,7 +592,9 @@ endif
 libngspice_la_CFLAGS = -shared
 
 libngspice_la_LDFLAGS =  -shared
-libngspice_la_LDFLAGS +=  -lstdc++
+## the toolchain's C++ runtime: -lstdc++ (GCC) or -lc++ (clang, e.g. MSYS2
+## CLANGARM64, which has no libstdc++) -- decided by configure.ac
+libngspice_la_LDFLAGS +=  $(CXX_STDLIB)
 
 if SHWIN
 libngspice_la_LDFLAGS += -Wl,--output-def=ngspice.def  -Wl,--out-implib=ngspice.dll.a
