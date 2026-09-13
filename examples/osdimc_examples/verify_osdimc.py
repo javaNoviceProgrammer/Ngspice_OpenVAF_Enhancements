@@ -50,6 +50,14 @@ What this suite pins:
     the compiler warns on `std=0` / `std_rel=0` (not exported) and on a
     `std_rel` whose parameter defaults to 0; the simulator says once per
     parameter when a relative sigma meets a nominal of 0 at the draw;
+  * (Enhancement-633, hunt F21 of 2026-09-12) a statistical parameter whose
+    default is derived from another drawn parameter (`(* std *) r3 = 2*r`)
+    draws around 2*r_drawn -- the compiler exports which defaults are derived
+    (OSDI_STAT_PARAM_DERIVED) and the simulator re-resolves those from the
+    trial's other draws before adding their own, on the plain and the reset
+    path alike; the instance-level `dr = 0.01*r` follows r too; a card that
+    gives r3 keeps its given nominal; a hoisted `geff = 1/(r+r3)` sees the
+    final values; `unset osdimc` puts r3 back to 2*1000 by re-derivation;
   * switching the option off restores every drawn parameter to nominal;
   * a model without statistics attributes is untouched by the option;
   * diagnostics: unknown dist / non-real param / localparam / dist-without-
@@ -889,6 +897,64 @@ check("[44] the draw: n1:dr, n2:dr and n2:dg (nominal 0) are said ONCE each and 
       "line draws around 50; `altermod zm ok=0` is said once and stays 0, `altermod zm ok=3` draws again; "
       "z1/z2 (sigma 0) are not exported",
       ok, "" if ok else f"noted={noted} dr={seq(out, '@n1[dr]')} dg={dg1} ok={okv} {out[-400:]}")
+
+# ---- [13] Enhancement-633 (hunt F21): a derived default under statistics ----
+print("\nEnhancement-633: a drawn parameter whose default depends on another drawn parameter:")
+rc, out, DRV = compile_va("smcderiv.va")
+check("[45] the derived-default model compiles and exports OSDI_STAT_PARAM_DERIVED",
+      rc == 0 and subprocess.run(["nm", DRV], capture_output=True, text=True).stdout.count("OSDI_STAT_PARAM_DERIVED") == 1,
+      out[-300:])
+DRVDECK = f"""osdimc derived default
+V1 a 0 1
+N1 a 0 mm
+N2 a 0 mg
+.model mm deriv
+.model mg deriv r3=2500
+.option osdimc mcseed=3
+.control
+pre_osdi {os.path.basename(DRV)}
+set numdgt=10
+repeat 3
+  op
+  let expect = 1/(@mm[r]+@mm[r3]) + 1/@n1[dr] + 1/(@mg[r]+@mg[r3]) + 1/@n2[dr]
+  let got = -i(v1)
+  print @mm[r] @mm[r2] @mm[r3] @n1[dr] @mg[r] @mg[r3] @n2[dr] expect got
+end
+montecarlo 3 -seed 2 -analysis op -expr r=@mm[r] -expr r3=@mm[r3] -expr dr=@n1[dr] -expr gr3=@mg[r3] -expr got=-i(v1) -expr expect=1/(@mm[r]+@mm[r3])+1/@n1[dr]+1/(@mg[r]+@mg[r3])+1/@n2[dr]
+print montecarlo1.r montecarlo1.r3 montecarlo1.dr montecarlo1.gr3 montecarlo1.got montecarlo1.expect
+unset osdimc
+op
+print @mm[r] @mm[r3] @n1[dr] @mg[r3]
+.endc
+.end
+"""
+out = run_deck(DRVDECK, "deriv")
+r, r2, r3 = seq(out, f"@mm[r]"), seq(out, f"@mm[r2]"), seq(out, f"@mm[r3]")
+dr, gr, gr3 = seq(out, f"@n1[dr]"), seq(out, f"@mg[r]"), seq(out, f"@mg[r3]")
+exp_, got = seq(out, "expect"), seq(out, "got")
+ok = (len(r) == 4 and r[0] == 1000.0 and r3[0] == 2000.0 and dr[0] == 10.0
+      and all(r[k] != 1000.0 for k in (1, 2)) and all(abs(r2[k] - 2 * r[k]) < 1e-6 for k in (1, 2))
+      and all(abs(r3[k] - 2 * r[k]) < 40 and r3[k] != 2 * r[k] for k in (1, 2))      # 2*r_drawn + d, |d| < 4 sigma
+      and all(abs(dr[k] - 0.01 * r[k]) < 4 and dr[k] != 0.01 * r[k] for k in (1, 2))
+      and all(abs(gr3[k] - 2500.0) < 40 for k in (1, 2))                              # given: around 2500, not 2*r
+      and all(abs(exp_[k] - got[k]) <= 1e-9 * abs(got[k]) for k in range(3)))
+check("[45] plain runs: r2 = 2r (as before); r3 = 2*r_drawn + d, dr = 0.01*r_drawn + d; a given r3 stays "
+      "around 2500; the hoisted geff matches the read-back parameters",
+      ok, "" if ok else f"r={r} r2={r2} r3={r3} dr={dr} gr3={gr3} exp={exp_} got={got} {out[-300:]}")
+rows = re.findall(r"^\d+\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s*$", out, re.M)
+mc = [tuple(float(v) for v in row) for row in rows[:3]] if len(rows) >= 3 else []
+rows2 = re.findall(r"^\d+\s+(\S+)\s+(\S+)\s*$", out, re.M)
+mc2 = [tuple(float(v) for v in row) for row in rows2[:3]] if len(rows2) >= 3 else []
+ok = (len(mc) == 3 and all(abs(m[1] - 2 * m[0]) < 40 and m[1] != 2 * m[0] for m in mc)
+      and all(abs(m[2] - 0.01 * m[0]) < 4 for m in mc) and all(abs(m[3] - 2500.0) < 40 for m in mc)
+      and len(mc2) == 3 and all(abs(a - b) <= 1e-9 * abs(b) for a, b in mc2))
+check("[46] the reset path (montecarlo): every sample's r3 is 2*r_drawn + d and dr 0.01*r_drawn + d, the given "
+      "r3 around 2500, geff consistent",
+      ok, "" if ok else f"mc={mc} mc2={mc2} {out[-300:]}")
+check("[46] `unset osdimc`: r back to 1000 and r3 to 2*1000 = 2000 by re-derivation (not the last trial's 2r), "
+      "dr to 10, the given r3 to 2500",
+      len(r) == 4 and r[3] == 1000.0 and r3[3] == 2000.0 and dr[3] == 10.0 and gr3[3] == 2500.0,
+      f"r={r[-1:]} r3={r3[-1:]} dr={dr[-1:]} gr3={gr3[-1:]}")
 
 # ----------------------------------------------------------------------------
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks}")

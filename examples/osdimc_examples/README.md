@@ -94,4 +94,14 @@ exported; a `std_rel` on a default of 0 is, since the deck may give the value),
 and the simulator says once per parameter when a relative sigma meets a
 nominal of 0 at the draw — the deck's own 0, or an `altermod` to 0.
 
-Run `python3 verify_osdimc.py` — 44 checks, both solvers.
+Enhancement-633 (checks 45–46, `smcderiv.va`): a statistical parameter whose
+default is derived from another drawn parameter (`(* std *) r3 = 2*r`) drew
+around a nominal captured once (2000 + δ) while a plain `r2 = 2*r` followed
+the drawn `r`. The compiler now exports which defaults are derived, and the
+simulator re-resolves those the deck never gave from the trial's other draws
+before adding their own — `2·r_drawn + δ`, on the plain and the reset path,
+for the instance-level `dr = 0.01*r` too; a card that gives `r3` keeps its
+given nominal, a hoisted `geff = 1/(r+r3)` sees the final values, and `unset
+osdimc` re-derives `r3` from the restored `r`.
+
+Run `python3 verify_osdimc.py` — 49 checks, both solvers.

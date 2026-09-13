@@ -234,6 +234,10 @@ typedef struct OsdiStatParam {
   uint32_t dist;
   double std;
   double trunc;
+  uint32_t derived;  /* Enhancement-633 (hunt F21): the default is not a
+                        compile-time constant (`r3 = 2*r`) -- a trial's draw
+                        goes on the default re-resolved from the other
+                        parameters' values of that trial */
 }OsdiStatParam;
 
 /* Enhancement-364: noise-source kinds, mirrored from the compiler-side header

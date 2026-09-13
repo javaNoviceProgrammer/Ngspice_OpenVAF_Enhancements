@@ -637,6 +637,12 @@ extern OsdiObjectFile load_object_file(const char *input) {
   sym = GET_SYM(handle, "OSDI_STAT_PARAM_TRUNCS");
   const double *stat_param_truncs_base = (const double *)sym;
 
+  /* Optional (Enhancement-633): whether each statistical parameter's default
+   * is derived from other parameters, one uint32 per INFOS entry; absent from
+   * an object whose statistical parameters all have constant defaults */
+  sym = GET_SYM(handle, "OSDI_STAT_PARAM_DERIVED");
+  const uint32_t *stat_param_derived_base = (const uint32_t *)sym;
+
   /* Optional (Enhancement-555): one given-flag entry point per descriptor */
   sym = GET_SYM(handle, "OSDI_PARAM_GIVEN_FNS");
   const void *const *param_given_fns = (const void *const *)sym;
@@ -846,6 +852,10 @@ extern OsdiObjectFile load_object_file(const char *input) {
               stat_param_truncs_base
                   ? stat_param_truncs_base[stat_param_info_offset + s]
                   : 0.0;
+          merged[s].derived =                      /* Enhancement-633 */
+              stat_param_derived_base
+                  ? stat_param_derived_base[stat_param_info_offset + s]
+                  : 0;
         }
         stat_params_ptr = merged;
         stat_param_info_offset += n_stat_params;

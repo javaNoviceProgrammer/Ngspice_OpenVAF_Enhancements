@@ -714,6 +714,9 @@ void OSDIdcpathEdges(CKTcircuit *ckt, int type,
 static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
                               bool verbose);
 static unsigned long osdimc_current_trial(void);
+static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry,
+                                 GENmodel *inModel, OsdiSimParas *sim_params,
+                                 int seed, bool verbose);           /* Enhancement-633 */
 static bool osdimc_apply_is_pending(void);
 static bool osdimc_walk_active(void);       /* MC hunt F3 */
 
@@ -1312,6 +1315,13 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
     osdimc_apply_type(ckt, inModel->GENmodType, seed535,
                       cp_getvar("osdimc_verbose", CP_BOOL, NULL, 0));
   }
+  /* Enhancement-633 (hunt F21): the draws of the parameters whose default
+   * is derived from other parameters -- on the default re-resolved from this
+   * trial's other draws, which are all in place now, pending or not */
+  if (osdimc_enabled() && (osdimc_current_trial() >= 2 || osdimc_walk_active()) &&
+      ckt->CKThead[inModel->GENmodType] && osdi_devtype_is_osdi(inModel->GENmodType))
+    osdimc_apply_derived(ckt, entry, inModel, sim_params, osdimc_seed(),
+                         cp_getvar("osdimc_verbose", CP_BOOL, NULL, 0));
 
   /* LRM 3.6.1: apply the nature tolerances this model type collected, in one
    * walk of the node list rather than a search per instance (see
@@ -2988,6 +2998,12 @@ void OSDImcNewRun(CKTcircuit *ckt) {
             if (id >= descr->num_instance_params) {
               OsdiMcNominal *e = osdimc_find(model, id);
               if (e) {
+                /* Enhancement-633 (hunt F21): a derived default the deck
+                 * never gave is not a number to put back -- its nominal is
+                 * whatever the other parameters make it; leave it stale so
+                 * the setup re-resolves it from the restored values */
+                if (infos[s].derived && e->given == 0)
+                  e->stale = true;
                 if (!e->stale &&  /* Enhancement-614: the setup re-resolves a stale one */
                     !(keep_pushed && e->pinned))         /* Enhancement-618 */
                   osdimc_write(descr, NULL, model, id, e->nominal);
@@ -2999,6 +3015,8 @@ void OSDImcNewRun(CKTcircuit *ckt) {
                 void *inst = osdi_instance_data(entry, gen_inst);
                 OsdiMcNominal *e = osdimc_find(inst, id);
                 if (e) {
+                  if (infos[s].derived && e->given == 0)   /* Enhancement-633 */
+                    e->stale = true;
                   if (!e->stale && !(keep_pushed && e->pinned))
                     osdimc_write(descr, inst, model, id, e->nominal);
                   osdimc_restore_given(entry, inst, model, id, e); /* E-555 */
@@ -3129,6 +3147,15 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
                                 descr->param_opvar[id].name[0]))
             continue;                                   /* Enhancement-620 */
           double val, z = 0.0;
+          if (infos[s].derived && e->given == 0) {
+            /* Enhancement-633 (hunt F21): its default is derived from other
+             * parameters -- the draw goes on the default re-resolved from
+             * THIS trial's values, in the setup's tail (osdimc_apply_derived);
+             * the walk coordinate is consumed here so the order holds */
+            if (osdimc_walk_on)
+              (void)osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
+            continue;
+          }
           if (osdimc_walk_on) {                       /* MC hunt F3 */
             val = osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
           } else {
@@ -3166,6 +3193,11 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
                                   descr->param_opvar[id].name[0]))
               continue;                                 /* Enhancement-620 */
             double val, z = 0.0;
+            if (infos[s].derived && e->given == 0) {    /* Enhancement-633 */
+              if (osdimc_walk_on)
+                (void)osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
+              continue;
+            }
             if (osdimc_walk_on) {                     /* MC hunt F3 */
               val = osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
             } else {
@@ -3188,6 +3220,196 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
                                  e->nominal, &infos[s], z);
             }
           }
+        }
+      }
+    }
+  }
+}
+
+/* Enhancement-633 (hunt F21 of 2026-09-12): the draws of the statistical
+ * parameters whose DEFAULT is derived from other parameters, applied in the
+ * setup's tail.
+ *
+ *   (* std=10 *) parameter real r  = 1000;
+ *   (* std=10 *) parameter real r3 = 2*r;
+ *
+ * The nominal of r3 was captured once (2000) and every trial wrote 2000 + d,
+ * because a written parameter counts as given and the model's setup no
+ * longer re-resolves its default -- so r3 drew around a fixed 2000 whatever r
+ * drew, while a plain `r2 = 2*r` beside it followed the drawn r at every
+ * setup. The compiler now says which statistical parameters have a derived
+ * default (OSDI_STAT_PARAM_DERIVED), and those the deck never gave are drawn
+ * here instead: the setup has run with the trial's other draws in place
+ * (r drawn); the given flag of each such parameter is cleared and the
+ * model's setup is run once more, so its default is re-resolved from those
+ * values (2 * r_drawn); that value is the trial's nominal, the draw goes on
+ * top (2 * r_drawn + d), and OSDItemp -- which runs the setups again right
+ * after -- evaluates the init-resident code with every value final, as it
+ * does for every other draw applied here (see the note at the setup's tail).
+ * A parameter the deck GAVE keeps its given value as nominal, as before. The
+ * walk coordinates are consumed in the applier's order, so a walk lands the
+ * same coordinate on the same parameter whichever pass writes it. */
+static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry,
+                                 GENmodel *inModel, OsdiSimParas *sim_params,
+                                 int seed, bool verbose) {
+  const OsdiDescriptor *descr = entry->descriptor;
+  const OsdiStatParam *infos = entry->stat_param_infos;
+  OsdiParamGivenFn given_fn = (OsdiParamGivenFn)entry->param_given_fn;
+  bool any_derived = false;
+  int type = inModel->GENmodType;
+
+  if (entry->num_stat_params == 0 || !infos || !given_fn)
+    return;
+  for (uint32_t s = 0; s < entry->num_stat_params; s++)
+    if (infos[s].derived)
+      any_derived = true;
+  if (!any_derived)
+    return;
+
+  uint64_t kbase = osdimc_kbase(seed);
+  uint64_t kdimbase = osdimc_mix(((uint64_t)(uint32_t)seed << 32) ^ 0x6c6873ull);
+  int walk_k = 0, walk_nu = 0;
+  if (osdimc_walk_on)
+    osdimc_walk_count(ckt, type, &walk_k, &walk_nu);
+
+  for (GENmodel *gen_model = inModel; gen_model;
+       gen_model = gen_model->GENnextModel) {
+    void *model = osdi_model_data(gen_model);
+    uint64_t kmodel = osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_model->GENmodName));
+    bool rederive_model = false, rederive_inst = false;
+    OsdiInitInfo init_info;
+    OsdiNgspiceHandle handle;
+
+    /* first: clear the given flag of every derived never-given entry that
+     * will be drawn, so the setup below re-resolves its default */
+    for (uint32_t s = 0; s < entry->num_stat_params; s++) {
+      uint32_t id = infos[s].param_id;
+      if (!infos[s].derived)
+        continue;
+      if (id >= descr->num_instance_params) {
+        OsdiMcNominal *e = osdimc_find(model, id);
+        if (e && e->given == 0 && !e->pinned && !osdimc_gated_off(&infos[s], e)) {
+          (void)given_fn(NULL, model, id, 2);
+          rederive_model = true;
+        }
+      } else {
+        for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+             gen_inst = gen_inst->GENnextInstance) {
+          void *inst = osdi_instance_data(entry, gen_inst);
+          OsdiMcNominal *e = osdimc_find(inst, id);
+          if (e && e->given == 0 && !e->pinned && !osdimc_gated_off(&infos[s], e)) {
+            (void)given_fn(inst, model, id, 2);
+            rederive_inst = true;
+          }
+        }
+      }
+    }
+    if (rederive_model || rederive_inst) {
+      /* the model's setup, once more, with the trial's other draws in place:
+       * the cleared parameters take their defaults from those values */
+      handle = (OsdiNgspiceHandle){.kind = 1, .name = gen_model->GENmodName};
+      descr->setup_model((void *)&handle, model, sim_params, &init_info);
+      (void)handle_init_info(init_info, descr, &handle, NULL, model);
+      if (rederive_inst) {
+        for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+             gen_inst = gen_inst->GENnextInstance) {
+          void *inst = osdi_instance_data(entry, gen_inst);
+          OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
+          double temp = extra->temp_given ? extra->temp : ckt->CKTtemp + extra->dt;
+          int *terminals = (int *)(gen_inst + 1);
+          uint32_t connected = descr->num_terminals;
+          bool *collapsed = (bool *)(((char *)inst) + descr->collapsed_offset);
+          const bool *snap = osdi_collapse_snapshot(entry, gen_inst);
+          if (temp <= 0.0)
+            temp = ckt->CKTtemp;
+          for (uint32_t i = 0; i < descr->num_terminals; i++)
+            if (terminals[i] == -1) { connected = i; break; }
+          handle = (OsdiNgspiceHandle){.kind = 2, .name = gen_inst->GENname};
+          descr->setup_instance((void *)&handle, inst, model, temp, connected,
+                                sim_params, &init_info);
+          (void)handle_init_info(init_info, descr, &handle, inst, model);
+          /* the collapse decision stays the one the matrix implements */
+          if (snap)
+            for (uint32_t i = 0; i < descr->num_collapsible; i++)
+              collapsed[i] = snap[i];
+        }
+      }
+    }
+
+    /* then: the re-resolved default is the trial's nominal; the draw on top */
+    for (uint32_t s = 0; s < entry->num_stat_params; s++) {
+      uint32_t id = infos[s].param_id;
+      const char *pname = descr->param_opvar[id].name[0];
+      if (id >= descr->num_instance_params) {
+        OsdiMcNominal *e = osdimc_find(model, id);
+        double val, z = 0.0, nom;
+        if (!e || e->pinned || osdimc_gated_off(&infos[s], e))
+          continue;
+        if (!(infos[s].derived && e->given == 0)) {
+          if (osdimc_walk_on)                 /* consumed by osdimc_apply_type */
+            (void)osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
+          continue;
+        }
+        {
+          void *src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
+          if (!src)
+            continue;
+          memcpy(&nom, src, sizeof(double));
+        }
+        e->nominal = nom;
+        if (osdimc_zero_sigma(&infos[s], e, (char *)gen_model->GENmodName, pname))
+          continue;
+        if (osdimc_walk_on) {
+          val = osdimc_walk_value(&infos[s], nom, &walk_k, &z);
+        } else {
+          double sc = osdimc_scale_for((char *)gen_model->GENmodName, pname);
+          osdimc_lhs_kdim = osdimc_mix(kdimbase ^ osdimc_hash_str((char *)gen_model->GENmodName) ^ id);
+          val = osdimc_value(osdimc_mix(kmodel ^ id), &infos[s], nom, sc, &z);
+          osdimc_lhs_kdim = 0;
+        }
+        if (!osdimc_draw_ok(descr, id, val))
+          val = nom;
+        osdimc_write(descr, NULL, model, id, val);
+        osdimc_active = true;
+        if (verbose)
+          osdimc_say_applied((char *)gen_model->GENmodName, pname, val, nom, &infos[s], z);
+      } else {
+        for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+             gen_inst = gen_inst->GENnextInstance) {
+          void *inst = osdi_instance_data(entry, gen_inst);
+          OsdiMcNominal *e = osdimc_find(inst, id);
+          double val, z = 0.0, nom;
+          if (!e || e->pinned || osdimc_gated_off(&infos[s], e))
+            continue;
+          if (!(infos[s].derived && e->given == 0)) {
+            if (osdimc_walk_on)
+              (void)osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
+            continue;
+          }
+          {
+            void *src = descr->access(inst, model, id, ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
+            if (!src)
+              continue;
+            memcpy(&nom, src, sizeof(double));
+          }
+          e->nominal = nom;
+          if (osdimc_zero_sigma(&infos[s], e, (char *)gen_inst->GENname, pname))
+            continue;
+          if (osdimc_walk_on) {
+            val = osdimc_walk_value(&infos[s], nom, &walk_k, &z);
+          } else {
+            uint64_t kinst = osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_inst->GENname));
+            double sc = osdimc_scale_for((char *)gen_inst->GENname, pname);
+            osdimc_lhs_kdim = osdimc_mix(kdimbase ^ osdimc_hash_str((char *)gen_inst->GENname) ^ id);
+            val = osdimc_value(osdimc_mix(kinst ^ id), &infos[s], nom, sc, &z);
+            osdimc_lhs_kdim = 0;
+          }
+          if (!osdimc_draw_ok(descr, id, val))
+            val = nom;
+          osdimc_write(descr, inst, model, id, val);
+          osdimc_active = true;
+          if (verbose)
+            osdimc_say_applied((char *)gen_inst->GENname, pname, val, nom, &infos[s], z);
         }
       }
     }

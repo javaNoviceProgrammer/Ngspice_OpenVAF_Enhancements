@@ -381,6 +381,8 @@ pub fn compile<'a>(
         let mut stat_param_counts: Vec<u32> = Vec::new();
         let mut stat_param_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
         let mut stat_param_truncs_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // E-554
+        let mut stat_param_derived_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // E-633
+        let mut any_derived = false;
         let mut param_given_fns_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // E-555
         let mut param_range_counts: Vec<u32> = Vec::new(); // E-558
         let mut param_ranges_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
@@ -527,7 +529,7 @@ pub fn compile<'a>(
                 // Collect declared parameter statistics for this module
                 let stats = cguint.stat_params();
                 stat_param_counts.push(stats.len() as u32);
-                for (param_id, dist, std, trunc) in stats {
+                for (param_id, dist, std, trunc, derived) in stats {
                     stat_param_infos_ll.push(cx.const_struct(
                         stat_param_info_ty,
                         &[
@@ -539,6 +541,10 @@ pub fn compile<'a>(
                     stat_param_truncs_ll.push(cx.const_real(trunc));
                     if trunc > 0.0 {
                         any_trunc = true;
+                    }
+                    stat_param_derived_ll.push(cx.const_unsigned_int(u32::from(derived)));
+                    if derived {
+                        any_derived = true;
                     }
                 }
 
@@ -674,6 +680,21 @@ pub fn compile<'a>(
                         "OSDI_STAT_PARAM_TRUNCS",
                         cx.ty_double(),
                         &stat_param_truncs_ll,
+                        true,
+                        false,
+                    );
+                }
+                // Enhancement-633 (F21 of the 2026-09-12 hunt): whether each
+                // entry's default is derived from other parameters (not a
+                // compile-time constant), in INFOS order, only when some
+                // entry is -- a simulator that does not know the symbol
+                // draws around the default it captured once, an object
+                // without it is read as all-constant.
+                if any_derived {
+                    cx.export_array(
+                        "OSDI_STAT_PARAM_DERIVED",
+                        cx.ty_int(),
+                        &stat_param_derived_ll,
                         true,
                         false,
                     );

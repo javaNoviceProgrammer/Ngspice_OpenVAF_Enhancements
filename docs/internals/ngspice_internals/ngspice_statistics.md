@@ -704,6 +704,13 @@ owner (model-card or instance name) and the parameter id. Consequences:
   is re-resolved by the next setup and its draws sit on the new value
   ([E-614](../../../enhancements_doc/Enhancement-614.md)); `altermod tm rl=500`
   moves `c1__r` from `1000 + δ` to `500 + δ`, the same δ.
+- **a default derived from another drawn parameter follows it**: `(* std *)
+  parameter real r3 = 2*r` beside a drawn `r` draws around `2·r_drawn` on every
+  trial — the object says which statistical parameters have a derived default,
+  and the simulator re-resolves those the deck never gave from the trial's
+  other draws before adding their own, on the plain and the reset path alike;
+  a card that gives `r3` keeps its given nominal, and `unset osdimc` re-derives
+  it from the restored values ([E-633](../../../enhancements_doc/Enhancement-633.md)).
 - **turning the option off** (`unset osdimc`, or `.option noosdimc` /
   `noautomc`) restores every drawn parameter to its nominal on the next run —
   a value the user gave by `alter`, not the deck's default (E-614) — and

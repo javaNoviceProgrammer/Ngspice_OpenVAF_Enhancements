@@ -1,0 +1,20 @@
+// Enhancement-633 (hunt F21 of 2026-09-12): a statistical parameter whose
+// DEFAULT is derived from another drawn parameter. The draw of r3 goes on the
+// default re-resolved from the trial's r (2*r_drawn + d), not on a nominal
+// captured once; the instance-level dr follows r the same way; a model card
+// that GIVES r3 keeps its given value as nominal. geff is parameter-only, so
+// the compiler hoists it to setup: it must see the final values.
+`include "disciplines.vams"
+module deriv(p, n);
+  inout p, n;
+  electrical p, n;
+  (* std=10.0 *) parameter real r = 1000.0 from (0:inf);
+  parameter real r2 = 2*r;
+  (* std=10.0 *) parameter real r3 = 2*r;
+  (* type="instance", std=1.0 *) parameter real dr = 0.01*r;
+  real geff;
+  analog begin
+    geff = 1/(r + r3);
+    I(p, n) <+ V(p, n)*geff + V(p, n)/dr + 0*r2;
+  end
+endmodule

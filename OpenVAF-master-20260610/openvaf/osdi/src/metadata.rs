@@ -273,7 +273,13 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         res
     }
 
-    pub fn stat_params(&self) -> Vec<(u32, u32, f64, f64)> {
+    /// The declared statistics of every parameter that carries them, in
+    /// `param_opvar()` order: (id, distribution flags, std, truncation,
+    /// derived). `derived` (Enhancement-633, F21 of the 2026-09-12 hunt) says
+    /// the parameter's default is not a compile-time constant -- `r3 = 2*r`
+    /// -- so a simulator drawing around the default must re-resolve it from
+    /// the other parameters' values of the trial before adding its own draw.
+    pub fn stat_params(&self) -> Vec<(u32, u32, f64, f64, bool)> {
         const DIST_UNIFORM: u32 = 1;
         const DIST_REL: u32 = 2;
         const DIST_LOGNORMAL: u32 = 4; // Enhancement-554
@@ -290,8 +296,15 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         let mut id = 0u32;
         for param in inst_data.params.keys() {
             if let OsdiInstanceParam::User(param) = param {
-                if let Some(stat) = &module.info.params[param].stat {
-                    res.push((id, flags_of(stat), stat.std, stat.trunc));
+                let param_info = &module.info.params[param];
+                if let Some(stat) = &param_info.stat {
+                    res.push((
+                        id,
+                        flags_of(stat),
+                        stat.std,
+                        stat.trunc,
+                        param_info.default_value.is_none(),
+                    ));
                 }
             }
             id += 1;
@@ -302,7 +315,13 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 continue;
             }
             if let Some(stat) = &param_info.stat {
-                res.push((id, flags_of(stat), stat.std, stat.trunc));
+                res.push((
+                    id,
+                    flags_of(stat),
+                    stat.std,
+                    stat.trunc,
+                    param_info.default_value.is_none(),
+                ));
             }
             id += 1;
         }
