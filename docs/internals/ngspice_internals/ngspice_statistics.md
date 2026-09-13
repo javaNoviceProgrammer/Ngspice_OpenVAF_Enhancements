@@ -66,7 +66,7 @@ re-throws the dice:
 | `gauss(nom, rvar, sig)` | Gaussian, σ = `nom·rvar/sig` | "relative" variation |
 | `aunif(nom, avar)` | uniform on `[nom−avar, nom+avar]` | |
 | `unif(nom, rvar)` | uniform on `[nom(1−rvar), nom(1+rvar)]` | |
-| `limit(nom, avar)` | `nom ± avar` (a fair coin) | corner-style ± |
+| `limit(nom, avar)` | `nom ± avar` (a fair coin) | corner-style ±; under the PSpice compatibility mode (`ngbehavior=ps`, KiCad's `kiltpsa`) the three-argument `limit(x, lo, hi)` is PSpice's clamp and the two-argument call is still this coin ([E-631](../../../enhancements_doc/Enhancement-631.md)) |
 | `mvnorm(i)` | component `i` of one correlated standard-normal draw | needs `mccorr`, §5 |
 
 So `agauss(1000, 100, 3)` is a resistor with a nominal 1 kΩ and a 3-σ spread of

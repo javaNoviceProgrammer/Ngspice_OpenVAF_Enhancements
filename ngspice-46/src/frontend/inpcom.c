@@ -6344,7 +6344,7 @@ static bool inp_strip_braces(char *s)
 }
 
 
-static void inp_get_func_from_line(struct function_env *env, char *line)
+static void inp_get_func_from_line(struct function_env *env, char *line, bool internal)
 {
     char *end, *orig_line = line;
     struct function *function;
@@ -6363,12 +6363,18 @@ static void inp_get_func_from_line(struct function_env *env, char *line)
         /* Enhancement-467: a `.func` whose name is already a built-in silently
          * replaced it for the whole deck -- see nupa_is_mathfunction(). Warn
          * and keep the user's definition, which is what already happened; the
-         * point is that it no longer happens unannounced. */
-        if (nupa_is_mathfunction(fname))
+         * point is that it no longer happens unannounced.
+         * Enhancement-631 (hunt F14): not for a card ngspice inserted itself
+         * -- the PSpice compatibility set's limit(), pwr(), pwrs(), stp(),
+         * if(), int() (`ngbehavior=ps`, KiCad's `kiltpsa`) -- which the
+         * warning blamed on "your definition"; and the definition now covers
+         * the calls of its own argument count only, which the text says. */
+        if (nupa_is_mathfunction(fname) && !internal)
             fprintf(stderr,
                     "\nWarning: .func %s() redefines the built-in function "
-                    "'%s'; every expression in this deck will use your "
-                    "definition instead of the built-in.\n\n", fname, fname);
+                    "'%s'; every call with its argument count will use your "
+                    "definition instead of the built-in (a call with another "
+                    "count still reaches the built-in).\n\n", fname, fname);
 
         /* Enhancement-491: the same warning is owed for a USER function. E-467
            covered the built-in case and left this one, so two `.func f(x)`
@@ -6568,7 +6574,8 @@ static void inp_grab_func(struct function_env *env, struct card *c)
             continue;
 
         if (ciprefix(".func", c->line)) {
-            inp_get_func_from_line(env, c->line);
+            inp_get_func_from_line(env, c->line,
+                                   c->linesource && eq(c->linesource, "internal"));
             *c->line = '*';
         }
 
@@ -6813,6 +6820,24 @@ static char *inp_expand_macro_in_str(struct function_env *env, char *str)
         }
 
         if (function->num_parameters != num_params) {
+            /* Enhancement-631 (hunt F14): a `.func` shadows a built-in of the
+             * same name only for calls with ITS argument count. The PSpice
+             * compatibility set (`ngbehavior=ps`, KiCad's `kiltpsa`) defines
+             * `limit(x, a, b)`, and the deck's random `limit(nom, avar)` --
+             * two arguments, a built-in -- was expanded against it and died
+             * here ("parameter mismatch ... fatal error in ngspice, exit(1)").
+             * A call of another count is left as written, for the built-in
+             * to evaluate; only a name that is no built-in is still an error. */
+            int builtin;
+            *open_paren_ptr = '\0';
+            builtin = nupa_is_mathfunction(fcn_name);
+            *open_paren_ptr = '(';
+            if (builtin) {
+                for (i = 0; i < num_params; i++)
+                    tfree(params[i]);
+                search_ptr = close_paren_ptr + 1;
+                continue;
+            }
             fprintf(stderr,
                     "ERROR: parameter mismatch for function call in string "
                     "%s\n",

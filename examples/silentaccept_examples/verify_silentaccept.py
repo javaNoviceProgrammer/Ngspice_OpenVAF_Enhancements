@@ -27,6 +27,13 @@ number the pre-fix binary produced.
        required the `a[k]` spelling, so formals written the way KiCad actually
        emits them (`a_0_`) matched nothing and the device was left floating.
    9   `.func sqrt(x) {...}` silently replaced the built-in for the whole deck.
+       Enhancement-631 (F14 of the 2026-09-12 hunt): a `.func` shadows a
+       built-in only for calls with ITS argument count -- a call of another
+       count is left to the built-in instead of "parameter mismatch ... fatal
+       error"; the PSpice compatibility set (`ngbehavior=ps`, KiCad's
+       `kiltpsa`) inserts `.func limit(x,a,b)` and so on, and those internal
+       cards draw no "your definition" warning: the random `limit(nom, avar)`
+       and PSpice's `limit(x, lo, hi)` both work under KiCad's mode.
   10   `.adapt` validated the adapter MODEL name but not its NODE list, so one
        typo switched the feature off with no diagnostic.
   11   Naming a model that is also a device model as the adapter did the same.
@@ -235,6 +242,30 @@ o = run(FUNC.format(".func myfun(x) {x*2}", "myfun(500)*2"), "fmine")
 check("[9] an ordinary name does NOT warn",
       "redefines the built-in" not in o and close(num(o, "@r1[resistance]"), 2000.0),
       f"{num(o, '@r1[resistance]')}")
+# Enhancement-631 (hunt F14): a `.func` covers the calls of its own argument
+# count; the PSpice compatibility set is ngspice's, not "your definition"
+o = run(FUNC.format(".func limit(x, a, b) {max(min(x, b), a)}", "limit(1500, 100, 1200) + limit(1000, 100)"), "farity")
+check("[9] a user .func limit(x,a,b) beside the built-in random limit(nom, avar): the 3-argument call uses the "
+      "definition (1200), the 2-argument call the built-in (900 or 1100) -- no 'parameter mismatch' exit; the warning "
+      "says 'every call with its argument count'",
+      "parameter mismatch" not in o and "every call with its argument count" in o
+      and num(o, "@r1[resistance]") in (2100.0, 2300.0), f"{num(o, '@r1[resistance]')} {o[-300:]}")
+KIL = ("func kiltpsa\n.param r1v = limit(1000, 100)\n.param lim3 = limit(1500, 100, 1200)\n.param p1 = pwr(2, 3)\n"
+       ".param i1 = int(-2.7)\nV1 in 0 dc 1\nR1 in out {{r1v}}\nR3 out 0 {{lim3}}\nR4 out 0 {{p1}}\nR5 out 0 {{i1+10}}\n"
+       ".control\nset ngbehavior={}\noption noacct\nset numdgt=8\nop\n"
+       "print @r1[resistance] @r3[resistance] @r4[resistance] @r5[resistance]\n.endc\n.end\n")
+with open(os.path.join(HERE, ".spiceinit"), "w") as f:
+    f.write("set ngbehavior=kiltpsa\n")
+try:
+    o = run(KIL.format("kiltpsa"), "fkil")
+finally:
+    os.remove(os.path.join(HERE, ".spiceinit"))
+check("[9] under `set ngbehavior=kiltpsa` (KiCad's): the random limit(1000,100) is 900 or 1100, PSpice's limit(1500,100,1200) "
+      "is 1200, pwr(2,3) = 8, int(-2.7)+10 = 8; no fatal exit, no 'redefines the built-in' for the compatibility set's own .func cards",
+      "parameter mismatch" not in o and "fatal error" not in o and "redefines the built-in" not in o
+      and num(o, "@r1[resistance]") in (900.0, 1100.0) and close(num(o, "@r3[resistance]"), 1200.0)
+      and close(num(o, "@r4[resistance]"), 8.0) and close(num(o, "@r5[resistance]"), 8.0),
+      f"r1={num(o, '@r1[resistance]')} r3={num(o, '@r3[resistance]')} r4={num(o, '@r4[resistance]')} r5={num(o, '@r5[resistance]')} {o[-300:]}")
 
 # ------------------------------------------------------------- 10-11 .adapt
 print("\n`.adapt` and the adapter model")

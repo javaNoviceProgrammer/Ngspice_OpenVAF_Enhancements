@@ -9,7 +9,11 @@ python3 verify_silentaccept.py
 ```
 
 44 checks, both linear solvers. `sa.va` supplies the four-bit bus models used by
-the autobus and adapter checks.
+the autobus and adapter checks. The two checks added by Enhancement-631 (F14 of
+the 2026-09-12 hunt) pin that a `.func` shadows a built-in only for calls with
+its argument count, and that KiCad's `set ngbehavior=kiltpsa` -- whose PSpice
+compatibility set defines `limit(x,a,b)` -- no longer kills the random
+`limit(nom, avar)` nor blames the user for `.func` cards ngspice inserted.
 
 ## What is checked
 
