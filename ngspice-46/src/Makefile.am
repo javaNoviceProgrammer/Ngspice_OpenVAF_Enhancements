@@ -213,6 +213,10 @@ ngspice_LDADD += frontend/help/libhlp.la
 endif
 endif
 
+## hicum2 is C++ and the executable is linked by the C compiler: name the
+## runtime (-lstdc++ where configure's probe found it; see configure.ac)
+ngspice_LDADD += $(XTRALIBS)
+
 if WINRESOURCE
 ngspice_SOURCES += ngicon.rc
 endif
@@ -455,7 +459,7 @@ libspice_la_LIBADD += \
 	maths/ni/libni.la \
 	maths/sparse/libsparse.la \
 	misc/libmisc.la \
-	$(LIBS)
+	$(LIBS) $(XTRALIBS)
 
 if SP_WANTED
 libspice_la_LIBADD += \
@@ -594,14 +598,16 @@ libngspice_la_CFLAGS = -shared
 libngspice_la_LDFLAGS =  -shared
 ## hicum2 is C++, but it reaches libngspice through a convenience library, so
 ## automake would pick the C linker and the library would have to name the
-## C++ runtime itself -- upstream links -lstdc++ here. That name breaks the
-## shared build on a clang toolchain that has only libc++ (MSYS2 CLANGARM64):
-## the compiler silently maps -lstdc++ to libc++, so configure cannot tell
-## the two apart, while libtool looks for a real libstdc++ file before it
-## trusts a -l dependency of a -no-undefined library, finds none, drops it
-## and builds the static archive alone. The never-compiled C++ source below
-## is automake's way of asking for the C++ linker: g++/clang++ add their own
-## runtime, and libtool takes those (its "postdeps") on trust.
+## C++ runtime itself -- upstream links -lstdc++ here and folds it into LIBS.
+## That name breaks the shared build on a clang toolchain that has only
+## libc++ (MSYS2 CLANGARM64): the compiler silently maps -lstdc++ to libc++,
+## so configure cannot tell the two apart, while libtool looks for a real
+## libstdc++ file before it trusts a -l dependency of a -no-undefined
+## library, finds none, drops it and builds the static archive alone. The
+## never-compiled C++ source below is automake's way of asking for the C++
+## linker: g++/clang++ add their own runtime, and libtool takes those (its
+## "postdeps") on trust. The name stays out of this link: configure keeps it
+## in XTRALIBS, not LIBS, and only the executable and tclspice use it.
 nodist_EXTRA_libngspice_la_SOURCES = dummy.cxx
 
 if SHWIN

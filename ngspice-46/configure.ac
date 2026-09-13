@@ -860,16 +860,17 @@ esac
 AM_CONDITIONAL([NO_X], [test "x$has_no_x" = xtrue])
 AM_CONDITIONAL([NO_HELP], [test "x$has_no_help" = xtrue])
 
-# Additional libs of hicum group (the executable is linked by the C compiler
-# and hicum2 is C++). Note this probe cannot tell which C++ runtime the
-# toolchain has: clang rewrites -lstdc++ into its default C++ library (libc++
-# on MSYS2 CLANGARM64 and macOS), so the link test passes there as well.
-# That is fine for the executable, where the name is only handed to the
-# compiler; libngspice does not use it -- see src/Makefile.am.
+# Additional libs of hicum group: the executable and tclspice are linked by
+# the C compiler and hicum2 is C++, so they name the runtime (XTRALIBS in
+# src/Makefile.am). It is deliberately NOT folded into LIBS, which reaches
+# every link: libngspice is linked by the C++ compiler instead and must not
+# see this name. The probe cannot tell the toolchains apart -- clang rewrites
+# -lstdc++ into its default C++ library (libc++ on MSYS2 CLANGARM64 and on
+# macOS), so it answers yes there too -- while libtool looks for a real
+# libstdc++ file before it trusts a -l dependency of a -no-undefined shared
+# library, finds none on CLANGARM64 and builds the static archive alone.
 AC_CHECK_LIB(stdc++, main, XTRALIBS="$XTRALIBS -lstdc++",,)
 AC_SUBST(XTRALIBS, $XTRALIBS)
-
-LIBS="$LIBS $XTRALIBS"
 
 # enabling making of the old and outdated applications
 # ngsconvert ngproc2mod ngmultidec ngmakeidx nghelp
@@ -1320,6 +1321,10 @@ m4_ifdef([AC_OPENMP], [AC_OPENMP])
 if test "x$enable_openmp" = xyes || test "x$enable_openmp" = x ; then
     AC_DEFINE([USE_OMP], [1], [OpenMP parallel processing])
     CFLAGS="$CFLAGS $OPENMP_CFLAGS"
+    # libngspice is linked by the C++ compiler (src/Makefile.am), and that
+    # link line carries CXXFLAGS: the OpenMP flag must be there as well, or
+    # the library is left with its omp_* references unresolved.
+    CXXFLAGS="$CXXFLAGS $OPENMP_CFLAGS"
     AC_MSG_RESULT([OpenMP feature enabled])
 else
     AC_MSG_RESULT([OpenMP feature disabled])
