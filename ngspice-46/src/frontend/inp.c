@@ -1631,9 +1631,11 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
             /* replace agauss(x,y,z) in each b-line by suitable value, one for all */
             bool statlocal = cp_getvar("statlocal", CP_BOOL, NULL, 0);
             if (!statlocal) {
-                static char* statfcn[] = { "agauss", "gauss", "aunif", "unif", "limit" };
+                /* Enhancement-621: mvnorm too, now that a .param calling it
+                 * is inlined into the lines that read it (inpcom.c) */
+                static char* statfcn[] = { "agauss", "gauss", "aunif", "unif", "limit", "mvnorm" };
                 int ii;
-                for (ii = 0; ii < 5; ii++)
+                for (ii = 0; ii < (int) (sizeof statfcn / sizeof statfcn[0]); ii++)
                     eval_agauss(deck, statfcn[ii]);
             }
 
@@ -1761,9 +1763,9 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
             /* FIXME: This is for the local param setting (not yet implemented in
             inp_fix_agauss_in_param() for model parameters according to HSPICE manual)*/
             if (statlocal) {
-                static char *statfcn[] = {"agauss", "gauss", "aunif", "unif", "limit"};
+                static char *statfcn[] = {"agauss", "gauss", "aunif", "unif", "limit", "mvnorm"};
                 int ii;
-                for (ii = 0; ii < 5; ii++)
+                for (ii = 0; ii < (int) (sizeof statfcn / sizeof statfcn[0]); ii++)
                     eval_agauss(deck, statfcn[ii]);
             }
             /* If user wants all currents saved (.options savecurrents), add .save 
@@ -3585,6 +3587,19 @@ eval_agauss(struct card *deck, char *fcn)
             }
             x = INPevaluate(&tmp2str, &nerror, 1);
             tfree(delstr);
+            if (cieq(fcn, "mvnorm")) {
+                /* Enhancement-621: one argument, the component index; the
+                 * value is the current sample's correlated draw (an
+                 * independent one until `mccorr` registers a matrix) */
+                val = mc_corr_component((int) floor(x + 0.5));
+                new_line = tprintf("%s%g%s", begstr, val, contstr);
+                tfree(card->line);
+                curr_line = card->line = new_line;
+                tfree(begstr);
+                tfree(contstr);
+                tfree(midstr);
+                continue;
+            }
             delstr = tmp2str = gettok_np(&tmp1str);
             if (!tmp2str) {
                 fprintf(cp_err, "ERROR: Incomplete function %s in line %s\n", fcn, curr_line);

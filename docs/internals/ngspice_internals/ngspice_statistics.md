@@ -335,7 +335,12 @@ mccorr 2  1 0.85  0.85 1               ; rho = 0.85 between the two factors
 ```
 
 `mvnorm(i)` returns a **unit-variance** standard normal (scale it in the `.param`);
-the matrix is a correlation matrix (unit diagonal). Drawing two parameters at
+the matrix is a correlation matrix (unit diagonal). A `.param` that calls it is
+inlined into the lines that read it, as one calling `agauss` is, so
+`montecarlo`'s fast path re-draws it per sample — and every use in a sample reads
+the same component ([E-621](../../../enhancements_doc/Enhancement-621.md); it used
+to stay one value for the whole run as soon as any other random binding armed the
+path). Drawing two parameters at
 `ρ=0` vs `ρ=0.85` shows the joint distribution tilt from a round blob to an
 elongated one:
 

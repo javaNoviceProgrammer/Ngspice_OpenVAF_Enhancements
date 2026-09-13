@@ -1404,10 +1404,20 @@ struct card *inp_readall(FILE *fp, const char *dir_name, const char* file_name,
 
         inp_fix_macro_param_func_paren_io(working);
 
+        /* Enhancement-621 (2026-09-12 hunt F1): `mvnorm` (Enhancement-151,
+         * the correlated draw) belongs with the other random functions here.
+         * A `.param pm = 1000 + 50*mvnorm(1)` stayed a parameter evaluated
+         * once at expansion, so a device's `{pm}` reached montecarlo's fast
+         * path as a constant and was frozen for the whole run the moment any
+         * other random binding armed the path (a yield of 0 % or 100 %, with
+         * full confidence). Inlined per use like agauss, the brace carries
+         * the call and the fast path re-draws it; within a sample every use
+         * reads the same correlated component (mc_corr_component caches the
+         * vector until the next sample boundary). */
         static char *statfcn[] = {
-                "agauss", "gauss", "aunif", "unif", "limit"};
+                "agauss", "gauss", "aunif", "unif", "limit", "mvnorm"};
         int ii;
-        for (ii = 0; ii < 5; ii++)
+        for (ii = 0; ii < (int) (sizeof statfcn / sizeof statfcn[0]); ii++)
             inp_fix_agauss_in_param(working, statfcn[ii]);
 
         inp_fix_temper_in_param(working);

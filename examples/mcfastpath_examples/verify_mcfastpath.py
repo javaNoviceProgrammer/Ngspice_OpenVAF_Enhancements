@@ -31,6 +31,15 @@ Exactness rests on consuming the RNG stream exactly as re-sourcing did:
   [4] two devices with identical random text draw INDEPENDENTLY
   [5] a sweep with a random `.param` now re-draws it per point (it was frozen)
   [6] a random reaching a structural slot still falls back to reset
+  [8] (Enhancement-621, 2026-09-12 hunt F1) a `.param` calling mvnorm() is
+      inlined like agauss: on the fast path `{pm}` re-draws every sample and
+      equals the direct brace's `mvnorm(1)` (one correlated component per
+      sample); it used to be frozen for the whole run
+  [9] a B-source reading it disarms the fast path (a bare draw), and the
+      reset path gives the same per-sample equality
+  [10] the guide's matched divider -- two correlated mvnorm .params -- beside
+      an unrelated agauss: sigma ~50 on each and rho ~0.9 between them (it was
+      sigma 3e-12: a yield of 0 or 100 %)
 """
 import os
 import re
@@ -158,6 +167,54 @@ def main():
           r.returncode == 0 and "SURVIVED" in t and ARMED in t
           and yd is not None and oracle is not None and yd[0] == oracle,
           f"rc={r.returncode} mc={yd} oracle={oracle}")
+
+    # [8]-[10] Enhancement-621 (2026-09-12 hunt F1): mvnorm() in a .param.
+    # ngspice inlines a .param that calls agauss/gauss/unif/aunif/limit into
+    # the lines that read it (a .func per use), which is what lets the fast
+    # path see the draw; mvnorm, this project's correlated draw, was not on
+    # that list, so `.param pm = 1000 + 50*mvnorm(1)` stayed one value for the
+    # whole run as soon as any other random binding armed the path.
+    MV = (".param pa = agauss(1000, 100, 3)\n.param pm = 1000 + 50*mvnorm(1)\nV1 a 0 dc 1\n"
+          "R1 a 0 {pa}\nR2 a 0 {1000 + 50*mvnorm(1)}\nR3 a 0 {pm}\n")
+    CTL = ("mccorr 1 1\nmontecarlo 6 -seed 1 -analysis op -expr direct=@r2[resistance] "
+           "-expr viaparam=@r3[resistance]{extra}\nset width=250\nprint direct viaparam{names}")
+
+    def cols(out, n):
+        rows = re.findall(r"^\d+\s+(\S+)\s+(\S+)" + r"\s+(\S+)" * (n - 2) + r"\s*$", out, re.M)
+        return [tuple(float(x) for x in r) for r in rows]
+
+    rc, out = run("mvparam", MV, CTL.format(extra="", names=""))
+    v = cols(out, 2)
+    ok = (rc == 0 and ARMED in out and "3 random value bindings" in out and len(v) == 6
+          and len({round(r[1], 6) for r in v}) == 6
+          and all(abs(r[0] - r[1]) < 1e-6 for r in v))
+    check("[8] a .param calling mvnorm() is inlined: the fast path arms with it (3 bindings), {pm} re-draws "
+          "every sample and equals the direct brace's mvnorm(1)",
+          ok, f"rc={rc} armed={ARMED in out} rows={v}")
+
+    rc, out = run("mvbsrc", MV + "B1 b 0 v=pm\n",
+                  CTL.format(extra=" -expr bsrc=v(b)", names=" bsrc"))
+    v = cols(out, 3)
+    ok = (rc == 0 and ARMED not in out and len(v) == 6 and len({round(r[1], 6) for r in v}) == 6
+          and all(abs(r[0] - r[1]) < 1e-6 and abs(r[1] - r[2]) < 1e-6 for r in v))
+    check("[9] ...a B-source reading it disarms the fast path (a bare draw) and the reset path agrees: "
+          "direct = viaparam = the B-source, every sample",
+          ok, f"rc={rc} armed={ARMED in out} rows={v}")
+
+    DIV = (".param r1 = 1000 + 50*mvnorm(1)\n.param r2 = 1000 + 50*mvnorm(2)\n.param r3 = agauss(1000, 100, 3)\n"
+           "V1 in 0 dc 2\nR1 in a {r1}\nR2 a 0 {r2}\nR3 in 0 {r3}\n")
+    rc, out = run("mvdiv", DIV,
+                  "mccorr 2 1 0.9 0.9 1\nmontecarlo 200 -seed 1 -analysis op -expr ra=@r1[resistance] -expr rb=@r2[resistance]\n"
+                  "let ma=mean(ra)\nlet mb=mean(rb)\n"
+                  "let rho=mean((ra-ma)*(rb-mb))/sqrt(mean((ra-ma)^2)*mean((rb-mb)^2))\n"
+                  "print stddev(ra) stddev(rb) rho")
+    g = lambda n: (lambda m: float(m.group(1)) if m else None)(re.search(r"^" + re.escape(n) + r" = (\S+)", out, re.M))
+    sa, sb, rho = g("stddev(ra)"), g("stddev(rb)"), g("rho")
+    ok = (rc == 0 and ARMED in out and sa is not None and sb is not None and rho is not None
+          and 35 < sa < 65 and 35 < sb < 65 and 0.8 < rho < 0.97)
+    check("[10] the matched divider beside an unrelated agauss: sigma ~50 on each correlated param and rho ~0.9 "
+          "on the fast path (it was sigma 3e-12)",
+          ok, f"rc={rc} armed={ARMED in out} sigma={sa},{sb} rho={rho}")
 
     for junk in os.listdir(HERE):
         if junk.startswith("_"):
