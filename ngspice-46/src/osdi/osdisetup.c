@@ -734,17 +734,37 @@ static int osdimc_seed(void)
     char buf[64];
 
     /* the REAL probe first: since E-467 cp_getvar coerces a published real
-     * to CP_NUM, so `mcseed=1.5` would answer 1 there in silence */
+     * to CP_NUM, so `mcseed=1.5` would answer 1 there in silence.
+     * Enhancement-634 (hunt D1): the seed is a 32-bit pattern (the draw keys
+     * take (uint32_t)seed), so it is 0 .. 4294967295 -- a larger value used to
+     * be called "not an integer" and folded onto 2147483647 with every other
+     * seed past 2^31, and a negative one was taken in silence. */
     if (cp_getvar("mcseed", CP_REAL, &d, 0)) {
-        if (d != (double) (int) d) {
+        if (d != floor(d)) {
             if (!warned)
-                fprintf(stderr, "Warning: .option mcseed=%g is not an integer; using %d\n", d, (int) d);
+                fprintf(stderr, "Warning: .option mcseed=%g is not an integer; using %g\n", d, floor(d));
             warned = TRUE;
+            d = floor(d);
         }
-        return (int) d;
+        if (d < 0.0 || d > 4294967295.0) {
+            if (!warned)
+                fprintf(stderr, "Warning: .option mcseed=%.0f is outside the seed's range 0 .. 4294967295; "
+                                "using the default seed 1\n", d);
+            warned = TRUE;
+            return 1;
+        }
+        return (int) (uint32_t) (uint64_t) d;
     }
-    if (cp_getvar("mcseed", CP_NUM, &s, 0))
+    if (cp_getvar("mcseed", CP_NUM, &s, 0)) {
+        if (s < 0) {                        /* Enhancement-634 (hunt D1) */
+            if (!warned)
+                fprintf(stderr, "Warning: mcseed=%d is negative; the seed is 0 .. 4294967295; "
+                                "using the default seed 1\n", s);
+            warned = TRUE;
+            return 1;
+        }
         return s;
+    }
     if (cp_getvar("mcseed", CP_STRING, buf, sizeof buf)) {
         if (!warned)
             fprintf(stderr, "Warning: .option mcseed=%s is not a number; using the default seed 1\n", buf);
@@ -2719,10 +2739,99 @@ static bool osdimc_machine_write;
 
 void OSDImcMachineWrite(bool on) { osdimc_machine_write = on; }
 
+/* Enhancement-634 (hunt D10): does `value` sit outside the parameter's
+ * declared range, as far as the range text can be read without the model --
+ * `(lo:hi)`, `[lo:hi]`, either bracket on either side, `inf`/`-inf`, or a
+ * `{a, b, c}` set of numbers? A bound that is not a number (another
+ * parameter's name) is not judged: 0 = inside or unknown, 1 = outside. The
+ * range text is E-558's, the source's own spelling. */
+static int osdimc_outside_range(const OsdiDescriptor *descr, uint32_t id, double value,
+                                const char **text_out) {
+  const OsdiRegistryEntry *entry = NULL;
+  const char *text, *p;
+  for (int t = 0; t < DEVmaxnum && !entry; t++) {
+    if (!osdi_devtype_is_osdi(t) || !ft_sim->devices[t])
+      continue;
+    const OsdiRegistryEntry *e = (const OsdiRegistryEntry *)ft_sim->devices[t]->registry_entry;
+    if (e && e->descriptor == descr)
+      entry = e;
+  }
+  if (!entry || !entry->param_ranges || id >= descr->num_params)
+    return 0;
+  text = entry->param_ranges[id];
+  if (!text || !*text)
+    return 0;
+  *text_out = text;
+  p = text;
+  while (*p == ' ')
+    p++;
+  if (strncmp(p, "from", 4) == 0) {      /* the source's own spelling */
+    p += 4;
+    while (*p == ' ')
+      p++;
+  }
+  if (*p == '{') {                       /* a set: one of the listed numbers */
+    int any = 0;
+    p++;
+    while (*p) {
+      char *end;
+      double v;
+      while (*p == ' ' || *p == ',')
+        p++;
+      if (*p == '}' || !*p)
+        break;
+      v = strtod(p, &end);
+      if (end == p)
+        return 0;                        /* not a number: not judged */
+      any = 1;
+      if (v == value)
+        return 0;
+      p = end;
+    }
+    return any;
+  }
+  if (*p == '(' || *p == '[') {
+    int lo_open = (*p == '('), hi_open;
+    double lo, hi;
+    char *end;
+    p++;
+    while (*p == ' ')
+      p++;
+    if (strncmp(p, "-inf", 4) == 0) { lo = -HUGE_VAL; end = (char *)p + 4; }
+    else if (strncmp(p, "inf", 3) == 0) { lo = HUGE_VAL; end = (char *)p + 3; }
+    else { lo = strtod(p, &end); if (end == p) return 0; }
+    p = end;
+    while (*p == ' ')
+      p++;
+    if (*p != ':')
+      return 0;
+    p++;
+    while (*p == ' ')
+      p++;
+    if (strncmp(p, "-inf", 4) == 0) { hi = -HUGE_VAL; end = (char *)p + 4; }
+    else if (strncmp(p, "inf", 3) == 0) { hi = HUGE_VAL; end = (char *)p + 3; }
+    else { hi = strtod(p, &end); if (end == p) return 0; }
+    p = end;
+    while (*p == ' ')
+      p++;
+    if (*p != ')' && *p != ']')
+      return 0;
+    hi_open = (*p == ')');
+    if (value < lo || (lo_open && value == lo))
+      return 1;
+    if (value > hi || (hi_open && value == hi))
+      return 1;
+    return 0;
+  }
+  return 0;
+}
+
 void OSDImcNoteUserWrite(int typecode, GENinstance *dev, GENmodel *mdl,
                          int param_id, double value) {
   const void *owner;
   OsdiMcNominal *e;
+  const OsdiDescriptor *wdescr = NULL;
+  const char *wname = NULL;
 
   if (osdimc_machine_write)                /* E-537 (hunt G) */
     return;
@@ -2734,6 +2843,8 @@ void OSDImcNoteUserWrite(int typecode, GENinstance *dev, GENmodel *mdl,
     if ((uint32_t)param_id >= descr->num_instance_params)
       return;
     owner = osdi_instance_data(entry, dev);
+    wdescr = descr;
+    wname = dev->GENname;
   } else if (mdl) {
     OsdiRegistryEntry *entry = osdi_reg_entry_model(mdl);
     const OsdiDescriptor *descr = entry->descriptor;
@@ -2741,12 +2852,23 @@ void OSDImcNoteUserWrite(int typecode, GENinstance *dev, GENmodel *mdl,
         (uint32_t)param_id >= descr->num_params)
       return;
     owner = osdi_model_data(mdl);
+    wdescr = descr;
+    wname = mdl->GENmodName;
   } else {
     return;
   }
   e = osdimc_find(owner, (uint32_t)param_id);
   if (e) {
+    const char *rtext = NULL;
     e->nominal = value;
+    /* Enhancement-634 (hunt D10): `altermod rm r=0` onto `from (0:inf)` was
+     * taken in silence, and the next trial's failure blamed the draw
+     * ("value -5.11649") -- name the recentre, here, where it happens */
+    if (osdimc_outside_range(wdescr, (uint32_t)param_id, value, &rtext))
+      fprintf(stderr, "Warning: %s:%s = %g is outside the parameter's declared range %s: the "
+                      "statistics are now centred outside it, and the draws around this value "
+                      "(the value itself included) will fail the range check at the next run\n",
+              wname, wdescr->param_opvar[param_id].name[0], value, rtext);
     /* Enhancement-614 (hunt F3): the user gave it now. The option-off
      * restore used to clear the given flag of a parameter the DECK never
      * gave and the model's setup then put back the default, losing the

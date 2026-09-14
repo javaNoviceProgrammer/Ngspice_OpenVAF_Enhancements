@@ -60,6 +60,7 @@ extern void com_wcd(wordlist *wl);
 extern void mc_wcd_config(const double *u, int n);
 extern void mc_wcd_shift(const double *u, int n, unsigned seed);
 extern int  mc_wcd_ndim(void);
+extern int  mc_wcd_active(void);        /* Enhancement-634: the wcd search is driving the draws */
 extern void mc_wcd_off(void);
 extern double mc_corr_component(int idx);   /* i-th correlated normal (1-based)  */
 extern int    mc_corr_size(void);           /* k of the registered matrix, 0 if none */

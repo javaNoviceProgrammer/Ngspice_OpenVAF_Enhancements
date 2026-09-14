@@ -466,6 +466,58 @@ int INPreportBusBases(CKTcircuit *ckt)
             }
             ds_free(&have);
         }
+        /* Enhancement-634 (hunt D13): the deck wires MORE bits of this base
+         * than the port has -- `/mid_2_`, `/mid_3_` beside a 2-bit port that
+         * took `/mid_0_` and `/mid_1_` -- and the width mismatch was silent:
+         * the low bits bound, the high ones floated. A node spelled as a bit
+         * of this base, in this spelling, that is not one of the port's. */
+        if (!seen && ckt && b->bits > 0) {
+            DS_CREATE(extra, 128);
+            int nextra = 0;
+            size_t blen = strlen(b->base);
+            for (nd = ckt->CKTnodes; nd; nd = nd->next) {
+                const char *nm = nd->name, *p;
+                int k, is_bit = 0;
+                if (nd->number == 0 || !nm || strncmp(nm, b->base, blen) != 0)
+                    continue;
+                p = nm + blen;
+                if (b->kicad) {         /* base_<digits>_ */
+                    if (*p != '_' || !isdigit_c(p[1]))
+                        continue;
+                    p++;
+                    while (isdigit_c(*p))
+                        p++;
+                    if (*p != '_' || p[1] != '\0')
+                        continue;
+                } else {                /* base[<digits>] */
+                    if (*p != '[' || !isdigit_c(p[1]))
+                        continue;
+                    p++;
+                    while (isdigit_c(*p))
+                        p++;
+                    if (*p != ']' || p[1] != '\0')
+                        continue;
+                }
+                for (k = 0; k < b->bits && !is_bit; k++)
+                    if (strcmp(nm, b->bit[k]) == 0)
+                        is_bit = 1;
+                if (is_bit)
+                    continue;
+                if (nextra++)
+                    ds_cat_str(&extra, ", ");
+                ds_cat_str(&extra, nm);
+            }
+            if (nextra > 0) {
+                fprintf(stderr,
+                        "Warning: instance %s: '%s' was expanded to the %d bus bits %s .. %s -- the port is %d bit%s\n"
+                        "         wide -- but the deck also wires %s, bit%s of the same bus beyond the port's width,\n"
+                        "         which this device does not touch; check the widths of the bus and the port.\n",
+                        b->inst, b->base, b->bits, b->first, b->last, b->bits, b->bits == 1 ? "" : "s",
+                        ds_get_buf(&extra), nextra == 1 ? "" : "s");
+                n++;
+            }
+            ds_free(&extra);
+        }
         {
             int k;
             for (k = 0; k < b->bits; k++) {
@@ -1357,15 +1409,19 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
     if (!verbose)
         return;
     verbose = (verbose == 2);           /* 2 = report, 1 = quiet */
+    /* Enhancement-634 (hunt D8): these two are warnings that say what
+     * happens -- the option is ignored and the run goes on -- where an
+     * "Error:" line followed by a run that proceeded read as neither */
     if (!cp_getvar("adapter", CP_STRING, amodel, sizeof(amodel)) || !amodel[0]) {
-        fprintf(stderr, "Error: .option autoadapt needs an adapter model: "
-                        "`.option autoadapt adapter=<modelname>`\n");
+        fprintf(stderr, "Warning: .option autoadapt needs an adapter model, "
+                        "`.option autoadapt adapter=<modelname>`; the option is "
+                        "ignored and nothing is adapted\n");
         return;
     }
     if (!autobus_enabled()) {
-        fprintf(stderr, "Error: .option autoadapt requires .option autobus; "
-                        "without it a bus node is not a single token and "
-                        "nothing would be adapted.\n");
+        fprintf(stderr, "Warning: .option autoadapt requires .option autobus -- "
+                        "without it a bus node is not a single token and nothing "
+                        "would be adapted; the option is ignored\n");
         return;
     }
 

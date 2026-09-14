@@ -349,6 +349,36 @@ impl ModuleInfo {
                             (None, None) => (None, false),
                         };
 
+                        // Enhancement-634 (hunt D5): an attribute given more
+                        // than once took the first in silence
+                        for attr_name in ["std", "std_rel", "dist", "trunc"] {
+                            let n = param.attr_count(db, &ast, attr_name);
+                            if n > 1 {
+                                let attr = param.get_attr(db, &ast, attr_name).unwrap();
+                                add_diagnostic(
+                                    attr.clone(),
+                                    &DuplicateStatAttr { attr, name: attr_name, count: n },
+                                );
+                            }
+                        }
+                        // Enhancement-634 (hunt D21): statistics on a parameter
+                        // whose `from` is a discrete set -- a draw around a
+                        // member is off the set on nearly every trial
+                        if sigma.is_some() && param.from_is_discrete_set(db) {
+                            let attr = param
+                                .get_attr(db, &ast, "std")
+                                .or_else(|| param.get_attr(db, &ast, "std_rel"))
+                                .unwrap();
+                            add_diagnostic(
+                                attr.clone(),
+                                &StatOnDiscreteSet {
+                                    attr,
+                                    name: name.to_string(),
+                                    range: param.bounds_source(db),
+                                },
+                            );
+                        }
+
                         // Enhancement-620 (hunt F16): a zero sigma, and a
                         // relative sigma on a default of 0, are said here --
                         // both draw exactly 0 on every trial, in silence
@@ -865,6 +895,66 @@ impl Diagnostic for ZeroSigma {
                 file_id: file,
                 range: range.into(),
                 message: "a zero sigma is not exported".to_owned(),
+            }])
+    }
+}
+
+/// Enhancement-634 (2026-09-12 hunt D5): a statistics attribute given more
+/// than once on one parameter -- `(* std=25.0, std=30.0 *)` -- took the
+/// last in silence.
+struct DuplicateStatAttr {
+    attr: ast::Attr,
+    name: &'static str,
+    count: usize,
+}
+
+impl Diagnostic for DuplicateStatAttr {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::warning()
+            .with_message(format!(
+                "'{}' is given {} times on this parameter; the last is the one used and the earlier ones are ignored",
+                self.name, self.count,
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "the last one, used".to_owned(),
+            }])
+    }
+}
+
+/// Enhancement-634 (2026-09-12 hunt D21): statistics declared on a parameter
+/// whose `from` constraint is a discrete set. A Gaussian or uniform draw
+/// around a member of `{1.0, 2.0, 3.0}` lands between the members on nearly
+/// every trial and fails the range check; the statistics are exported all
+/// the same (the deck may give the value), and the author is told.
+struct StatOnDiscreteSet {
+    attr: ast::Attr,
+    name: String,
+    range: String,
+}
+
+impl Diagnostic for StatOnDiscreteSet {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::warning()
+            .with_message(format!(
+                "'{}' declares statistics on '{}', whose range is the discrete set `{}`: a draw around a member lands off the set and fails the range check on nearly every trial; declare a continuous range, or drop the statistics",
+                self.attr.name().unwrap(),
+                self.name,
+                self.range,
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "statistics on a discrete-valued parameter".to_owned(),
             }])
     }
 }

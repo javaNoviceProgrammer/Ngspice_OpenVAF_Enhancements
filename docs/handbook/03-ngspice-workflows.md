@@ -61,6 +61,12 @@ node vectors, and a name the model does not have is warned about at `save`
 time (E-558; before that a model-card name was refused as *no such device*
 while `print @mm[s]` read it).
 
+Two current readings of one device differ by the multiplier: the branch
+unknown of a voltage contribution, the vector `n1#flow(p,n)` (typed
+`current`, and a name that parses unquoted in `let`/`print` — E-634), is the
+current of *one* unit, while the terminal current `@n1[i_p]` (E-394) is the
+total, `m` times it; with `m=1` they agree.
+
 ## 3.3 Parameter access, `alter`, and sweeps
 
 Parameters are readable and writable from the control language:

@@ -886,6 +886,14 @@ int mc_wcd_ndim(void)
     return wcd_ndim;
 }
 
+/* Enhancement-634 (hunt D19): is the wcd search driving the draws now -- its
+ * nominal point, finite-difference probes and line searches alike? The
+ * savemc recorder labels the rows those runs make. */
+int mc_wcd_active(void)
+{
+    return lhs_mode == MC_MODE_WCD;
+}
+
 void mc_wcd_off(void)
 {
     lhs_mode = MC_MODE_RANDOM;

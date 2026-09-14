@@ -162,6 +162,7 @@ extern int ft_set_writes;       /* Enhancement-544: successful parameter writes,
 extern void outp_loop_begin(const char *label, const char *noun,
                             int total, int mode);
 extern void outp_loop_point(int index);
+extern const char *outp_loop_label_now(void);   /* Enhancement-634 */
 extern void outp_loop_end(void);
 extern void outp_loop_abort(void);   /* E-536: interrupt unwind */
 extern bool ft_listprint;

@@ -22,6 +22,11 @@ impl AstCache {
     ///
     /// The (unescaped) string literal assigned to `attribute`. If `attribute`
     /// doesn't exist or is not a string literal `None` is returned instead
+    /// Enhancement-634 (hunt D5): the number of times `attribute` is given
+    pub(crate) fn count_attribute(&self, attribute: &str, id: ErasedAstId) -> usize {
+        self.id_map.attr_count(id, attribute)
+    }
+
     pub(crate) fn resolve_attribute(&self, attribute: &str, id: ErasedAstId) -> Option<ast::Attr> {
         let idx = self.id_map.get_attr(id, attribute)?;
         let ast = self.id_map.get_syntax(id).to_node(self.ast.syntax());

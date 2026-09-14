@@ -379,6 +379,16 @@ outp_finish_reference(runDesc *run)
  * that is why capturing a plain `tran` to a file yields a screenful of
  * "Reference value" frames -- but repeating the behaviour in new output is not
  * an improvement, and the regression suites capture stdout. */
+/* Enhancement-634 (hunt D19): the loop command running now, or NULL -- the
+ * savemc recorder labels a row made inside `wcd` with it, since that
+ * command's finite-difference probes are runs like any other and were
+ * indistinguishable from samples in the file */
+const char *
+outp_loop_label_now(void)
+{
+    return outp_loop_active ? outp_loop_label : NULL;
+}
+
 void
 outp_loop_begin(const char *label, const char *noun, int total, int mode)
 {
@@ -1657,6 +1667,8 @@ guess_type(const char *name, char* pltypename)
     int type;
 
     if (substring("#branch", name))
+        type = SV_CURRENT;
+    else if (substring("#flow(", name))     /* Enhancement-634 (hunt D11): an OSDI branch current */
         type = SV_CURRENT;
     else if (cieq(name, "time"))
         type = SV_TIME;

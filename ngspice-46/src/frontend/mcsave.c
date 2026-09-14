@@ -40,6 +40,7 @@
 #include "ngspice/jobdefs.h"
 #include "ngspice/trcvdefs.h"       /* Enhancement-626: the dc job's swept names */
 #include "ngspice/ifsim.h"
+#include "ngspice/randnumb.h"     /* Enhancement-634: mc_wcd_active */
 #include "mcsave.h"
 extern char *spice_analysis_get_name(int index);
 #include <time.h>
@@ -106,6 +107,7 @@ static FILE *fp;                    /* csv/txt: kept open, appended */
 static int header_cols;             /* columns the csv/txt header was written with */
 static long lastrow_off = -1;       /* Enhancement-611: where the last row begins, to rewrite it */
 static int noted_nothing;
+static int ran_no_row;              /* Enhancement-634 (hunt D7): a run came, and there was nothing to record */
 static int noted_osdimc_off;
 static int unwritable;              /* Enhancement-613: no file could be opened for this circuit */
 static int noted_write_fail;        /* Enhancement-613: a later open failed (said once) */
@@ -444,6 +446,21 @@ mcs_option(char **given)
         }
         if (on)
             osdi_only = 1;
+    } else {
+        /* Enhancement-634 (hunt D6): both recorders asked for -- one file per
+         * circuit, and savemc (every parameter) is the one taken; say so once */
+        static int noted_both;
+        char other[BSIZE_SP];
+        if (!noted_both &&
+            (cp_getvar("automc_save", CP_STRING, other, sizeof other) ||
+             cp_getvar("osdimc_save", CP_STRING, other, sizeof other) ||
+             cp_getvar("automc_save", CP_BOOL, NULL, 0) ||
+             cp_getvar("osdimc_save", CP_BOOL, NULL, 0))) {
+            fprintf(cp_err, "Warning: .option automc_save/osdimc_save is ignored beside .option savemc: "
+                            "one recorder per circuit, and savemc (every parameter with statistics) "
+                            "is the one used (said once)\n");
+            noted_both = 1;
+        }
     }
     if (!on || cp_getvar("nosavemc", CP_BOOL, NULL, 0))
         return 0;
@@ -670,7 +687,7 @@ static void
 put_value(FILE *f, double v)
 {
     if (isnan(v))
-        fputs(fmt == FMT_TXT ? "nan" : "", f);
+        fputs("", f);   /* Enhancement-634 (hunt D12): a cell the row never got is empty in every format */
     else
         fprintf(f, "%.12g", v);
 }
@@ -1245,6 +1262,7 @@ MCSAVErun(const char *analysis, int ok)
         if (col_wanted(i))
             n++;
     if (n == 0) {
+        ran_no_row = 1;                         /* Enhancement-634 (hunt D7) */
         if (!noted_nothing) {
             fprintf(cp_err, "Note: savemc: nothing to record -- no %sparameter with "
                             "statistics in this circuit%s\n",
@@ -1348,8 +1366,18 @@ MCSAVErun(const char *analysis, int ok)
         rows[nrows][i] = cols[i].set && !cols[i].written && !(nswept > 0 && mcs_is_swept(cols[i].name))
                          ? cols[i].value : NAN;
     rowcols[nrows] = ncols;
-    rowan[nrows] = copy(analysis ? analysis : "?");
+    /* Enhancement-634 (hunt D19): a row made by wcd's own iteration -- its
+     * finite-difference probes and line searches -- is labelled so; those
+     * runs are the command's, not samples, and read as `op ok` rows before */
+    {
+        const char *loop = outp_loop_label_now();
+        if (mc_wcd_active() || (loop && eq(loop, "wcd")))
+            rowan[nrows] = tprintf("%s (wcd probe)", analysis ? analysis : "?");
+        else
+            rowan[nrows] = copy(analysis ? analysis : "?");
+    }
     rowst[nrows] = copy(ok == MCS_PAUSED ? "paused" : ok ? "ok" : "failed");
+    ran_no_row = 0;                             /* Enhancement-634 (hunt D7) */
     /* Enhancement-624 (hunt F8): a run that completed made the current plot;
      * a run that failed or paused made one only if the current plot changed
      * under it (a transient that stopped part-way keeps its partial plot,
@@ -1441,6 +1469,10 @@ MCSAVEappend(const char *name, double value)
         return -3;
     if (!owner || nrows == 0)
         return -1;
+    /* Enhancement-634 (hunt D3): the three fixed columns are not names a
+     * value may take -- `writemc trial=9` added a second `trial` column */
+    if (eq(name, "trial") || eq(name, "analysis") || eq(name, "status"))
+        return -4;
     c = col_find(name);
     if (!c) {
         c = col_add(name, 0, 0);
@@ -1592,9 +1624,16 @@ com_writemc(wordlist *wl)
             tfree(why);
         } else {
             r = MCSAVEappend(name, v);
-            if (r == -1)
+            if (r == -1 && ran_no_row)          /* Enhancement-634 (hunt D7) */
+                fprintf(cp_err, "writemc: the last run made no row -- this circuit has no "
+                                "parameter with statistics to record (said above) -- so there "
+                                "is no row to put %s on\n", name);
+            else if (r == -1)
                 fprintf(cp_err, "writemc: no analysis has run yet, so there is no row to "
                                 "put %s on\n", name);
+            else if (r == -4)                   /* Enhancement-634 (hunt D3) */
+                fprintf(cp_err, "writemc: `%s` is one of the row's fixed columns (trial, analysis, "
+                                "status); give the value another name\n", name);
             else if (r == -3 && !said_nofile)
                 fprintf(cp_err, "writemc: savemc could not open a file for this circuit "
                                 "(said above), so %s is not recorded (said once)\n", name);

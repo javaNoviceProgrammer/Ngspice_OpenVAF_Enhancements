@@ -1106,6 +1106,17 @@ int PPlex(YYSTYPE *lvalp, struct PPltype *llocp, char **line)
                     sbuf--; // Point at ')', last accepted char.
                 }
             }
+            /* Enhancement-634 (hunt D11): an OSDI flow node is named
+             * `<inst>#flow(<node>)` -- the parentheses are part of the name,
+             * and the token used to end at the '(' and read as a call. Take
+             * the parenthesised part into the name, as i(v..) is taken. */
+            if (*sbuf == '(' && sbuf - start >= 5 && strncmp(sbuf - 5, "#flow", 5) == 0) {
+                char *q = sbuf + 1;
+                while (*q && *q != ')')
+                    q++;
+                if (*q == ')')
+                    sbuf = q + 1;
+            }
             lvalp->str = copy_substring(start, sbuf);
             lexer_return(TOK_STR, 0);
         }

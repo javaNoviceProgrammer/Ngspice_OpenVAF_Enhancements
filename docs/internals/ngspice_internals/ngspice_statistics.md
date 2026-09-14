@@ -695,7 +695,17 @@ owner (model-card or instance name) and the parameter id. Consequences:
   in any process, in any order; trial N is re-runnable in isolation; `resume`
   never redraws. Trial 2 of the deck above draws `r = 1022.885` — and so does
   trial 2 of any other command sequence with the same seed (§7.4 shows it).
-- **`.option mcseed=<int>` swaps the whole ensemble**; the default is 1.
+  (`resume` of an analysis that had *completed* is not a resume: ngspice runs
+  the analysis again, and that run is a new trial with new draws — the
+  contract is for an interrupted run, a breakpoint or a `stop`, whose draws
+  are kept through every `resume` that continues it.)
+- **`.option mcseed=<int>` swaps the whole ensemble**; the default is 1. The
+  seed is a 32-bit pattern, 0 … 4294967295 — a value outside that range is
+  refused and said, seed 1 used ([E-634](../../../enhancements_doc/Enhancement-634.md)).
+  A `set mcseed=<n>` in the `.control` block after the card takes effect for
+  the next trial: the later setting wins, as for any variable — the "deck card
+  wins" rule of `autobus` and `saveused` (E-454/E-464) is about a card against
+  a `.spiceinit`, not against a later `set`.
 - **`alter`/`altermod` recentre**: a stored value becomes the new nominal, and
   draws stay `nominal + δ` — never a random walk. A statistical parameter the
   deck never gave, whose default reads the written one — a child's binding in
@@ -720,11 +730,13 @@ owner (model-card or instance name) and the parameter id. Consequences:
   invalidates the table.
 
 A seed that is not an integer is truncated and said; one that is not a number is
-refused and said, each once ([E-572](../../../enhancements_doc/Enhancement-572.md)):
+refused and said, each once ([E-572](../../../enhancements_doc/Enhancement-572.md));
+one outside the seed's range likewise ([E-634](../../../enhancements_doc/Enhancement-634.md)):
 
 ```
 Warning: .option mcseed=1.5 is not an integer; using 1
 Warning: .option mcseed=abc is not a number; using the default seed 1
+Warning: .option mcseed=4294967297 is outside the seed's range 0 .. 4294967295; using the default seed 1
 ```
 
 ### 7.4 The trial policy for loop commands
@@ -989,6 +1001,29 @@ what: `montecarlo` varies both channels; a `repeat … reset … op` loop varies
 the netlist channel only — a user `reset` restarts the trial sequence, so the
 model channel is its baseline on every pass (E-535) — and a `repeat … op` loop
 without the `reset` varies the model channel only.
+
+Four shapes of the record worth knowing ([E-634](../../../enhancements_doc/Enhancement-634.md)):
+
+- **which rows a sweep makes depends on its path**: `sweep @r2[resistance]`
+  runs one analysis per point (the device path) and writes one `op` row per
+  point with the loop's one held draw; `sweep @rm[r]` over a model parameter
+  becomes a single `dc` run and writes one `dc` row, with the swept cell empty
+  (§8, [E-626](../../../enhancements_doc/Enhancement-626.md)).
+- **`wcd`'s own runs are labelled**: the nominal point, every finite-difference
+  probe and every line search of a `wcd` is an analysis run like any other and
+  makes a row; those rows say `op (wcd probe)` in the `analysis` column, so
+  they are told apart from samples.
+- **a random `.param` derived from another** — `.param pm = mvnorm(1)` and
+  `.param r2v = 1k*(1+0.05*pm)`, with `r2 b 0 {r2v}` — is one shared draw: its
+  text holds no random call of its own, so it is not inlined per use (§2), and
+  it is recorded under its own name *and* under every slot that reads it
+  (`r2v` and `r2`, equal). A `.param` that calls the random function directly
+  is inlined and recorded by slot only.
+- **under a host that loads the circuit twice** — KiCad's simulator loads it
+  when the schematic opens and again for each Run — the trial counter restarts
+  with the second load, so the first Run is a *second baseline* and the file
+  labels it trial 2; and its `analysis` column says `run`, the command the host
+  issues, not `op`.
 
 ### 8.1 Results onto the same row — `writemc`
 

@@ -460,7 +460,23 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
                 errbuf = copy("  unknown parameter ($). Check the compatibility flag!\n");
             }
             else {
-                errbuf = tprintf("  unknown parameter (%s) \n", parm);
+                /* Enhancement-634 (hunt D9): a MODEL parameter written on the
+                 * instance line (`N1 a 0 rm r=2k` where r belongs to the
+                 * .model card) was "unknown parameter (r)"; name the cause */
+                IFparm *mp = device->modelParms;
+                IFparm *mp_end = device->numModelParms ? mp + *(device->numModelParms) : mp;
+                int is_model = 0;
+                for (; mp && mp < mp_end; mp++)
+                    if (strcmp(parm, mp->keyword) == 0) {
+                        is_model = 1;
+                        break;
+                    }
+                if (is_model)
+                    errbuf = tprintf("  unknown parameter (%s): it is a model parameter of this "
+                                     "device -- set it on the .model card, not on the instance "
+                                     "line\n", parm);
+                else
+                    errbuf = tprintf("  unknown parameter (%s) \n", parm);
             }
             rtn = errbuf;
             goto quit;

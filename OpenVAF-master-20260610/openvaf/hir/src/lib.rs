@@ -565,6 +565,31 @@ impl Parameter {
         db.param_exprs(self.id).bounds
     }
 
+    /// Enhancement-634 (hunt D21 of 2026-09-12): the parameter's `from`
+    /// constraint is a discrete set -- `from {1.0, 2.0, 3.0}`, lowered to one
+    /// Value bound per member and no range -- so a continuous draw around any
+    /// member lands off the set on nearly every trial.
+    pub fn from_is_discrete_set(self, db: &CompilationDB) -> bool {
+        let bounds = self.bounds(db);
+        let mut values = 0;
+        for bound in bounds.iter() {
+            if bound.kind != ConstraintKind::From {
+                continue;
+            }
+            match bound.val {
+                ConstraintValue::Value(_) => values += 1,
+                ConstraintValue::Range(_) => return false,
+            }
+        }
+        values > 0
+    }
+
+    /// Enhancement-634 (hunt D5): how many times attribute `name` is given on
+    /// this parameter's declaration; `get_attr` resolves the first.
+    pub fn attr_count(&self, db: &CompilationDB, ast: &AstCache, name: &str) -> usize {
+        ast.count_attribute(name, self.id.lookup(db).ast_id(db).erased())
+    }
+
     /// Enhancement-546: every expression a `from`/`exclude` constraint of this
     /// parameter is made of -- the bound values and range ends -- as roots into
     /// [`Self::init`]'s body. Together with [`Self::default`] these are the

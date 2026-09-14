@@ -193,6 +193,13 @@ impl AstIdMap {
         self.arena[id].attrs.iter().position(|attr| &**attr == name)
     }
 
+    /// Enhancement-634 (hunt D5 of 2026-09-12): how many times `name` is
+    /// given on the item -- `(* std=25.0, std=30.0 *)` is two; the attrs are
+    /// listed last-written first, so the one `get_attr` resolves is the last.
+    pub fn attr_count(&self, id: ErasedAstId, name: &str) -> usize {
+        self.arena[id].attrs.iter().filter(|attr| &***attr == name).count()
+    }
+
     pub(crate) fn get_parent(&self, id: ErasedAstId) -> Option<ErasedAstId> {
         self.parents[id]
     }

@@ -2070,11 +2070,26 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                 cp_evloop(wl->wl_word);
         }
 #else
-        for (wl = controls; wl; wl = wl->wl_next){
+        {
+            bool cw_noted = FALSE;
+            for (wl = controls; wl; wl = wl->wl_next){
 #ifdef OSDI
-            inputdir = dir_name;
+                inputdir = dir_name;
 #endif
-            cp_evloop(wl->wl_word);
+                cp_evloop(wl->wl_word);
+                /* Enhancement-634 (hunt D2): `set controlswait` waits for the
+                 * HOST's run in the shared library; in this program there is
+                 * no such run, and a deck written for KiCad's simulator had
+                 * its `writemc`/`print` lines run at once, before its own
+                 * `.op`, with nothing said. Say so, once. */
+                if (!cw_noted && cp_getvar("controlswait", CP_BOOL, NULL, 0)) {
+                    fprintf(cp_err, "Note: `set controlswait` waits for a host's run only under "
+                                    "libngspice (a schematic tool); in this program there is no "
+                                    "such run, and the commands after it run now -- put the "
+                                    "analysis before them, or run the deck under the host\n");
+                    cw_noted = TRUE;
+                }
+            }
         }
 #endif
         wl_free(controls);
@@ -2223,6 +2238,29 @@ inp_dodeck(
                 controlled_exit(EXIT_FAILURE);
             }
             } /* switch  . . . */
+        }
+        /* Enhancement-634 (hunt D6): an option given on two cards -- a second
+         * `.option savemc=` line -- kept the first in silence. The lookup takes
+         * the first of a name in this list; say so when a later card gives the
+         * same name a different value. */
+        for (eev = ct->ci_vars; eev; eev = eev->va_next) {
+            struct variable *later;
+            for (later = eev->va_next; later; later = later->va_next) {
+                if (!eq(later->va_name, eev->va_name))
+                    continue;
+                if (later->va_type == eev->va_type &&
+                    ((eev->va_type == CP_STRING && eq(later->va_string, eev->va_string)) ||
+                     (eev->va_type == CP_NUM && later->va_num == eev->va_num) ||
+                     (eev->va_type == CP_REAL && later->va_real == eev->va_real) ||
+                     eev->va_type == CP_BOOL))
+                    continue;                       /* the same value again: harmless */
+                fprintf(stderr, "Warning: .option %s is given more than once with different values; "
+                                "the first card's (%s%s) is used and the later one is ignored\n",
+                        eev->va_name,
+                        eev->va_type == CP_STRING ? eev->va_string : "",
+                        eev->va_type == CP_STRING ? "" : "the earlier value");
+                break;
+            }
         }
         options = opt_beg; // back to the beginning
     } /* if (!noparse)  . . . */

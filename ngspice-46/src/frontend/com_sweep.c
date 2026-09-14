@@ -556,6 +556,7 @@ static int sw_boundarg(const char *w, const char *cmd, const char *what, double 
  * netlist's own, so the note can say plainly that everything repeats. */
 static void sw_seed_note(const char *cmd, int seed_given)
 {
+    int rs = 0;
     if (seed_given)
         return;
     fprintf(cp_out, "  NOTE    : no -seed given -- the random .params%s are "
@@ -563,6 +564,11 @@ static void sw_seed_note(const char *cmd, int seed_given)
                     "repeats them; give -seed <n> for an independent "
                     "replication\n",
             OSDImcActive() ? " and the model-declared statistics" : "", cmd);
+    /* Enhancement-634 (hunt D14): a `setseed` in effect is set aside by that
+     * default -- the command seeds its own stream -- and nothing said so */
+    if (cp_getvar("rndseed", CP_NUM, &rs, sizeof rs) && rs != 1)
+        fprintf(cp_out, "  NOTE    : the `setseed %d` in effect is set aside for this %s, which "
+                        "seeds its own stream; give `-seed %d` to draw from it\n", rs, cmd, rs);
 }
 
 static int sw_seedarg(const char *w, const char *cmd, unsigned int *out)
@@ -4384,6 +4390,20 @@ void com_highsigma(wordlist *wl)
                         "            sampled the nominal spread; check the names "
                         "against the model's (* std *) parameters.\n",
                 ninflate, ninflate == 1 ? "" : "s");
+    /* Enhancement-634 (hunt D4): every weight exactly 1 means no Gaussian
+     * dimension was inflated at all -- a deck whose only statistics are
+     * uniform (a uniform has no sigma to scale), or none. The banner promised
+     * a scale, and the "equivalent sigma" then read as a high-sigma result of
+     * what was a plain Monte-Carlo run at the nominal spread. */
+    else if (nvalid > 0 && sum_w == (double) nvalid && sum_w2 == (double) nvalid)
+        fprintf(cp_out, "  NOTE    : nothing in this circuit was inflated -- its statistics are "
+                        "uniform (a uniform has no sigma to scale)%s, so these %d samples "
+                        "are plain Monte Carlo\n"
+                        "            at the nominal spread and the figures above are "
+                        "those of a plain estimate, not a high-sigma one. Give a "
+                        "Gaussian (agauss/gauss, or (* std *)) something to scale.\n",
+                ninflate ? " or the -inflate names point only at such parameters" : "",
+                nvalid);
     if (degenerate)
         fprintf(cp_out, "  NOTE    : the importance weights have collapsed -- an "
                         "effective sample size of %.1f out of %d. P(fail) above is "
@@ -4903,6 +4923,14 @@ void com_montecarlo(wordlist *wl)
                 }
                 if (!wmc_expr[nwmc][0]) {
                     fprintf(cp_err, "montecarlo: -writemc '%s' has no expression after the '='\n", tok);
+                    tfree(tok);
+                    return;
+                }
+                /* Enhancement-634 (hunt D3): the row's fixed columns are not names */
+                if (eq(wmc_name[nwmc], "trial") || eq(wmc_name[nwmc], "analysis") ||
+                    eq(wmc_name[nwmc], "status")) {
+                    fprintf(cp_err, "montecarlo: -writemc `%s` is one of the row's fixed columns (trial, "
+                                    "analysis, status); give the value another name\n", wmc_name[nwmc]);
                     tfree(tok);
                     return;
                 }
