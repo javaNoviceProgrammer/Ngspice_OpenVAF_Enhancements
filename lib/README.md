@@ -34,8 +34,30 @@ interactive paths and is not a drop-in for `build/src/ngspice`.
 **macOS.** `KiCad.app` keeps two independent copies of the library plus a
 symlink — `Contents/Frameworks/libngspice.0.dylib`,
 `Contents/PlugIns/sim/libngspice.0.dylib` and
-`PlugIns/sim/libngspice.dylib -> libngspice.0.dylib`. Replace both real files
-and re-sign; the copy here already carries KiCad's install name.
+`PlugIns/sim/libngspice.dylib -> libngspice.0.dylib`. Both real files have to be
+replaced and re-signed; [`install_macos.sh`](install_macos.sh) does it. Quit
+KiCad, then:
+
+```bash
+./lib/install_macos.sh
+```
+
+It finds `/Applications/KiCad/KiCad.app` (give another bundle's path as the
+argument, or set `KICAD_APP`), tells an Apple-silicon Mac from an Intel one
+(`hw.optional.arm64`, so a shell under Rosetta does not mislead it) and checks
+the choice against KiCad's own binary — an Intel-only KiCad on Apple silicon
+runs under Rosetta and gets the `intel` library — then keeps KiCad's library
+beside each copy as `libngspice.0.dylib.orig` (written once, never overwritten:
+it stays the untouched original, with KiCad's signature) and the library it
+replaces as `libngspice.0.dylib.prev`, copies the matching
+`macos/<bundle>/libngspice.0.dylib` over both, restores the symlink and ad-hoc
+signs the two files. It refuses to run while KiCad is open, and asks for `sudo`
+when the bundle is not writable. `--codemodels` also replaces KiCad's XSPICE
+`.cm` files in `PlugIns/sim/ngspice/` (originals kept as `.orig`);
+`--restore` puts every `.orig` back, byte for byte, which is the way back short
+of reinstalling.
+
+By hand, the same steps are:
 
 ```bash
 K=/Applications/KiCad/KiCad.app/Contents
@@ -46,10 +68,9 @@ cp lib/macos/apple-silicon/libngspice.0.dylib "$K/PlugIns/sim/"
 codesign -s - --force "$K/Frameworks/libngspice.0.dylib" "$K/PlugIns/sim/libngspice.0.dylib"
 ```
 
-Quit KiCad before copying. Replacing files inside a signed bundle invalidates
-KiCad's signature; the ad-hoc re-sign is usually enough on a machine where the
-app already runs, but Gatekeeper may object again after an OS or KiCad update.
-The `.orig` copies are the way back short of reinstalling.
+Replacing files inside a signed bundle invalidates KiCad's signature; the
+ad-hoc re-sign is usually enough on a machine where the app already runs, but
+Gatekeeper may object again after an OS or KiCad update.
 
 **Windows.** KiCad's installer keeps `libngspice-0.dll` in its `bin\`
 directory; back it up and replace it with the one from `windows/intel/` (or
