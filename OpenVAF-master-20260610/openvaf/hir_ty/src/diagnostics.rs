@@ -569,11 +569,28 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                          here it is {alt}"
                     )])
             }
-            InferenceDiagnostic::BitSelectOutOfRange { expr, index, msb, lsb } => {
+            InferenceDiagnostic::BitSelectOutOfRange { expr, index, msb, lsb, ref name, is_net, ndim } => {
                 let src = self
                     .parse
                     .to_file_span(self.expr_range(expr), self.sm);
 
+                // Enhancement-636: an array is not a bus; say which it is.
+                let (message, help) = if is_net {
+                    (
+                        "bus bit-select index out of range",
+                        format!("help: this bus was declared with width [{msb}:{lsb}]"),
+                    )
+                } else if ndim > 1 {
+                    (
+                        "array index out of range",
+                        format!("help: that dimension of the array '{name}' is declared [{msb}:{lsb}]"),
+                    )
+                } else {
+                    (
+                        "array index out of range",
+                        format!("help: the array '{name}' is declared [{msb}:{lsb}]"),
+                    )
+                };
                 Report::error()
                     .with_labels(vec![Label {
                         style: LabelStyle::Primary,
@@ -581,8 +598,8 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                         range: src.range.into(),
                         message: format!("index {index} out of range"),
                     }])
-                    .with_message("bus bit-select index out of range")
-                    .with_notes(vec![format!("help: this bus was declared with width [{msb}:{lsb}]")])
+                    .with_message(message)
+                    .with_notes(vec![help])
             }
             InferenceDiagnostic::WrongArrayDimensions { expr, expected, found } => {
                 let src = self

@@ -473,7 +473,25 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// indices, matching `BusDecl::index_tuples` ordering: `flat = Σ_k pos_k · stride_k`, where
     /// `pos_k` is the declaration-order position within dimension `k` (`idx-msb` ascending,
     /// `msb-idx` descending) and `stride_k` is the product of the sizes of the later dimensions.
-    pub(crate) fn lower_flat_array_index(&mut self, dims: &[(i32, i32)], indices: &[ExprId]) -> Value {
+    /// Enhancement-636: the flat position of a dynamic-index access, judged
+    /// per dimension. An index outside its declared `[msb:lsb]` used to fold
+    /// into the flat position silently: a 1-D `a[7]` on `a[0:2]` matched no
+    /// element and so read `a[0]` (E-489's deliberate no-out-of-bounds
+    /// select), a 2-D `m[1][-1]` on `m[0:1][0:1]` folded to flat 1 and read
+    /// `m[0][1]`, and a write to either landed nowhere -- all without a word.
+    /// Now every dimension is checked, an out-of-range access is reported once
+    /// per accepted point through the deferred `$warning` path (LRM 9.4.6: a
+    /// transient value mid-solve does not print), naming the array, the index
+    /// and what the access does instead, and the returned position is -1 so a
+    /// read consistently yields the first element and a write consistently
+    /// drops. `name` is the array's base name, `write` picks the message tail.
+    pub(crate) fn lower_flat_array_index(
+        &mut self,
+        name: &str,
+        dims: &[(i32, i32)],
+        indices: &[ExprId],
+        write: bool,
+    ) -> Value {
         let n = dims.len();
         let sizes: Vec<i32> = dims.iter().map(|&(m, l)| (m - l).abs() + 1).collect();
         let mut strides = vec![1i32; n];
@@ -481,9 +499,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
             strides[k] = strides[k + 1] * sizes[k + 1];
         }
         let mut flat: Option<Value> = None;
+        let mut in_range: Option<Value> = None;
+        let mut idx_vals = Vec::with_capacity(n);
         for k in 0..n {
             let (msb, lsb) = dims[k];
             let idx = self.lower_expr(indices[k]);
+            idx_vals.push(idx);
             // pos_k: steps from msb toward lsb
             let pos = if msb <= lsb {
                 let m = self.ctx.iconst(msb);
@@ -492,6 +513,16 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let m = self.ctx.iconst(msb);
                 self.ctx.ins().binary1(Opcode::Isub, m, idx)
             };
+            // 0 <= pos_k < size_k
+            let zero = self.ctx.iconst(0);
+            let size = self.ctx.iconst(sizes[k]);
+            let lo_ok = self.ctx.ins().binary1(Opcode::Ile, zero, pos);
+            let hi_ok = self.ctx.ins().binary1(Opcode::Ilt, pos, size);
+            let ok = self.ctx.ins().select(lo_ok, hi_ok, FALSE);
+            in_range = Some(match in_range {
+                None => ok,
+                Some(acc) => self.ctx.ins().select(acc, ok, FALSE),
+            });
             let term = if strides[k] == 1 {
                 pos
             } else {
@@ -503,7 +534,52 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 Some(acc) => self.ctx.ins().binary1(Opcode::Iadd, acc, term),
             });
         }
-        flat.unwrap_or_else(|| self.ctx.iconst(0))
+        let (Some(flat), Some(in_range)) = (flat, in_range) else {
+            return self.ctx.iconst(0);
+        };
+        // The message: "index [7] of `a`, declared [0:2], is out of range; the
+        // read returns a[0]" -- one `%d` per dimension, the declaration as
+        // written, the first element's name.
+        let mut fmt = String::from("index ");
+        for _ in 0..n {
+            fmt.push_str("[%d]");
+        }
+        fmt.push_str(&format!(" of `{name}`, declared"));
+        for &(msb, lsb) in dims {
+            fmt.push_str(&format!(" [{msb}:{lsb}]"));
+        }
+        fmt.push_str(", is out of range; ");
+        if write {
+            fmt.push_str("the assignment is dropped");
+        } else {
+            fmt.push_str(&format!("the read returns {name}"));
+            for &(msb, _) in dims {
+                fmt.push_str(&format!("[{msb}]"));
+            }
+        }
+        fmt.push('\n');
+        let cb = CallBackKind::Print {
+            kind: DisplayKind::Warn,
+            arg_tys: vec![Type::Integer.into(); n].into_boxed_slice(),
+            dst: PrintDst::Console,
+            immediate: self.ctx.in_event_ctx || self.ctx.in_analog_initial,
+            in_initial: self.ctx.in_analog_initial,
+        };
+        self.ctx.make_cond(in_range, |ctx, ok| {
+            if !ok {
+                let mut args = vec![ctx.sconst(&fmt)];
+                args.extend_from_slice(&idx_vals);
+                ctx.call(cb.clone(), &args);
+            }
+        });
+        let none = self.ctx.iconst(-1);
+        self.ctx.ins().select(in_range, flat, none)
+    }
+
+    /// Enhancement-636: the base name of an array from one of its expanded
+    /// element names (`a[0]`, `m[0][1]` -> `a`, `m`).
+    fn array_base_name(elem: &str) -> &str {
+        elem.split('[').next().unwrap_or(elem)
     }
 
     /// Enhancement-505: clamp a distribution argument that cannot be negative.
@@ -651,7 +727,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
         dims: &[(i32, i32)],
         indices: &[ExprId],
     ) -> Value {
-        let flat = self.lower_flat_array_index(dims, indices);
+        let name = elems[0].name(self.ctx.db);
+        let flat = self.lower_flat_array_index(Self::array_base_name(&name), dims, indices, false);
         let mut res = self.ctx.use_param(ParamKind::Param(elems[0]));
         for (k, &param) in elems.iter().enumerate().skip(1) {
             let target = self.ctx.iconst(k as i32);
@@ -670,7 +747,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
         dims: &[(i32, i32)],
         indices: &[ExprId],
     ) -> Value {
-        let flat = self.lower_flat_array_index(dims, indices);
+        let name = elems[0].name(self.ctx.db);
+        let flat = self.lower_flat_array_index(Self::array_base_name(&name), dims, indices, false);
         let mut res = self.ctx.read_variable(elems[0]);
         for (k, &var) in elems.iter().enumerate().skip(1) {
             let target = self.ctx.iconst(k as i32);

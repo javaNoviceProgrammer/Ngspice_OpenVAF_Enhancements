@@ -74,7 +74,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 // conditionally: element `elems[k]` becomes `v` when the flat runtime position
                 // equals `k`, else keeps its value.
                 let v = self.lower_expr(value);
-                let flat = self.lower_flat_array_index(&dims, &indices);
+                let name = elems[0].name(self.ctx.db);
+                let base = name.split('[').next().unwrap_or(&name).to_owned();
+                let flat = self.lower_flat_array_index(&base, &dims, &indices, true);
                 for (k, var) in elems.into_iter().enumerate() {
                     let target = self.ctx.iconst(k as i32);
                     let is_k = self.ctx.ins().binary1(Opcode::Ieq, flat, target);

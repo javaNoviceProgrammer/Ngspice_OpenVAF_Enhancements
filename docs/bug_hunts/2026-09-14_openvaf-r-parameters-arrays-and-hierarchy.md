@@ -28,7 +28,7 @@ first pass's output filter had hidden; they are in the smaller notes.)
 | # | finding | severity |
 |---|---|---|
 | F1 | an integer parameter's real range bounds are rounded before the run-time check, so `from (1.5:2.5)` refuses every value (2 included) and `from (0.5:2.5]` refuses 1 and accepts 3 — while the compile-time default check uses the true bounds | correctness — **fixed in [E-635](../../enhancements_doc/Enhancement-635.md)** |
-| F2 | an array index outside the declared range at run time reads element 0 and drops the write, with no message; only a literal index is refused, and then as a "bus bit-select" | silent misuse |
+| F2 | an array index outside the declared range at run time reads element 0 and drops the write, with no message; only a literal index is refused, and then as a "bus bit-select" | silent misuse — **fixed in [E-636](../../enhancements_doc/Enhancement-636.md)** |
 | F3 | a reversed part-select `p[3:0]` of a `[0:3]` bus connected to a child port means `p[0:3]`; the concatenation `{p[3],p[2],p[1],p[0]}` does reverse | silent misuse |
 | F4 | assigning to a genvar inside its own loop is substituted textually (`0 = 0 + 1`) and reported as a parse error in the generated copy | diagnostic |
 | F5 | a contribution to, or a port-flow probe of, an `input` port compiles without a word | lint gap |
@@ -84,6 +84,8 @@ Repro: `hunt13/ir4.va`, `ir5.va`, `ir3.va`, `p10.va`, `ki1.va` with the decks
 beside them.
 
 ## F2 — an array index outside the declared range reads element 0 and drops the write
+
+*Fixed in [E-636](../../enhancements_doc/Enhancement-636.md): every dimension is checked and the access is reported once per accepted point through the deferred `$warning` path, naming the array, the index and what happens instead; the first-element read stands; the constant-index refusal is worded for an array.*
 
 ```verilog
 parameter integer k = 3;
@@ -246,6 +248,7 @@ Repro: `hunt13/p1.va`, `in1.va`, `in2.va`, `in3.va`.
   time with no message; the literal `white_noise(-1e-20)` is refused at
   compile time.
 * `$discontinuity(-1)` is accepted.
+* A `$warning` (or any display task) in parameter-only code is init-resident (E-535) and prints twice per operating point, once per setup pass -- `if (k > 2) $warning("k big");` gives two identical `OSDI(warn) n1: k big` lines. Seen while fixing F2 (E-636), whose own warning inherits it for a parameter index.
 * There is no way to spell "no zeros" in `laplace_zp`/`laplace_zd`: `{}` is
   refused twice (`unexpected token '}'` and `empty concatenation {} is not
   allowed`); the way round is `laplace_nd`/`laplace_np`.

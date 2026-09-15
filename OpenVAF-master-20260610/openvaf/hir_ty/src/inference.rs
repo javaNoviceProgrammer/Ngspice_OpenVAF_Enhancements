@@ -2165,6 +2165,9 @@ impl Ctx<'_> {
                     index: bound,
                     msb: arr.msb,
                     lsb: arr.lsb,
+                    name: arr.base_name.clone(),
+                    is_net: false,
+                    ndim: arr.ndim(),
                 });
                 return None;
             }
@@ -3474,6 +3477,9 @@ impl Ctx<'_> {
                 index: bad_idx,
                 msb,
                 lsb,
+                name: base_name.clone(),
+                is_net,
+                ndim: bus.ndim(),
             });
             return None;
         }
@@ -3721,11 +3727,17 @@ pub enum InferenceDiagnostic {
     },
 
     /// A bus bit-select index was outside the bus's declared `[msb:lsb]` width.
+    /// Enhancement-636: `name`, `is_net` and `ndim` word the report for what
+    /// was indexed -- a vectored net's "bus bit-select", or an array variable
+    /// or parameter's "array index" (`msb`/`lsb` are the offending dimension's).
     BitSelectOutOfRange {
         expr: ExprId,
         index: i32,
         msb: i32,
         lsb: i32,
+        name: Name,
+        is_net: bool,
+        ndim: usize,
     },
 
     /// An array/bus was indexed with the wrong number of `[...]` clauses for its dimensionality
