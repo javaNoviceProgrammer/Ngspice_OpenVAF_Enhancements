@@ -77,6 +77,7 @@ int INPmakeMod(char *token, int type, struct card *line)
    newm->INPmodLine = line;                  /* model line */
    newm->INPmodfast = NULL;
    newm->INPmodTypeName = NULL;   /* set by INPdomodel once the type is known */
+   newm->INPmodOsdiSel = 0;       /* Enhancement-644 */
 
    nghash_insert(modtabhash, token, newm);
 

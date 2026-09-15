@@ -153,7 +153,10 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
      * family is bound to the member its parameters select. Done here, where
      * the card is materialised: an `n` line reads the model's type after
      * INPgetMod returns (INP2N), so the instance follows. */
-    if (modtmp->INPmodType >= 0 && osdi_devtype_is_osdi(modtmp->INPmodType)) {
+    /* Enhancement-644: unless an `n` line already chose the member with its
+     * own parameters (INP2N), or the card is a clone made for one. */
+    if (modtmp->INPmodType >= 0 && osdi_devtype_is_osdi(modtmp->INPmodType) &&
+        !modtmp->INPmodOsdiSel) {
         char *why = NULL;
         int sel = osdi_select_paramset_overload(modtmp->INPmodType, modtmp->INPmodLine->line,
                                                 modtmp->INPmodName, &why);
@@ -162,6 +165,7 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
             return E_PARMVAL;
         }
         modtmp->INPmodType = sel;
+        modtmp->INPmodOsdiSel = 1;
     }
 #endif
 

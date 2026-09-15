@@ -754,6 +754,76 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
           }
       }
 #endif
+#ifdef OSDI
+      /* Enhancement-644 (LRM 6.4.2): a card naming an overloaded paramset
+       * family is selected by this instance's own parameters together with
+       * the card's -- the clause selects per instance (`rsil #(.mm_ok(1))`),
+       * and since Enhancement-644 a paramset's own parameters are instance
+       * parameters, so `n1 a b rsil l=0.5u w=0.5u mm_ok=1` decides. The
+       * first instance binds the card to its member; an instance that needs
+       * another member gets a clone of the card, `<card>.<member>`, made
+       * once and shared by every instance selecting that member. */
+      {
+          INPmodel *pre = INPlookMod(token);
+          if (pre && pre->INPmodType >= 0 && pre->INPmodfast == NULL &&
+              osdi_paramset_family_head(pre->INPmodType) && !pre->INPmodOsdiSel) {
+              char *why = NULL;
+              int sel = osdi_select_paramset_member(pre->INPmodType, pre->INPmodLine->line,
+                                                    line, pre->INPmodName, &why);
+              if (sel < 0) {
+                  LITERR(why);
+                  tfree(why);
+                  return;
+              }
+              if (sel != pre->INPmodType)
+                  fprintf(stderr,
+                          "Note: .model %s: paramset '%s' resolved to its member '%s' by "
+                          "the parameters of its first instance, %s (LRM 6.4.2)\n",
+                          pre->INPmodName, ft_sim->devices[pre->INPmodType]->name,
+                          ft_sim->devices[sel]->name, name);
+              pre->INPmodType = sel;
+              pre->INPmodOsdiSel = 1;
+          } else if (pre && pre->INPmodType >= 0 && pre->INPmodOsdiSel) {
+              int head = osdi_paramset_family_of(pre->INPmodType);
+              if (head >= 0) {
+                  char *why = NULL;
+                  int sel = osdi_select_paramset_member(head, pre->INPmodLine->line, line,
+                                                        pre->INPmodName, &why);
+                  if (sel < 0) {
+                      LITERR(why);
+                      tfree(why);
+                      return;
+                  }
+                  if (sel != pre->INPmodType) {
+                      char *cname = tprintf("%s.%s", pre->INPmodName,
+                                            ft_sim->devices[sel]->name);
+                      INPmodel *clone = INPlookMod(cname);
+                      if (!clone) {
+                          INPmakeMod(cname, sel, pre->INPmodLine);
+                          clone = INPlookMod(cname);
+                          if (clone) {
+                              clone->INPmodOsdiSel = 1;
+                              clone->INPmodTypeName = copy(pre->INPmodTypeName);
+                          }
+                          fprintf(stderr,
+                                  "Note: %s: paramset '%s' resolved to its member '%s' for "
+                                  "this instance's parameters, where .model %s is bound to "
+                                  "'%s' -- a second card, %s, is made for it (LRM 6.4.2)\n",
+                                  name, ft_sim->devices[head]->name, ft_sim->devices[sel]->name,
+                                  pre->INPmodName, ft_sim->devices[pre->INPmodType]->name,
+                                  cname);
+                      } else {
+                          tfree(cname);
+                      }
+                      if (clone) {
+                          tfree(token);
+                          token = copy(clone->INPmodName);
+                      }
+                  }
+              }
+          }
+      }
+#endif
       c = INPgetMod(ckt, token, &thismodel, tab);
       /* check if using model binning -- pass in line since need 'l' and 'w' */
       if (!thismodel) {

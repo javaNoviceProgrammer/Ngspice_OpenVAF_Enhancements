@@ -196,13 +196,25 @@ impl ModuleInfo {
                         }
                         lit
                     });
+                    // Enhancement-644 (LRM 6.4, IHP hunt C1): a paramset's own
+                    // parameter is what an INSTANCE of the paramset sets --
+                    // `rsil #(.l(0.5u), .w(0.5u)) r1(...)` in the LRM's world,
+                    // `n1 a b rsil l=0.5u w=0.5u` in SPICE's -- so it is an
+                    // instance parameter by default (the `.model` card gives
+                    // the instances' defaults, as for any instance parameter).
+                    // It used to be model-card-only, which no device library
+                    // can live with. `(* type="model" *)` keeps one on the card
+                    // alone; a pass-through target-module parameter is what
+                    // its own declaration says.
+                    let paramset_own = paramset_range
+                        .is_some_and(|r| r.contains_range(param.text_range(db)));
                     let is_instance = match type_.as_deref() {
                         Some("instance") => true,
                         Some("model") => {
                             explicit_model.insert(param);
                             false
                         }
-                        None => false,
+                        None => paramset_own && !param.is_local(db),
                         Some(found) => {
                             let attr = type_attr.unwrap();
                             add_diagnostic(
@@ -486,8 +498,7 @@ impl ModuleInfo {
                             stat,
                             range_text: param.bounds_source(db),
                             default_value: param.default_const(db),
-                            paramset_own: paramset_range
-                                .is_some_and(|r| r.contains_range(param.text_range(db))),
+                            paramset_own,
                         },
                     );
                 }

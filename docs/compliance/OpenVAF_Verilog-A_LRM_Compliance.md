@@ -251,9 +251,14 @@ single-value constraint, and names the ranges that would break a tie
 (`rsil takes mm_ok from [0:0]; rsil__2 takes mm_ok from [1:1]`). The same
 enhancement made every netlist number the double its text names, so a
 card value at a declared bound (`vmax=1.2` against `from [0:1.2]`) is
-accepted — see §3.1 of the handbook's ngspice chapter. ⚠️ Still refused with
-a located error: a random draw in an override (E-545's documented
-statistics design).
+accepted — see §3.1 of the handbook's ngspice chapter. Enhancement-644
+completed the clause on the `.model` route: a paramset's own parameters
+are **instance** parameters, as 6.4's `rsil #(.l(0.5u), .w(0.5u)) r1(…)`
+has them, and the member is selected **per instance** from the card's and
+the instance's values — `n1 a b rsil l=0.5u w=0.5u mm_ok=1` — the first
+instance binding the card and one needing another member getting a clone
+card. ⚠️ Still refused with a located error: a random draw in an override
+(E-545's documented statistics design).
 
 ### 3.3 Natures, disciplines, nets (LRM 3.5–3.7)
 

@@ -122,8 +122,21 @@ static int write_param_info(IFparm **dst, const OsdiDescriptor *descr,
  * with DIFFERENT ids: `GAIN` and `gain` fold to one lowercased keyword, a deck
  * value lands on whichever registered last, and the other keeps its default with
  * nothing to say a value was dropped. Comparing ids is what separates the two. */
+/* Enhancement-644 (IHP hunt C2): a parameter a paramset BOUND (PARA_FLAG_FIXED,
+ * Enhancement-93) cannot be set from a netlist at all, so sharing its keyword
+ * with a settable one loses nothing -- PSP's `SWSOA` bound to the paramset's
+ * own `swsoa`, `sp_resistor`'s `r` alias bound to the paramset's `R`. The
+ * warning below is about a value that lands on the wrong parameter; there
+ * is no such value here. */
+static int osdi_param_is_fixed(const OsdiDescriptor *descr, int id) {
+  return id >= 0 && (uint32_t)id < descr->num_params &&
+         (descr->param_opvar[id].flags & PARA_FLAG_FIXED) != 0;
+}
+
 static void osdi_warn_case_collisions(const IFparm *params, int n,
-                                      const char *module, const char *kind) {
+                                      const OsdiDescriptor *descr,
+                                      const char *kind) {
+  const char *module = descr->name;
   for (int i = 1; i < n; i++) {
     if (!params[i].keyword)
       continue;
@@ -132,6 +145,10 @@ static void osdi_warn_case_collisions(const IFparm *params, int n,
         if (params[j].id == params[i].id) {
           /* the same parameter under two spellings -- deliberately routed */
           continue;
+        }
+        if (osdi_param_is_fixed(descr, params[j].id) ||
+            osdi_param_is_fixed(descr, params[i].id)) {
+          continue; /* Enhancement-644: one of them cannot be set anyway */
         }
         fprintf(stderr,
                 "Warning: %s: %s parameter '%s' is declared more than once "
@@ -198,7 +215,20 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
    * the OSDI device beside it, and `@n1[i]` did not exist, so the only way to
    * see a compact model's terminal current was to edit the model. */
   *num_instance_para_names += (int)descr->num_terminals;
-  if (descr->num_terminals == 2) {
+  /* Enhancement-644 (IHP hunt C2): a two-terminal model that declares an `i`
+   * of its own -- `sp_resistor`'s `(* desc="Current" *) real i` -- keeps
+   * it: `@n1[i]` reads the model's value (the table lookup finds the model's
+   * entry first), and the loader's alias would only draw the case-collision
+   * warning against a name the author chose deliberately. */
+  bool model_has_i = false;
+  for (uint32_t i = 0; i < descr->num_params + descr->num_opvars; i++) {
+    if ((i < descr->num_instance_params || i >= descr->num_params) &&
+        !strcasecmp(descr->param_opvar[i].name[0], "i")) {
+      model_has_i = true;
+      break;
+    }
+  }
+  if (descr->num_terminals == 2 && !model_has_i) {
     *num_instance_para_names += 1; /* the bare `i` alias */
   }
 
@@ -294,14 +324,14 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
                         "terminal current"};
       dst += 1;
     }
-    if (descr->num_terminals == 2) {
+    if (descr->num_terminals == 2 && !model_has_i) {
       dst[0] = (IFparm){"i", (int)base, IF_REAL | IF_ASK,
                         "current into the first terminal"};
       dst += 1;
     }
   }
   osdi_warn_case_collisions(instance_para_names, *num_instance_para_names,
-                            descr->name, "instance");
+                            descr, "instance");
 
   // allocate and fill model params
   int *num_model_para_names = TMALLOC(int, 1);
@@ -313,7 +343,7 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
   write_param_info(&dst, descr, descr->num_instance_params, descr->num_params,
                    true);
   osdi_warn_case_collisions(model_para_names, *num_model_para_names,
-                            descr->name, "model");
+                            descr, "model");
 
   // Allocate SPICE device
   SPICEdev *OSDIinfo = TMALLOC(SPICEdev, 1);
@@ -558,8 +588,95 @@ static int osdi_member_param(int t, const char *name)
   return -1;
 }
 
+/* Enhancement-644: is `type` the head of an overloaded paramset family --
+ * the member whose name IS the family name, the one a `.model` card of that
+ * name is bound to before anything selects? */
+int osdi_paramset_family_head(int type)
+{
+  if (type < 0 || !osdi_devtype_is_osdi(type))
+    return 0;
+  const OsdiRegistryEntry *e =
+      (const OsdiRegistryEntry *)DEVices[type]->DEVpublic.registry_entry;
+  return e && e->paramset_family &&
+         strcmp(DEVices[type]->DEVpublic.name, e->paramset_family) == 0;
+}
+
+/* Enhancement-644: the head of the family `type` is a member of (the member
+ * named as the family), or -1 when `type` is no paramset member. */
+int osdi_paramset_family_of(int type)
+{
+  if (type < 0 || !osdi_devtype_is_osdi(type))
+    return -1;
+  const OsdiRegistryEntry *e =
+      (const OsdiRegistryEntry *)DEVices[type]->DEVpublic.registry_entry;
+  if (!e || !e->paramset_family)
+    return -1;
+  for (int t = 0; t < DEVmaxnum; t++) {
+    if (!osdi_devtype_is_osdi(t))
+      continue;
+    if (!strcmp(DEVices[t]->DEVpublic.name, e->paramset_family))
+      return t;
+  }
+  return -1;
+}
+
 int osdi_select_paramset_overload(int type, const char *card,
                                   const char *modname, char **why)
+{
+  return osdi_select_paramset_member(type, card, NULL, modname, why);
+}
+
+/* Enhancement-644: `name=value` pairs of an instance line's parameter part
+ * (`n1 a b rsil l=0.5u w=0.5u mm_ok=0`, everything after the nodes), for the
+ * selection below -- the values an instance of the paramset sets, which LRM
+ * 6.4.2 selects by. Names and values are copies; `n` is the fill so far. */
+static void osdi_instance_params(const char *inst, char **names, double *vals,
+                                 int *numeric, int *n, int max)
+{
+  const char *p = inst;
+  while (p && *p && *n < max) {
+    const char *eq = strchr(p, '=');
+    if (!eq)
+      break;
+    /* the name: the identifier run before `=` */
+    const char *ne = eq;
+    while (ne > p && (ne[-1] == ' ' || ne[-1] == '\t'))
+      ne--;
+    const char *ns = ne;
+    while (ns > p && ns[-1] != ' ' && ns[-1] != '\t' && ns[-1] != '(' && ns[-1] != ',')
+      ns--;
+    /* the value: the run after `=` */
+    const char *vs = eq + 1;
+    while (*vs == ' ' || *vs == '\t')
+      vs++;
+    const char *ve = vs;
+    while (*ve && *ve != ' ' && *ve != '\t' && *ve != ')' && *ve != ',')
+      ve++;
+    if (ne > ns) {
+      char *name = copy_substring(ns, ne);
+      char *vt = copy_substring(vs, ve);
+      char *vp = vt;
+      int err = 0;
+      double v = INPevaluate(&vp, &err, 0);
+      names[*n] = name;
+      vals[*n] = v;
+      numeric[*n] = !err;
+      (*n)++;
+      tfree(vt);
+    }
+    p = ve;
+  }
+}
+
+/* Enhancement-644: the selection with the values an INSTANCE line gives as
+ * well as the card's -- an instance's own parameters are what 6.4.2 selects
+ * by (`rsil #(.mm_ok(1))`), and since Enhancement-644 a paramset's own
+ * parameters are instance parameters. An instance value replaces the card's
+ * for the same name; an instance name no member declares (`m`, `temp`, a
+ * misspelling INPdevParse will refuse later) is left out of the selection.
+ * `inst` NULL is the card alone, the `.model` route of Enhancement-565. */
+int osdi_select_paramset_member(int type, const char *card, const char *inst,
+                                const char *modname, char **why)
 {
   *why = NULL;
   if (!osdi_devtype_is_osdi(type))
@@ -626,6 +743,41 @@ int osdi_select_paramset_overload(int type, const char *card,
     if (vt)
       tfree(vt);
     n++;
+  }
+  /* Enhancement-644: the instance's values, replacing the card's for the
+   * same name, and only for names some member declares */
+  if (inst) {
+    char *inames[MAXP];
+    double ivals[MAXP];
+    int inumeric[MAXP];
+    int ni = 0;
+    osdi_instance_params(inst, inames, ivals, inumeric, &ni, MAXP);
+    for (int i = 0; i < ni; i++) {
+      int known = 0;
+      for (int k = 0; k < n_members && !known; k++)
+        known = osdi_member_param(members[k], inames[i]) >= 0;
+      if (!known) {
+        tfree(inames[i]);
+        continue;
+      }
+      int j;
+      for (j = 0; j < n; j++)
+        if (!strcasecmp(names[j], inames[i]))
+          break;
+      if (j < n) {
+        tfree(names[j]);
+        names[j] = inames[i];
+        vals[j] = ivals[i];
+        numeric[j] = inumeric[i];
+      } else if (n < MAXP) {
+        names[n] = inames[i];
+        vals[n] = ivals[i];
+        numeric[n] = inumeric[i];
+        n++;
+      } else {
+        tfree(inames[i]);
+      }
+    }
   }
 
   int survivors[MAXM], unoverridden[MAXM];
@@ -761,7 +913,7 @@ int osdi_select_paramset_overload(int type, const char *card,
     fprintf(stderr, "Error: %s", *why);
     return -1;
   }
-  if (winner != type)
+  if (winner != type && !inst)
     fprintf(stderr, "Note: .model %s: paramset '%s' resolved to its member '%s' (LRM 6.4.2)\n",
             modname, family, DEVices[winner]->DEVpublic.name);
   return winner;

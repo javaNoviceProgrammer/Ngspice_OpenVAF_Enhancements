@@ -107,6 +107,12 @@ struct INPmodel {
      * `res`), kept so an `n` line can tell that a card which resolved to a
      * built-in names a shadowed Verilog-A module of the same name. */
     char *INPmodTypeName;
+    /* Enhancement-644 (LRM 6.4.2): for a card naming an overloaded paramset
+     * family, set once the member is chosen -- by the first `n` line that
+     * uses the card (its own parameters take part in the selection), or by
+     * the card alone when it is materialised without one -- so the choice
+     * is not made twice. */
+    int INPmodOsdiSel;
 };
 
 // Ugly way to pass line onfo (number and source file) to lower-level error handlers.

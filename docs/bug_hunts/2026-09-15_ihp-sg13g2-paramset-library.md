@@ -27,8 +27,8 @@ it, and the bugs the library's spelling of that plumbing uncovered.
 | A2 | a literal seed (`$rdist_normal(1, 0, 1)`) is refused everywhere, though LRM Syntax 9-9 allows `[sign] decimal_number`; the library also uses `seed + 3` | openvaf-r, hir_ty | compliance — **fixed in [E-642](../../enhancements_doc/Enhancement-642.md)** (any integer value; L019 recognises a seed the loop changes) |
 | B1 | paramset overload selection parses `exclude {0}` as "always satisfied", so a member whose parameter carries an `exclude` never applies; and it range-checks and counts the **module's** pass-through parameters as if they were the paramset's own (6.4.2: "only the ranges of the paramset's own parameters") — which is also why `.model rsil rsil` with nothing given picks the mismatch member `rsil__2` instead of reporting the tie | ngspice, `osdi/osdiinit.c` `osdi_range_accepts`, `osdi_select_paramset_overload` | correctness — **fixed in [E-643](../../enhancements_doc/Enhancement-643.md)** (value sets read; only the paramset's own parameters judged and counted, exported as `OSDI_PARAMSET_OWN`; a tie names what selects) |
 | B2 | the same selection re-evaluates each bound from its E-558 text with `INPevaluate`, one ulp off the compiler's double: `parameter real l = 0.96e-6 from [0.96e-6:10e-6)` refuses its own default (`0.5e-6` happens to pass) | ngspice, `osdi/osdiinit.c` `osdi_range_bound` | correctness — **fixed in [E-643](../../enhancements_doc/Enhancement-643.md)**: the root was every ngspice number parser (`INPevaluate`, `ft_numparse`, numparam) rounding twice — `vmax=1.2` on a card was refused by `from [0:1.2]` — and the compiler's scaled literals doing the same; all read the text's nearest double now |
-| C1 | a paramset's own parameters are model-card-only: `n1 … rsil l=0.5u w=0.5u mm_ok=0` is refused ("it is a model parameter of this device"); a SPICE device library needs them on the instance line | OSDI export + ngspice | feature gap |
-| C2 | a bound module parameter that differs from a paramset parameter only in case (PSP's `SWSOA`, the paramset's `swsoa`) draws "declared more than once differing only in case" although the bound one is fixed and cannot be set | ngspice | cosmetic |
+| C1 | a paramset's own parameters are model-card-only: `n1 … rsil l=0.5u w=0.5u mm_ok=0` is refused ("it is a model parameter of this device"); a SPICE device library needs them on the instance line | OSDI export + ngspice | feature gap — **done in [E-644](../../enhancements_doc/Enhancement-644.md)**: own parameters are instance parameters; the member is selected per instance, with a clone card when the card is bound to another |
+| C2 | a bound module parameter that differs from a paramset parameter only in case (PSP's `SWSOA`, the paramset's `swsoa`) draws "declared more than once differing only in case" although the bound one is fixed and cannot be set | ngspice | cosmetic — **fixed in [E-644](../../enhancements_doc/Enhancement-644.md)** (a fixed parameter's twin is skipped; the loader's bare `i` alias is not synthesised over a model's own `i`) |
 | L1 | `.LEVEL = 103.8.2;` in the four MOS paramset files is not a number (PSP's `LEVEL` is an integer parameter); `Rparasitic`'s gnucap reference is 205.95 Ω for `R=100` at 27 °C, which needs `$simparam("tnom", 27)` to evaluate to something other than 27 | the library | upstream |
 
 And, beyond bugs, what "compile and expose via OSDI" needs (§ *Features*):
@@ -283,6 +283,8 @@ Repro: `pset/t5.py` (`e6`, `u`, `e7`, `plain`).
 
 ## C1 — paramset parameters are not on the instance line
 
+*Done in [E-644](../../enhancements_doc/Enhancement-644.md): a paramset's own parameters are instance parameters, the card gives the defaults, and LRM 6.4.2's selection runs per instance (the first instance binds the card, another member gets a clone card `<card>.<member>`).*
+
 ```
 n1 n1 0 0 rsil l=0.5u w=0.5u mm_ok=0
 Error … unknown parameter (l): it is a model parameter of this device -- set it on the .model card, not on the instance line
@@ -300,6 +302,8 @@ instance to a sibling member's card — that `.model rsil_mm rsil mm_ok=1`
 cards make unnecessary for this library.
 
 ## C2 — a fixed parameter's case-twin warns
+
+*Fixed in [E-644](../../enhancements_doc/Enhancement-644.md): the E-335 check skips a pair with a `PARA_FLAG_FIXED` side, and the loader's bare `i` alias (E-394) is not synthesised when the model declares an `i` of its own.*
 
 ```
 Warning: sg13g2_lv_nmos_psp: model parameter 'swsoa' is declared more than once differing only in case; SPICE cannot tell the names apart, so only one of them can be set from a netlist.
@@ -349,7 +353,7 @@ things:
    the twin so `alter`/osdimc can re-seed each trial. With the E-10 RNG
    (pure in seed and call site) "one value per trial shared by every
    instance" falls out for free once the trial seed is mixed in.
-3. **Instance-line paramset parameters** (C1).
+3. **Instance-line paramset parameters** (C1) — done, E-644.
 4. **The wrapper modules.** `sg13_lv_nmos` twice, split on `mm_ok`, is
    module overloading — not LRM; and `$rdist_normal(…, "instance")` at
    module scope is the §6.4.1 rule stretched to a module. Either accept

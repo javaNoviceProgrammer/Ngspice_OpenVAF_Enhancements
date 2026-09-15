@@ -45,6 +45,15 @@ n1 in out mymod          ; instance (ports in declaration order)
   `let`/`print`, and `.param` all read the same spelling to the same
   double now. One visible consequence: `0e400` is zero, not "not a
   representable number".
+- **A paramset's own parameters are instance parameters** (E-644): one
+  `.model rsil rsil` card per device kind, the geometry on the instance
+  line — `n1 a b rsil l=0.5u w=0.5u mm_ok=0` — as any SPICE device
+  library is written; the card's values are the instances' defaults. An
+  overloaded family (LRM 6.4.2) is selected **per instance** from the
+  card's and the instance's values together: the first instance binds the
+  card to its member, and an instance that needs another member gets a
+  clone of the card, `<card>.<member>` (`rsil.rsil__2`), made once and
+  announced with a note; `show` names it as the instance's model.
 
 ## 3.2 Reading data out of a model
 

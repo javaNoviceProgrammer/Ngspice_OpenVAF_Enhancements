@@ -343,6 +343,10 @@ extern int osdi_shadowed_module(const char *type_name, const char **lib,
  * paramset family, the device type of the member the clause's rules select
  * from the card's parameters; `type` itself when it heads no family. -1 with
  * `*why` set when no member applies or more than one does. */
+extern int osdi_paramset_family_head(int type);          /* E-644 */
+extern int osdi_paramset_family_of(int type);            /* E-644 */
+extern int osdi_select_paramset_member(int type, const char *card, const char *inst,
+                                       const char *modname, char **why); /* E-644 */
 extern int osdi_select_paramset_overload(int type, const char *card,
                                          const char *modname, char **why);
 extern const char *osdi_shadowed_module_for(const char *devname,
