@@ -203,6 +203,14 @@ pub enum BodyValidationDiagnostic {
         expr: ExprId,
         node: NodeId,
     },
+    /// Enhancement-639: a contribution to a branch with a port declared `input`
+    /// at one end (LRM 5.6.1's "may issue a warning").
+    ContributeToInputPort {
+        expr: ExprId,
+        node: NodeId,
+        stmt: StmtId,
+        is_pot: bool,
+    },
     TrivialBranchAccess {
         branch: BranchWrite,
         expr: ExprId,
@@ -1714,6 +1722,29 @@ impl ExprValidator<'_, '_> {
         None
     }
 
+    /// Enhancement-639: a contribution (`self.write`) to a branch with a port
+    /// declared `input` -- and only `input`; an `inout` is both -- at either
+    /// end. LRM 5.6.1: "Implementations may issue a warning if a contribution
+    /// is made to an analog port declared with an input direction." Probes are
+    /// not judged: the clause restricts nothing about probing.
+    fn lint_input_port_write(&mut self, nodes: &[NodeId], call: BuiltIn, expr: ExprId) {
+        if !self.write {
+            return;
+        }
+        for &node in nodes {
+            let data = self.parent.db.node_data(node);
+            if data.is_input && !data.is_output {
+                self.report(BodyValidationDiagnostic::ContributeToInputPort {
+                    expr,
+                    node,
+                    stmt: self.stmt,
+                    is_pot: call == BuiltIn::potential,
+                });
+                return;
+            }
+        }
+    }
+
     fn lint_trivial_branch(&mut self, branch: BranchWrite, call: BuiltIn, expr: ExprId) {
         let is_flow = call == BuiltIn::flow;
         if self.write {
@@ -2478,6 +2509,7 @@ impl ExprValidator<'_, '_> {
                 } else {
                     BranchWrite::Unnamed { hi: lo, lo: Some(hi) }
                 };
+                self.lint_input_port_write(&[hi, lo], call, expr);
                 self.lint_trivial_branch(branch, call, expr);
                 if let Some(discipline) = self.validate_implicit_branch(expr, hi, lo) {
                     self.validate_flow_or_pot(expr, call, discipline)
@@ -2494,6 +2526,7 @@ impl ExprValidator<'_, '_> {
                     return;
                 }
                 if let Some(discipline) = self.parent.db.node_discipline(node) {
+                    self.lint_input_port_write(&[node], call, expr);
                     self.lint_trivial_branch(
                         BranchWrite::Unnamed { hi: node, lo: None },
                         call,
@@ -2548,6 +2581,7 @@ impl ExprValidator<'_, '_> {
                             }
                         }
                         BranchKind::NodeGnd(node) => {
+                            self.lint_input_port_write(&[node], call, expr);
                             self.lint_trivial_branch(
                                 BranchWrite::Unnamed { hi: node, lo: None },
                                 call,
@@ -2561,6 +2595,7 @@ impl ExprValidator<'_, '_> {
                             } else {
                                 BranchWrite::Unnamed { hi: lo, lo: Some(hi) }
                             };
+                            self.lint_input_port_write(&[hi, lo], call, expr);
                             self.lint_trivial_branch(branch, call, expr);
                             self.validate_flow_or_pot(expr, call, branch_info.discipline)
                         }

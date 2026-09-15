@@ -31,7 +31,7 @@ first pass's output filter had hidden; they are in the smaller notes.)
 | F2 | an array index outside the declared range at run time reads element 0 and drops the write, with no message; only a literal index is refused, and then as a "bus bit-select" | silent misuse — **fixed in [E-636](../../enhancements_doc/Enhancement-636.md)** |
 | F3 | a reversed part-select `p[3:0]` of a `[0:3]` bus connected to a child port means `p[0:3]`; the concatenation `{p[3],p[2],p[1],p[0]}` does reverse | silent misuse — **fixed in [E-637](../../enhancements_doc/Enhancement-637.md)** |
 | F4 | assigning to a genvar inside its own loop is substituted textually (`0 = 0 + 1`) and reported as a parse error in the generated copy | diagnostic — **fixed in [E-638](../../enhancements_doc/Enhancement-638.md)** |
-| F5 | a contribution to, or a port-flow probe of, an `input` port compiles without a word | lint gap |
+| F5 | a contribution to, or a port-flow probe of, an `input` port compiles without a word | lint gap — **fixed in [E-639](../../enhancements_doc/Enhancement-639.md)** (the contribution; the probe is unrestricted by LRM 5.6.1) |
 | F6 | diagnostic slips: runs of spaces in two messages, `--dump-json` advertised but unimplemented, a `$fatal` without arguments told to "see the message above" that was never printed, and more | wording |
 
 ## What was read and run
@@ -163,6 +163,8 @@ accepted anywhere in an analog block.)
 Repro: `hunt13/g5.va`.
 
 ## F5 — a contribution to an `input` port compiles without a word
+
+*Fixed in [E-639](../../enhancements_doc/Enhancement-639.md): lint L031 `contribution_to_input_port` (warn) is the warning LRM 5.6.1 says an implementation may issue, on every contribution form; the port-flow probe stays silent — the clause places no restriction on probing.*
 
 ```verilog
 module m(p,n); input p; inout n; electrical p,n;

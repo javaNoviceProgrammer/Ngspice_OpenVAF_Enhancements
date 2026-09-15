@@ -229,5 +229,12 @@ pub mod builtin {
         // on an integer parameter (rounded) -- was folded without a word, while
         // the same value on a netlist card is refused or warned.
         pub const lossy_integer_constant = LintData{default_lvl: Warn, documentation_id: 30};
+        // Enhancement-639 (hunt F5 of 2026-09-14): a contribution to a branch that
+        // has a port declared `input` at one end. LRM 5.6.1: "Implementations may
+        // issue a warning if a contribution is made to an analog port declared
+        // with an input direction" -- this is that warning. Warn, not deny, as
+        // the LRM has it: the model still means something (the port is driven
+        // like an inout), only its declared interface says otherwise.
+        pub const contribution_to_input_port = LintData{default_lvl: Warn, documentation_id: 31};
     }
 }

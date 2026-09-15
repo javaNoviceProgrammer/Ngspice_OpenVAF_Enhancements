@@ -1,9 +1,8 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
 use basedb::lints::builtin::{
-    const_simparam, lossy_integer_constant, param_default_out_of_range, rng_in_loop,
-    runtime_format_string,
-    trivial_probe, unknown_analysis_name, unknown_limit_function, unknown_simparam,
-    variant_const_simparam,
+    const_simparam, contribution_to_input_port, lossy_integer_constant,
+    param_default_out_of_range, rng_in_loop, runtime_format_string, trivial_probe,
+    unknown_analysis_name, unknown_limit_function, unknown_simparam, variant_const_simparam,
 };
 use basedb::lints::{self, Lint, LintSrc};
 use basedb::{AstIdMap, BaseDB, FileId};
@@ -156,6 +155,11 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             BodyValidationDiagnostic::TrivialBranchAccess { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, trivial_probe);
                 Some((trivial_probe, src))
+            }
+            // Enhancement-639
+            BodyValidationDiagnostic::ContributeToInputPort { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, contribution_to_input_port);
+                Some((contribution_to_input_port, src))
             }
             BodyValidationDiagnostic::RngInLoop { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, rng_in_loop);
@@ -1680,6 +1684,32 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     ])
             }
 
+            // Enhancement-639
+            BodyValidationDiagnostic::ContributeToInputPort { expr, node, is_pot, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let db: &dyn hir_def::db::HirDefDB = self.db.upcast();
+                let name = db.node_data(node).name.to_string();
+                let what = if is_pot { "a potential" } else { "a flow" };
+                Report::warning()
+                    .with_message(format!("contribution to the input port '{name}'"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!("{what} contribution to a branch on '{name}', which is declared `input`"),
+                    }])
+                    .with_notes(vec![
+                        "LRM 5.6.1: an `input` port is one the module reads; a contribution drives it, and \
+                         'implementations may issue a warning if a contribution is made to an analog port \
+                         declared with an input direction' -- this is that warning"
+                            .to_owned(),
+                        format!(
+                            "help: declare '{name}' `inout` if the module drives it, or keep the declaration \
+                             and silence this with (* openvaf_allow=\"contribution_to_input_port\" *) on the \
+                             statement"
+                        ),
+                    ])
+            }
             BodyValidationDiagnostic::TrivialBranchAccess { branch, expr, .. } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 let db = self.db.upcast();
