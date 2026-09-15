@@ -27,7 +27,7 @@ first pass's output filter had hidden; they are in the smaller notes.)
 
 | # | finding | severity |
 |---|---|---|
-| F1 | an integer parameter's real range bounds are rounded before the run-time check, so `from (1.5:2.5)` refuses every value (2 included) and `from (0.5:2.5]` refuses 1 and accepts 3 — while the compile-time default check uses the true bounds | correctness |
+| F1 | an integer parameter's real range bounds are rounded before the run-time check, so `from (1.5:2.5)` refuses every value (2 included) and `from (0.5:2.5]` refuses 1 and accepts 3 — while the compile-time default check uses the true bounds | correctness — **fixed in [E-635](../../enhancements_doc/Enhancement-635.md)** |
 | F2 | an array index outside the declared range at run time reads element 0 and drops the write, with no message; only a literal index is refused, and then as a "bus bit-select" | silent misuse |
 | F3 | a reversed part-select `p[3:0]` of a `[0:3]` bus connected to a child port means `p[0:3]`; the concatenation `{p[3],p[2],p[1],p[0]}` does reverse | silent misuse |
 | F4 | assigning to a genvar inside its own loop is substituted textually (`0 = 0 + 1`) and reported as a parse error in the generated copy | diagnostic |
@@ -46,6 +46,8 @@ unfiltered. The probe files stay in the session scratchpad (`hunt13/*.va`,
 `*.cir`, harness `h.py`).
 
 ## F1 — an integer parameter's real range bounds are rounded before the run-time check
+
+*Fixed in [E-635](../../enhancements_doc/Enhancement-635.md): the bound keeps its real type and the parameter's value is compared as a real against it; a range no integer satisfies is refused at compile time.*
 
 ```verilog
 parameter integer k = 2 from (1.5:2.5);   // the only legal value is 2

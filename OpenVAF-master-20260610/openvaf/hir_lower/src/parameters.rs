@@ -1,7 +1,10 @@
 use std::f64::NEG_INFINITY;
 use std::mem::replace;
 
-use hir::{BodyRef, CompilationDB, ConstraintValue, Expr, ExprId, ParamConstraint, Parameter, Ref, Type};
+use hir::{
+    BodyRef, CompilationDB, ConstraintValue, Expr, ExprId, Literal, ParamConstraint, Parameter, Ref,
+    Type,
+};
 use lasso::Rodeo;
 use mir::builder::InstBuilder;
 use mir::{Block, FuncRef, Function, Opcode, Value, FALSE, GRAVESTONE, INFINITY};
@@ -19,21 +22,36 @@ struct CmpOps {
     lt: Option<Opcode>,
     le: Option<Opcode>,
     eq: Opcode,
+    /// Enhancement-635: the parameter is an integer, so a real bound (which
+    /// keeps its type since Enhancement-635, see `hir_ty`) is compared in the
+    /// real domain against the parameter's value cast to a real.
+    is_int: bool,
 }
 
 impl CmpOps {
     fn from_ty(ty: &Type) -> Self {
         match ty {
-            Type::Real => CmpOps { lt: Some(Opcode::Flt), le: Some(Opcode::Fle), eq: Opcode::Feq },
-            Type::Integer => {
-                CmpOps { lt: Some(Opcode::Ilt), le: Some(Opcode::Ile), eq: Opcode::Ieq }
-            }
-            Type::String => CmpOps { lt: None, le: None, eq: Opcode::Seq },
+            Type::Real => CmpOps {
+                lt: Some(Opcode::Flt),
+                le: Some(Opcode::Fle),
+                eq: Opcode::Feq,
+                is_int: false,
+            },
+            Type::Integer => CmpOps {
+                lt: Some(Opcode::Ilt),
+                le: Some(Opcode::Ile),
+                eq: Opcode::Ieq,
+                is_int: true,
+            },
+            Type::String => CmpOps { lt: None, le: None, eq: Opcode::Seq, is_int: false },
             Type::Array { ty, .. } => Self::from_ty(ty),
-            Type::EmptyArray => CmpOps { lt: None, le: None, eq: Opcode::Ieq },
+            Type::EmptyArray => CmpOps { lt: None, le: None, eq: Opcode::Ieq, is_int: false },
             _ => unreachable!(),
         }
     }
+
+    const REAL: CmpOps =
+        CmpOps { lt: Some(Opcode::Flt), le: Some(Opcode::Fle), eq: Opcode::Feq, is_int: false };
 
     fn in_bound(self, inclusive: bool) -> Opcode {
         if inclusive {
@@ -255,7 +273,7 @@ impl HirInterner {
                         }
                         let (val0, val1) = match bound.val {
                             ConstraintValue::Value(val) => {
-                                let val = ctx.lower_expr(val);
+                                let val = ctx.bound_in_param_ty(val, ops);
 
                                 if let Some((min, max)) = lowered_bounds {
                                     let is_min = ctx.ctx.ins().binary1(ops.le.unwrap(), val, min);
@@ -287,8 +305,8 @@ impl HirInterner {
                                 (val, Value::reserved_value())
                             }
                             ConstraintValue::Range(range) => {
-                                let start = ctx.lower_expr(range.start);
-                                let end = ctx.lower_expr(range.end);
+                                let start = ctx.bound_in_param_ty(range.start, ops);
+                                let end = ctx.bound_in_param_ty(range.end, ops);
 
                                 if let Some((min, max)) = lowered_bounds {
                                     let (op, call) = if range.start_inclusive {
@@ -467,6 +485,34 @@ fn default_is_plain(body: &BodyRef, expr: ExprId, depth: u32) -> bool {
 }
 
 impl BodyLoweringCtx<'_, '_, '_> {
+    /// Enhancement-635: is this `from`/`exclude` bound expression a real, as
+    /// `hir_ty` typed it? For an integer parameter a real bound is no longer
+    /// cast to the integer type, and `inf`/`-inf` there are the real
+    /// infinities (a `-inf` is a unary minus whose own type inference never
+    /// records -- the literal under it carries the type).
+    fn bound_is_real(&self, expr: ExprId) -> bool {
+        match self.body.get_expr(expr) {
+            Expr::UnaryOp { expr: arg, op: UnaryOp::Neg | UnaryOp::Identity }
+                if self.body.as_literal(arg) == Some(&Literal::Inf) =>
+            {
+                self.body.expr_type(arg) == Type::Real
+            }
+            _ => self.body.needs_cast(expr).is_none() && self.body.expr_type(expr) == Type::Real,
+        }
+    }
+
+    /// Enhancement-635: the bound lowered, and converted to the PARAMETER's type
+    /// when it is a real bound of an integer parameter -- for the informational
+    /// min/max of the descriptor, which is stored in the parameter's type.
+    fn bound_in_param_ty(&mut self, expr: ExprId, ops: CmpOps) -> Value {
+        let val = self.lower_expr(expr);
+        if ops.is_int && self.bound_is_real(expr) {
+            self.ctx.insert_cast(val, &Type::Real, &Type::Integer)
+        } else {
+            val
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn check_param(
         &mut self,
@@ -479,6 +525,31 @@ impl BodyLoweringCtx<'_, '_, '_> {
         global_exit: Block,
     ) {
         let mut exit = None;
+
+        // Enhancement-635: an integer parameter's real bounds are compared as
+        // reals -- the parameter's value cast once, up front (this block
+        // dominates every comparison below), the bound in its own type. An
+        // integer bound keeps the integer comparison.
+        let param_real = if ops.is_int
+            && bounds.iter().any(|b| {
+                b.kind == kind
+                    && match b.val {
+                        ConstraintValue::Value(v) => self.bound_is_real(v),
+                        ConstraintValue::Range(r) => {
+                            self.bound_is_real(r.start) || self.bound_is_real(r.end)
+                        }
+                    }
+            }) {
+            Some(self.ctx.insert_cast(param_val, &Type::Integer, &Type::Real))
+        } else {
+            None
+        };
+        let operands = |this: &Self, bound: ExprId| -> (Value, CmpOps) {
+            match param_real {
+                Some(real) if this.bound_is_real(bound) => (real, CmpOps::REAL),
+                _ => (param_val, ops),
+            }
+        };
 
         for (i, bound) in bounds.iter().enumerate() {
             if bound.kind != kind {
@@ -496,6 +567,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
             match bound.val {
                 ConstraintValue::Value(val) => {
+                    let (param_val, ops) = operands(self, val);
                     let val = precomputed_vals
                         .get(i)
                         .map_or_else(|| self.lower_expr(val), |(val, _)| *val);
@@ -506,18 +578,20 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     self.ctx.switch_to_block(next_bb);
                 }
                 ConstraintValue::Range(range) => {
+                    let (lo_val, lo_ops) = operands(self, range.start);
+                    let (hi_val, hi_ops) = operands(self, range.end);
                     let (start, end) = precomputed_vals.get(i).map_or_else(
                         || (self.lower_expr(range.start), self.lower_expr(range.end)),
                         |(start, end)| (*start, *end),
                     );
 
-                    let op = ops.in_bound(range.start_inclusive);
-                    let is_lo_ok = self.ctx.ins().binary1(op, start, param_val);
+                    let op = lo_ops.in_bound(range.start_inclusive);
+                    let is_lo_ok = self.ctx.ins().binary1(op, start, lo_val);
 
                     let is_ok = self.ctx.make_select(is_lo_ok, |builder, is_ok| {
                         if is_ok {
-                            let op = ops.in_bound(range.end_inclusive);
-                            builder.ins().binary1(op, param_val, end)
+                            let op = hi_ops.in_bound(range.end_inclusive);
+                            builder.ins().binary1(op, hi_val, end)
                         } else {
                             FALSE
                         }

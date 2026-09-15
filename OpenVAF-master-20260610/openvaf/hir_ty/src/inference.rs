@@ -241,6 +241,7 @@ impl InferenceResult {
             expr_stmt_ty: None,
             owner: id,
             bit_candidates: AHashMap::default(),
+            int_param_bound: false,
         };
         ctx.expr_stmt_ty = match id {
             DefWithBodyId::ParamId(param) => match &db.param_data(param).ty {
@@ -254,7 +255,22 @@ impl InferenceResult {
             _ => None,
         };
 
-        for stmt in &*body.entry_stmts {
+        // Enhancement-635: an integer parameter's `from`/`exclude` bounds (every
+        // entry statement after the default) keep their own type. A real bound
+        // used to be cast to the parameter's integer type here, which ROUNDED
+        // it before the run-time comparison: `from (1.5:2.5)` became `(2:3)`
+        // and refused every value, `from (0.5:2.5]` became `(1:3]` and refused
+        // 1 while accepting 3, `exclude 2.5` excluded 3, and `inf` was
+        // i32::MAX, so `from [0:inf)` refused 2147483647. The compile-time
+        // checks on the same range (`hir_def`'s emptiness check and L027)
+        // always read the real bounds, so the two disagreed. The bound stays
+        // real and `check_param` compares the parameter's value as a real
+        // against it (an i32 is exact as an f64). The default (entry 0) is
+        // still converted to the declared type, as the LRM has it.
+        let int_param = matches!(id, DefWithBodyId::ParamId(_))
+            && ctx.expr_stmt_ty == Some(Type::Integer);
+        for (i, stmt) in body.entry_stmts.iter().enumerate() {
+            ctx.int_param_bound = int_param && i > 0;
             ctx.infere_stmt(*stmt);
         }
 
@@ -274,6 +290,10 @@ struct Ctx<'a> {
     owner: DefWithBodyId,
     /// hunt F12: numeric concatenations whose operands are all scalar integers
     bit_candidates: AHashMap<ExprId, BitCandidate>,
+    /// Enhancement-635: the statement being inferred is a `from`/`exclude`
+    /// bound of an INTEGER parameter -- a real bound keeps its type instead of
+    /// being rounded to the parameter's, and `inf` is the real infinity.
+    int_param_bound: bool,
 }
 
 impl Ctx<'_> {
@@ -399,7 +419,12 @@ impl Ctx<'_> {
                     if dst_ty == Type::Integer && matches!(val_ty, Ty::Literal(Type::String)) {
                         self.result.casts.insert(val, Type::Integer);
                     } else if dst_ty.is_assignable_to(&value_ty) {
-                        if dst_ty != value_ty {
+                        // Enhancement-635: a real bound of an integer parameter
+                        // is compared as a real, not rounded to an integer.
+                        let real_bound_of_int = self.int_param_bound
+                            && dst_ty == Type::Integer
+                            && value_ty == Type::Real;
+                        if dst_ty != value_ty && !real_bound_of_int {
                             self.result.casts.insert(val, dst_ty);
                         }
                     } else if !matches!(value_ty, Type::String)
@@ -903,7 +928,12 @@ impl Ctx<'_> {
             // +/- inf can only appear in param bounds.
             // This is checked during ast validation and when it appears it is always correct
             Expr::Literal(Literal::Inf) => {
-                if let Some(ty) = &self.expr_stmt_ty {
+                // Enhancement-635: in an integer parameter's bounds `inf` is the
+                // real infinity, so `from [0:inf)` admits every integer (it used
+                // to be i32::MAX, and the exclusive bound refused 2147483647).
+                if self.int_param_bound {
+                    self.result.expr_types[expr] = Ty::Val(Type::Real);
+                } else if let Some(ty) = &self.expr_stmt_ty {
                     self.result.expr_types[expr] = Ty::Val(ty.clone());
                 }
                 return None;

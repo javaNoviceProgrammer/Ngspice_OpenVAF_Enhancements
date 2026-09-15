@@ -572,6 +572,7 @@ impl Ctx {
         name: &Name,
         param_ast: &ast::Param,
         ast_id: ErasedAstId,
+        ty: Option<&Type>,
     ) {
         for c in param_ast.constraints() {
             if c.kind() != Some(ConstraintKind::From) {
@@ -583,11 +584,27 @@ impl Ctx {
             else {
                 continue;
             };
+            // Enhancement-635: an integer parameter's range is judged on the
+            // integers it admits -- `from (1.5:2.5)` admits 2, `from (1.5:1.9)`
+            // and `from (2:3)` admit nothing. The bounds are compared as reals
+            // at run time since Enhancement-635 (they used to be rounded first,
+            // which turned `(1.5:2.5)` into the empty `(2:3)`), so this is the
+            // question the run-time check will ask.
+            let int_empty = ty == Some(&Type::Integer) && lo <= hi && {
+                let first = if lo.fract() == 0.0 && !r.start_inclusive() { lo + 1.0 } else { lo.ceil() };
+                let last = if hi.fract() == 0.0 && !r.end_inclusive() { hi - 1.0 } else { hi.floor() };
+                first > last
+            };
             let why = if lo > hi {
                 Some(format!("its lower bound {lo} is above its upper bound {hi}"))
             } else if lo == hi && !(r.start_inclusive() && r.end_inclusive()) {
                 Some(format!(
                     "both bounds are {lo} and at least one of them is exclusive"
+                ))
+            } else if int_empty {
+                Some(format!(
+                    "the parameter is an integer and no integer lies between {lo} and {hi} \
+                     with these bounds"
                 ))
             } else {
                 None
@@ -2218,7 +2235,7 @@ impl Ctx {
             let Some(name) = param.name() else { continue };
             let base_name = name.as_name();
             let ast_id = self.source_ast_id_map.ast_id(&param);
-            self.check_param_range_satisfiable(&base_name, &param, ast_id.into());
+            self.check_param_range_satisfiable(&base_name, &param, ast_id.into(), ty.as_ref());
             // Enhancement-102: prefer the shared decl-level dims; otherwise fall
             // back to this name's own name-then-range dims (empty for a scalar).
             let widths: Vec<ast::Range> =
