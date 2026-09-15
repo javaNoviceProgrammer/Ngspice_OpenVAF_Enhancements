@@ -222,6 +222,24 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 call_args.push(self.lower_expr(expr));
             }
         }
+        // Enhancement-640: a severity task with no message (`$fatal;`, `$fatal(0);`,
+        // `$info;`) printed an empty body, which the simulator's sink dropped, so
+        // `$fatal` aborted with "see the OSDI(fatal) message above" and nothing
+        // above it. LRM 9.7.3: "these tasks shall also report the simulation run
+        // time" -- there has to be a line to carry it. The task's own name is the
+        // message.
+        if fmt_lit.is_empty() && dst == PrintDst::Console {
+            let name = match kind {
+                DisplayKind::Fatal => Some("$fatal"),
+                DisplayKind::Error => Some("$error"),
+                DisplayKind::Warn => Some("$warning"),
+                DisplayKind::Info => Some("$info"),
+                _ => None,
+            };
+            if let Some(name) = name {
+                fmt_lit.push_str(name);
+            }
+        }
         if newline {
             fmt_lit.push('\n');
         }

@@ -165,8 +165,12 @@ fn codegen_opts() -> Arg {
     Arg::new(CODEGEN)
         .long(CODEGEN)
         .short('C')
-        .help("Set a codegen option.")
-        .long_help("Set a codegen option.\nThese options are passed directly to LLVM.")
+        .help("Set a codegen option (none is consumed; kept for the batch-mode cache key).")
+        .long_help(
+            "Set a codegen option.\nNo codegen option is consumed by this compiler: the list is \
+             kept only to distinguish batch-mode cache entries, and each option given is \
+             warned and ignored.",
+        )
         .value_name("OPT[=VALUE]")
         .action(ArgAction::Append)
         .required(false)
@@ -300,7 +304,12 @@ directives (`include) resolved is emitted to stdout.",
 }
 
 fn dump_json() -> Arg {
-    flag(DUMP_JSON, "dump-json").help("Abort after lowering and serialize MIR as json.")
+    flag(DUMP_JSON, "dump-json").long_help(
+        "Serialize each module's optimized evaluation MIR as JSON, written beside the output as
+<output stem>_<module>.json (the control-flow graph, the instructions, the values, the inputs
+by kind -- parameters, voltages, currents, simulator state -- and the outputs). The library is
+still built; add --dry-run to stop after lowering and produce the JSON only.",
+    )
 }
 
 fn def_arg() -> Arg {

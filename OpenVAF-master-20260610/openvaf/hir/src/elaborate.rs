@@ -5115,7 +5115,7 @@ impl ElabCtx<'_> {
                             continue;
                         }
                         self.hier_param_errors.push(format!(
-                            "instance parameter override '.{}' names no parameter of module                              '{}'{}",
+                            "instance parameter override '.{}' names no parameter of module '{}'{}",
                             pname,
                             target.name,
                             if param_names.is_empty() {

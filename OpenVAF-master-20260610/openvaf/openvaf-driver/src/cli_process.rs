@@ -11,8 +11,8 @@ use termcolor::{Color, ColorSpec, WriteColor};
 
 use crate::cli_def::{
     ALLOW, BATCHMODE, CACHE_DIR, CODEGEN, DEFINE, DENY, DRYRUN, DUMPIR, DUMPMIR, DUMPUNOPTIR,
-    DUMPUNOPTMIR, INCLUDE, INPUT, LINTS, OPT_LVL, OUTPUT, SUPPORTED_TARGETS, TARGET, TARGET_CPU,
-    WARN,
+    DUMPUNOPTMIR, DUMP_JSON, INCLUDE, INPUT, LINTS, OPT_LVL, OUTPUT, SUPPORTED_TARGETS, TARGET,
+    TARGET_CPU, WARN,
 };
 use crate::{CompilationDestination, Opts};
 
@@ -157,9 +157,18 @@ pub fn matches_to_opts(matches: ArgMatches) -> Result<Opts> {
         CompilationDestination::Path { lib_file }
     };
 
-    let codegen_opts = matches
+    let codegen_opts: Vec<String> = matches
         .get_many::<String>(CODEGEN)
         .map_or_else(Vec::new, |values| values.cloned().collect());
+    // Enhancement-640 (hunt F6 of 2026-09-14): `-C` was described as "passed
+    // directly to LLVM" and accepted anything, but nothing consumes the list --
+    // it only reaches the batch-mode cache key. Say so instead of dropping it.
+    for opt in &codegen_opts {
+        eprintln!(
+            "warning: -C {opt}: no codegen option is consumed by this compiler (the list \
+             only distinguishes batch-mode cache entries); it is ignored"
+        );
+    }
 
     // Enhancement-460: `-D =1` names no macro. It was accepted and then silently
     // dropped, so the build behaved as though the define had never been passed and the
@@ -218,6 +227,7 @@ pub fn matches_to_opts(matches: ArgMatches) -> Result<Opts> {
         dump_unopt_mir: matches.get_flag(DUMPUNOPTMIR),
         dump_ir: matches.get_flag(DUMPIR),
         dump_unopt_ir: matches.get_flag(DUMPUNOPTIR),
+        dump_json: matches.get_flag(DUMP_JSON),
         dry_run: matches.get_flag(DRYRUN),
     })
 }

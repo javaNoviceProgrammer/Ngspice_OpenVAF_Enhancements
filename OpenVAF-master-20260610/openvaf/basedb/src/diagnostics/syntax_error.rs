@@ -471,6 +471,24 @@ impl Diagnostic for SyntaxError {
                             .to_owned(),
                     ])
             }
+            // Enhancement-640
+            SyntaxError::StmtOutsideAnalog { span } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "this statement is at module scope".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: contributions, assignments and system tasks belong inside an \
+                         analog block -- `analog begin ... end` (or `analog <statement>;` for a \
+                         single one); module scope holds declarations, instances and analog \
+                         blocks only"
+                            .to_owned(),
+                    ])
+            }
             SyntaxError::ExprTooDeep { span } => {
                 let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
                 Report::error()

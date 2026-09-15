@@ -166,7 +166,7 @@ check("[5] unknown dist / integer param / localparam / dist-without-sigma "
       "each WARN and the model still compiles",
       rc == 0
       and 'unknown distribution "banana"' in out
-      and "only a scalar real parameter" in out
+      and "statistics need a real parameter; this one is an integer" in out
       and "localparam cannot be varied" in out
       and "no effect without a 'std'" in out,
       f"rc={rc}")
@@ -176,7 +176,7 @@ check("[6] a negative sigma, std beside std_rel, and quoted GARBAGE "
       "(\"25 ohm\", \"inf\") are located ERRORS",
       rc != 0
       and out.count("expected a non-negative real literal") >= 3
-      and "mutually exclusive" in out,
+      and "are both given on this parameter; give one of them" in out,
       f"rc={rc}")
 
 # ---- [2] baseline, draws, process vs mismatch ------------------------------

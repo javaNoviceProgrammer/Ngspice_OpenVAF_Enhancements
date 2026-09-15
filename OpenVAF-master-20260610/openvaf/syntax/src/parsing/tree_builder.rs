@@ -134,6 +134,18 @@ impl<'a> SyntaxTreeBuilder<'a> {
                 }
                 return;
             }
+            // Enhancement-640: same shape, the span is the statement's first token
+            parser::SyntaxError::StmtOutsideAnalog => {
+                let span = if self.token_pos + n_trivia == self.tokens.len() {
+                    TextRange::at(self.text_pos, 0.into())
+                } else {
+                    TextRange::at(pos, self.tokens[self.token_pos + n_trivia].span.range.len())
+                };
+                if !mem::replace(&mut self.panic, true) && self.last_error.is_none() {
+                    self.errors.push(SyntaxError::StmtOutsideAnalog { span });
+                }
+                return;
+            }
             parser::SyntaxError::ExprTooDeep => {
                 let span = if self.token_pos + n_trivia == self.tokens.len() {
                     TextRange::at(self.text_pos, 0.into())

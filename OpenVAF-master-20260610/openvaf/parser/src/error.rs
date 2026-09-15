@@ -50,6 +50,12 @@ pub enum SyntaxError {
     /// grammar requires at least one; the source is well-formed token by
     /// token, so it is reported in its own right like the two above.
     EmptyCase,
+    /// Enhancement-640 (hunt F6 of 2026-09-14): a STATEMENT at module scope --
+    /// `I(p,n) <+ ...;`, `x = 1;`, `$strobe(...);`, `begin ... end` -- outside
+    /// any `analog` block. It used to be read as whatever item its first token
+    /// could start (`I(` as a net declaration with discipline `I`), and one
+    /// mistake came back as three errors, none naming it.
+    StmtOutsideAnalog,
     // ExtraToken { span: Span, token: Token },
     //
     // #[error("Unexpected Token!")]

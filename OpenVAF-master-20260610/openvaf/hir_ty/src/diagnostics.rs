@@ -97,7 +97,7 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                     ))
                     .with_notes(vec![
                         format!(
-                            "help: LRM 3.4.7: an aliasparam is an override spelling only --                              'the equations in the module shall reference the parameter by                              its original name'; write '{target}' here"
+                            "help: LRM 3.4.7: an aliasparam is an override spelling only -- 'the equations in the module shall reference the parameter by its original name'; write '{target}' here"
                         ),
                     ])
             }

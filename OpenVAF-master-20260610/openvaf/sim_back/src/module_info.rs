@@ -405,8 +405,20 @@ impl ModuleInfo {
                                 // double through the ordinary parameter setter,
                                 // and a localparam refuses netlist writes by
                                 // design (E-93).
+                                // Enhancement-640: the wording used to say "only a
+                                // scalar real parameter", but an array's elements
+                                // are real parameters and each carries its own
+                                // statistics; what cannot is a non-real type.
                                 let reason = if param.ty(db) != Type::Real {
-                                    Some("only a scalar real parameter can carry statistics")
+                                    Some(match param.ty(db) {
+                                        Type::Integer => {
+                                            "statistics need a real parameter; this one is an integer"
+                                        }
+                                        Type::String => {
+                                            "statistics need a real parameter; this one is a string"
+                                        }
+                                        _ => "statistics need a real parameter; this one is not real",
+                                    })
                                 } else if param.is_local(db) {
                                     Some(
                                         "a localparam cannot be varied by the simulator",
@@ -794,7 +806,8 @@ impl Diagnostic for IllegalSigmaAttr {
 }
 
 /// Both `std` and `std_rel` on one parameter: two different sigmas for one
-/// quantity. The absolute one wins so the model still compiles predictably.
+/// quantity, refused. (Enhancement-640: the message used to add "the absolute
+/// 'std' is used", which an error cannot mean -- the build stops.)
 struct SigmaConflict {
     attr: ast::Attr,
 }
@@ -806,8 +819,8 @@ impl Diagnostic for SigmaConflict {
             .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
         Report::error()
             .with_message(
-                "'std' and 'std_rel' attributes are mutually exclusive; \
-                 the absolute 'std' is used"
+                "'std' and 'std_rel' are both given on this parameter; give one of them -- \
+                 an absolute sigma (std) or a relative one (std_rel)"
                     .to_owned(),
             )
             .with_labels(vec![Label {

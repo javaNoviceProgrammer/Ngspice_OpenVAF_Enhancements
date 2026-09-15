@@ -713,6 +713,30 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     }])
                     .with_notes(vec![note])
             }
+            // Enhancement-640
+            BodyValidationDiagnostic::NonFiniteRealDefault { param, expr, ref value } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let name = self.db.param_data(param).name.clone();
+                let (what, help) = if value.contains("NaN") {
+                    ("is not a number", "the default folds to NaN: an undefined operation on constants")
+                } else {
+                    (
+                        "overflows to infinity",
+                        "the default folds past the largest double (about 1.8e308); a literal that \
+                         large is refused as 'too large to represent', and the same value reached \
+                         by arithmetic is no more representable",
+                    )
+                };
+                Report::error()
+                    .with_message(format!("the default of parameter '{name}' {what}"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!("folds to {value}"),
+                    }])
+                    .with_notes(vec![format!("help: {help}")])
+            }
             BodyValidationDiagnostic::PotentialOfPortFlow { expr, branch } => {
                 let FileSpan { range, file } = self.expr_src(expr);
 

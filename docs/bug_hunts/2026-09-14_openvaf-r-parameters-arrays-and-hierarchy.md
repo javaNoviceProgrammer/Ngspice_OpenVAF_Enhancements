@@ -32,7 +32,7 @@ first pass's output filter had hidden; they are in the smaller notes.)
 | F3 | a reversed part-select `p[3:0]` of a `[0:3]` bus connected to a child port means `p[0:3]`; the concatenation `{p[3],p[2],p[1],p[0]}` does reverse | silent misuse — **fixed in [E-637](../../enhancements_doc/Enhancement-637.md)** |
 | F4 | assigning to a genvar inside its own loop is substituted textually (`0 = 0 + 1`) and reported as a parse error in the generated copy | diagnostic — **fixed in [E-638](../../enhancements_doc/Enhancement-638.md)** |
 | F5 | a contribution to, or a port-flow probe of, an `input` port compiles without a word | lint gap — **fixed in [E-639](../../enhancements_doc/Enhancement-639.md)** (the contribution; the probe is unrestricted by LRM 5.6.1) |
-| F6 | diagnostic slips: runs of spaces in two messages, `--dump-json` advertised but unimplemented, a `$fatal` without arguments told to "see the message above" that was never printed, and more | wording |
+| F6 | diagnostic slips: runs of spaces in two messages, `--dump-json` advertised but unimplemented, a `$fatal` without arguments told to "see the message above" that was never printed, and more | wording — **fixed in [E-640](../../enhancements_doc/Enhancement-640.md)** (all seven) |
 
 ## What was read and run
 
@@ -183,6 +183,8 @@ default) for the missing direction; a contribution against a declared
 Repro: `hunt13/p1.va`, `in1.va`, `in2.va`, `in3.va`.
 
 ## F6 — diagnostic slips
+
+*Fixed in [E-640](../../enhancements_doc/Enhancement-640.md): the two messages, `--dump-json` implemented, message-less severity tasks print their name, the two statistics wordings, `-C` warned, an overflowing real default refused like the literal, and a statement at module scope reported once as what it is. The "bus bit-select" item was E-636's.*
 
 * **Runs of spaces** inside two messages, from a backslash continuation in
   the format string: `LRM 3.4.7: an aliasparam is an override spelling only

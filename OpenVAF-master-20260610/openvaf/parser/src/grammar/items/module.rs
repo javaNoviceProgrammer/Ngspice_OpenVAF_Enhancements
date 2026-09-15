@@ -153,6 +153,20 @@ fn module_items(p: &mut Parser) {
             IDENT if is_instantiation(p) => {
                 instantiation(p, m);
             }
+            // Enhancement-640: a statement at module scope. An identifier followed
+            // by `(`, `=` or `<+` is `I(p,n) <+`, `x = 1`, `V(a) <+` -- never a
+            // declaration or an instance (`electrical [3:0] a;` starts with an
+            // identifier too, but its second token is `[`, which stays with the
+            // net declaration) -- and a `begin` or a system task (`$strobe(`) can
+            // only start a statement. Say so, once, and skip to the end of the
+            // statement, instead of reading `I(` as a net declaration with
+            // discipline `I` and reporting three token errors.
+            IDENT if p.nth_at_ts(1, TokenSet::new(&[T!['('], T![=], T![<+]])) => {
+                stmt_outside_analog(p, m);
+            }
+            BEGIN_KW | SYSFUN => {
+                stmt_outside_analog(p, m);
+            }
             IDENT => {
                 net_decl::<false>(p, m);
             }
@@ -218,6 +232,36 @@ fn module_items(p: &mut Parser) {
             }
         }
     }
+}
+
+/// Enhancement-640: report a statement at module scope and skip it -- to the
+/// `;` that ends it (a `begin` block: to its `end`), or to the next item.
+fn stmt_outside_analog(p: &mut Parser, m: Marker) {
+    p.error(crate::SyntaxError::StmtOutsideAnalog);
+    if p.at(BEGIN_KW) {
+        let mut depth = 0i32;
+        while !p.at(EOF) {
+            match p.current() {
+                BEGIN_KW => depth += 1,
+                END_KW => {
+                    depth -= 1;
+                    if depth == 0 {
+                        p.bump_any();
+                        break;
+                    }
+                }
+                ENDMODULE_KW => break,
+                _ => {}
+            }
+            p.bump_any();
+        }
+    } else {
+        while !p.at_ts(MODULE_ITEM_RECOVERY) && !p.at(T![;]) {
+            p.bump_any();
+        }
+        p.eat(T![;]);
+    }
+    m.complete(p, ERROR);
 }
 
 fn net_decl<const NET_TYPE_FIRST: bool>(p: &mut Parser, m: Marker) {
@@ -678,6 +722,20 @@ fn generate_block_item(p: &mut Parser) {
             }
             IDENT if is_instantiation(p) => {
                 instantiation(p, m);
+            }
+            // Enhancement-640: a statement at module scope. An identifier followed
+            // by `(`, `=` or `<+` is `I(p,n) <+`, `x = 1`, `V(a) <+` -- never a
+            // declaration or an instance (`electrical [3:0] a;` starts with an
+            // identifier too, but its second token is `[`, which stays with the
+            // net declaration) -- and a `begin` or a system task (`$strobe(`) can
+            // only start a statement. Say so, once, and skip to the end of the
+            // statement, instead of reading `I(` as a net declaration with
+            // discipline `I` and reporting three token errors.
+            IDENT if p.nth_at_ts(1, TokenSet::new(&[T!['('], T![=], T![<+]])) => {
+                stmt_outside_analog(p, m);
+            }
+            BEGIN_KW | SYSFUN => {
+                stmt_outside_analog(p, m);
             }
             IDENT => {
                 net_decl::<false>(p, m);

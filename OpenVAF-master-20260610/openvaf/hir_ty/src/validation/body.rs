@@ -181,6 +181,16 @@ pub enum BodyValidationDiagnostic {
         verdict: Box<str>,
         fraction: bool,
     },
+    /// Enhancement-640: a real parameter's constant default folds to an
+    /// infinity (`1e308*10`) or to NaN -- the literal `1e400` is refused as
+    /// "too large to represent", and the arithmetic that lands on the same
+    /// value was accepted in silence.
+    NonFiniteRealDefault {
+        param: ParamId,
+        expr: ExprId,
+        /// the folded value, pre-rendered (`inf`, `-inf`, `NaN`)
+        value: Box<str>,
+    },
 
     /// Book audit (paramsets), LRM 6.4.1: a paramset statement is one of an
     /// analog function's -- no contribution, no event control, no named block.
@@ -4307,6 +4317,21 @@ fn check_param_default_range(
 
     let exprs = db.param_exprs(param);
     let Some(value) = const_num_in(db, body, infer, exprs.default, 0) else { return };
+
+    // Enhancement-640: a real default that folds to an infinity or a NaN. The
+    // literal `1e400` is refused by the lexer ("too large to represent"); the
+    // same value reached through arithmetic (`1e308*10`) was accepted and the
+    // parameter simulated as infinity. `inf` itself is not a legal default
+    // (only bounds may spell it), so a non-finite constant default is always
+    // an overflow or an undefined operation.
+    if db.param_data(param).ty != Some(Type::Integer) && !value.is_finite() {
+        diagnostics.push(BodyValidationDiagnostic::NonFiniteRealDefault {
+            param,
+            expr: exprs.default,
+            value: format!("{value}").into_boxed_str(),
+        });
+        return;
+    }
 
     // Enhancement-590: an `integer` parameter's constant default that an integer
     // cannot hold -- `parameter integer half = 2.5` ran with 3, `= 3000000000`

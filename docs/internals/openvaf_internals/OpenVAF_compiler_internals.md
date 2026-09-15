@@ -195,7 +195,7 @@ Notice how little glue there is. Two calls do almost all the work:
 
 So the front‑end/back‑end boundary is *"type‑checked module description"* (`ModuleInfo`): before it, everything is about understanding the source; after it, everything is about turning one module's meaning into numeric code.
 
-The `--dump-mir`, `--dump-unopt-mir`, `--dump-ir`, `--dump-unopt-ir` flags you can pass on the command line are threaded straight through so you can print each IR at each stage — we use them for the worked examples later.
+The `--dump-mir`, `--dump-unopt-mir`, `--dump-ir`, `--dump-unopt-ir` flags you can pass on the command line are threaded straight through so you can print each IR at each stage — we use them for the worked examples later. `--dump-json` (since E-640) writes the optimized evaluation MIR of each module as `<output stem>_<module>.json` — the control-flow graph, the instructions, the values, the inputs by kind and the outputs — for a tool to read; with `--dry-run` it is all that is produced.
 
 ### 2.3 Why so many intermediate representations?
 

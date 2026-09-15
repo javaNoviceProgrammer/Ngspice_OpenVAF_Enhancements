@@ -56,6 +56,10 @@ pub struct Opts {
     pub dump_unopt_mir: bool,
     pub dump_ir: bool,
     pub dump_unopt_ir: bool,
+    /// Enhancement-640: write each module's evaluation MIR as JSON beside the
+    /// output (`<output stem>_<module>.json`); with `dry_run` nothing else is
+    /// produced -- the "abort after lowering" the flag has always advertised.
+    pub dump_json: bool,
 }
 // pub fn dump_json(opts: &Opts) -> Result<CompilationTermination> {
 //     let input =
@@ -114,6 +118,44 @@ pub struct Opts {
 //     }
 //     Ok(CompilationTermination::Compiled { lib_file: Utf8PathBuf::default() })
 // }
+
+/// Enhancement-640: the group and name `Function::to_json` prints for one MIR
+/// parameter of the evaluation function. Every `ParamKind` is named; the
+/// simulator-state and synthesized kinds by what they are.
+fn param_json_name(db: &CompilationDB, kind: hir_lower::ParamKind) -> (&'static str, String) {
+    use hir_lower::{CurrentKind, ParamKind};
+    let node = |n: hir::Node| n.name(db).to_string();
+    match Some(kind) {
+        Some(ParamKind::Param(p)) => ("parameters", p.name(db)),
+        Some(ParamKind::ParamGiven { param }) => ("param_given", param.name(db)),
+        Some(ParamKind::ParamSysFun(f)) => ("params", format!("${f:?}")),
+        Some(ParamKind::Voltage { hi, lo: Some(lo) }) => {
+            ("voltages", format!("({}, {})", node(hi), node(lo)))
+        }
+        Some(ParamKind::Voltage { hi, lo: None }) => ("voltages", format!("({})", node(hi))),
+        Some(ParamKind::Current(CurrentKind::Unnamed { hi, lo: Some(lo) })) => {
+            ("currents", format!("({}, {})", node(hi), node(lo)))
+        }
+        Some(ParamKind::Current(CurrentKind::Unnamed { hi, lo: None })) => {
+            ("currents", format!("({})", node(hi)))
+        }
+        Some(ParamKind::Current(CurrentKind::Branch(br))) => ("currents", br.name(db).to_string()),
+        Some(ParamKind::Current(CurrentKind::Port(p))) => ("currents", format!("<{}>", node(p))),
+        Some(ParamKind::PortConnected { port }) => ("port_connected", node(port)),
+        Some(ParamKind::HiddenState(var)) => ("hidden_state", var.name(db).to_string()),
+        Some(ParamKind::ImplicitUnknown(eq)) => ("implicit_unknowns", format!("{eq:?}")),
+        Some(ParamKind::PrevState(s)) => ("lim_state", format!("prev {s:?}")),
+        Some(ParamKind::NewState(s)) => ("lim_state", format!("new {s:?}")),
+        Some(ParamKind::EventState(i)) => ("event_state", i.to_string()),
+        Some(ParamKind::Abstime) => ("sim_state", "$abstime".to_owned()),
+        Some(ParamKind::Temperature) => ("sim_state", "$temperature".to_owned()),
+        Some(ParamKind::EnableIntegration) => ("sim_state", "enable_integration".to_owned()),
+        Some(ParamKind::EnableLim) => ("sim_state", "enable_lim".to_owned()),
+        Some(ParamKind::IsInitialStep) => ("sim_state", "is_initial_step".to_owned()),
+        Some(ParamKind::IsFinalStep) => ("sim_state", "is_final_step".to_owned()),
+        None => unreachable!(),
+    }
+}
 
 pub fn expand(opts: &Opts) -> Result<CompilationTermination> {
     let start = Instant::now();
@@ -247,7 +289,7 @@ pub fn compile(opts: &Opts) -> Result<CompilationTermination> {
         );
     }
 
-    if opts.dry_run {
+    if opts.dry_run && !opts.dump_json {
         return Ok(CompilationTermination::Compiled { lib_file });
     }
     // HIR lowering into MIR happens here
@@ -327,6 +369,51 @@ pub fn compile(opts: &Opts) -> Result<CompilationTermination> {
             println!("Evaluation HIR interner of {}", module.module.name(&db));
             print_intern("  ", &db, &cmodule.intern);
             println!("");
+        }
+    }
+
+    // Enhancement-640: `--dump-json`. The flag was in `--help` ("Abort after
+    // lowering and serialize MIR as json") and answered `currently
+    // unimplemented` (hunt F6 of 2026-09-14) -- the upstream implementation had
+    // been commented out when the MIR builder changed. Each module's optimized
+    // evaluation function goes out through `Function::to_json`, which was kept
+    // alive all along, as `<output stem>_<module>.json` beside the output; with
+    // `--dry-run` the object files are dropped and nothing is linked.
+    if opts.dump_json {
+        for (module, cmodule) in modules.iter().zip(compiled_modules.iter()) {
+            let mut cfg = mir::ControlFlowGraph::new();
+            cfg.compute(&cmodule.eval);
+            let intern = &cmodule.intern;
+            let json = cmodule.eval.to_json(
+                &cfg,
+                &literals,
+                |param| match intern.params.get_index(param) {
+                    Some((kind, _)) => param_json_name(&db, *kind),
+                    // a value computed at instance setup and handed to eval
+                    // (`sim_back::init`'s cache slots follow the interner's params)
+                    None => {
+                        let slot = usize::from(param) - intern.params.len();
+                        ("cached", format!("cslot{slot}"))
+                    }
+                },
+                intern.outputs.iter().filter_map(|(kind, val)| {
+                    let name = match *kind {
+                        hir_lower::PlaceKind::Var(var) => var.name(&db).to_string(),
+                        _ => return None,
+                    };
+                    Some((name, val.expand()?))
+                }),
+            );
+            let stem = lib_file.file_stem().unwrap_or("mir");
+            let path = lib_file.with_file_name(format!("{stem}_{}.json", module.module.name(&db)));
+            std::fs::write(&path, json).with_context(|| format!("failed to write {path}"))?;
+            println!("{path}");
+        }
+        if opts.dry_run {
+            for obj_file in paths {
+                let _ = remove_file(obj_file);
+            }
+            return Ok(CompilationTermination::Compiled { lib_file });
         }
     }
 
