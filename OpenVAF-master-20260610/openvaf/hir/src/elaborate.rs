@@ -1374,6 +1374,41 @@ fn unroll_first_analog_genvar_loop(
         })?;
         let body = &text[spans[body_lo].start..spans[body_hi - 1].end];
 
+        // Enhancement-638: a genvar takes its values from its loop header only.
+        // An assignment to it inside the body (`i = i + 1;`) used to be
+        // substituted like any other use and reported by the parser as
+        // `unexpected token integer` at `0 = 0 + 1` in the generated copy, once
+        // per copy -- the user's mistake never named. The same for a nested
+        // loop that reuses the genvar as its own loop variable.
+        {
+            let body_sig: Vec<usize> =
+                (body_lo..body_hi).filter(|&i| !is_trivia(spans[i].kind)).collect();
+            for (n, &t) in body_sig.iter().enumerate() {
+                if raw(t) != gv || body_sig.get(n + 1).map(|&j| raw(j)) != Some("=") {
+                    continue;
+                }
+                let prev = n.checked_sub(1).map(|k| raw(body_sig[k]));
+                let prev2 = n.checked_sub(2).map(|k| raw(body_sig[k]));
+                if prev == Some("(") && prev2 == Some("for") {
+                    anyhow::bail!(
+                        "genvar for loop `{gv}`: a loop nested inside it uses `{gv}` as its own \
+                         loop variable; a genvar names one loop at a time -- nest with a \
+                         different genvar"
+                    )
+                }
+                let stmt_end = body_sig[n..]
+                    .iter()
+                    .find(|&&j| raw(j) == ";")
+                    .map_or(spans[t].end, |&j| spans[j].end);
+                let snippet: String = text[spans[t].start..stmt_end].chars().take(60).collect();
+                anyhow::bail!(
+                    "genvar for loop `{gv}`: `{gv}` is assigned inside its own loop body \
+                     (`{snippet}`); a genvar takes its values from the loop header only -- \
+                     give a value that changes in the body to an integer variable"
+                )
+            }
+        }
+
         // Enhancement-414: the FIRST copy keeps the body's own line breaks, so a
         // diagnostic inside the loop still reports the line the user wrote; the
         // remaining copies are folded onto one line and the whole replacement is

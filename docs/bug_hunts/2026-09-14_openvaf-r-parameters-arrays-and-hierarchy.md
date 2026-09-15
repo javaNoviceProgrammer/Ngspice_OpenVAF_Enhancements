@@ -30,7 +30,7 @@ first pass's output filter had hidden; they are in the smaller notes.)
 | F1 | an integer parameter's real range bounds are rounded before the run-time check, so `from (1.5:2.5)` refuses every value (2 included) and `from (0.5:2.5]` refuses 1 and accepts 3 — while the compile-time default check uses the true bounds | correctness — **fixed in [E-635](../../enhancements_doc/Enhancement-635.md)** |
 | F2 | an array index outside the declared range at run time reads element 0 and drops the write, with no message; only a literal index is refused, and then as a "bus bit-select" | silent misuse — **fixed in [E-636](../../enhancements_doc/Enhancement-636.md)** |
 | F3 | a reversed part-select `p[3:0]` of a `[0:3]` bus connected to a child port means `p[0:3]`; the concatenation `{p[3],p[2],p[1],p[0]}` does reverse | silent misuse — **fixed in [E-637](../../enhancements_doc/Enhancement-637.md)** |
-| F4 | assigning to a genvar inside its own loop is substituted textually (`0 = 0 + 1`) and reported as a parse error in the generated copy | diagnostic |
+| F4 | assigning to a genvar inside its own loop is substituted textually (`0 = 0 + 1`) and reported as a parse error in the generated copy | diagnostic — **fixed in [E-638](../../enhancements_doc/Enhancement-638.md)** |
 | F5 | a contribution to, or a port-flow probe of, an `input` port compiles without a word | lint gap |
 | F6 | diagnostic slips: runs of spaces in two messages, `--dump-json` advertised but unimplemented, a `$fatal` without arguments told to "see the message above" that was never printed, and more | wording |
 
@@ -135,6 +135,8 @@ one reading a user who wrote `[3:0]` did not intend. Refuse it, or honour it.
 Repro: `hunt13/bo1.va`, `bo2.va`, `bo3.va`.
 
 ## F4 — assigning to a genvar inside its own loop is reported as a parse error in the generated copy
+
+*Fixed in [E-638](../../enhancements_doc/Enhancement-638.md): the body is scanned before unrolling; an assignment to the genvar, or a nested loop reusing it, is refused with the statement quoted and the rule stated.*
 
 ```verilog
 genvar i; real s;
