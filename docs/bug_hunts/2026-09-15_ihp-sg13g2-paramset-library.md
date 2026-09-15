@@ -24,7 +24,7 @@ it, and the bugs the library's spelling of that plumbing uncovered.
 | # | finding | where | severity |
 |---|---|---|---|
 | A1 | the OOMR-to-localparam fold re-renders the **macro-expanded** tree: a macro with a trailing `//` comment swallows the rest of its line, a multi-line `\` macro glues tokens and leaks the `\` — every paramset with an out-of-module reference over r3_cmc or PSP103 fails to compile | openvaf-r, `hir/src/elaborate.rs` `elaborate_paramset_consts` | correctness — **fixed in [E-641](../../enhancements_doc/Enhancement-641.md)** (in the preprocessor: the comment is not macro text, the separators are kept) |
-| A2 | a literal seed (`$rdist_normal(1, 0, 1)`) is refused everywhere, though LRM Syntax 9-9 allows `[sign] decimal_number`; the library also uses `seed + 3` | openvaf-r, hir_ty | compliance |
+| A2 | a literal seed (`$rdist_normal(1, 0, 1)`) is refused everywhere, though LRM Syntax 9-9 allows `[sign] decimal_number`; the library also uses `seed + 3` | openvaf-r, hir_ty | compliance — **fixed in [E-642](../../enhancements_doc/Enhancement-642.md)** (any integer value; L019 recognises a seed the loop changes) |
 | B1 | paramset overload selection parses `exclude {0}` as "always satisfied", so a member whose parameter carries an `exclude` never applies; and it range-checks and counts the **module's** pass-through parameters as if they were the paramset's own (6.4.2: "only the ranges of the paramset's own parameters") — which is also why `.model rsil rsil` with nothing given picks the mismatch member `rsil__2` instead of reporting the tie | ngspice, `osdi/osdiinit.c` `osdi_range_accepts`, `osdi_select_paramset_overload` | correctness |
 | B2 | the same selection re-evaluates each bound from its E-558 text with `INPevaluate`, one ulp off the compiler's double: `parameter real l = 0.96e-6 from [0.96e-6:10e-6)` refuses its own default (`0.5e-6` happens to pass) | ngspice, `osdi/osdiinit.c` `osdi_range_bound` | correctness |
 | C1 | a paramset's own parameters are model-card-only: `n1 … rsil l=0.5u w=0.5u mm_ok=0` is refused ("it is a model parameter of this device"); a SPICE device library needs them on the instance line | OSDI export + ngspice | feature gap |
@@ -205,6 +205,8 @@ re-parsed file must mean what the tree meant.
 Repro: `pset/t3.py` (`macrofold.va`), `ihp/bound/res_typ_full.va`.
 
 ## A2 — a literal or computed seed is refused
+
+*Fixed in [E-642](../../enhancements_doc/Enhancement-642.md): the seed of `$arandom` and the `$dist_*`/`$rdist_*` family is any integer value; `$random` keeps its variable; a seed the enclosing loop changes is a fresh draw per iteration and L019 says nothing about it.*
 
 ```verilog
 g = 1.0 + 0.01 * $rdist_normal(7, 0, 1);          // Syntax 9-9: seed ::= … | [sign] decimal_number

@@ -1702,8 +1702,10 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                          nominally prescribes, would change on every model evaluation and \
                          break DC/transient convergence"
                             .to_owned(),
-                        "help: to vary a draw per iteration, use a separate call site per \
-                         sample (e.g. unroll with a genvar), or move the draw out of the loop"
+                        "help: to vary a draw per iteration, give it a seed that changes \
+                         with the loop (`$rdist_normal(seed + i, ...)`), use a separate call \
+                         site per sample (e.g. unroll with a genvar), or move the draw out \
+                         of the loop"
                             .to_owned(),
                     ])
             }

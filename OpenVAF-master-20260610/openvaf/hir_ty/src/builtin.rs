@@ -348,27 +348,34 @@ bultins! {
         fn RANDOM_SEED(Var(Integer)) -> Integer;
     }
 
+    // Enhancement-642: the seed of `$arandom` and of the `$dist_*`/`$rdist_*`
+    // family is any integer VALUE. LRM Syntax 9-8/9-9 spell it as an integer
+    // variable, an integer parameter or `[sign] decimal_number` -- the LRM's
+    // own 6.4.1 example seeds with literals, `$rdist_normal(1,0,1n,"global")`
+    // -- and the signatures below used to admit only the first two, so a
+    // literal was "expected integer variable reference ... but found integer
+    // literal". Under the Enhancement-10 design a draw is a pure function of
+    // (seed, call site) and the seed is never written back, so nothing needs
+    // an lvalue; that also admits a computed seed (`seed + 3`, the IHP
+    // corner modules' spelling; `seed + i` inside a loop, one draw per
+    // iteration). `$random` keeps its variable (Syntax 9-8's `random_seed`
+    // is a variable only; it is the Verilog-2001 function, `$arandom` the
+    // analog one). A real seed is refused as an integer value would be.
     ARANDOM = const {
         fn ARANDOM_NO_SEED() -> Integer;
-        fn ARANDOM_SEED(Var(Integer)) -> Integer;
-        fn ARANDOM_SEED_NAME(Var(Integer),Literal(String)) -> Integer;
-        fn ARNADOM_CONST_SEED(Param(Integer)) -> Integer;
-        fn ARNADOM_CONST_SEED_NAME(Param(Integer),Literal(String)) -> Integer;
+        fn ARANDOM_SEED(Val(Integer)) -> Integer;
+        fn ARANDOM_SEED_NAME(Val(Integer),Literal(String)) -> Integer;
     }
 
 
     RDIST_1_ARG = const {
-        fn RDIST_1_ARG_SEED(Var(Integer),Val(Real)) -> Real;
-        fn RDIST_1_ARG_CONST_SEED(Param(Integer),Val(Real)) -> Real;
-        fn RDIST_1_ARG_CONST_NAME(Var(Integer),Val(Real),Literal(String)) -> Real;
-        fn RDIST_1_ARG_CONST_SEED_NAME(Param(Integer),Val(Real),Literal(String)) -> Real;
+        fn RDIST_1_ARG_SEED(Val(Integer),Val(Real)) -> Real;
+        fn RDIST_1_ARG_SEED_NAME(Val(Integer),Val(Real),Literal(String)) -> Real;
     }
 
     RDIST_2_ARG = const {
-        fn RDIST_2_ARG_SEED(Var(Integer),Val(Real),Val(Real)) -> Real;
-        fn RDIST_2_ARG_CONST_SEED(Param(Integer),Val(Real),Val(Real)) -> Real;
-        fn RDIST_2_ARG_CONST_NAME(Var(Integer),Val(Real),Val(Real),Literal(String)) -> Real;
-        fn RDIST_2_ARG_CONST_SEED_NAME(Param(Integer),Val(Real),Val(Real),Literal(String)) -> Real;
+        fn RDIST_2_ARG_SEED(Val(Integer),Val(Real),Val(Real)) -> Real;
+        fn RDIST_2_ARG_SEED_NAME(Val(Integer),Val(Real),Val(Real),Literal(String)) -> Real;
     }
 
 
@@ -395,20 +402,16 @@ bultins! {
     // 20000 draws from every $dist_* function are integral, while no $rdist_*
     // column is.
     DIST_1_ARG = const {
-        fn DIST_1_ARG_SEED(Var(Integer),Val(Integer)) -> Integer;
-        fn DIST_1_ARG_CONST_SEED(Param(Integer),Val(Integer)) -> Integer;
-        fn DIST_1_ARG_CONST_NAME(Var(Integer),Val(Integer),Literal(String)) -> Integer;
-        fn DIST_1_ARG_CONST_SEED_NAME(Param(Integer),Val(Integer),Literal(String)) -> Integer;
+        fn DIST_1_ARG_SEED(Val(Integer),Val(Integer)) -> Integer;
+        fn DIST_1_ARG_SEED_NAME(Val(Integer),Val(Integer),Literal(String)) -> Integer;
     }
 
     DIST_2_ARG = const {
-        fn DIST_2_ARG_SEED(Var(Integer),Val(Integer),Val(Integer)) -> Integer;
         // Enhancement-49 audit: the middle argument said Val(Real) while every
         // sibling signature says Val(Integer) -- the integer-distribution
         // $dist_* functions take integer parameters per the LRM
-        fn DIST_2_ARG_CONST_SEED(Param(Integer),Val(Integer),Val(Integer)) -> Integer;
-        fn DIST_2_ARG_CONST_NAME(Var(Integer),Val(Integer),Val(Integer),Literal(String)) -> Integer;
-        fn DIST_2_ARG_CONST_SEED_NAME(Param(Integer),Val(Integer),Val(Integer),Literal(String)) -> Integer;
+        fn DIST_2_ARG_SEED(Val(Integer),Val(Integer),Val(Integer)) -> Integer;
+        fn DIST_2_ARG_SEED_NAME(Val(Integer),Val(Integer),Val(Integer),Literal(String)) -> Integer;
     }
 
     SIMPROBE = const {

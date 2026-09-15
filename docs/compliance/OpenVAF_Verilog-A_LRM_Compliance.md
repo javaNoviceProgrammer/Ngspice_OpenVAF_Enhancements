@@ -1388,11 +1388,23 @@ themselves did not move — only the static type — and the discrete/continuous
 split is visible in the moments: `$dist_uniform` sits at (n²−1)/12 while
 `$rdist_uniform` sits at 100/12.
 
+**The seed is any integer value** (E-642): Syntax 9-8/9-9 spell it as an
+integer variable, an integer parameter or `[sign] decimal_number` — the
+clause's own 6.4.1 example seeds with literals — and the signatures used to
+admit only the first two, refusing `$rdist_normal(1, 0, 1n, "global")` as
+"expected integer variable reference". A literal, a negative literal and a
+computed seed (`seed + 3`, the IHP corner modules' spelling; `seed + i` in a
+loop, one draw per iteration) are accepted for `$arandom` and the
+`$dist_*`/`$rdist_*` family; `$random` keeps its variable-only `random_seed`
+(Syntax 9-8). A real seed is refused as any integer argument is.
+
 ```verilog
 parameter integer seed = 1;
 real gain;
 analog begin
     gain = 1.0 + sigma * $rdist_normal(seed, 0.0, 1.0);  // per-instance mismatch
+    for (i = 0; i < 8; i = i + 1)
+        s = s + $rdist_normal(seed + i, 0.0, 1.0);       // eight different draws
     ...
 end
 ```

@@ -610,6 +610,7 @@ impl BodyValidationDiagnostic {
             diagnostics: Vec::new(),
             ctx,
             loop_depth: 0,
+            loop_writes: Vec::new(),
             disable_scopes: Vec::new(),
             in_paramset: false,
             non_const_dominator: Box::default(),
@@ -864,6 +865,11 @@ struct BodyValidator<'a> {
     /// becomes `BodyCtx::Loop` when the controlling expression is non-constant,
     /// so `repeat(3)` would be missed.
     loop_depth: u32,
+    /// Enhancement-642: the names each enclosing runtime loop can write (its
+    /// body and, for a `for`, its increment), innermost last -- what
+    /// `collect_loop_writes` finds. A draw whose seed reads one of them is a
+    /// fresh draw per iteration and not the Enhancement-395 case.
+    loop_writes: Vec<HashSet<Name>>,
     /// Enhancement-390: names of the enclosing `begin : label` blocks, mirroring
     /// `hir_lower`'s `disable_scopes`, so a `disable` can be resolved here where
     /// diagnostics exist.
@@ -1334,6 +1340,17 @@ impl BodyValidator<'_> {
                 // it can be emitted into a model that hangs the simulator.
                 self.check_loop_termination(stmt, cond);
 
+                // Enhancement-642: what the loop writes, for the seed test of
+                // the draw-in-a-loop lint (a `repeat` body counts too)
+                let mut writes = HashSet::default();
+                let mut escapes = false;
+                self.body.stmts[stmt]
+                    .walk_child_stmts(|s| self.collect_loop_writes(s, &mut writes, &mut escapes));
+                if let Stmt::ForLoop { incr, .. } = self.body.stmts[stmt] {
+                    self.collect_loop_writes(incr, &mut writes, &mut escapes);
+                }
+                self.loop_writes.push(writes);
+
                 // Enhancement-70: loop bodies get their own ctx so the
                 // analog-operator restriction is reported against "loops"
                 // (LRM 4.5.1), not "conditions".
@@ -1342,6 +1359,7 @@ impl BodyValidator<'_> {
                     s.body.stmts[stmt].walk_child_stmts(|stmt| s.validate_stmt(stmt))
                 });
                 self.loop_depth -= 1;
+                self.loop_writes.pop();
                 return;
             }
         };
@@ -1420,6 +1438,19 @@ impl BodyValidator<'_> {
         let always =
             matches!(self.body.exprs[cond], Expr::Literal(ref lit) if literal_is_truthy(lit));
         self.diagnostics.push(BodyValidationDiagnostic::NonTerminatingLoop { cond, always });
+    }
+
+    /// Enhancement-642: does a draw's seed change from one iteration of the
+    /// enclosing loops to the next? True when it reads a name some enclosing
+    /// loop writes, or when its reads cannot be judged (a user function call).
+    /// A seedless `$random` has nothing that could change.
+    fn seed_varies_in_loop(&self, seed: Option<ExprId>) -> bool {
+        let Some(seed) = seed else { return false };
+        let mut reads = HashSet::default();
+        if !self.collect_cond_reads(seed, &mut reads) {
+            return true;
+        }
+        reads.iter().any(|name| self.loop_writes.iter().any(|writes| writes.contains(name)))
     }
 
     /// Names read by a loop condition. Returns `false` when the condition cannot be
@@ -2372,7 +2403,18 @@ impl ExprValidator<'_, '_> {
             // reintroducing the convergence failure, so it is reported instead
             // of being silent. A lint, not a hard error: the code is well
             // formed and a model that does not care can allow it.
-            _ if call.is_rng() && self.parent.loop_depth != 0 => {
+            // Enhancement-642: unless the SEED changes with the loop -- a seed
+            // that reads a name the loop writes (`seed + i`, or a variable the
+            // body advances) gives a fresh draw per iteration, which is what
+            // the lint's own help line asks for. A seed that is a literal, a
+            // parameter or a loop-invariant variable is the case above. The
+            // reads are collected the way `check_loop_termination` collects a
+            // condition's; a seed the collector cannot judge (a user function
+            // in it) is given the benefit of the doubt.
+            _ if call.is_rng()
+                && self.parent.loop_depth != 0
+                && !self.parent.seed_varies_in_loop(args.first().copied()) =>
+            {
                 if let Some(name) = name.as_ref().and_then(|p| p.as_ident()) {
                     self.parent.diagnostics.push(BodyValidationDiagnostic::RngInLoop {
                         name: name.to_string().into_boxed_str(),
