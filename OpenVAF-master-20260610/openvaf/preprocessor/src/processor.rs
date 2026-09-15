@@ -647,10 +647,12 @@ impl<'a> Processor<'a> {
             }
             PreprocessorToken::CompilerDirective => match p.compiler_directive() {
                 CompilerDirective::Include => {
-                    if let Some((file_name, range)) = parse_include(p, err) {
+                    let mut trailing = Vec::new();
+                    if let Some((file_name, range)) = parse_include(p, err, &mut trailing) {
                         let span = CtxSpan { range, ctx: p.ctx() };
                         match self.include_file(file_name, span, p.dst, err, &p.working_dir) {
-                            Ok(_) => (),
+                            // Enhancement-641: the line break after the directive
+                            Ok(_) => p.dst.extend(trailing),
                             Err((FileReadError::InvalidTextFormat(err_msg), file)) => {
                                 err.push(PreprocessorDiagnostic::InvalidTextFormat {
                                     file: file.unwrap(),
@@ -879,16 +881,22 @@ impl<'a> Processor<'a> {
                         let span = p.current_span();
                         let loc = self.source_location(p);
                         self.emit_source_location(name == "`__FILE__", loc, span, p.dst);
-                        p.bump();
+                        // Enhancement-641: keep the separator after the use
+                        let end = p.end();
+                        let mut trailing = Vec::new();
+                        p.bump_keep_trivia(&mut trailing, end, err);
+                        p.dst.extend(trailing);
                         return;
                     }
                     // record the use site, so the macros expand to it from
                     // inside the called macro's text as well
                     self.srcloc_origin = Some(self.source_location(p));
-                    let (call, range) =
+                    let (call, range, trailing) =
                         parse_macro_call(p, err, &[], &mut self.source_map, p.end());
                     let span = CtxSpan { range, ctx: p.ctx() };
                     self.call_macro(&call, span, TiSlice::from_ref(&[]), p.dst, err);
+                    // Enhancement-641: the trivia that followed the call
+                    p.dst.extend(trailing);
                 }
 
                 _ => {

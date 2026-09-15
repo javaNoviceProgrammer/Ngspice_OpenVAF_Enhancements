@@ -1,0 +1,14 @@
+
+
+
+tk = 273.15       + 27.0;
+begin : blkA \
+        real t; \
+        t = (0.0); \
+        g = g + t; \
+    end
+I(p,n) <+ V(p,n);
+begin x = 1; end
+next;
+k = 273.15      ;
+273.15      

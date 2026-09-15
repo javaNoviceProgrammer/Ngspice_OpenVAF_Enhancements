@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::ops::Range;
 
 use stdx::impl_idx_math_from;
@@ -244,6 +244,17 @@ impl<'a, 'd> Parser<'a, 'd> {
         err: &mut Vec<PreprocessorDiagnostic>,
     ) {
         for token in self.full_tokens[range].iter() {
+            // Enhancement-641: IEEE 1364-2005 19.3.1 (via LRM 10.4) -- "if a
+            // one-line comment is included in the text, then the comment
+            // shall not become part of the text substituted". It used to be
+            // kept as trivia, which the parser ignores but a re-rendering of
+            // the expanded tokens (the E-563 paramset fold) cannot: laid out
+            // on one line, `273.15 // 0C in K` commented out everything after
+            // the macro use. A block comment is macro text and stays.
+            if token.kind == TokenKind::LineComment {
+                self.offset += token.len;
+                continue;
+            }
             // The IEEE 1364-2005 19.3.1 macro operators (via LRM 10.4) are
             // only meaningful in macro text. They are stored as markers the
             // expansion interprets -- `to_syntax` would report them as the
@@ -266,6 +277,71 @@ impl<'a, 'd> Parser<'a, 'd> {
                 dst.push(ParsedToken { kind: kind.into(), range });
             }
         }
+    }
+
+    /// Enhancement-641: consumes the current token without saving it, but
+    /// KEEPS the trivia that follows it -- the white space and comments up to
+    /// the next relevant token, capped at `end` -- as macro text in `dst`.
+    /// `bump` skips that trivia; for an argument reference in a `` `define ``
+    /// body the separator after it was lost, so `begin : blk \ real t;`
+    /// expanded to the tokens `blkA` `real` with nothing between them --
+    /// parsed fine, re-rendered as `blkAreal`.
+    pub(crate) fn bump_keep_trivia_to_macro(
+        &mut self,
+        dst: &mut Vec<ParsedToken<'a>>,
+        end: FullTokenIdx,
+        err: &mut Vec<PreprocessorDiagnostic>,
+    ) {
+        if self.token == PreprocessorToken::Eof {
+            return;
+        }
+        let start = self.skip_current_token();
+        // the token may itself be the last one before `end` (a file that ends
+        // in a macro use, no newline after it): nothing follows it then
+        let trivia_end = max(min(end, self.full_token_pos), start + 1u32);
+        self.save_tokens_to_macro((start + 1u32)..trivia_end, dst, err);
+        self.advance(true, trivia_end, err)
+    }
+
+    /// Enhancement-641: the same as [`Self::bump_keep_trivia_to_macro`] for a
+    /// token in ordinary text -- the trivia after it goes to `out` as output
+    /// tokens. A macro call's expansion is pushed by the caller AFTER the
+    /// call is parsed, so the trivia that followed the call has to be handed
+    /// back rather than written to the stream in place.
+    pub(crate) fn bump_keep_trivia(
+        &mut self,
+        out: &mut Vec<crate::Token>,
+        end: FullTokenIdx,
+        err: &mut Vec<PreprocessorDiagnostic>,
+    ) {
+        if self.token == PreprocessorToken::Eof {
+            return;
+        }
+        let start = self.skip_current_token();
+        let trivia_end = max(min(end, self.full_token_pos), start + 1u32);
+        for token in self.full_tokens[(start + 1u32)..trivia_end].iter() {
+            let res = Self::convert_lexer_token(*token, self.offset, self.src, err, self.ctx);
+            self.offset += token.len;
+            if let Some((kind, range)) = res {
+                out.push(crate::Token { span: CtxSpan { range, ctx: self.ctx }, kind });
+            }
+        }
+        self.advance(true, trivia_end, err)
+    }
+
+    /// Steps past the current relevant token (advancing the offset over the
+    /// token itself only) and returns its full-token index, so the caller can
+    /// decide what to do with the trivia that follows it.
+    fn skip_current_token(&mut self) -> FullTokenIdx {
+        self.previous_offset = self.offset;
+        let start = self.full_token_pos;
+        let (token, full_token_pos) =
+            mk_token(self.pos + 1u32, &self.relevant_tokens, self.full_tokens.next_key());
+        self.token = token;
+        self.full_token_pos = full_token_pos;
+        self.pos += 1u32;
+        self.offset += self.full_tokens[start].len;
+        start
     }
 
     pub(crate) fn bump_to_macro(

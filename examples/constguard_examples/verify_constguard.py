@@ -257,8 +257,12 @@ print("\na build that defines no module is not a success")
 rc, out, _ = compile_va(H + "/* unterminated\nmodule m(a,b); inout a,b; electrical a,b;"
                         " analog I(a,b) <+ 1e-3*V(a,b); endmodule\n", "unterm")
 check("[24] an unterminated /* comment is diagnosed", rc != 0, f"rc={rc}")
+# E-641: the comment opens after the `include line, and the trivia after an
+# include used to be skipped unconverted -- so the lexer's own error was never
+# reported and only the "defines no module" symptom remained. The unterminated
+# comment itself is diagnosed now.
 check("...[24] and the message says what is missing",
-      "defines no module" in out, out.splitlines()[0][:60] if out else "")
+      "expected */" in out or "defines no module" in out, out.splitlines()[0][:60] if out else "")
 rc, out, _ = compile_va(H, "nomod")
 check("[25] a file with no module at all is diagnosed", rc != 0, f"rc={rc}")
 

@@ -16,7 +16,7 @@ use crate::diagnostics::PreprocessorDiagnostic::{self, UnexpectedEof};
 use crate::parser::{CompilerDirective, FullTokenIdx, Parser, PreprocessorToken};
 use crate::processor::{Macro, MacroArg, MacroCall, ParsedToken, ParsedTokenKind, Processor};
 use crate::sourcemap::{CtxSpan, SourceMap};
-use crate::Diagnostics;
+use crate::{Diagnostics, Token};
 
 pub(crate) fn parse_condition<'a>(
     p: &mut Parser<'a, '_>,
@@ -94,9 +94,17 @@ fn parse_if_body<'a, const PROCESS: bool, const CONSIDER_ELSE: bool>(
     }
 }
 
+/// Parses `` `include "file" `` at the current token. The trivia after the
+/// string literal -- the line break that ends the directive -- comes back in
+/// `trailing` (Enhancement-641): it used to be skipped with the literal, so
+/// an included file that ends without a newline (PSP103's
+/// `PSP103_scaling.include` ends in `end`) ran into the next line of the
+/// including file, `endEPSOX`, in any re-rendering of the token stream. The
+/// caller appends it after the included file's tokens.
 pub(crate) fn parse_include<'a>(
     p: &mut Parser<'a, '_>,
     err: &mut Diagnostics,
+    trailing: &mut Vec<Token>,
 ) -> Option<(&'a str, TextRange)> {
     // let tspan = trace_span!("parsing `include");
     // let _tspan = tspan.enter();
@@ -104,7 +112,9 @@ pub(crate) fn parse_include<'a>(
     let start = p.current_range().start();
     p.bump();
     let path = p.current_text();
-    if p.expect(PreprocessorToken::StrLit, "a string literal", err) {
+    if p.at(PreprocessorToken::StrLit) {
+        let end = p.end();
+        p.bump_keep_trivia(trailing, end, err);
         // Enhancement-220: a malformed/unterminated string literal (e.g. a lone
         // `"` at EOF) can be shorter than its two delimiters; stripping the quotes
         // with `path[1..len-1]` then panicked ("slice index starts at 1 but ends
@@ -112,6 +122,7 @@ pub(crate) fn parse_include<'a>(
         let inner = path.get(1..path.len().saturating_sub(1)).unwrap_or("");
         Some((inner, TextRange::new(start, p.previous_range().end().max(start))))
     } else {
+        p.expect(PreprocessorToken::StrLit, "a string literal", err);
         None
     }
 }
@@ -229,19 +240,26 @@ fn parse_macro_token<'a>(
             // made the stored range lie and lost the spacing that `"`
             // stringification reconstructs from the source gaps.
             let range = p.current_range();
-            p.bump();
             dst.push(ParsedToken {
                 range,
                 kind: ParsedTokenKind::ArgumentReference(MacroArg::from(arg)),
             });
+            // Enhancement-641: the trivia after the reference is macro text
+            // too -- it separates the substituted argument from what follows
+            p.bump_keep_trivia_to_macro(dst, end, err);
             return;
         }
     }
 
     if p.at(PreprocessorToken::CompilerDirective) {
         if p.compiler_directive() == CompilerDirective::Macro {
-            let (call, range) = parse_macro_call(p, err, args, sm, end);
+            let (call, range, trailing) = parse_macro_call(p, err, args, sm, end);
             dst.push(ParsedToken { range, kind: ParsedTokenKind::MacroCall(call) });
+            // Enhancement-641: and the trivia after the nested call
+            dst.extend(trailing.into_iter().map(|t| ParsedToken {
+                range: t.span.range,
+                kind: ParsedTokenKind::ResolvedToken(t.kind),
+            }));
         } else {
             // Enhancement-219: a non-`Macro` compiler directive (`\`include`,
             // `\`ifdef`, `\`endif`, ...) has no meaning inside a macro-call
@@ -261,24 +279,35 @@ fn parse_macro_token<'a>(
 
     p.bump_to_macro(dst, end, err)
 }
+/// Parses `` `name `` or `` `name(arg, ...) `` at the current token. The
+/// third element is the trivia that followed the call (Enhancement-641): the
+/// separator between the expansion and the next token used to be skipped
+/// with the call's last token, so `` `twice(0.0, blkA) `` at the end of a
+/// line ran its `end` straight into the next line's first token. The caller
+/// appends it after the expansion, where it belongs.
 pub(crate) fn parse_macro_call<'a>(
     p: &mut Parser<'a, '_>,
     err: &mut Diagnostics,
     args: &[&'a str],
     sm: &mut SourceMap,
     end: FullTokenIdx,
-) -> (MacroCall<'a>, TextRange) {
+) -> (MacroCall<'a>, TextRange, Vec<Token>) {
     // let tspan = trace_span!("parsing macro call");
     // let _tspan = tspan.enter();
 
     let start = p.current_range();
     let name = &p.current_text()[1..];
     let followed = p.followed_by_bracket_without_space();
-    p.bump();
+    let mut trailing = Vec::new();
     let arg_bindings = if followed {
         p.bump();
+        p.bump();
         let mut arg_bindings = TiVec::<MacroArg, _>::with_capacity(4);
-        'outer: while !p.eat(PreprocessorToken::CloseParen) {
+        'outer: loop {
+            if p.at(PreprocessorToken::CloseParen) {
+                p.bump_keep_trivia(&mut trailing, end, err);
+                break;
+            }
             let mut dst = Vec::with_capacity(18);
             let start = p.current_range().start();
 
@@ -327,9 +356,10 @@ pub(crate) fn parse_macro_call<'a>(
         }
         arg_bindings
     } else {
+        p.bump_keep_trivia(&mut trailing, end, err);
         TiVec::new()
     };
 
     let span = start.cover(p.previous_range());
-    (MacroCall { name, arg_bindings }, span)
+    (MacroCall { name, arg_bindings }, span, trailing)
 }

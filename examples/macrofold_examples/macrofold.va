@@ -1,0 +1,50 @@
+// Enhancement-641: a paramset with an out-of-module reference over a module
+// whose body is built from macros. The E-563 fold re-renders the expanded
+// token stream and re-parses it; every construct below used to break that
+// rendering -- a `//` comment kept as macro text, the separator after an
+// argument reference and after a macro call dropped, an included file that
+// ends without a newline glued to the next line.
+`include "disciplines.vams"
+
+`define TABS 273.15      // 0C in K -- IEEE 1364-2005 19.3.1: not macro text
+`define twice(x, blk) \
+    begin : blk \
+        real t; \
+        t = (x); \
+        g = g + t; \
+    end
+`define K `TABS
+`define GAIN(a) a * 1.0
+
+module res_va(p, n);
+    inout p, n; electrical p, n;
+    parameter real r = 1k from (0:inf);
+    real g, tk;
+    analog begin
+        tk = `TABS + 27.0;
+        g = 1.0 / r;
+        `twice(0.0, blkA)
+        `twice(0.0, blkB)
+        `include "macrofold_tail.include"
+        g = `GAIN(g);
+        I(p,n) <+ V(p,n) * g * (tk / (`K + 27.0));
+    end
+endmodule
+
+// the "constant module" of LRM 6.4.1
+module consts ();
+    localparam real rsh = 7.0;
+    localparam real scale = 2.0;
+endmodule
+
+// r = rsh / w * 1e-6 (7 ohm at w = 1u), rs2 doubles it through a second
+// localparam -- both are hierarchical out-of-module references, so the fold
+// re-renders the whole file, macros included
+paramset rs res_va;
+    parameter real w = 1e-6 from (0:inf);
+    .r = consts.rsh / w * 1e-6;
+endparamset
+paramset rs2 res_va;
+    parameter real w = 1e-6 from (0:inf);
+    .r = consts.rsh * consts.scale / w * 1e-6;
+endparamset

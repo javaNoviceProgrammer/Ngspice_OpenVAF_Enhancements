@@ -1,0 +1,5 @@
+// Included from macrofold.va inside the analog block. This file ends in the
+// keyword `else` with NO newline after it -- the line break that follows the
+// `include directive in the including file is the only separator between
+// that `else` and the statement that comes next (E-641).
+if (V(p,n) > 1e6) g = 0.0; else

@@ -226,3 +226,37 @@ fn source_map_triple_replacement() {
         "source_map_triple_replacement",
     )
 }
+
+/// Enhancement-641: the expanded token stream re-renders to the text the
+/// tokens mean. A macro body's trailing `//` comment is not macro text (IEEE
+/// 1364-2005 19.3.1), the trivia after an argument reference, after a macro
+/// call and after an `` `include `` directive survives, and a file that ends
+/// in a macro use or an include without a newline does not glue its last token
+/// to whatever follows the use.
+#[test]
+fn macro_text_separators() {
+    let sources = TestSourceProvider::new(vec![]);
+    // no newline at the end: the last token of the included file is `end`
+    sources.vfs.borrow_mut().add_virt_file("/tail.va", "begin x = 1; end".to_owned().into());
+    let file = sources.vfs.borrow_mut().add_virt_file(
+        "/macro_text_separators.va",
+        r#"`define TABS 273.15      // 0C in K
+`define twice(x, blk) \
+    begin : blk \
+        real t; \
+        t = (x); \
+        g = g + t; \
+    end
+`define K `TABS
+tk = `TABS + 27.0;
+`twice(0.0, blkA)
+I(p,n) <+ V(p,n);
+`include "tail.va"
+next;
+k = `K;
+`K"#
+            .to_owned()
+            .into(),
+    );
+    check_prepocessor(sources, file, "macro_text_separators")
+}
