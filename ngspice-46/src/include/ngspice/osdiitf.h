@@ -65,6 +65,12 @@ typedef struct OsdiRegistryEntry {
   const double *param_defaults;    /* E-565: the literal default of each parameter,
                                       param_opvar order, NaN when it is not a literal;
                                       NULL in an object without the symbol */
+  const uint32_t *param_own;       /* E-643 (LRM 6.4.2): 1 for a parameter declared in
+                                      the paramset itself, 0 for a target-module
+                                      parameter passed through; the selection judges
+                                      and counts only the former. param_opvar order;
+                                      NULL in an object without the symbol, when
+                                      every non-fixed parameter counts as before */
 
   /* Nature / discipline / attribute tables (OSDI_NATURES, OSDI_DISCIPLINES,
    * OSDI_ATTRIBUTES), filled at .osdi load time. The compiler has always

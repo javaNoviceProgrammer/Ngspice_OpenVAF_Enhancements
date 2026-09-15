@@ -11,13 +11,23 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 #include "ngspice/ngspice.h"
 #include "ngspice/bool.h"
 #include "ngspice/ftedefs.h"
+#include "ngspice/inpdefs.h"
 #include "numparse.h"
 
 
 bool ft_strictnumparse = FALSE;
 
 
-static int get_decimal_number(const char **p_str, double *p_val);
+/* Enhancement-643: where a decimal number's digits sit, for INPdecimal */
+struct digit_span {
+    const char *start;  /* first digit (after the sign) */
+    const char *end;    /* one past the last digit */
+    int frac;           /* digits after the decimal point */
+    double sign;
+};
+
+static int get_decimal_number(const char **p_str, double *p_val,
+                              struct digit_span *span);
 
 
 /* Parse a number. This will handle things like 10M, etc... If the number
@@ -41,10 +51,12 @@ int ft_numparse(char **p_str, bool whole, double *p_val)
 {
     double mant;
     double expo;
+    double mil = 1.0;
+    struct digit_span span;
     const char *p_cur = *p_str; /* position in string */
 
     /* Parse the mantissa (or decimal number if no exponent) */
-    if (get_decimal_number(&p_cur, &mant) < 0) {
+    if (get_decimal_number(&p_cur, &mant, &span) < 0) {
         return -1;
     }
 
@@ -55,7 +67,7 @@ int ft_numparse(char **p_str, bool whole, double *p_val)
         /* Parse another number. Note that a decimal number such as 1.23
          * is allowed as the exponent */
         ++p_cur;
-        if (get_decimal_number(&p_cur, &expo) < 0) {
+        if (get_decimal_number(&p_cur, &expo, NULL) < 0) {
             expo = 0.0;
             --p_cur; /* The "E" was not part of the number */
         }
@@ -113,7 +125,7 @@ int ft_numparse(char **p_str, bool whole, double *p_val)
         else if (((ch_cur = p_cur[1]) == 'i' || ch_cur == 'I') &&
                 (((ch_cur = p_cur[2]) == 'l') || ch_cur == 'L')) {
             expo = -6.0;
-            mant *= 25.4;
+            mil = 25.4;
             p_cur += 3;
         }
         else { /* plain m for milli */
@@ -151,10 +163,17 @@ int ft_numparse(char **p_str, bool whole, double *p_val)
 
     /* Return results */
     {
-       /* Value of number. Ternary operator used to prevent avoidable
-        * calls to pow(). */
-       const double val = *p_val = mant *
-                (expo == 0.0 ? 1.0 : pow(10.0, expo));
+       /* Enhancement-643: the digits and the whole power of ten go to
+        * strtod as one number, correctly rounded (`1.2` used to come out
+        * as 1.2000000000000002 -- see INPdecimal); an exponent that is not
+        * an integer (`1e1.5`, which this parser allows) takes the old
+        * road. */
+       const double val = *p_val =
+               (expo == floor(expo) && fabs(expo) < 100000.0)
+               ? span.sign * mil *
+                 INPdecimal(span.start, span.end, NULL, NULL,
+                            (int) expo - span.frac)
+               : mant * mil * (expo == 0.0 ? 1.0 : pow(10.0, expo));
         *p_str = (char *) p_cur; /* updated location in string */
 
         if (ft_parsedb) { /* diagnostics for parsing the number */
@@ -186,7 +205,8 @@ int ft_numparse(char **p_str, bool whole, double *p_val)
  * -1: Conversion failure. *p_val is unchanged
  * 0: Conversion OK. The string was not the representation of an integer
  * +1: Conversion OK. The string was an integer */
-static int get_decimal_number(const char **p_str, double *p_val)
+static int get_decimal_number(const char **p_str, double *p_val,
+                              struct digit_span *span)
 {
     double sign = 1.0; /* default sign multiplier if missing is 1.0 */
     const char *p_cur = *p_str;
@@ -207,6 +227,12 @@ static int get_decimal_number(const char **p_str, double *p_val)
     if ((!isdigit(ch_cur) && ch_cur != '.') ||
             ((ch_cur == '.') && !isdigit_c(p_cur[1]))) {
         return -1;
+    }
+
+    if (span) {
+        span->start = p_cur;
+        span->frac = 0;
+        span->sign = sign;
     }
 
     /* Parse and compute the number. Assuming 0-9 digits are contiguous and
@@ -236,11 +262,16 @@ static int get_decimal_number(const char **p_str, double *p_val)
             if (digit > 9) { /* not digit */
                 /* Add fractional part to intergral part from earlier */
                 val += numerator * pow(10, (double) (p0 - p_cur));
+                if (span)
+                    span->frac = (int) (p_cur - p0);
                 break;
             }
             numerator = numerator * 10.0 + (double) digit;
         }
     } /* end of case of fraction */
+
+    if (span)
+        span->end = p_cur;
 
     /* Return the value and update the position in the string */
     *p_val = sign * val;

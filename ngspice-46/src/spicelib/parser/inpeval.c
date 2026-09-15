@@ -10,6 +10,59 @@ Author: 1985 Thomas L. Quarles
 #include "inpxx.h"
 
 
+/* Enhancement-643: the value of a decimal literal, correctly rounded.
+ *
+ * `digits` .. `end` is the literal's run of digits, decimal point included
+ * (`more` .. `more_end` a second run, the digits an RKM spelling such as
+ * `4k7` writes after its scale letter; NULL otherwise), and `exp10` the power
+ * of ten the runs read as one integer are to be scaled by -- the fractions'
+ * lengths, the written exponent and the scale factor all folded in, exactly
+ * the exponent the old `mantis * pow(10, e)` used. That product rounds twice
+ * (the mantissa, then the multiplication) and lands an ulp off the nearest
+ * double for a large share of ordinary spellings: INPevaluate("1.2") was
+ * 1.2000000000000002, "0.96u" 9.600000000000001e-07, "10e-6"
+ * 9.999999999999999e-06. The OSDI models compare a card value against bounds
+ * the compiler parsed correctly, so `vmax=1.2` was refused by `from [0:1.2]`
+ * -- "value 1.2 is out of bounds" -- and the paramset selection, which
+ * re-reads a bound's text through this parser, judged a member's own default
+ * outside its own range. Handing the digits and the exponent to strtod as
+ * one number gives the correctly rounded result every C library agrees on.
+ * No decimal point is written, so the locale's separator does not matter. A
+ * run longer than the buffer (a literal of hundreds of digits) takes the old
+ * road. */
+double INPdecimal(const char *digits, const char *end,
+                  const char *more, const char *more_end, int exp10)
+{
+    char buf[96];
+    size_t n = 0;
+    int pass;
+
+    for (pass = 0; pass < 2; pass++) {
+        const char *p = pass ? more : digits;
+        const char *e = pass ? more_end : end;
+        if (!p)
+            continue;
+        for (; p < e; p++) {
+            if (*p == '.')
+                continue;
+            if (n >= 64) {
+                double mantis = 0.0;
+                for (p = digits; p < end; p++)
+                    if (*p != '.')
+                        mantis = 10 * mantis + (*p - '0');
+                for (p = more; more && p < more_end; p++)
+                    mantis = 10 * mantis + (*p - '0');
+                return mantis * pow(10.0, (double) exp10);
+            }
+            buf[n++] = *p;
+        }
+    }
+    if (n == 0)
+        return 0.0;
+    sprintf(buf + n, "e%d", exp10);
+    return strtod(buf, NULL);
+}
+
 double
 INPevaluate(char **line, int *error, int gobble)
 /* gobble: non-zero to gobble rest of token, zero to leave it alone */
@@ -64,6 +117,14 @@ INPevaluate(char **line, int *error, int gobble)
         return (0);
     }
 
+    /* Enhancement-643: the digit run(s), for INPdecimal */
+    const char *digits = here;
+    const char *digits_end = NULL;
+    const char *more = NULL;
+    const char *more_end = NULL;
+    int more_exp = 0;
+    double mil = 1.0;
+
     while (isdigit_c(*here)) {
         /* digit, so accumulate it. */
         mantis = 10 * mantis + *here - '0';
@@ -72,12 +133,13 @@ INPevaluate(char **line, int *error, int gobble)
 
     if (*here == '\0') {
         /* reached the end of token - done. */
+        double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
         if (gobble) {
             FREE(token);
         } else {
             *line = here;
         }
-        return ((double) mantis * sign);
+        return v;
     }
 
     if (*here == ':') {
@@ -85,12 +147,13 @@ INPevaluate(char **line, int *error, int gobble)
            but is part of ternary function a?b:c
            FIXME : subcircuit models still use ':' for model numbering
            Will this hurt somewhere? */
+        double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
         if (gobble) {
             FREE(token);
         } else {
             *line = here;
         }
-        return ((double) mantis * sign);
+        return v;
     }
 
     /* after decimal point! */
@@ -100,12 +163,13 @@ INPevaluate(char **line, int *error, int gobble)
 
         if (*here == '\0') {
             /* number ends in the decimal point */
+            double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
             if (gobble) {
                 FREE(token);
             } else {
                 *line = here;
             }
-            return ((double) mantis * sign);
+            return v;
         }
 
         while (isdigit_c(*here)) {
@@ -115,6 +179,8 @@ INPevaluate(char **line, int *error, int gobble)
             here++;
         }
     }
+
+    digits_end = here;
 
     /* now look for "E","e",etc to indicate an exponent */
     if ((*here == 'E') || (*here == 'e') || (*here == 'D') || (*here == 'd')) {
@@ -211,7 +277,7 @@ INPevaluate(char **line, int *error, int gobble)
                    ((here[2] == 'L') || (here[2] == 'l')))
         {
             expo1 = expo1 - 6;
-            mantis *= 25.4;     /* Mil */
+            mil = 25.4;         /* Mil */
         } else {
             expo1 = expo1 - 3;  /* m, milli */
         }
@@ -232,8 +298,9 @@ INPevaluate(char **line, int *error, int gobble)
      * mistake. Underflow stays untouched, as E-425 also decided: `1e-400` is
      * 0.0 and `1e-320` is a subnormal, and both are defined by IEEE 754. */
     {
-        double result = sign * mantis *
-                        pow(10.0, (double) (expo1 + expsgn * expo2));
+        double result = sign * mil *
+                        INPdecimal(digits, digits_end, more, more_end,
+                                   expo1 + expsgn * expo2 + more_exp);
 
         if (!isfinite(result)) {
             fprintf(stderr,
@@ -325,6 +392,14 @@ INPevaluateRKM_R(char** line, int* error, int gobble)
         return (0);
     }
 
+    /* Enhancement-643: the digit run(s), for INPdecimal */
+    const char *digits = here;
+    const char *digits_end = NULL;
+    const char *more = NULL;
+    const char *more_end = NULL;
+    int more_exp = 0;
+    double mil = 1.0;
+
     while (isdigit_c(*here)) {
         /* digit, so accumulate it. */
         mantis = 10 * mantis + *here - '0';
@@ -333,13 +408,13 @@ INPevaluateRKM_R(char** line, int* error, int gobble)
 
     if (*here == '\0') {
         /* reached the end of token - done. */
+        double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
         if (gobble) {
             FREE(token);
-        }
-        else {
+        } else {
             *line = here;
         }
-        return ((double)mantis * sign);
+        return v;
     }
 
     if (*here == ':') {
@@ -347,13 +422,13 @@ INPevaluateRKM_R(char** line, int* error, int gobble)
            but is part of ternary function a?b:c
            FIXME : subcircuit models still use ':' for model numbering
            Will this hurt somewhere? */
+        double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
         if (gobble) {
             FREE(token);
-        }
-        else {
+        } else {
             *line = here;
         }
-        return ((double)mantis * sign);
+        return v;
     }
 
     /* after decimal point! */
@@ -363,13 +438,13 @@ INPevaluateRKM_R(char** line, int* error, int gobble)
 
         if (*here == '\0') {
             /* number ends in the decimal point */
+            double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
             if (gobble) {
                 FREE(token);
-            }
-            else {
+            } else {
                 *line = here;
             }
-            return ((double)mantis * sign);
+            return v;
         }
 
         while (isdigit_c(*here)) {
@@ -379,6 +454,8 @@ INPevaluateRKM_R(char** line, int* error, int gobble)
             here++;
         }
     }
+
+    digits_end = here;
 
     /* now look for "E","e",etc to indicate an exponent */
     if ((*here == 'E') || (*here == 'e') || (*here == 'D') || (*here == 'd')) {
@@ -469,7 +546,7 @@ INPevaluateRKM_R(char** line, int* error, int gobble)
             ((here[2] == 'L') || (here[2] == 'l')))
         {
             expo1 = expo1 - 6;
-            mantis *= 25.4;     /* Mil */
+            mil = 25.4;         /* Mil */
         }
         else {
             expo1 = expo1 - 3;  /* m, M for milli */
@@ -488,13 +565,20 @@ INPevaluateRKM_R(char** line, int* error, int gobble)
     /* read a digit after multiplier */
     if (hasmulti) {
         here++;
+        more = here;
         while (isdigit_c(*here)) {
             deci = 10 * deci + *here - '0';
             expo3 = expo3 - 1;
             here++;
         }
+        more_end = here;
+        more_exp = expo3;
         mantis = mantis + deci * pow(10.0, (double)expo3);
     }
+
+    double v = sign * mil *
+        INPdecimal(digits, digits_end, more, more_end,
+                   expo1 + expsgn * expo2 + more_exp);
 
     if (gobble) {
         FREE(token);
@@ -503,8 +587,7 @@ INPevaluateRKM_R(char** line, int* error, int gobble)
         *line = here;
     }
 
-    return (sign * mantis *
-        pow(10.0, (double)(expo1 + expsgn * expo2)));
+    return v;
 }
 
 /* In addition to fcn INPevaluate() above, allow values like 4k7,
@@ -569,6 +652,14 @@ INPevaluateRKM_C(char** line, int* error, int gobble)
         return (0);
     }
 
+    /* Enhancement-643: the digit run(s), for INPdecimal */
+    const char *digits = here;
+    const char *digits_end = NULL;
+    const char *more = NULL;
+    const char *more_end = NULL;
+    int more_exp = 0;
+    double mil = 1.0;
+
     while (isdigit_c(*here)) {
         /* digit, so accumulate it. */
         mantis = 10 * mantis + *here - '0';
@@ -577,13 +668,13 @@ INPevaluateRKM_C(char** line, int* error, int gobble)
 
     if (*here == '\0') {
         /* reached the end of token - done. */
+        double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
         if (gobble) {
             FREE(token);
-        }
-        else {
+        } else {
             *line = here;
         }
-        return ((double)mantis * sign);
+        return v;
     }
 
     if (*here == ':') {
@@ -591,13 +682,13 @@ INPevaluateRKM_C(char** line, int* error, int gobble)
            but is part of ternary function a?b:c
            FIXME : subcircuit models still use ':' for model numbering
            Will this hurt somewhere? */
+        double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
         if (gobble) {
             FREE(token);
-        }
-        else {
+        } else {
             *line = here;
         }
-        return ((double)mantis * sign);
+        return v;
     }
 
     /* after decimal point! */
@@ -607,13 +698,13 @@ INPevaluateRKM_C(char** line, int* error, int gobble)
 
         if (*here == '\0') {
             /* number ends in the decimal point */
+            double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
             if (gobble) {
                 FREE(token);
-            }
-            else {
+            } else {
                 *line = here;
             }
-            return ((double)mantis * sign);
+            return v;
         }
 
         while (isdigit_c(*here)) {
@@ -623,6 +714,8 @@ INPevaluateRKM_C(char** line, int* error, int gobble)
             here++;
         }
     }
+
+    digits_end = here;
 
     /* now look for "E","e",etc to indicate an exponent */
     if ((*here == 'E') || (*here == 'e') || (*here == 'D') || (*here == 'd')) {
@@ -707,7 +800,7 @@ INPevaluateRKM_C(char** line, int* error, int gobble)
             ((here[2] == 'L') || (here[2] == 'l')))
         {
             expo1 = expo1 - 6;
-            mantis *= 25.4;     /* Mil */
+            mil = 25.4;         /* Mil */
         }
         else {
             expo1 = expo1 - 3;  /* Meg as well */
@@ -726,13 +819,20 @@ INPevaluateRKM_C(char** line, int* error, int gobble)
     /* read a digit after multiplier */
     if (hasmulti) {
         here++;
+        more = here;
         while (isdigit_c(*here)) {
             deci = 10 * deci + *here - '0';
             expo3 = expo3 - 1;
             here++;
         }
+        more_end = here;
+        more_exp = expo3;
         mantis = mantis + deci * pow(10.0, (double)expo3);
     }
+
+    double v = sign * mil *
+        INPdecimal(digits, digits_end, more, more_end,
+                   expo1 + expsgn * expo2 + more_exp);
 
     if (gobble) {
         FREE(token);
@@ -741,8 +841,7 @@ INPevaluateRKM_C(char** line, int* error, int gobble)
         *line = here;
     }
 
-    return (sign * mantis *
-        pow(10.0, (double)(expo1 + expsgn * expo2)));
+    return v;
 }
 
 /* In addition to fcn INPevaluate() above, allow values like 4k7,
@@ -807,6 +906,14 @@ INPevaluateRKM_L(char** line, int* error, int gobble)
         return (0);
     }
 
+    /* Enhancement-643: the digit run(s), for INPdecimal */
+    const char *digits = here;
+    const char *digits_end = NULL;
+    const char *more = NULL;
+    const char *more_end = NULL;
+    int more_exp = 0;
+    double mil = 1.0;
+
     while (isdigit_c(*here)) {
         /* digit, so accumulate it. */
         mantis = 10 * mantis + *here - '0';
@@ -815,13 +922,13 @@ INPevaluateRKM_L(char** line, int* error, int gobble)
 
     if (*here == '\0') {
         /* reached the end of token - done. */
+        double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
         if (gobble) {
             FREE(token);
-        }
-        else {
+        } else {
             *line = here;
         }
-        return ((double)mantis * sign);
+        return v;
     }
 
     if (*here == ':') {
@@ -829,13 +936,13 @@ INPevaluateRKM_L(char** line, int* error, int gobble)
            but is part of ternary function a?b:c
            FIXME : subcircuit models still use ':' for model numbering
            Will this hurt somewhere? */
+        double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
         if (gobble) {
             FREE(token);
-        }
-        else {
+        } else {
             *line = here;
         }
-        return ((double)mantis * sign);
+        return v;
     }
 
     /* after decimal point! */
@@ -845,13 +952,13 @@ INPevaluateRKM_L(char** line, int* error, int gobble)
 
         if (*here == '\0') {
             /* number ends in the decimal point */
+            double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
             if (gobble) {
                 FREE(token);
-            }
-            else {
+            } else {
                 *line = here;
             }
-            return ((double)mantis * sign);
+            return v;
         }
 
         while (isdigit_c(*here)) {
@@ -861,6 +968,8 @@ INPevaluateRKM_L(char** line, int* error, int gobble)
             here++;
         }
     }
+
+    digits_end = here;
 
     /* now look for "E","e",etc to indicate an exponent */
     if ((*here == 'E') || (*here == 'e') || (*here == 'D') || (*here == 'd')) {
@@ -945,7 +1054,7 @@ INPevaluateRKM_L(char** line, int* error, int gobble)
             ((here[2] == 'L') || (here[2] == 'l')))
         {
             expo1 = expo1 - 6;
-            mantis *= 25.4;     /* Mil */
+            mil = 25.4;         /* Mil */
         }
         else {
             expo1 = expo1 - 3;  /* Meg as well */
@@ -964,13 +1073,20 @@ INPevaluateRKM_L(char** line, int* error, int gobble)
     /* read a digit after multiplier */
     if (hasmulti) {
         here++;
+        more = here;
         while (isdigit_c(*here)) {
             deci = 10 * deci + *here - '0';
             expo3 = expo3 - 1;
             here++;
         }
+        more_end = here;
+        more_exp = expo3;
         mantis = mantis + deci * pow(10.0, (double)expo3);
     }
+
+    double v = sign * mil *
+        INPdecimal(digits, digits_end, more, more_end,
+                   expo1 + expsgn * expo2 + more_exp);
 
     if (gobble) {
         FREE(token);
@@ -979,8 +1095,7 @@ INPevaluateRKM_L(char** line, int* error, int gobble)
         *line = here;
     }
 
-    return (sign * mantis *
-        pow(10.0, (double)(expo1 + expsgn * expo2)));
+    return v;
 }
 
 
@@ -1040,6 +1155,14 @@ INPevaluate2(char** line, int* error, int gobble)
         return (0);
     }
 
+    /* Enhancement-643: the digit run(s), for INPdecimal */
+    const char *digits = here;
+    const char *digits_end = NULL;
+    const char *more = NULL;
+    const char *more_end = NULL;
+    int more_exp = 0;
+    double mil = 1.0;
+
     while (isdigit_c(*here)) {
         /* digit, so accumulate it. */
         mantis = 10 * mantis + *here - '0';
@@ -1048,13 +1171,13 @@ INPevaluate2(char** line, int* error, int gobble)
 
     if (*here == '\0') {
         /* reached the end of token - done. */
+        double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
         if (gobble) {
             FREE(token);
-        }
-        else {
+        } else {
             *line = here;
         }
-        return ((double)mantis * sign);
+        return v;
     }
 
     if (*here == ':') {
@@ -1062,13 +1185,13 @@ INPevaluate2(char** line, int* error, int gobble)
            but is part of ternary function a?b:c
            FIXME : subcircuit models still use ':' for model numbering
            Will this hurt somewhere? */
+        double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
         if (gobble) {
             FREE(token);
-        }
-        else {
+        } else {
             *line = here;
         }
-        return ((double)mantis * sign);
+        return v;
     }
 
     /* after decimal point! */
@@ -1078,13 +1201,13 @@ INPevaluate2(char** line, int* error, int gobble)
 
         if (*here == '\0') {
             /* number ends in the decimal point */
+            double v = sign * INPdecimal(digits, here, NULL, NULL, 0);
             if (gobble) {
                 FREE(token);
-            }
-            else {
+            } else {
                 *line = here;
             }
-            return ((double)mantis * sign);
+            return v;
         }
 
         while (isdigit_c(*here)) {
@@ -1094,6 +1217,8 @@ INPevaluate2(char** line, int* error, int gobble)
             here++;
         }
     }
+
+    digits_end = here;
 
     /* now look for "E","e",etc to indicate an exponent */
     if ((*here == 'E') || (*here == 'e') || (*here == 'D') || (*here == 'd')) {
@@ -1172,7 +1297,7 @@ INPevaluate2(char** line, int* error, int gobble)
             ((here[2] == 'L') || (here[2] == 'l')))
         {
             expo1 = expo1 - 6;
-            mantis *= 25.4;     /* Mil */
+            mil = 25.4;         /* Mil */
             here += 3;
         }
         else {
@@ -1184,6 +1309,10 @@ INPevaluate2(char** line, int* error, int gobble)
         break;
     }
 
+    double v = sign * mil *
+        INPdecimal(digits, digits_end, more, more_end,
+                   expo1 + expsgn * expo2 + more_exp);
+
     if (gobble) {
         FREE(token);
     }
@@ -1191,8 +1320,7 @@ INPevaluate2(char** line, int* error, int gobble)
         *line = here;
     }
 
-    return (sign * mantis *
-        pow(10.0, (double)(expo1 + expsgn * expo2)));
+    return v;
 }
 
 

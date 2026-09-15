@@ -723,22 +723,22 @@ nupa_is_mathfunction(const char *name)
 
 
 
-static double
-parseunit(const char *s)
-/* the Spice suffixes */
+/* Enhancement-643: the power of ten a Spice suffix stands for, 0 for none */
+static int
+unitexp(const char *s)
 {
     switch (toupper_c(s[0]))
     {
-    case 'T':  return 1e12;
-    case 'G':  return 1e9;
-    case 'K':  return 1e3;
-    case 'M':  return ciprefix("MEG", s) ? 1e6 : 1e-3;
-    case 'U':  return 1e-6;
-    case 'N':  return 1e-9;
-    case 'P':  return 1e-12;
-    case 'F':  return 1e-15;
-    case 'A':  return 1e-18;
-    default :  return 1;
+    case 'T':  return 12;
+    case 'G':  return 9;
+    case 'K':  return 3;
+    case 'M':  return ciprefix("MEG", s) ? 6 : -3;
+    case 'U':  return -6;
+    case 'N':  return -9;
+    case 'P':  return -12;
+    case 'F':  return -15;
+    case 'A':  return -18;
+    default :  return 0;
     }
 }
 
@@ -771,7 +771,27 @@ fetchnumber(dico_t *dico, const char **pi, bool *perror)
 
     }
 
-    u *= parseunit(s + n);
+    /* Enhancement-643: a suffix is folded into the number's text before it
+     * is read, so `1.1u` is the double nearest 1.1e-6 -- `u *= 1e-6` rounded
+     * a second time and landed an ulp off for a third of such spellings,
+     * which then failed the model's own `from [1.1u:...]` at the bound (the
+     * netlist parser, INPevaluate, reads the same spelling correctly since
+     * this enhancement). A mantissa that carries its own exponent keeps the
+     * multiplication. */
+    {
+        int e10 = unitexp(s + n);
+        if (e10 != 0) {
+            char buf[80];
+            if (n > 0 && n < 60 && !memchr(s, 'e', (size_t) n) &&
+                !memchr(s, 'E', (size_t) n)) {
+                memcpy(buf, s, (size_t) n);
+                sprintf(buf + n, "e%d", e10);
+                u = strtod(buf, NULL);
+            } else {
+                u *= pow(10.0, (double) e10);
+            }
+        }
+    }
 
     /* swallow unit
      *   FIXME `100MegBaz42' should emit an error message

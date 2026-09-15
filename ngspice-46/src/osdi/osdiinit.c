@@ -418,7 +418,9 @@ static double osdi_range_bound(const char **pp, double fallback)
   while (*p == ' ' || *p == '\t')
     p++;
   const char *start = p;
-  while (*p && *p != ':' && *p != ']' && *p != ')' && *p != ' ' && *p != '\t')
+  /* `,` and `}` end a member of a value set (Enhancement-643) */
+  while (*p && *p != ':' && *p != ']' && *p != ')' && *p != ' ' && *p != '\t' &&
+         *p != ',' && *p != '}')
     p++;
   size_t n = (size_t)(p - start);
   *pp = p;
@@ -476,6 +478,36 @@ static int osdi_range_accepts(const char *text, double v)
         p++;
       }
       satisfied = (lo_inc ? v >= lo : v > lo) && (hi_inc ? v <= hi : v < hi);
+    } else if (*p == '{') {
+      /* Enhancement-643: a value set -- `exclude {0}`, `from {1, 2, 4}` (the
+       * compiler writes every single-value constraint this way, E-589). It
+       * used to be read as ONE bound, `{0}`, which no number parser accepts,
+       * and an unparseable bound counts as satisfied -- so every `exclude`
+       * excluded every value, and r3_cmc's `type from [-1:1] exclude 0`
+       * disqualified each of the IHP resistor paramsets at its own default.
+       * A member the card cannot judge (an expression) gets the benefit of
+       * the doubt: a from-set accepts, an exclude-set does not exclude. */
+      int unknown = 0;
+      p++;
+      satisfied = 0;
+      for (;;) {
+        while (*p == ' ' || *p == '\t' || *p == ',')
+          p++;
+        if (*p == '}' || !*p)
+          break;
+        const char *before = p;
+        double x = osdi_range_bound(&p, NAN);
+        if (isnan(x))
+          unknown = 1;
+        else if (v == x)
+          satisfied = 1;
+        if (p == before) /* nothing consumed: a stray character */
+          p++;
+      }
+      if (*p == '}')
+        p++;
+      if (unknown && !satisfied)
+        satisfied = is_from;
     } else {
       double x = osdi_range_bound(&p, NAN);
       satisfied = isnan(x) ? 1 : (v == x);
@@ -489,6 +521,22 @@ static int osdi_range_accepts(const char *text, double v)
     }
   }
   return !any_from || in_from;
+}
+
+/* Enhancement-643 (LRM 6.4.2): is parameter `pid` of the member one of the
+ * paramset's OWN -- declared in the paramset, not a target-module parameter
+ * passed through unbound? "The simulator shall consider only the ranges of
+ * the paramset's own parameters when choosing a paramset", and the
+ * "un-overridden parameters" it counts are the paramset's. Both used to run
+ * over every non-fixed parameter: r3_cmc's `type from [-1:1] exclude 0`
+ * disqualified every IHP resistor paramset (with the `{0}` mis-parse above),
+ * and the mismatch member of `rsil`, which binds six more module parameters,
+ * had six fewer "un-overridden" ones and won a card that named neither --
+ * where the clause's answer is the tie error. An object without the
+ * OSDI_PARAMSET_OWN table (an older compiler) keeps the old reading. */
+static int osdi_param_is_own(const OsdiRegistryEntry *e, uint32_t pid)
+{
+  return !e->param_own || e->param_own[pid];
 }
 
 /* the parameter id of `name` (an alias counts) in device type t, or -1. A
@@ -600,12 +648,14 @@ int osdi_select_paramset_overload(int type, const char *card,
       }
       given[pid] = TRUE;
       const char *rt = e->param_ranges ? e->param_ranges[pid] : NULL;
-      if (numeric[i] && rt && *rt && !osdi_range_accepts(rt, vals[i]))
+      if (numeric[i] && rt && *rt && osdi_param_is_own(e, (uint32_t)pid) &&
+          !osdi_range_accepts(rt, vals[i]))
         reason = tprintf("%s: %s = %g is outside %s", label, names[i], vals[i], rt);
     }
     if (!reason && e->param_defaults && e->param_ranges) {
       for (uint32_t pid = 0; pid < d->num_params; pid++) {
-        if (given[pid] || (d->param_opvar[pid].flags & PARA_FLAG_FIXED))
+        if (given[pid] || (d->param_opvar[pid].flags & PARA_FLAG_FIXED) ||
+            !osdi_param_is_own(e, pid))
           continue;
         double dv = e->param_defaults[pid];
         const char *rt = e->param_ranges[pid];
@@ -626,7 +676,8 @@ int osdi_select_paramset_overload(int type, const char *card,
     } else {
       int un = 0;
       for (uint32_t pid = 0; pid < d->num_params; pid++)
-        if (!given[pid] && !(d->param_opvar[pid].flags & PARA_FLAG_FIXED))
+        if (!given[pid] && !(d->param_opvar[pid].flags & PARA_FLAG_FIXED) &&
+            osdi_param_is_own(e, pid))
           un++;
       survivors[n_surv] = t;
       unoverridden[n_surv] = un;
@@ -657,10 +708,56 @@ int osdi_select_paramset_overload(int type, const char *card,
     }
   }
   if (n_best > 1) {
+    /* Enhancement-643: name what would tell the tied members apart -- each
+     * one's own ranged parameters (`rsil takes mm_ok from [0:0]; rsil__2
+     * takes mm_ok from [1:1]`), which is how an overloaded family is meant
+     * to be selected (the clause's own `nch` example) */
+    char *hint = NULL;
+    for (int i = 0; i < n_surv; i++) {
+      if (unoverridden[i] != best)
+        continue;
+      int t = survivors[i];
+      const OsdiRegistryEntry *e =
+          (const OsdiRegistryEntry *)DEVices[t]->DEVpublic.registry_entry;
+      const OsdiDescriptor *d = e->descriptor;
+      char *ranged = NULL;
+      for (uint32_t pid = 0; e->param_ranges && pid < d->num_params; pid++) {
+        const char *rt = e->param_ranges[pid];
+        if ((d->param_opvar[pid].flags & PARA_FLAG_FIXED) || !osdi_param_is_own(e, pid) ||
+            !rt || !*rt)
+          continue;
+        /* a range every tied member declares alike selects nothing */
+        int common = 1;
+        for (int j = 0; j < n_surv && common; j++) {
+          if (j == i || unoverridden[j] != best)
+            continue;
+          const OsdiRegistryEntry *ej =
+              (const OsdiRegistryEntry *)DEVices[survivors[j]]->DEVpublic.registry_entry;
+          int pj = osdi_member_param(survivors[j], d->param_opvar[pid].name[0]);
+          const char *rj = pj >= 0 && ej->param_ranges ? ej->param_ranges[pj] : NULL;
+          if (!rj || strcmp(rj, rt) != 0)
+            common = 0;
+        }
+        if (common)
+          continue;
+        char *next = ranged ? tprintf("%s, %s %s", ranged, d->param_opvar[pid].name[0], rt)
+                            : tprintf("%s %s", d->param_opvar[pid].name[0], rt);
+        tfree(ranged);
+        ranged = next;
+      }
+      char *next = hint ? tprintf("%s; %s takes %s", hint, DEVices[t]->DEVpublic.name,
+                                  ranged ? ranged : "no range of its own")
+                        : tprintf("%s takes %s", DEVices[t]->DEVpublic.name,
+                                  ranged ? ranged : "no range of its own");
+      tfree(hint);
+      tfree(ranged);
+      hint = next;
+    }
     *why = tprintf("paramset '%s' is ambiguous for .model %s (LRM 6.4.2): %d members apply "
-                   "with %d un-overridden parameter(s) each -- give a parameter only one "
-                   "of them declares\n",
-                   family, modname, n_best, best);
+                   "with %d un-overridden parameter(s) each -- give a parameter whose value "
+                   "only one of them accepts: %s\n",
+                   family, modname, n_best, best, hint ? hint : "");
+    tfree(hint);
     fprintf(stderr, "Error: %s", *why);
     return -1;
   }

@@ -154,6 +154,17 @@ impl Module {
         self.id.as_intern_id().as_u32()
     }
 
+    /// Enhancement-643 (LRM 6.4.2): for the twin module of a `paramset`, the
+    /// source range of that `paramset ... endparamset` declaration -- what a
+    /// parameter declared inside it is the paramset's OWN parameter, as
+    /// opposed to a target-module parameter passed through unbound. `None`
+    /// for a module written as one.
+    pub fn paramset_decl_range(self, db: &CompilationDB) -> Option<TextRange> {
+        let loc = self.lookup(db);
+        let ast_id = loc.item_tree(db)[loc.id].paramset?;
+        Some(db.ast_id_map(loc.scope.root_file).get(ast_id).range())
+    }
+
     fn lookup(self, db: &CompilationDB) -> ModuleLoc {
         self.id.lookup(db)
     }

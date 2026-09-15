@@ -662,6 +662,10 @@ extern OsdiObjectFile load_object_file(const char *input) {
   const uint32_t *param_default_counts = (const uint32_t *)sym;
   sym = GET_SYM(handle, "OSDI_PARAM_DEFAULTS");
   const double *param_defaults_base = (const double *)sym;
+  /* Optional (Enhancement-643): which of them are the paramset's own, one
+   * uint32 per DEFAULTS entry */
+  sym = GET_SYM(handle, "OSDI_PARAMSET_OWN");
+  const uint32_t *param_own_base = (const uint32_t *)sym;
   uint32_t param_default_offset = 0;
 
   /* Nature / discipline / attribute tables. Every one is optional: a model
@@ -872,10 +876,15 @@ extern OsdiObjectFile load_object_file(const char *input) {
     }
     /* Enhancement-565: this descriptor's slice of the literal defaults */
     const double *param_defaults_ptr = NULL;
+    const uint32_t *param_own_ptr = NULL;
     if (param_default_counts && param_defaults_base) {
       uint32_t n = param_default_counts[i];
-      if (n == descr->num_params)
+      if (n == descr->num_params) {
         param_defaults_ptr = param_defaults_base + param_default_offset;
+        /* Enhancement-643: the same slice of the own-parameter flags */
+        if (param_own_base)
+          param_own_ptr = param_own_base + param_default_offset;
+      }
       param_default_offset += n;
     }
 
@@ -937,6 +946,7 @@ extern OsdiObjectFile load_object_file(const char *input) {
         .param_ranges = param_ranges_ptr,                               /* E-558 */
         .paramset_family = paramset_families ? paramset_families[i] : NULL, /* E-565 */
         .param_defaults = param_defaults_ptr,                           /* E-565 */
+        .param_own = param_own_ptr,                                     /* E-643 */
 
         .num_natures = n_natures,
         .natures = natures_base,

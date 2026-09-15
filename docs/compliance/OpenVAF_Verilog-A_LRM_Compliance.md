@@ -239,9 +239,21 @@ own, the overridden values and the un-given defaults within the declared
 ranges, then the fewest un-overridden parameters, the most ranged local
 parameters, the fewest unconnected ports — the LRM's own four-`nch`
 example selecting exactly as the clause says; none applying, or several,
-is an error naming each member's reason. ⚠️ Still refused with a located
-error: a random draw in an override (E-545's documented statistics
-design).
+is an error naming each member's reason. Enhancement-643 squared the
+`.model` route with the clause's last sentence — *"the simulator shall
+consider only the ranges of the paramset's own parameters"*: the compiler
+exports which parameters are the paramset's own (`OSDI_PARAMSET_OWN`),
+ngspice range-checks and counts only those (a target-module parameter
+passed through unbound — r3_cmc's `type from [-1:1] exclude 0` — neither
+disqualifies a member nor makes the member that binds more of them win a
+tie), reads the `{…}` value sets the compiler writes for every
+single-value constraint, and names the ranges that would break a tie
+(`rsil takes mm_ok from [0:0]; rsil__2 takes mm_ok from [1:1]`). The same
+enhancement made every netlist number the double its text names, so a
+card value at a declared bound (`vmax=1.2` against `from [0:1.2]`) is
+accepted — see §3.1 of the handbook's ngspice chapter. ⚠️ Still refused with
+a located error: a random draw in an override (E-545's documented
+statistics design).
 
 ### 3.3 Natures, disciplines, nets (LRM 3.5–3.7)
 

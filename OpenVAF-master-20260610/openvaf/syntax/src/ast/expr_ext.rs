@@ -459,7 +459,14 @@ impl ast::SiRealNumber {
             "a" => -18,
             _ => unreachable!(),
         };
-        src.parse::<f64>().unwrap() * (10_f64).powi(exp)
+        // Enhancement-643: parse the mantissa and the scale as ONE decimal
+        // number, so the value is the double nearest to what was written.
+        // `mantissa * 10^exp` rounded twice and landed an ulp off for 28% of
+        // the literals a model uses (`1.1u`, `0.34u`, `0.1n`, ...) -- and a
+        // simulator that parses the same spelling correctly then judged
+        // `w = 1.1u` outside `from [1.1u:...]`. A scaled literal carries no
+        // exponent of its own (LRM 2.6.2), so appending one is unambiguous.
+        format!("{src}e{exp}").parse::<f64>().unwrap()
     }
 }
 

@@ -394,6 +394,7 @@ pub fn compile<'a>(
         let mut any_family = false;
         let mut param_default_counts: Vec<u32> = Vec::new();
         let mut param_defaults_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
+        let mut param_own_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // Enhancement-643
 
         let descriptors: Vec<_> = osdi_modules
             .iter()
@@ -525,6 +526,10 @@ pub fn compile<'a>(
                 for v in defaults {
                     param_defaults_ll.push(cx.const_real(v));
                 }
+                // Enhancement-643: which of them are the paramset's own
+                for own in cguint.param_paramset_own() {
+                    param_own_ll.push(cx.const_unsigned_int(u32::from(own)));
+                }
 
                 // Collect declared parameter statistics for this module
                 let stats = cguint.stat_params();
@@ -577,6 +582,11 @@ pub fn compile<'a>(
                 param_default_counts.iter().map(|&n| cx.const_unsigned_int(n)).collect();
             cx.export_array("OSDI_PARAM_DEFAULT_COUNTS", cx.ty_int(), &counts_ll, true, false);
             cx.export_array("OSDI_PARAM_DEFAULTS", cx.ty_double(), &param_defaults_ll, true, false);
+            // Enhancement-643 (LRM 6.4.2): one uint32 per parameter, in the same
+            // order and counted by the same table -- 1 for a parameter declared
+            // in the paramset itself, 0 for a target-module parameter passed
+            // through; the selection judges and counts only the former
+            cx.export_array("OSDI_PARAMSET_OWN", cx.ty_int(), &param_own_ll, true, false);
         }
         cx.export_val(
             "OSDI_NUM_DESCRIPTORS",

@@ -161,7 +161,10 @@ check("[4] ...with NO stall caveat", "STALLED" not in o_ref, "clean message")
 
 # ------------------------------------------------ THE ANSWER ORACLE ----------
 print("\nstall-acceptance must not change the ANSWER")
-rc, o_loose = run(AMP, "set qpss_tol=1e-8\nqpss v(out) 1.9G 1.91G hb 2 2", "loose")
+# E-643: the deck's residual floor sits at 3.3e-8 with correctly rounded
+# netlist numbers (it was 9.5e-9 when `0.8p`, `20m`, ... were an ulp off), so
+# the loosened bound that converges the ordinary way is 1e-7
+rc, o_loose = run(AMP, "set qpss_tol=1e-7\nqpss v(out) 1.9G 1.91G hb 2 2", "loose")
 sp_s, sp_l = spectrum(o_stall), spectrum(o_loose)
 check("[5] the loosened run converges without the caveat",
       "STALLED" not in o_loose and "converged in" in o_loose, f"{iters(o_loose)} iterations")

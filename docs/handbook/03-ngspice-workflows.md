@@ -36,6 +36,15 @@ n1 in out mymod          ; instance (ports in declaration order)
   the layer's deliberate bounds.
 - Multiple instances of one model card get independent state and
   independent per-instance values of position/multiplicity parameters.
+- **A netlist number is the double its text names** (E-643). A card value
+  at a declared bound — `vmax=1.2` against `from [0:1.2]`, `l=0.96u`
+  against `[0.96u:10u)` — is accepted: ngspice's parsers used to compute
+  `mantissa × 10^exponent` and land an ulp above or below the value the
+  compiler read from the same spelling (`1.2` was 1.2000000000000002), so
+  the model's own range check refused it. The netlist parser, `alter`/
+  `let`/`print`, and `.param` all read the same spelling to the same
+  double now. One visible consequence: `0e400` is zero, not "not a
+  representable number".
 
 ## 3.2 Reading data out of a model
 

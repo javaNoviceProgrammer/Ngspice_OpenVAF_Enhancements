@@ -69,6 +69,9 @@ impl ModuleInfo {
             IndexMap::default();
 
         let ast = cu.ast(db);
+        // Enhancement-643: the paramset's own parameters are the ones declared
+        // inside its `paramset ... endparamset` (LRM 6.4.2)
+        let paramset_range = module.paramset_decl_range(db);
 
         check_probe_only_branch_shorts(db, cu, module, sink);
 
@@ -483,6 +486,8 @@ impl ModuleInfo {
                             stat,
                             range_text: param.bounds_source(db),
                             default_value: param.default_const(db),
+                            paramset_own: paramset_range
+                                .is_some_and(|r| r.contains_range(param.text_range(db))),
                         },
                     );
                 }
@@ -1164,6 +1169,11 @@ pub struct ParamInfo {
     /// Enhancement-558: the declared range as the source spells it, for the
     /// simulator's out-of-bounds message; empty without a range
     pub range_text: String,
+    /// Enhancement-643 (LRM 6.4.2): declared inside the `paramset` this
+    /// module is the twin of -- one of the paramset's own parameters, which
+    /// are the only ones its selection judges and counts; false for a
+    /// target-module parameter passed through, and for a plain module
+    pub paramset_own: bool,
 }
 
 /// Declared statistics of a parameter, exported through the OSDI

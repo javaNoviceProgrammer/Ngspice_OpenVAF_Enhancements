@@ -103,6 +103,7 @@ fn parameters() {
                         2.0,
                     ),
                     range_text: "",
+                    paramset_own: false,
                 },
             ),
             (
@@ -122,6 +123,7 @@ fn parameters() {
                         3.0,
                     ),
                     range_text: "",
+                    paramset_own: false,
                 },
             ),
             (
@@ -141,6 +143,7 @@ fn parameters() {
                         3.0,
                     ),
                     range_text: "",
+                    paramset_own: false,
                 },
             ),
         ]

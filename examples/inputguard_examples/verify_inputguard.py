@@ -424,12 +424,19 @@ def main():
         rc, out = run(NUM % tok)
         check(f"{label}", close(val(out, "@ra[resistance]"), want, 1e-9),
               str(val(out, "@ra[resistance]")))
-    for tok, label in (("1e400", "1e400 (was inf)"), ("0e400", "0e400 (was NaN)"),
+    for tok, label in (("1e400", "1e400 (was inf)"),
                        ("1e2147483648", "1e2147483648 (was signed overflow)"),
                        ("1e21474836480", "1e21474836480 (wrapped to 1)")):
         rc, out = run(NUM % tok)
         check(f"{label} is refused", "not a representable number" in out,
               out[-140:].replace("\n", " "))
+    # E-643: `0e400` is zero -- a representable number. It was refused only
+    # because 0 * pow(10, 400) is NaN; the digits and the exponent now reach
+    # strtod as one number, which reads it as the 0 it is.
+    rc, out = run(NUM % "0e400")
+    check("0e400 (was NaN) is zero, not refused", "not a representable number" not in out
+          and close(val(out, "@ra[resistance]"), 1e-12, 1e-9),
+          str(val(out, "@ra[resistance]")))
 
     # ---------------------------------------------------------------- [8]
     print("\n[8] a failing OSDI setup_model must not be masked by a later success")

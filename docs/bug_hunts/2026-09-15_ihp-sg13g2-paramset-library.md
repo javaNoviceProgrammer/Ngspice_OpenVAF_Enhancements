@@ -25,8 +25,8 @@ it, and the bugs the library's spelling of that plumbing uncovered.
 |---|---|---|---|
 | A1 | the OOMR-to-localparam fold re-renders the **macro-expanded** tree: a macro with a trailing `//` comment swallows the rest of its line, a multi-line `\` macro glues tokens and leaks the `\` — every paramset with an out-of-module reference over r3_cmc or PSP103 fails to compile | openvaf-r, `hir/src/elaborate.rs` `elaborate_paramset_consts` | correctness — **fixed in [E-641](../../enhancements_doc/Enhancement-641.md)** (in the preprocessor: the comment is not macro text, the separators are kept) |
 | A2 | a literal seed (`$rdist_normal(1, 0, 1)`) is refused everywhere, though LRM Syntax 9-9 allows `[sign] decimal_number`; the library also uses `seed + 3` | openvaf-r, hir_ty | compliance — **fixed in [E-642](../../enhancements_doc/Enhancement-642.md)** (any integer value; L019 recognises a seed the loop changes) |
-| B1 | paramset overload selection parses `exclude {0}` as "always satisfied", so a member whose parameter carries an `exclude` never applies; and it range-checks and counts the **module's** pass-through parameters as if they were the paramset's own (6.4.2: "only the ranges of the paramset's own parameters") — which is also why `.model rsil rsil` with nothing given picks the mismatch member `rsil__2` instead of reporting the tie | ngspice, `osdi/osdiinit.c` `osdi_range_accepts`, `osdi_select_paramset_overload` | correctness |
-| B2 | the same selection re-evaluates each bound from its E-558 text with `INPevaluate`, one ulp off the compiler's double: `parameter real l = 0.96e-6 from [0.96e-6:10e-6)` refuses its own default (`0.5e-6` happens to pass) | ngspice, `osdi/osdiinit.c` `osdi_range_bound` | correctness |
+| B1 | paramset overload selection parses `exclude {0}` as "always satisfied", so a member whose parameter carries an `exclude` never applies; and it range-checks and counts the **module's** pass-through parameters as if they were the paramset's own (6.4.2: "only the ranges of the paramset's own parameters") — which is also why `.model rsil rsil` with nothing given picks the mismatch member `rsil__2` instead of reporting the tie | ngspice, `osdi/osdiinit.c` `osdi_range_accepts`, `osdi_select_paramset_overload` | correctness — **fixed in [E-643](../../enhancements_doc/Enhancement-643.md)** (value sets read; only the paramset's own parameters judged and counted, exported as `OSDI_PARAMSET_OWN`; a tie names what selects) |
+| B2 | the same selection re-evaluates each bound from its E-558 text with `INPevaluate`, one ulp off the compiler's double: `parameter real l = 0.96e-6 from [0.96e-6:10e-6)` refuses its own default (`0.5e-6` happens to pass) | ngspice, `osdi/osdiinit.c` `osdi_range_bound` | correctness — **fixed in [E-643](../../enhancements_doc/Enhancement-643.md)**: the root was every ngspice number parser (`INPevaluate`, `ft_numparse`, numparam) rounding twice — `vmax=1.2` on a card was refused by `from [0:1.2]` — and the compiler's scaled literals doing the same; all read the text's nearest double now |
 | C1 | a paramset's own parameters are model-card-only: `n1 … rsil l=0.5u w=0.5u mm_ok=0` is refused ("it is a model parameter of this device"); a SPICE device library needs them on the instance line | OSDI export + ngspice | feature gap |
 | C2 | a bound module parameter that differs from a paramset parameter only in case (PSP's `SWSOA`, the paramset's `swsoa`) draws "declared more than once differing only in case" although the bound one is fixed and cannot be set | ngspice | cosmetic |
 | L1 | `.LEVEL = 103.8.2;` in the four MOS paramset files is not a number (PSP's `LEVEL` is an integer parameter); `Rparasitic`'s gnucap reference is 205.95 Ω for `R=100` at 27 °C, which needs `$simparam("tnom", 27)` to evaluate to something other than 27 | the library | upstream |
@@ -228,6 +228,8 @@ Repro: `pset/t2.py`, `pset/t6.py`.
 
 ## B1 — overload selection: `exclude {…}` and the module's pass-through parameters
 
+*Fixed in [E-643](../../enhancements_doc/Enhancement-643.md): `{a, b}` sets are read; the compiler exports which parameters are the paramset's own and the selection judges and counts only those; a tie is the LRM's error, naming the ranges that would break it.*
+
 `osdi_range_accepts` walks the E-558 range text. After `exclude` it calls
 `osdi_range_bound` on `{0}`, which `INPevaluate` cannot read, returns the
 `NAN` fallback, and the caller takes `isnan(x)` as "satisfied" — for an
@@ -255,6 +257,8 @@ the LRM's answer for that card is the tie error.
 Repro: `pset/t5.py` (`exclude`), `ihp/out/tb_res_wa.cir` (the silent pick).
 
 ## B2 — the bound text is one ulp off the default
+
+*Fixed in [E-643](../../enhancements_doc/Enhancement-643.md), and found to be wider than the selection: `INPevaluate("1.2")` was 1.2000000000000002, so a card value at a declared bound was refused by the model's own check; every ngspice number parser and the compiler's scaled literals are correctly rounded now.*
 
 ```verilog
 parameter real l = 0.96e-6 from [0.96e-6:10e-6);

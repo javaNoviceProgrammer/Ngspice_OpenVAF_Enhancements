@@ -273,6 +273,29 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         res
     }
 
+    /// Enhancement-643 (LRM 6.4.2): whether each parameter, in
+    /// `param_opvar()` order, is one of the paramset's own -- declared inside
+    /// the `paramset` this module is the twin of -- for the
+    /// `OSDI_PARAMSET_OWN` side-table (false for a builtin, a pass-through
+    /// target parameter, or any parameter of a plain module).
+    pub fn param_paramset_own(&self) -> Vec<bool> {
+        let OsdiCompilationUnit { inst_data, model_data, module, .. } = self;
+        let mut res = Vec::new();
+        for param in inst_data.params.keys() {
+            res.push(match param {
+                OsdiInstanceParam::User(param) => module.info.params[param].paramset_own,
+                OsdiInstanceParam::Builtin(_) => false,
+            });
+        }
+        for param in model_data.params.keys() {
+            if module.info.params[param].is_instance {
+                continue;
+            }
+            res.push(module.info.params[param].paramset_own);
+        }
+        res
+    }
+
     /// The declared statistics of every parameter that carries them, in
     /// `param_opvar()` order: (id, distribution flags, std, truncation,
     /// derived). `derived` (Enhancement-633, F21 of the 2026-09-12 hunt) says
