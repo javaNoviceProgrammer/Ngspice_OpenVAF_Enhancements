@@ -893,7 +893,10 @@ and a call in a constant expression, in an analog function, or on
 anything but a port is refused — are pinned end-to-end on both solvers
 by `examples/portconnected_examples/`, including the LRM's own
 `myclk`/`twoclk`/`top` example. Bus actuals may be **part-selects** — positional,
-named, or width-1 onto a scalar port (E-85):
+named, or width-1 onto a scalar port (E-85); since E-637 every bus actual
+connects positionally, a whole bus in its declared order and a part-select in
+the order written, onto the port's declared msb-to-lsb order — as the `{...}`
+concatenation always did:
 
 ```verilog
 adc2 hi (out[3:2], in);        // positional slice

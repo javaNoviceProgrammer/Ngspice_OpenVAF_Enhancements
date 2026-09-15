@@ -4563,17 +4563,28 @@ fn bind_port(
 
     let (lo, hi) = bus.min_max();
     let width = (hi - lo + 1) as usize;
+    // Enhancement-637: the port's bits in ITS declared order, msb first --
+    // the order `bind_port_concat` has always used, and the one a
+    // positional connection means: the actual's leftmost bit lands on the
+    // port's msb whichever way either side is declared.
+    let port_step: i32 = if bus.msb >= bus.lsb { -1 } else { 1 };
+    let port_bits = (0..width as i32).map(|k| bus.msb + k * port_step);
 
     // Part-select actual `base[msb:lsb]` (Enhancement-85): slice those bits
-    // of the caller's bus onto the port, ascending-to-ascending -- the same
-    // bit-order convention the full-bus slicing below uses.
+    // of the caller's bus onto the port. Enhancement-637: in the order
+    // WRITTEN, msb first, like the `{...}` concatenation it abbreviates and
+    // like E-85's array part-select as a filter argument (`cf[1:0]` is
+    // `{cf[1], cf[0]}`). The slice used to be normalised to ascending and
+    // laid onto the port ascending by index, so `p[3:0]` of a `[0:3]` bus
+    // meant `p[0:3]` while `{p[3],p[2],p[1],p[0]}` reversed.
     if let Some((base, msb, lsb)) = as_part_select(net_text) {
         let (slo, shi) = if msb <= lsb { (msb, lsb) } else { (lsb, msb) };
         let slice_width = (shi - slo + 1) as usize;
         if slice_width == width && find_matching_caller_bus_covering(caller, base, slo, shi) {
+            let src_step: i32 = if msb <= lsb { 1 } else { -1 };
             let mut bits = BTreeMap::new();
-            for bit in lo..=hi {
-                bits.insert(bit, format!("{base}[{}]", slo + (bit - lo)));
+            for (k, port_bit) in port_bits.enumerate() {
+                bits.insert(port_bit, format!("{base}[{}]", msb + k as i32 * src_step));
             }
             result.insert(port_name.clone(), PortBinding::Bus(bits));
             return;
@@ -4598,16 +4609,20 @@ fn bind_port(
         return;
     }
 
+    // Enhancement-637: a whole bus connects positionally, its msb on the
+    // port's msb, as `{p}` already did -- it used to be laid on by index
+    // value (ascending onto ascending), so `.a(p)` with `p` declared `[3:0]`
+    // and `a` `[0:3]` wired p[0] to a[0] while `.a({p})` wired it to a[3].
     let mut bits = BTreeMap::new();
-    for bit in lo..=hi {
+    for (k, port_bit) in port_bits.enumerate() {
         let text = match caller_bus {
             Some(caller_bus) => {
-                let (caller_lo, _) = caller_bus.min_max();
-                format!("{net_text}[{}]", caller_lo + (bit - lo))
+                let src_step: i32 = if caller_bus.msb >= caller_bus.lsb { -1 } else { 1 };
+                format!("{net_text}[{}]", caller_bus.msb + k as i32 * src_step)
             }
             None => net_text.to_string(),
         };
-        bits.insert(bit, text);
+        bits.insert(port_bit, text);
     }
     result.insert(port_name.clone(), PortBinding::Bus(bits));
 }

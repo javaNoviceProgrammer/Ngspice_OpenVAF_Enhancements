@@ -29,7 +29,7 @@ first pass's output filter had hidden; they are in the smaller notes.)
 |---|---|---|
 | F1 | an integer parameter's real range bounds are rounded before the run-time check, so `from (1.5:2.5)` refuses every value (2 included) and `from (0.5:2.5]` refuses 1 and accepts 3 — while the compile-time default check uses the true bounds | correctness — **fixed in [E-635](../../enhancements_doc/Enhancement-635.md)** |
 | F2 | an array index outside the declared range at run time reads element 0 and drops the write, with no message; only a literal index is refused, and then as a "bus bit-select" | silent misuse — **fixed in [E-636](../../enhancements_doc/Enhancement-636.md)** |
-| F3 | a reversed part-select `p[3:0]` of a `[0:3]` bus connected to a child port means `p[0:3]`; the concatenation `{p[3],p[2],p[1],p[0]}` does reverse | silent misuse |
+| F3 | a reversed part-select `p[3:0]` of a `[0:3]` bus connected to a child port means `p[0:3]`; the concatenation `{p[3],p[2],p[1],p[0]}` does reverse | silent misuse — **fixed in [E-637](../../enhancements_doc/Enhancement-637.md)** |
 | F4 | assigning to a genvar inside its own loop is substituted textually (`0 = 0 + 1`) and reported as a parse error in the generated copy | diagnostic |
 | F5 | a contribution to, or a port-flow probe of, an `input` port compiles without a word | lint gap |
 | F6 | diagnostic slips: runs of spaces in two messages, `--dump-json` advertised but unimplemented, a `$fatal` without arguments told to "see the message above" that was never printed, and more | wording |
@@ -112,6 +112,8 @@ A literal index is refused, but as a bus: `a[-1]` on `real a[0:2]` gets
 Repro: `hunt13/d1b.va` (reads), `d1c.va` (writes), `d3.va` (literal).
 
 ## F3 — a reversed part-select on a bus-port connection is silently un-reversed
+
+*Fixed in [E-637](../../enhancements_doc/Enhancement-637.md): every bus actual is positional — a part-select in the order written, a whole bus in its declared order — so `p[3:0]` reverses like the concatenation, and `.a(p)` agrees with `.a({p})` when the two declarations run opposite ways (the whole-bus twin found while fixing this).*
 
 ```verilog
 module ch(a,b); inout [0:3] a; inout b; electrical [0:3] a; electrical b;
