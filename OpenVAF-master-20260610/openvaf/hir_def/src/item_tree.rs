@@ -146,6 +146,10 @@ pub enum ItemTreeDiagnostic {
     /// ("unrecognized parameter (...) - ignored"); this one was dropped in
     /// silence because the override simply never matched a target parameter.
     ParamsetUnknownParam { ast_id: ErasedAstId, name: Name, target: Name },
+    /// Enhancement-645: a `paramset` assigns an ARRAY parameter of the target
+    /// (`.c = ...`) a value that is not a `'{...}` literal with exactly one leaf per
+    /// element. Each element parameter takes the leaf at its own position.
+    ParamsetArrayOverrideLength { ast_id: ErasedAstId, name: Name, expected: u32, found: u32 },
     /// Enhancement-398: a `paramset` assigns the same target parameter twice.
     /// The binder takes the FIRST match, so the later assignment was silently
     /// discarded.

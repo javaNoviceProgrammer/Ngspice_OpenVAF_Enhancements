@@ -189,6 +189,47 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                         message,
                     }])
             }
+            InferenceDiagnostic::ArrayArgLenMismatch { expr, expected, found } => {
+                let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "array argument has {found} element{} but the function's formal \
+                         declares {expected}",
+                        if found == 1 { "" } else { "s" }
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: format!("{found} elements here, {expected} expected"),
+                    }])
+                    .with_notes(vec![
+                        "help: an analog function's array formal (`input [0:2] a; real a[0:2];`) \
+                         takes an array of exactly its own size (LRM 4.7.1); pass an array of \
+                         that size, or an assignment pattern `'{...}` of the elements meant"
+                            .to_owned(),
+                    ])
+            }
+            InferenceDiagnostic::ArrayArgParamOutput { expr, ref name } => {
+                let src = self.parse.to_file_span(self.expr_range(expr), self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "output argument bound to parameter array '{name}', which cannot be \
+                         written"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: src.file,
+                        range: src.range.into(),
+                        message: "a parameter array; the function would write it".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: an `output`/`inout` array formal is copied back into the caller's \
+                         array after the call (LRM 4.7.2.2), so it needs a variable array; copy \
+                         the parameter into a `real` array first, or declare the formal `input`"
+                            .to_owned(),
+                    ])
+            }
             InferenceDiagnostic::TypeMismatch(ref err) => {
                 let src = self.parse.to_file_span(
                     self.expr_range(err.expr),

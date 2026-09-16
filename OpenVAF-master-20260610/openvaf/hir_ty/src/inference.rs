@@ -1028,7 +1028,7 @@ impl Ctx<'_> {
         // accepts it as an array value (rather than emitting the "requires a bit-select" error).
         for (arg_info, &actual) in fun_info.args.iter().zip(args) {
             if let Type::Array { ref ty, len } = arg_info.ty {
-                self.pre_resolve_array_call_arg(stmt, actual, ty, len);
+                self.pre_resolve_array_call_arg(stmt, actual, ty, len, arg_info.is_output);
             }
         }
 
@@ -1043,6 +1043,9 @@ impl Ctx<'_> {
                 } else if arg.is_output
                     && args.get(i).map_or(true, |a| {
                         !self.result.array_var_refs.contains_key(a)
+                            // Enhancement-645: a parameter array here is already
+                            // reported (`ArrayArgParamOutput`); no second error.
+                            && !self.result.array_param_refs.contains_key(a)
                     })
                 {
                     // Enhancement-33: an array output/inout formal needs a caller
@@ -1075,19 +1078,61 @@ impl Ctx<'_> {
     /// `VarId`s (recorded in `array_var_refs`) and types the argument expression as an array, so it
     /// satisfies an array-typed formal. Leaves the expression untouched (to be diagnosed normally)
     /// if it isn't a caller array of the expected length.
-    fn pre_resolve_array_call_arg(&mut self, stmt: StmtId, actual: ExprId, elem_ty: &Type, len: u32) {
+    fn pre_resolve_array_call_arg(
+        &mut self,
+        stmt: StmtId,
+        actual: ExprId,
+        elem_ty: &Type,
+        len: u32,
+        is_output: bool,
+    ) {
         let name = match &self.body.exprs[actual] {
             Expr::Path { path, port: false } => path.as_ident(),
             _ => return,
         };
-        let Some(arr) = name.and_then(|n| self.find_var_array(&n)) else { return };
-        let Some(elems) = self.array_elem_vars_flat(stmt, actual, &arr) else { return };
-        if elems.len() as u32 != len {
+        let Some(name) = name else { return };
+        let array_ty = Ty::Val(Type::Array { ty: Box::new(elem_ty.clone()), len });
+        if let Some(arr) = self.find_var_array(&name) {
+            let Some(elems) = self.array_elem_vars_flat(stmt, actual, &arr) else { return };
+            let found = elems.len() as u32;
+            if found != len {
+                // Enhancement-645: a size mismatch used to `return` here and reach the
+                // generic path, whose "requires a bit-select [i]" named the wrong cause.
+                self.result.diagnostics.push(InferenceDiagnostic::ArrayArgLenMismatch {
+                    expr: actual,
+                    expected: len,
+                    found,
+                });
+            }
+            self.result.array_var_refs.insert(actual, elems);
+            self.result.expr_types[actual] = array_ty;
             return;
         }
-        self.result.array_var_refs.insert(actual, elems);
-        self.result.expr_types[actual] =
-            Ty::Val(Type::Array { ty: Box::new(elem_ty.clone()), len });
+        // Enhancement-645: a PARAMETER array -- LRM 4.7.1 Example 3's `input [0:1] b`
+        // formal fed `parameter real c[0:1]` -- is the read-only twin of the variable
+        // case, resolved the way the filter arguments resolve one; lowering reads its
+        // elements through `array_param_ref`. A parameter cannot receive the copy-back
+        // of an output formal, so that pairing is refused here by name.
+        if let Some(arr) = self.find_param_array(&name) {
+            let Some(params) = self.array_elem_params_flat(stmt, actual, &arr) else { return };
+            let found = params.len() as u32;
+            if found != len {
+                self.result.diagnostics.push(InferenceDiagnostic::ArrayArgLenMismatch {
+                    expr: actual,
+                    expected: len,
+                    found,
+                });
+            }
+            if is_output {
+                self.result.diagnostics.push(InferenceDiagnostic::ArrayArgParamOutput {
+                    expr: actual,
+                    name,
+                });
+            }
+            self.result.array_shapes.insert(actual, bus_shape(&arr));
+            self.result.array_param_refs.insert(actual, params);
+            self.result.expr_types[actual] = array_ty;
+        }
     }
 
     fn infere_nature_access(
@@ -3134,6 +3179,26 @@ impl Ctx<'_> {
     /// Resolves an array's scalar element `VarId`s, flattened in *declaration order* (each
     /// dimension `msb`→`lsb`, outermost slowest — `BusDecl::index_tuples`), the order a (nested)
     /// array literal `'{...}` fills. Works for 1-D and multi-dimensional arrays.
+    /// Enhancement-645: the parameter-array twin of [`Self::array_elem_vars_flat`] --
+    /// every element parameter of `arr` in declaration order, or `None` when a name
+    /// does not resolve to a parameter.
+    fn array_elem_params_flat(
+        &mut self,
+        stmt: StmtId,
+        ref_expr: ExprId,
+        arr: &BusDecl,
+    ) -> Option<Vec<ParamId>> {
+        let mut params = Vec::with_capacity(arr.elem_count());
+        for indices in arr.index_tuples() {
+            let synth = Path::new_ident(arr.elem_name(&indices));
+            match self.resolve_path(stmt, ref_expr, &synth)? {
+                ScopeDefItem::ParamId(param) => params.push(param),
+                _ => return None,
+            }
+        }
+        (!params.is_empty()).then_some(params)
+    }
+
     fn array_elem_vars_flat(
         &mut self,
         stmt: StmtId,
@@ -3647,6 +3712,20 @@ pub enum InferenceDiagnostic {
         found: usize,
         expr: ExprId,
         exact: bool,
+    },
+    /// Enhancement-645: a whole-array argument to an analog function whose element
+    /// count differs from the formal's declared size. It used to fall through to
+    /// "requires a bit-select [i]", which blamed a missing index.
+    ArrayArgLenMismatch {
+        expr: ExprId,
+        expected: u32,
+        found: u32,
+    },
+    /// Enhancement-645: an `output`/`inout` array formal bound to a PARAMETER
+    /// array; the copy-back (LRM 4.7.2.2) needs a variable to land in.
+    ArrayArgParamOutput {
+        expr: ExprId,
+        name: Name,
     },
 
     ExpectedProbe {

@@ -166,6 +166,28 @@ impl Diagnostic for ItemTreeDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            ItemTreeDiagnostic::ParamsetArrayOverrideLength { ast_id, name, expected, found } => {
+                let range = self.ast_id_map.get_syntax(*ast_id).range();
+                let span = self.parse.to_file_span(range, self.sm);
+                Report::error()
+                    .with_message(format!(
+                        "paramset assigns array parameter '{name}' a value with {found} \
+                         element{} but the array has {expected}",
+                        if *found == 1 { "" } else { "s" }
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("expected a `'{{...}}` literal of {expected} elements"),
+                    }])
+                    .with_notes(vec![
+                        "help: an array parameter is assigned whole, `.c = '{1.0, 2.0, 3.0};` \
+                         (one leaf per element, row-major for a multi-dimensional array); each \
+                         element takes the leaf at its own position"
+                            .to_owned(),
+                    ])
+            }
             ItemTreeDiagnostic::ParamsetUnknownParam { ast_id, name, target } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();
                 let span = self.parse.to_file_span(range, self.sm);

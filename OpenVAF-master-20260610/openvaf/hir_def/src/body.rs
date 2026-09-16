@@ -328,7 +328,18 @@ impl Body {
         if let Some(ov_ast_id) = tree[item_tree].override_expr {
             let file = db.parse(root_file).tree();
             let ov = ast_id_map.get(ov_ast_id).to_node(file.syntax());
-            let default = ctx.collect_opt_expr(ov.val());
+            // Enhancement-645: an element of a bound ARRAY parameter takes the leaf at
+            // its own position of the override's `'{...}` literal, exactly as an
+            // element's default is picked below; the item tree has already checked
+            // that the literal has one leaf per element.
+            let val = match tree[item_tree].array_index {
+                Some(pos) => ov
+                    .val()
+                    .map(crate::item_tree::flatten_pattern)
+                    .and_then(|f| f.into_iter().nth(pos as usize)),
+                None => ov.val(),
+            };
+            let default = ctx.collect_opt_expr(val);
             let entry_stmts = vec![ctx.alloc_stmt_desugared(Stmt::Expr(default))];
             body.entry_stmts = entry_stmts.into_boxed_slice();
             return (

@@ -394,17 +394,50 @@ impl Ctx {
                     let mut bound = orig.clone();
                     bound.name = apply_rename_pairs(&child, &orig.name);
                     bound.renames = compose_renames(orig.renames.as_ref(), &child);
+                    // Enhancement-645: an element of an ARRAY parameter (`c[1]`, its
+                    // `array_index` set) is bound by an override of the array's base
+                    // name, `.c = '{...}`, and takes the leaf at its own position (body
+                    // lowering picks it the way it picks an element's default). The
+                    // element used to match nothing, so `.c = ...` was "a parameter the
+                    // module does not declare".
+                    let array_base = orig.array_index.map(|_| array_base_name(&orig.name));
+                    let ov_name = array_base.clone().unwrap_or_else(|| orig.name.clone());
+                    let first_elem = orig.array_index.map_or(true, |i| i == 0);
                     if let Some((_, ov, ov_node)) =
-                        overrides.iter().find(|(n, _, _)| *n == orig.name).cloned()
+                        overrides.iter().find(|(n, _, _)| *n == ov_name).cloned()
                     {
-                        bound_names.push(orig.name.clone());
+                        if !bound_names.contains(&ov_name) {
+                            bound_names.push(ov_name.clone());
+                        }
                         if orig.is_local {
-                            self.tree.diagnostics.push(ItemTreeDiagnostic::ParamsetFixedParam {
-                                ast_id: ov.into(),
-                                name: orig.name.clone(),
-                                target: target_name.clone(),
-                            });
+                            if first_elem {
+                                self.tree.diagnostics.push(ItemTreeDiagnostic::ParamsetFixedParam {
+                                    ast_id: ov.into(),
+                                    name: ov_name.clone(),
+                                    target: target_name.clone(),
+                                });
+                            }
                         } else {
+                            if let (Some(base), true) = (&array_base, first_elem) {
+                                let expected = target
+                                    .param_arrays
+                                    .iter()
+                                    .find(|a| a.base_name == *base)
+                                    .map_or(0, |a| a.elem_count() as u32);
+                                let found = ov_node
+                                    .val()
+                                    .map_or(0, |e| super::flatten_pattern(e).len() as u32);
+                                if found != expected {
+                                    self.tree.diagnostics.push(
+                                        ItemTreeDiagnostic::ParamsetArrayOverrideLength {
+                                            ast_id: ov.into(),
+                                            name: base.clone(),
+                                            expected,
+                                            found,
+                                        },
+                                    );
+                                }
+                            }
                             // Enhancement-398: the bound parameter becomes a localparam and
                             // `param_body_with_sourcemap` discards its constraints, so nothing
                             // downstream ever range-checks it -- a paramset was the ONE way to
@@ -418,14 +451,20 @@ impl Ctx {
                                 .into()
                             {
                                 let pa: ast::Param = pa;
-                                self.check_paramset_range(&orig.name, &pa, &ov_node, ov);
+                                self.check_paramset_range(
+                                    &orig.name,
+                                    &pa,
+                                    &ov_node,
+                                    ov,
+                                    orig.array_index,
+                                );
                             }
                             bound.is_local = true;
                             bound.override_expr = Some(ov);
                             // the override is this paramset's own text
                             bound.renames = None;
                         }
-                    } else if !orig.is_local && own_names.contains(&orig.name) {
+                    } else if !orig.is_local && own_names.contains(&ov_name) {
                         // LRM 6.4: an instance of the paramset cannot set the module's
                         // parameter; the paramset's own declaration of the name is the
                         // card parameter, and the module's keeps its default
@@ -762,8 +801,15 @@ impl Ctx {
         param_ast: &ast::Param,
         ov_node: &ast::ParamsetOverride,
         ov_id: AstId<ast::ParamsetOverride>,
+        // Enhancement-645: for an element of an array parameter, the position of
+        // its leaf in the override's `'{...}` literal; `None` judges the whole value.
+        elem: Option<u32>,
     ) {
-        let Some(val) = ov_node.val().and_then(|e| Self::const_num(&e)) else { return };
+        let val_expr = ov_node.val().and_then(|e| match elem {
+            Some(i) => super::flatten_pattern(e).into_iter().nth(i as usize),
+            None => Some(e),
+        });
+        let Some(val) = val_expr.and_then(|e| Self::const_num(&e)) else { return };
 
         for c in param_ast.constraints() {
             let Some(kind) = c.kind() else { continue };
@@ -2507,5 +2553,15 @@ fn compose_renames(prev: Option<&RenameMap>, child: &[(Name, Name)]) -> Option<R
         None
     } else {
         Some(out.into())
+    }
+}
+
+/// Enhancement-645: the base name of an array element name (`c` for `c[1]`, `m` for
+/// `m[1][0]`); a name without an index is returned unchanged.
+fn array_base_name(name: &Name) -> Name {
+    let s = name.to_string();
+    match s.split_once('[') {
+        Some((base, _)) => Name::resolve(base),
+        None => name.clone(),
     }
 }
