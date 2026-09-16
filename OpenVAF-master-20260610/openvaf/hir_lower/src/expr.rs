@@ -1055,6 +1055,21 @@ impl BodyLoweringCtx<'_, '_, '_> {
         };
         self.ctx.def_place(PlaceKind::FunctionReturn(fun), init);
 
+        // Enhancement-646: the function's own variables start every call at their
+        // declared initializer (zero, or "" for a string, when they have none). A
+        // function body is inlined, so its locals are module variables: a read
+        // before the call's own write reached the HIDDEN-STATE value, i.e. whatever
+        // the previous call -- or the previous Newton iteration -- had left there.
+        // `integer n; n = n + 1;` counted every evaluation, an `integer n = 0;`
+        // initializer was applied once at the initial step, and a model whose
+        // function read a local first converged only through gmin stepping. The
+        // return variable (4.7.2.1) and the output arguments (4.7.2.2) were already
+        // fresh per call; the locals and the return array's elements now are too.
+        for var in fun.local_vars(self.ctx.db) {
+            let init_val = self.ctx.lower_expr_body(var.init(self.ctx.db).borrow(), 0);
+            self.ctx.def_place(PlaceKind::Var(var), init_val);
+        }
+
         // VAMS-2023 `return [expr];` (LRM 5.11): the inlined body gets an exit
         // block a `return` can jump to; sealed only after the body is lowered,
         // when every return-edge into it is known.

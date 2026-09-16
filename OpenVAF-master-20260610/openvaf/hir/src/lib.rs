@@ -293,6 +293,42 @@ impl Function {
         db.function_data(self.id).ret_len.is_some()
     }
 
+    /// Enhancement-646: every variable the function declares -- its locals, the locals
+    /// of the named blocks in its body, and the return array's elements -- but not the
+    /// element variables of an array ARGUMENT, which the call binds at entry (an input
+    /// takes the caller's values, an output is zeroed) and copies back. These are what a
+    /// call must start afresh: LRM 4.7.2.1 zeroes the identifier variable and 4.7.2.2 the
+    /// output arguments on every call, and a local is no different in kind.
+    pub fn local_vars(self, db: &CompilationDB) -> Vec<Variable> {
+        let mut bound: Vec<Variable> = Vec::new();
+        for arg in self.args(db) {
+            bound.extend(arg.array_elems(db));
+        }
+        let mut out = Vec::new();
+        let mut stack = vec![Scope::Function(self)];
+        while let Some(scope) = stack.pop() {
+            for (_, def) in scope.declarations(db) {
+                match def {
+                    ScopeDef::Variable(var) => {
+                        if !bound.contains(&var) && !out.contains(&var) {
+                            out.push(var);
+                        }
+                    }
+                    // a named block in the body keeps its locals in its own def map,
+                    // reached through the block's declaration, not as a child scope
+                    ScopeDef::Block(block) => stack.push(Scope::Block(block)),
+                    _ => {}
+                }
+            }
+            for child in scope.children(db) {
+                if matches!(child, Scope::Block(_)) {
+                    stack.push(child);
+                }
+            }
+        }
+        out
+    }
+
     /// For an array-returning function (Enhancement-23): the return array's element variables
     /// (`f[0]`, `f[1]`, ...) in declaration order — the body writes these, and the caller copies
     /// them into the destination array. Empty for a scalar-returning function.
