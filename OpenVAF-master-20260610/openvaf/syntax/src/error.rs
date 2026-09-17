@@ -59,6 +59,19 @@ pub enum SyntaxError {
     MalformedRealLiteral {
         span: TextRange,
     },
+    /// Enhancement-650 (hunt F6): `\ddd` in a string names one 8-bit character
+    /// (IEEE 1364-2005 2.6.3, LRM 2.7.1), so an escape above `\377` has no
+    /// character to name. `"\777"` used to print U+01FF.
+    OctalEscapeTooLarge {
+        span: TextRange,
+    },
+    /// Enhancement-650: an escape the LRM does not define (`\q`, `\x41`). The
+    /// backslash is kept verbatim (Enhancement-48's contract); this says so.
+    UnknownStringEscape {
+        span: TextRange,
+        src: SyntaxNodePtr,
+        escape: String,
+    },
     /// LRM 2.7: a string literal shall be contained on a single line.
     MultilineStringLiteral {
         span: TextRange,
@@ -183,6 +196,8 @@ impl_display! {
         ZeroWidthLiteral{..} => "a sized literal must have a non-zero size";
         InvalidBasedLiteral{..} => "based literal has no valid digits for its base";
         MalformedRealLiteral{..} => "a real constant needs a digit on each side of the decimal point";
+        OctalEscapeTooLarge{..} => "an octal escape in a string exceeds \\377";
+        UnknownStringEscape{escape,..} => "unknown escape sequence '{}' in a string", escape;
         MultilineStringLiteral{..} => "a string literal must be contained on a single line";
         MissingToken{expected, ..} => "unexpected token; expected {}", expected;
         IllegalRootSegment { ..} =>  "$root is only allowed as a prefix";

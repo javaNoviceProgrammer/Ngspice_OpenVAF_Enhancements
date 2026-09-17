@@ -9,7 +9,7 @@ use crate::diagnostics::{
     text_range_list_to_unified_spans, text_ranges_to_unified_spans, Diagnostic, Label, LabelStyle,
     Report,
 };
-use crate::lints::builtin::vams_keyword_compat;
+use crate::lints::builtin::{unknown_string_escape, vams_keyword_compat};
 use crate::lints::{Lint, LintSrc};
 use crate::{BaseDB, FileId};
 
@@ -26,6 +26,14 @@ impl Diagnostic for SyntaxError {
         match self {
             SyntaxError::ReservedIdentifier { compat: true, src, .. } => Some((
                 vams_keyword_compat,
+                LintSrc {
+                    overwrite: None,
+                    ast: db.ast_id_map(root_file).nearest_ast_id_to_ptr(*src, db, root_file),
+                },
+            )),
+            // Enhancement-650 (hunt F6)
+            SyntaxError::UnknownStringEscape { src, .. } => Some((
+                unknown_string_escape,
                 LintSrc {
                     overwrite: None,
                     ast: db.ast_id_map(root_file).nearest_ast_id_to_ptr(*src, db, root_file),
@@ -419,6 +427,39 @@ impl Diagnostic for SyntaxError {
                         "help: LRM 2.6.2: write `1.0` rather than `1.`, `0.5` rather than `.5`"
                             .to_owned(),
                     ])
+            }
+            // Enhancement-650 (hunt F6): string escapes
+            SyntaxError::OctalEscapeTooLarge { span } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "names no 8-bit character".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 2.7.1: `\\ddd` is one character given by one to three \
+                         octal digits, so the largest is `\\377`; for a code point above \
+                         that, write the character itself (the source is UTF-8)"
+                            .to_owned(),
+                    ])
+            }
+            SyntaxError::UnknownStringEscape { span, ref escape, .. } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "the backslash is kept as written".to_owned(),
+                    }])
+                    .with_notes(vec![format!(
+                        "help: LRM 2.7.1 defines `\\n`, `\\t`, `\\\\`, `\\\"` and `\\ddd` (octal); \
+                         '{escape}' is none of them, so the string contains a literal \
+                         backslash followed by '{}' -- write `\\\\` if that is the intent",
+                        &escape[1..]
+                    )])
             }
             SyntaxError::MultilineStringLiteral { span } => {
                 let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);

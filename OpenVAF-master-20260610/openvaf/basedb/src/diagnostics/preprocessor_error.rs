@@ -11,10 +11,15 @@ use crate::BaseDB;
 
 impl Diagnostic for PreprocessorDiagnostic {
     fn lint(&self, _root_file: FileId, _db: &dyn BaseDB) -> Option<(Lint, LintSrc)> {
-        if let PreprocessorDiagnostic::MacroOverwritten { .. } = self {
-            Some((lints::builtin::macro_overwritten, LintSrc::GLOBAL))
-        } else {
-            None
+        match self {
+            PreprocessorDiagnostic::MacroOverwritten { .. } => {
+                Some((lints::builtin::macro_overwritten, LintSrc::GLOBAL))
+            }
+            // Enhancement-650 (hunt F6)
+            PreprocessorDiagnostic::LineDirectiveNotApplied { .. } => {
+                Some((lints::builtin::line_directive_not_applied, LintSrc::GLOBAL))
+            }
+            _ => None,
         }
     }
 
@@ -78,6 +83,98 @@ impl Diagnostic for PreprocessorDiagnostic {
                     }])
                     .with_notes(vec![
                         "help: a file must not `include itself, directly or through other files"
+                            .to_owned(),
+                    ])
+            }
+            // Enhancement-650 (hunt F6): the six slips that hid behind
+            // "encountered unexpected token!", a silent accept, or a misplaced blame
+            PreprocessorDiagnostic::UnmatchedConditional { span, ref name } => {
+                let span = span.to_file_span(&sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "no '`ifdef' region is open here".to_owned(),
+                    }])
+                    .with_notes(vec![format!(
+                        "help: '{name}' closes or continues an '`ifdef'/'`ifndef' region; \
+                         the one this belongs to was never opened, or was already closed"
+                    )])
+            }
+            PreprocessorDiagnostic::BackslashBeforeWhitespace { span, trailing } => {
+                let span = span.to_file_span(&sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "white space follows this '\\'".to_owned(),
+                    }])
+                    .with_notes(vec![format!(
+                        "help: a line continuation is a '\\' immediately before the newline \
+                         (IEEE 1364-2005 19.3.1); an editor's trailing white space breaks it \
+                         -- delete the {trailing} character(s) after the '\\'"
+                    )])
+            }
+            PreprocessorDiagnostic::NulByte { span } => {
+                let span = span.to_file_span(&sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "NUL byte here".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: Verilog-A source is text; a NUL usually means a binary, \
+                         UTF-16 or truncated file was passed"
+                            .to_owned(),
+                    ])
+            }
+            PreprocessorDiagnostic::LineDirectiveNotApplied { span } => {
+                let span = span.to_file_span(&sm);
+                Report::warning()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "applies to '`__FILE__' and '`__LINE__' only".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 10.7 lets a tool report the declared position; this \
+                         compiler does not relocate diagnostics, so an error after this \
+                         directive is reported at its position in the physical file"
+                            .to_owned(),
+                    ])
+            }
+            PreprocessorDiagnostic::IncludeCycle { span, .. } => {
+                let span = span.to_file_span(&sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "this file is already being included".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: a file must not `include itself, directly or through other files"
+                            .to_owned(),
+                    ])
+            }
+            PreprocessorDiagnostic::EmptyMacroArgList { span } => {
+                let span = span.to_file_span(&sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "empty formal-argument list".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: IEEE 1364-2005 19.3.1 (via LRM 10.4): `define NAME(a) ... \
+                         needs at least one formal argument; for a macro without arguments \
+                         write `define NAME ... and call it as `NAME"
                             .to_owned(),
                     ])
             }

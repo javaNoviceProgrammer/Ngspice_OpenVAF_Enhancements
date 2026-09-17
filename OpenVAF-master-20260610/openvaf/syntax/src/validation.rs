@@ -194,6 +194,7 @@ fn validate_literal(literal: ast::Literal, errors: &mut Vec<SyntaxError>) {
             }
         }
 
+
         // Enhancement-425: a real literal that does not fit in a double.
         //
         // `StdRealNumber::value` is `src.parse().unwrap()` and `SiRealNumber::value`
@@ -220,12 +221,12 @@ fn validate_literal(literal: ast::Literal, errors: &mut Vec<SyntaxError>) {
             }
             // LRM 2.6.2: at least one digit on each side of the decimal point
             // (`1.` is among the LRM's illegal examples; Rust's f64 parser
-            // accepts it, so it slipped through silently). The lexer always
-            // starts the token with a digit, so only the right side can be
-            // missing.
+            // accepts it, so it slipped through silently). Enhancement-650: the
+            // lexer now also makes a token of `.5`, so the LEFT side can be
+            // missing too, and gets the same sentence.
             let text = lit.syntax.text();
             if let Some(pos) = text.find('.') {
-                if !text.as_bytes().get(pos + 1).is_some_and(|b| b.is_ascii_digit()) {
+                if pos == 0 || !text.as_bytes().get(pos + 1).is_some_and(|b| b.is_ascii_digit()) {
                     errors.push(SyntaxError::MalformedRealLiteral { span: range });
                 }
             }
@@ -279,6 +280,57 @@ fn validate_literal(literal: ast::Literal, errors: &mut Vec<SyntaxError>) {
         // continuation (SystemVerilog 5.9 semantics; BSIM4 and other CMC
         // models rely on it), so only an UNESCAPED newline is flagged.
         ast::LiteralKind::String(lit) => {
+            // Enhancement-650 (hunt F6): the escapes of a string literal, judged
+            // where `unescaped_value` will later read them. `\n \t \\ \"`, a
+            // backslash-newline continuation and `\ddd` (one to three octal digits)
+            // are the LRM's (2.7.1); an octal value above `\377` names no 8-bit
+            // character and is refused (1364-2005 2.6.3 sanctions the error); any
+            // other escape is kept verbatim, as Enhancement-48 decided, and warned.
+            {
+            let text = literal.syntax().text().to_string();
+                let bytes = text.as_bytes();
+                let start = u32::from(range.start());
+                let mut i = 0;
+                while i < bytes.len() {
+                    if bytes[i] != b'\\' {
+                        i += 1;
+                        continue;
+                    }
+                    match bytes.get(i + 1) {
+                        Some(b'n' | b't' | b'\\' | b'"' | b'\n' | b'\r') | None => i += 2,
+                        Some(b'0'..=b'7') => {
+                            let mut len = 0;
+                            let mut code = 0u32;
+                            while len < 3 && matches!(bytes.get(i + 1 + len), Some(b'0'..=b'7')) {
+                                code = code * 8 + u32::from(bytes[i + 1 + len] - b'0');
+                                len += 1;
+                            }
+                            if code > 0o377 {
+                                errors.push(SyntaxError::OctalEscapeTooLarge {
+                                    span: TextRange::at(
+                                        (start + i as u32).into(),
+                                        ((1 + len) as u32).into(),
+                                    ),
+                                });
+                            }
+                            i += 1 + len;
+                        }
+                        Some(_) => {
+                            let ch = text[i + 1..].chars().next().unwrap();
+                            errors.push(SyntaxError::UnknownStringEscape {
+                                span: TextRange::at(
+                                    (start + i as u32).into(),
+                                    ((1 + ch.len_utf8()) as u32).into(),
+                                ),
+                                src: SyntaxNodePtr::new(literal.syntax()),
+                                escape: format!("\\{ch}"),
+                            });
+                            i += 1 + ch.len_utf8();
+                        }
+                    }
+                }
+            }
+
             let bytes = lit.syntax.text().as_bytes();
             let mut i = 0;
             while i < bytes.len() {

@@ -583,11 +583,24 @@ impl Ctx<'_> {
                 (dst, Type::Real)
             }
             _ => {
-                self.result.diagnostics.push(InferenceDiagnostic::InvalidAssignDst {
-                    e: expr,
-                    maybe_different_operand: None,
-                    assignment_kind,
-                });
+                // Enhancement-650 (hunt F6): `Pwr(p,n) <+ 1.0` with `electrical p;
+                // thermal2 n;` resolved the access as invalid -- the disciplines are
+                // incompatible (LRM 5.5.1) -- and this arm then blamed the SHAPE of the
+                // destination, "expected nature access such as V(foo) or I(foo)", which
+                // points the reader at the access function that IS the discipline's own.
+                // Body validation reports the real cause at the same expression (the
+                // mismatched disciplines, or the nature the discipline lacks, with the
+                // access functions that would work), so this arm stays silent for it.
+                if !matches!(
+                    self.result.resolved_calls.get(&expr),
+                    Some(ResolvedFun::InvalidNatureAccess(_))
+                ) {
+                    self.result.diagnostics.push(InferenceDiagnostic::InvalidAssignDst {
+                        e: expr,
+                        maybe_different_operand: None,
+                        assignment_kind,
+                    });
+                }
                 return None;
             }
         };

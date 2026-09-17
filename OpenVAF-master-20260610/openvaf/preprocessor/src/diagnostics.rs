@@ -40,6 +40,29 @@ pub enum PreprocessorDiagnostic {
     KeywordSetNotSwitched { name: String, span: CtxSpan },
     /// `` `end_keywords `` with no matching `` `begin_keywords ``.
     UnmatchedEndKeywords { span: CtxSpan },
+    /// Enhancement-650 (hunt F6): `` `endif ``, `` `else `` or `` `elsif `` with no
+    /// open `` `ifdef ``/`` `ifndef ``. It fell into the catch-all "encountered
+    /// unexpected token!".
+    UnmatchedConditional { name: String, span: CtxSpan },
+    /// Enhancement-650: a `\` line continuation with white space between it and
+    /// the newline -- the classic editor artefact, reported by the same
+    /// catch-all. `trailing` counts the characters after the backslash.
+    BackslashBeforeWhitespace { span: CtxSpan, trailing: usize },
+    /// Enhancement-650: a NUL byte in the source text (a binary, UTF-16 or
+    /// truncated file), also the catch-all before.
+    NulByte { span: CtxSpan },
+    /// Enhancement-650: `` `line `` is honoured by `` `__FILE__ ``/`` `__LINE__ ``
+    /// only; diagnostics keep the physical position. It was accepted in silence.
+    LineDirectiveNotApplied { span: CtxSpan },
+    /// Enhancement-650: an `` `include `` of a file that is already being
+    /// processed (itself, directly or through other files). The depth limit
+    /// used to catch it 64 levels down and blame whichever include sat there
+    /// -- `disciplines.vams`, when the self-include followed the module.
+    IncludeCycle { file: String, span: CtxSpan },
+    /// Enhancement-650: `` `define NAME() `` -- an empty formal-argument list,
+    /// which IEEE 1364-2005 19.3.1 does not allow. It was "unexpected token,
+    /// expected 'an identifier'" at the `)`.
+    EmptyMacroArgList { span: CtxSpan },
 }
 
 use PreprocessorDiagnostic::*;
@@ -63,5 +86,11 @@ impl_display! {
         UnknownKeywordSet { name, .. } => "unknown '`begin_keywords' version specifier \"{}\"", name;
         KeywordSetNotSwitched { name, .. } => "keyword set \"{}\" is treated as \"VAMS-2023\"", name;
         UnmatchedEndKeywords { .. } => "'`end_keywords' without a matching '`begin_keywords'";
+        UnmatchedConditional { name, .. } => "'{}' without a matching '`ifdef' or '`ifndef'", name;
+        BackslashBeforeWhitespace { trailing, .. } => "a '\\' line continuation must be the last character on its line, but {} white-space character(s) follow it", trailing;
+        NulByte { .. } => "the source contains a NUL byte";
+        LineDirectiveNotApplied { .. } => "'`line' changes '`__FILE__' and '`__LINE__' only; diagnostics keep the physical file position";
+        IncludeCycle { file, .. } => "'`include \"{}\"' includes a file that is already being included", file;
+        EmptyMacroArgList { .. } => "a macro with parentheses needs at least one formal argument";
     }
 }

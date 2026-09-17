@@ -595,6 +595,13 @@ pub enum BodyValidationDiagnostic {
         /// the entry statement carrying the default, for lint attribution
         stmt: StmtId,
     },
+    /// Enhancement-650 (hunt F6): a `from {..}` member of an `integer`
+    /// parameter that folds to a non-integer. No integer can equal 2.5, so
+    /// `from {1, 2.5}` is `from {1}`, and it compiled without a word. An
+    /// `exclude` member is a negative claim, vacuously true for an integer,
+    /// and is left alone (`intrange` pins `exclude 2.5` on an integer as a
+    /// legitimate no-op beside real range BOUNDS, which the LRM allows).
+    NonIntegerSetMember { param: ParamId, expr: ExprId, value: String, stmt: StmtId },
 }
 
 impl BodyValidationDiagnostic {
@@ -1202,6 +1209,18 @@ impl BodyValidator<'_> {
                 // avoid duplicate errors
                 else if self.infer.assignment_destination.contains_key(&stmt) {
                     self.validate_assignment_dst(dst, stmt);
+                }
+                // Enhancement-650 (hunt F6): a destination whose access names no
+                // nature of the branch's discipline(s) -- `Pwr(p,n) <+ 1.0` across
+                // `electrical p; thermal2 n;`. Inference no longer reports the shape of
+                // it (that message named V(foo)/I(foo) as the expected form, pointing at
+                // the access function that IS the discipline's own); the walk below
+                // reports the real cause exactly as it does for a read.
+                else if matches!(
+                    self.infer.resolved_calls.get(&dst),
+                    Some(ResolvedFun::InvalidNatureAccess(_))
+                ) {
+                    self.validate_expr(dst, stmt);
                 }
 
                 return;
@@ -4400,6 +4419,29 @@ fn check_param_default_range(
     use syntax::ast::ConstraintKind;
 
     let exprs = db.param_exprs(param);
+
+    // Enhancement-650 (hunt F6): a `from` set member no integer can equal. Judged
+    // per member and before the default is looked at, so it is reported whether
+    // or not the default folds.
+    if db.param_data(param).ty == Some(Type::Integer) {
+        for constraint in exprs.bounds.iter() {
+            if let (ConstraintKind::From, ConstraintValue::Value(e)) = (constraint.kind, constraint.val) {
+                if let Some(v) = const_num_in(db, body, infer, e, 0) {
+                    if v.is_finite() && v.fract() != 0.0 {
+                        if let Some(&stmt) = body.entry_stmts.first() {
+                            diagnostics.push(BodyValidationDiagnostic::NonIntegerSetMember {
+                                param,
+                                expr: e,
+                                value: format!("{v}"),
+                                stmt,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let Some(value) = const_num_in(db, body, infer, exprs.default, 0) else { return };
 
     // Enhancement-640: a real default that folds to an infinity or a NaN. The

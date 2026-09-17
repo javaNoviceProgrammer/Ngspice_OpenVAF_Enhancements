@@ -80,8 +80,9 @@ for name, expr in [("deep unary  (-…)", "-" * 40000 + "V(a,b)"),
 # --- include self-recursion ---
 v, o, dt = run(wr("self.va", '`include "self.va"\n' + HDR + "module m(a); electrical a; endmodule\n"))
 check(f"include: self-including file -> clean error  [{v} {dt:.1f}s]", v == "ERROR", v)
-check("include: diagnostic mentions the nesting depth",
-      "nests too deeply" in o, o[:200])
+# Enhancement-650: the cycle is named at its first occurrence, not 64 levels down
+check("include: diagnostic names the cycle (E-650; was the nesting-depth limit)",
+      "includes a file that is already being included" in o or "nests too deeply" in o, o[:200])
 
 # --- array / bus / instance caps ---
 arrays = {

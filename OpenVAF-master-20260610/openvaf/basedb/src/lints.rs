@@ -116,6 +116,11 @@ impl LintRegistry {
         Some(self.lints.get_index_of(name)?.into())
     }
 
+    /// Enhancement-650: every registered lint name, for a "did you mean" hint.
+    pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.lints.keys().copied()
+    }
+
     pub fn lintdata_from_name(&self, name: &str) -> Option<LintData> {
         self.lints.get(name).copied()
     }
@@ -236,5 +241,19 @@ pub mod builtin {
         // the LRM has it: the model still means something (the port is driven
         // like an inout), only its declared interface says otherwise.
         pub const contribution_to_input_port = LintData{default_lvl: Warn, documentation_id: 31};
+        // Enhancement-650 (hunt F6): `\q`, `\x41` -- an escape LRM 2.7.1 does not
+        // define. The backslash is kept verbatim (Enhancement-48's contract, which
+        // the stresc suite pins); warn, because a kept backslash is rarely what the
+        // author meant.
+        pub const unknown_string_escape = LintData{default_lvl: Warn, documentation_id: 32};
+        // Enhancement-650: `` `line `` moves `` `__FILE__ ``/`` `__LINE__ `` only; the
+        // diagnostics keep the physical position. A lint, so generated code that
+        // carries the directive on purpose can silence it from the command line.
+        pub const line_directive_not_applied = LintData{default_lvl: Warn, documentation_id: 33};
+        // Enhancement-650: a `from {..}` member of an integer parameter that no
+        // integer equals (`from {1, 2.5}`). Warn, not deny: `intrange` pins a real
+        // member as legal-and-unreachable, and a range spec shared with a real
+        // parameter may carry one on purpose.
+        pub const dead_range_member = LintData{default_lvl: Warn, documentation_id: 34};
     }
 }

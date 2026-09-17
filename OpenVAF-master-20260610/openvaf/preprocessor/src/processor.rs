@@ -49,6 +49,13 @@ pub(crate) struct Processor<'a> {
     /// itself (directly or transitively) is reported as `IncludeRecursionLimit`
     /// instead of overflowing the compiler stack.
     include_depth: u32,
+    /// Enhancement-650 (hunt F6): the files currently being processed through
+    /// `` `include ``, innermost last, plus `root_file` for the direct case. An
+    /// include of one of them is a cycle and is reported as such at its first
+    /// occurrence, instead of 64 levels down where the depth limit blamed
+    /// whichever include sat there.
+    include_stack: Vec<FileId>,
+    root_file: FileId,
     /// Value of the most recently seen `` `default_transition `` directive
     /// (Enhancement-47): the default rise/fall time for `transition()` filters
     /// that omit those arguments. `None` = 0 (instantaneous, the LRM default).
@@ -97,6 +104,8 @@ impl<'a> Processor<'a> {
             include_dirs: sources.include_dirs(root_file),
             expansion_stack: Vec::new(),
             include_depth: 0,
+            include_stack: Vec::new(),
+            root_file,
             default_discipline: None,
             default_transition: None,
             in_defines_file: false,
@@ -196,6 +205,11 @@ impl<'a> Processor<'a> {
             }
         };
         let (src, file) = found.ok_or((FileReadError::Io(io::ErrorKind::NotFound), None))?;
+        // Enhancement-650 (hunt F6): a file that is already open is a cycle
+        if file == self.root_file || self.include_stack.contains(&file) {
+            errors.push(PreprocessorDiagnostic::IncludeCycle { file: path.to_owned(), span });
+            return Ok(());
+        }
         let src = self.arena.ensure(src);
         let workdir = self.sources.file_path(file).parent().unwrap();
 
@@ -205,7 +219,9 @@ impl<'a> Processor<'a> {
 
         let parser = Parser::new(src, ctx, workdir, dst, errors);
         self.include_depth += 1;
+        self.include_stack.push(file);
         self.process_file(parser, errors);
+        self.include_stack.pop();
         self.include_depth -= 1;
 
         Ok(())
@@ -825,6 +841,7 @@ impl<'a> Processor<'a> {
                     // this one.
                     let at_line = p.current_line();
                     let line_end = p.current_line_end();
+                    let directive_span = p.current_span();
                     p.bump();
                     let on_line = |p: &Parser| p.current_range().start() < line_end;
                     let number = if on_line(p) && p.at(PreprocessorToken::Other) {
@@ -850,6 +867,11 @@ impl<'a> Processor<'a> {
                                 p.line_override.take().and_then(|ov| ov.file)
                             };
                             p.line_override = Some(LineOverride { at_line, number, file });
+                            // Enhancement-650 (hunt F6): say what the directive does
+                            // and does not do, rather than accept it in silence
+                            err.push(PreprocessorDiagnostic::LineDirectiveNotApplied {
+                                span: directive_span,
+                            });
                         }
                         None => err.push(PreprocessorDiagnostic::MissingOrUnexpectedToken {
                             expected: "a line number",
@@ -899,8 +921,14 @@ impl<'a> Processor<'a> {
                     p.dst.extend(trailing);
                 }
 
-                _ => {
-                    err.push(UnexpectedToken(p.current_span()));
+                // Enhancement-650 (hunt F6): a conditional directive that closes or
+                // continues nothing. `parse_condition` consumes the ones that belong
+                // to an open region, so any that reaches here is unmatched.
+                CompilerDirective::EndIf | CompilerDirective::Else | CompilerDirective::ElseIf => {
+                    err.push(PreprocessorDiagnostic::UnmatchedConditional {
+                        name: p.current_text().to_owned(),
+                        span: p.current_span(),
+                    });
                     p.bump()
                 }
             },

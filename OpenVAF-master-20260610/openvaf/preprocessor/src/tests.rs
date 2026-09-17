@@ -49,7 +49,15 @@ impl SourceProvider for TestSourceProvider {
 
 fn check_prepocessor(sources: TestSourceProvider, root_file: FileId, test_name: &'static str) {
     let Preprocess { ts, diagnostics, sm, .. } = preprocess(&sources, root_file);
-    assert_eq!(diagnostics.as_slice(), &[]);
+    // Enhancement-650: `` `line `` is accepted with a warning that it relocates
+    // `` `__FILE__ ``/`` `__LINE__ `` only; every other diagnostic is unexpected
+    let unexpected: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            !matches!(d, crate::diagnostics::PreprocessorDiagnostic::LineDirectiveNotApplied { .. })
+        })
+        .collect();
+    assert_eq!(unexpected, Vec::<&crate::diagnostics::PreprocessorDiagnostic>::new());
     let actual_tokens: String = ts.iter().map(|token| format!("{:?}\n", token.kind,)).collect();
     let expected = PathBuf::from(".").join("test_data").join(format!("{}.tokens", test_name));
     expect_file![expected].assert_eq(&actual_tokens);

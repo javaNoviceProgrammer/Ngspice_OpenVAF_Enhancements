@@ -177,10 +177,39 @@ pub fn matches_to_opts(matches: ArgMatches) -> Result<Opts> {
     let defines: Vec<String> = matches
         .get_many::<String>(DEFINE)
         .map_or_else(Vec::new, |values| values.cloned().collect());
+    // Enhancement-650 (hunt F6): the rest of the shape is checked here too. A bad
+    // NAME used to surface as a syntax error inside `/std/__openvaf_defines__.va`,
+    // a file the user never wrote, without naming the argument.
     for def in &defines {
-        let name = def.split_once('=').map_or(def.as_str(), |(name, _)| name);
-        if name.trim().is_empty() {
+        let (name, value) = match def.split_once('=') {
+            Some((name, value)) => (name.trim(), Some(value)),
+            None => (def.trim(), None),
+        };
+        if name.is_empty() {
             bail!("invalid value '{def}' for '-D <MACRO[=VALUE]>': the macro name is empty");
+        }
+        if let Some(bare) = name.strip_prefix('`') {
+            let value = value.map_or_else(String::new, |v| format!("={v}"));
+            bail!(
+                "invalid value '{def}' for '-D <MACRO[=VALUE]>': the macro name is written \
+                 without its backtick -- '-D {bare}{value}'"
+            );
+        }
+        let is_ident = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+        if !is_ident {
+            bail!(
+                "invalid value '{def}' for '-D <MACRO[=VALUE]>': '{name}' is not a macro name \
+                 (letters, digits, '_' and '$', not starting with a digit)"
+            );
+        }
+        if let Some(v) = value {
+            if let Some(rest) = v.strip_prefix('=') {
+                bail!(
+                    "invalid value '{def}' for '-D <MACRO[=VALUE]>': the value '{v}' starts \
+                     with a second '='; '-D {name}={rest}' defines {name} as {rest}"
+                );
+            }
         }
     }
 

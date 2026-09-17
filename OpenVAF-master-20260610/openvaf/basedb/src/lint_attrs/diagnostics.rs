@@ -87,8 +87,24 @@ impl Diagnostic for AttrDiagnostic {
                             .to_owned(),
                     ])
             }
-            UnknownLint { range, .. } => {
+            UnknownLint { range, ref lint, .. } => {
                 let FileSpan { file: file_id, range } = parse.to_file_span(range, &sm);
+                // Enhancement-650 (hunt F6): name the nearest known lint. The
+                // report itself existed and was never emitted (see
+                // `hir::diagnostics::collect`); now that it is, a typo gets its
+                // correction with it.
+                let registry = db.lint_registry();
+                let nearest = registry
+                    .names()
+                    .filter(|name| !name.contains("::"))
+                    .map(|name| (edit_distance(name, lint), name))
+                    .min()
+                    .filter(|(dist, _)| *dist <= 1 + lint.len() / 4)
+                    .map(|(_, name)| name);
+                let mut notes = vec!["help: this attribute has no effect".to_owned()];
+                if let Some(name) = nearest {
+                    notes.push(format!("help: did you mean '{name}'?"));
+                }
                 Report::error()
                     .with_labels(vec![Label {
                         style: LabelStyle::Primary,
@@ -96,10 +112,26 @@ impl Diagnostic for AttrDiagnostic {
                         range: range.into(),
                         message: "unknown lint".to_owned(),
                     }])
-                    .with_notes(vec!["help: this attribute has no effect".to_owned()])
+                    .with_notes(notes)
             }
         };
 
         report.with_message(self.to_string())
     }
+}
+
+/// Enhancement-650: Levenshtein distance, for the "did you mean" hint above.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur.push((prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
 }

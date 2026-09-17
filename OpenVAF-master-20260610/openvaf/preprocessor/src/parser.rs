@@ -227,7 +227,27 @@ impl<'a, 'd> Parser<'a, 'd> {
                     err.push(PreprocessorDiagnostic::UnexpectedEof { expected: "\"", span })
                 }
                 LexerErrorKind::UnexpectedToken => {
-                    err.push(PreprocessorDiagnostic::UnexpectedToken(span))
+                    // Enhancement-650 (hunt F6): two inputs that deserve their own
+                    // sentence before the catch-all -- a NUL byte, and a `\` that
+                    // meant to continue the line but has white space after it.
+                    let text = &src[range];
+                    let rest_of_line = src[usize::from(range.end())..]
+                        .split(['\n', '\r'])
+                        .next()
+                        .unwrap_or("");
+                    if text.contains('\0') {
+                        err.push(PreprocessorDiagnostic::NulByte { span })
+                    } else if text == "\\"
+                        && !rest_of_line.is_empty()
+                        && rest_of_line.chars().all(|c| c == ' ' || c == '\t')
+                    {
+                        err.push(PreprocessorDiagnostic::BackslashBeforeWhitespace {
+                            span,
+                            trailing: rest_of_line.chars().count(),
+                        })
+                    } else {
+                        err.push(PreprocessorDiagnostic::UnexpectedToken(span))
+                    }
                 }
                 LexerErrorKind::UnterminatedBlockComment => {
                     err.push(PreprocessorDiagnostic::UnexpectedEof { expected: "*/", span })

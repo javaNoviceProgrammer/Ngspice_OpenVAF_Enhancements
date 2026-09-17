@@ -4004,6 +4004,14 @@ struct Scope {
     /// Enhancement-86 absolute prefixes, shared (not cloned) across every instance
     /// of the current top-module flatten -- see `AbsPrefixes`.
     abs: Rc<AbsPrefixes>,
+    /// Enhancement-650 (hunt F6): the dotted instance path of the body being
+    /// rendered, relative to the top module (`l1`, `l1.l2`, `arr[0]`); empty
+    /// for the top module itself. `%m` in a string literal of an inlined child
+    /// is rewritten to `%m.<path>`, so the simulator's instance name (which
+    /// `%m` expands to at run time, E-539) is followed by the child's own
+    /// position -- LRM 9.4.4's hierarchical name -- instead of naming the top
+    /// instance for every child.
+    hier_path: String,
 }
 
 /// Tries to constant-fold a `[msb:lsb]` instance-array range, mirroring
@@ -4491,6 +4499,16 @@ fn render_with_holes(text: &str, holes: &[(Range<usize>, String)], scope: &Scope
                 out.push_str(&render_name(replacement));
                 continue;
             }
+        } else if !scope.hier_path.is_empty()
+            && matches!(
+                tok.kind,
+                TokenKind::Literal { kind: tokens::lexer::LiteralKind::Str { .. } }
+            )
+            && raw.contains('%')
+        {
+            // Enhancement-650: `%m` in an inlined child names the child
+            out.push_str(&qualify_hier_name_format(raw, &scope.hier_path));
+            continue;
         } else if tok.kind == TokenKind::EscapedIdent {
             // an escaped identifier's resolved name drops the backslash
             // (Enhancement-46); the substituted value is re-escaped if needed
@@ -4506,6 +4524,33 @@ fn render_with_holes(text: &str, holes: &[(Range<usize>, String)], scope: &Scope
 
 fn apply_rename(text: &str, scope: &Scope) -> String {
     render_with_holes(text, &[], scope)
+}
+
+/// Enhancement-650 (hunt F6): rewrites every `%m`/`%M` of a string literal's raw
+/// text to `%m.<path>`, leaving `%%m` (an escaped percent) alone.
+fn qualify_hier_name_format(raw: &str, path: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + path.len() + 1);
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        out.push(c);
+        if c != '%' {
+            continue;
+        }
+        match chars.peek() {
+            Some('%') => {
+                out.push('%');
+                chars.next();
+            }
+            Some(&m @ ('m' | 'M')) => {
+                out.push(m);
+                out.push('.');
+                out.push_str(path);
+                chars.next();
+            }
+            _ => (),
+        }
+    }
+    out
 }
 
 fn rel_range(base: TextSize, range: TextRange) -> Range<usize> {
@@ -6182,6 +6227,21 @@ impl ElabCtx<'_> {
         out
     }
 
+    /// Enhancement-650 (hunt F6): the dotted instance path (`l1.l2`, `arr[0]`)
+    /// whose flattening prefix is `prefix`, read back from the Enhancement-86
+    /// absolute map (`<top>.<chain>` -> prefix); the shortest key is the
+    /// unaliased one. Empty when the prefix is the top module's own.
+    fn hier_path_of_prefix(&self, prefix: &str) -> String {
+        self.abs_prefixes
+            .map
+            .iter()
+            .filter(|(_, pfx)| pfx.as_str() == prefix)
+            .map(|(chain, _)| chain.as_str())
+            .min_by_key(|chain| chain.len())
+            .and_then(|chain| chain.split_once('.').map(|(_, rest)| rest.to_owned()))
+            .unwrap_or_default()
+    }
+
     /// Renders one instance's flattened body: a `Scope` covering every
     /// name the target module itself declares (ports bound to the caller's
     /// net, or a fresh internal net if left open; everything else
@@ -6206,6 +6266,8 @@ impl ElabCtx<'_> {
         // for every instance) prefix map by Rc instead of cloning its N entries into this
         // scope -- the per-instance clone made the whole flatten O(N^2) in the count.
         scope.abs = Rc::clone(&self.abs_prefixes);
+        // Enhancement-650: the child's own position, for `%m`
+        scope.hier_path = self.hier_path_of_prefix(prefix);
         let mut extra_decls = Vec::new();
 
         // Enhancement-86: ports that need a synthesized 0V ammeter -- because

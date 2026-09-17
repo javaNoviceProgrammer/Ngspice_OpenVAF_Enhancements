@@ -149,8 +149,21 @@ pub(crate) fn parse_define<'a>(
     let args = if followed_by_bracket {
         debug_assert!(p.at(PreprocessorToken::OpenParen));
         p.bump();
+        // Enhancement-650 (hunt F6): `` `define G() `` -- IEEE 1364-2005 19.3.1
+        // wants at least one formal. Say so at the `)`, then carry on with an
+        // argument-less macro so the definition itself still lands.
+        let empty_list = p.at(PreprocessorToken::CloseParen);
+        if empty_list {
+            err.push(crate::diagnostics::PreprocessorDiagnostic::EmptyMacroArgList {
+                span: p.current_span(),
+            });
+            p.bump();
+        }
         let mut args = Vec::new();
         loop {
+            if empty_list {
+                break;
+            }
             if !p.before(end) {
                 success = false;
                 err.push(UnexpectedEof {

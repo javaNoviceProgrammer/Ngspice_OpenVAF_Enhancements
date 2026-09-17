@@ -89,6 +89,11 @@ A spaced literal whose digits are illegal
 for its base is a located error. Two illegal forms that used to compile
 in silence are errors now: `1.` (LRM 2.6.2 requires a digit on each side
 of the decimal point) and a string spanning a raw newline (LRM 2.7).
+`.5`, the LRM's other 2.6.2 example, gets the same sentence since
+[E-650](../../enhancements_doc/Enhancement-650.md) (it was "unexpected
+token '.'"); an octal escape above `\377` is refused (2.7.1 gives one 8-bit
+character) and an escape the LRM does not define is kept verbatim with a
+warning (E-650).
 A backslash immediately before the newline is a **line continuation**
 instead: the backslash–newline pair contributes nothing to the string
 (SystemVerilog 5.9 semantics and de-facto Verilog-A practice — BSIM4
@@ -1267,7 +1272,10 @@ conversion, dynamic `*` widths, `%e/f/g/r` (engineering notation),
 [E-539](../../enhancements_doc/Enhancement-539.md) `%m` prints the
 **hierarchical name of the INSTANCE** that ran the task (`n.x1.nsub`), which is
 what 9.4.4 asks it for — it expanded at compile time to the *module* name until
-then, so every instance of a module printed one string. ⚠️ **`%l`/`%L` (the
+then, so every instance of a module printed one string. Inside an inlined
+child instance it is the child's own hierarchical name (`na1.l1.l2`,
+`na1.l1.arr[0]`) since [E-650](../../enhancements_doc/Enhancement-650.md);
+it printed the top instance's name for every child before. ⚠️ **`%l`/`%L` (the
 library.cell specifier) is NOT implemented**: it expands to the literal
 placeholder `__.__`, which looks like data rather than a diagnostic. There is
 no library concept in the SPICE netlist flow to name, so the honest options are
@@ -1563,7 +1571,7 @@ connected port.)*
 | 2 Lexical (identifiers, numbers, strings, attributes, three-token based literals, expression-position attrs) | ✅ ([E-515](../../enhancements_doc/Enhancement-515.md) audit) | `escid`, `stresc`, `comment`, `lrmlex` |
 | 3.2–3.3 Value types, variables, persistence | ✅ | `vartype`, `variable_persistence`, `intstate`, `varinit` |
 | 3.4 Parameters (ranges, localparam, aliasparam incl. 3.4.7 error rules, arrays incl. whole-array instantiation override and paramset assignment `.c = '{...}` (E-645), paramset, block-scoped) | ✅ (default-exemption ⚠️ and frozen-type-of-untyped ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramarray`, `paramset`, `paramsethsp`, `blockparam`, `alias` |
-| 3.5–3.13 Natures, disciplines, nets, buses, nodesets, 3.11.1 compatibility (signal-flow/natureless/domainless), nature-attribute validation, attribute values as constant expressions per A.1.6 ([E-649](../../enhancements_doc/Enhancement-649.md)), NIST2018 constants, **3.6.1 `abstol` honoured per node** ([E-539](../../enhancements_doc/Enhancement-539.md)) | ✅ (base-nature attr omission ⚠️, derived-access extension ⚠️ documented **and audible**, explicit-`.option`-wins ⚠️ documented; illegal discipline `units`/`access` overrides warn; vector branches ✖ rejected) | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
+| 3.5–3.13 Natures, disciplines, nets, buses, nodesets, 3.11.1 compatibility (signal-flow/natureless/domainless; a contribution across incompatible disciplines is named as such, [E-650](../../enhancements_doc/Enhancement-650.md)), nature-attribute validation, attribute values as constant expressions per A.1.6 ([E-649](../../enhancements_doc/Enhancement-649.md)), NIST2018 constants, **3.6.1 `abstol` honoured per node** ([E-539](../../enhancements_doc/Enhancement-539.md)) | ✅ (base-nature attr omission ⚠️, derived-access extension ⚠️ documented **and audible**, explicit-`.option`-wins ⚠️ documented; illegal discipline `units`/`access` overrides warn; vector branches ✖ rejected) | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
 | 4.1–4.4 Operators (incl. string relational, `===`/`!==` as 2-state `==`/`!=`), precedence, functions (`$clog2`, `$rtoi`/`$itor`, `ln1p`/`expm1`, domain diagnostics both routes, `%`-by-deck-zero fatal, same-node `V(a,a)`/`I(a,a)` rejected) | ✅ (`<<<`/`>>>` extension ⚠️ warned; runtime-probe domain policy ⚠️ documented) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil`, `lrmfuncs`, `lrmintrin`, `domainrt` |
 | 4.5 Analog operators (all), **clause-by-clause audit 4.5.1–4.5.15** ([E-514](../../enhancements_doc/Enhancement-514.md)); frozen-`td` absdelay implemented, ddx over unnamed-branch flows, no-ic `idtmod` pins DC at 0, `default_transition` honored for explicit zeros | ✅ (`limexp` stateless ⚠️, idt-reset τ=10µs ⚠️, ddt/idt tolerances not plumbed ⚠️, transition amplitude approximation ⚠️, zi continuous-bilinear ⚠️, dynamic laplace coeffs track+warn ⚠️ — all documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
 | 4.6 Noise & analysis (correlation per call site with label-combined reporting 4.6.4.1/4.6.4.6; `noise_table` linear-in-f, `noise_table_log` log-log, parameter-fed tables ⚠️ refused; Table 4-22 ic/static/nodeset phases exact; ac_stim matched to the running small-signal analysis) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |
@@ -1582,7 +1590,7 @@ connected port.)*
 | 9 misc ($finish family, $simparam; $simparam$str serves analysis_name/analysis_type/cwd/simulator — module/instance/path unserved ⚠️, the two-argument default form accepted since E-598; $bound_step smallest-wins; $table_model per 9.21 incl. isoline files, per-dimension controls, `2`/`3`/`D`/`E` codes, `I`, `;N` selector, the array data source of any dimension from compile-time-constant arrays, `localparam string` names — `I` on runtime/inline data and overridable `parameter string` names ⚠️ refused; attributes) | ✅ | `simctrl`, `simparamstr`, `opvar` |
 | plusargs (`$test`/`$value`) | ✅ ([E-215](../../enhancements_doc/Enhancement-215.md)) | `plusargs` |
 | simprobe / node aliases | ⚠️ LRM fallbacks (no-default `$simprobe` = warn + the mandated runtime fatal; all three 9.20 `shall be an error` rules enforced — context, a port as the aliased net, and a target that is another call's net ([E-541](../../enhancements_doc/Enhancement-541.md)); ⚠️ the third only within one module) | `alias`, `lrmvoice` |
-| 10 Compiler directives (incl. `` `__FILE__``/`` `__LINE__``, predefined-macro protection, `` `begin_keywords ``) | ✅ ([E-515](../../enhancements_doc/Enhancement-515.md)) | `preproc`, `directive`, `defaulttransition`, `filemacro`, `lrmlex` |
+| 10 Compiler directives (incl. `` `__FILE__``/`` `__LINE__``, predefined-macro protection, `` `begin_keywords ``; a stray `` `endif ``, an empty macro formal list, a continuation with trailing white space, a NUL byte and an include cycle each named, `` `line `` warned as `` `__LINE__ ``-only, [E-650](../../enhancements_doc/Enhancement-650.md)) | ✅ ([E-515](../../enhancements_doc/Enhancement-515.md)) | `preproc`, `directive`, `defaulttransition`, `filemacro`, `lrmlex` |
 | Mixed-signal / digital (outside Annex C) | ❌ by scope | — |
 
 As of E-84 the standard's own examples are a compliance suite: every

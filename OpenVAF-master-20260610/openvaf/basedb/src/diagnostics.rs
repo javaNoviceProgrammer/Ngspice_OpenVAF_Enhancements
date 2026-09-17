@@ -46,11 +46,39 @@ pub trait Diagnostic {
             }
 
             report.severity = seververity;
-            Some(report.with_code(format!("L{:03}", documentation_id)))
+            Some(note_command_line_define(report.with_code(format!("L{:03}", documentation_id)), db))
         } else {
-            Some(self.build_report(root_file, db))
+            Some(note_command_line_define(self.build_report(root_file, db), db))
         }
     }
+}
+
+/// Enhancement-650 (hunt F6): a diagnostic whose primary label sits in the
+/// virtual `-D` definitions file (`/std/__openvaf_defines__.va`, see
+/// `hir::db::defines_src`) points at a file the user never wrote. Name the
+/// command-line argument the offending line was synthesized from.
+fn note_command_line_define(mut report: Report, db: &dyn BaseDB) -> Report {
+    const DEFINES_FILE: &str = "/std/__openvaf_defines__.va";
+    let Some(label) = report.labels.iter().find(|l| l.style == LabelStyle::Primary) else {
+        return report;
+    };
+    if db.file_path(label.file_id).to_string() != DEFINES_FILE {
+        return report;
+    }
+    let Ok(text) = db.file_text(label.file_id) else { return report };
+    let start = label.range.start.min(text.len());
+    let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = text[start..].find('\n').map_or(text.len(), |i| start + i);
+    let line = &text[line_start..line_end];
+    let arg = match line.strip_prefix("`define ").and_then(|rest| rest.split_once(' ')) {
+        Some((name, value)) => format!("-D {name}={value}"),
+        None => line.to_owned(),
+    };
+    report.notes.push(format!(
+        "note: this line was synthesized from the command-line argument `{arg}`; the \
+         argument is what needs fixing"
+    ));
+    report
 }
 
 pub const HINT_UNSUPPORTED: &str = "this is allowed by VerilogAMS language spec but was purposefully excluded from the supported language subset\nmore details can be found in the OpenVAF documentation";

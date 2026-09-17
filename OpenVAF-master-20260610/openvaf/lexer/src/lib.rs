@@ -334,6 +334,28 @@ impl Cursor<'_> {
             // One-symbol tokens.
             ';' => Semi,
             ',' => Comma,
+            // Enhancement-650 (hunt F6): `.5` is a malformed real -- LRM 2.6.2 wants a
+            // digit on each side of the point -- and it used to lex as `.` + `5` and
+            // die in the parser as "unexpected token '.'", while `5.` got the dedicated
+            // sentence. Lex it as one Float token so validation says the same about both.
+            // No legal construct puts a digit right after a `.`: a hierarchical name
+            // continues with an identifier, and `1..5` is two malformed reals.
+            '.' if self.first().is_ascii_digit() => {
+                self.eat_decimal_digits();
+                let has_scale_char = match self.first() {
+                    'e' | 'E' if starts_float_exponent(self.second(), self.third()) => {
+                        self.bump();
+                        self.eat_float_exponent();
+                        false
+                    }
+                    'T' | 'G' | 'M' | 'K' | 'k' | 'm' | 'u' | 'n' | 'p' | 'f' | 'a' => {
+                        self.bump();
+                        true
+                    }
+                    _ => false,
+                };
+                TokenKind::Literal { kind: LiteralKind::Float { has_scale_char } }
+            }
             '.' => Dot,
             '(' => OpenParen,
             ')' => CloseParen,

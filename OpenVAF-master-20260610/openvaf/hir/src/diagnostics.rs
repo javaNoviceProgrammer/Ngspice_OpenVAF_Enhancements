@@ -19,6 +19,11 @@ use crate::{CompilationDB, HirDatabase};
 pub(crate) fn collect(db: &CompilationDB, root_file: FileId, sink: &mut impl DiagnosticSink) {
     sink.add_diagnostics(&*db.preprocess(root_file).diagnostics, root_file, db);
     sink.add_diagnostics(db.parse(root_file).errors(), root_file, db);
+    // Enhancement-650 (hunt F6): `(* openvaf_allow="no_such_lint" *)` was checked
+    // -- `UnknownLint`, a deny-level lint -- and the report thrown away: the lint
+    // attribute tree's diagnostics were never handed to a sink, so a typo in a lint
+    // name silenced nothing and said nothing.
+    sink.add_diagnostics(db.lint_attr_tree(root_file).diagnostics.iter(), root_file, db);
 
     // Collect root tree items (natures, ...) AST -> HIR
     let def_map = db.def_map(root_file);
@@ -134,6 +139,13 @@ fn collect_body_diagnostcs(
     ast_id_map: &AstIdMap,
 ) {
     let body_sm = db.body_source_map(def);
+    // Enhancement-650 (hunt F6): the reports of the STATEMENT-level lint
+    // attributes (an unknown lint name in `(* openvaf_allow=".." *)` on a
+    // statement) were collected into the body source map and never emitted.
+    {
+        let base: &dyn HirDefDB = db.upcast();
+        dst.add_diagnostics(body_sm.diagnostics.iter(), root_file, base.upcast());
+    }
     let diagnostics = &db.inference_result(def).diagnostics;
     for diag in diagnostics {
         let diag = InferenceDiagnosticWrapped { body_sm: &body_sm, diag, parse, db, sm };

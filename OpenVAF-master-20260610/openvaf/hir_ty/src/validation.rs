@@ -1,5 +1,5 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
-use basedb::lints::builtin::{
+use basedb::lints::builtin::{dead_range_member, 
     const_simparam, contribution_to_input_port, lossy_integer_constant,
     param_default_out_of_range, rng_in_loop, runtime_format_string, trivial_probe,
     unknown_analysis_name, unknown_limit_function, unknown_simparam, variant_const_simparam,
@@ -184,6 +184,11 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             BodyValidationDiagnostic::ParamDefaultOutOfRange { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, param_default_out_of_range);
                 Some((param_default_out_of_range, src))
+            }
+            // Enhancement-650 (hunt F6)
+            BodyValidationDiagnostic::NonIntegerSetMember { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, dead_range_member);
+                Some((dead_range_member, src))
             }
             // Enhancement-590
             BodyValidationDiagnostic::IntLiteralOverflow { stmt, .. }
@@ -635,6 +640,33 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                          the default and silence this warning with \
                          (* openvaf_allow=\"param_default_out_of_range\" *) on the \
                          declaration; otherwise pick a default inside the range"
+                            .to_owned(),
+                    ])
+            }
+            // Enhancement-650 (hunt F6): a range member no integer can equal
+            BodyValidationDiagnostic::NonIntegerSetMember { param, expr, ref value, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let name = self.db.param_data(param).name.clone();
+                let verdict = format!(
+                    "no integer equals {value}, so this member of the `from` set can never be \
+                     chosen"
+                );
+                Report::warning()
+                    .with_message(format!(
+                        "parameter '{name}' is an integer, but its range names the non-integer \
+                         {value}"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: verdict,
+                    }])
+                    .with_notes(vec![
+                        "LRM 3.4.2: a value range is checked against the parameter's value, and \
+                         an integer parameter holds only integers -- a real member is dead: a \
+                         typo (`from {1, 2.5}` for `from {1, 2, 5}`?), or a parameter that was \
+                         meant to be real; the other members keep working"
                             .to_owned(),
                     ])
             }
