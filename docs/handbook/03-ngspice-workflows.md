@@ -695,3 +695,18 @@ tokens the way `plot` and `gnuplot` always did. A quoted file name — the
 spelling for a path with a space, and what an f-string with whitespace yields —
 is unquoted by `wrdata`, `write`, `source` and `pyplot` (E-556, E-558); before
 that the quotes went into the file name.
+
+## 3.11 Ending a run from a control script: `quit` and `exit`
+
+`quit` ends ngspice — from a `.control` block, at the prompt, in pipe mode — and
+`exit` is the same command under the name most shells and interpreters use
+([E-653](../../enhancements_doc/Enhancement-653.md);
+[`examples/exitcmd_examples/`](../../examples/exitcmd_examples/)). Both take one
+optional word: an integer becomes the process's exit status (`exit 3` lets a script
+report a result to whatever launched ngspice), and `noask` skips the "Are you sure you
+want to quit (yes)?" question that `set askquit` raises when a simulation is still in
+progress or a plot has not been written. In the shared library either returns control
+to the host instead of ending the process. A `sweep -analysis exit` is refused like
+`-analysis quit`, because the analysis a sweep runs per point must leave the circuit
+standing. Before E-653 `exit` was "no such command available in ngspice", and the
+block went on with its next line.

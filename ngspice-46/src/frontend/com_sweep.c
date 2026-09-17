@@ -413,7 +413,8 @@ static const char *sw_knobdesc(const char *name, int kind)
 static bool sw_analysis_is_destructive(const char *analysis)
 {
     static const char *const banned[] = { "reset", "remcirc", "destroy",
-                                          "source", "load", "quit", NULL };
+                                          "source", "load", "quit", "exit",
+                                          NULL };
     const char *p = analysis;
     size_t n;
     int i;

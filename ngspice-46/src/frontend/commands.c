@@ -672,6 +672,12 @@ struct comm spcp_coms[] = {
       { 0, 0, 0, 0 }, E_BEGINNING, 0, 1,
       NULL,
       ": Quit %s." } ,
+    /* Enhancement-653: `exit` is a second name for `quit` -- the same
+     * function, the same optional exit code or `noask` word. */
+    { "exit", com_quit, FALSE, TRUE,
+      { 0, 0, 0, 0 }, E_BEGINNING, 0, 1,
+      NULL,
+      ": Quit %s (the same as quit)." } ,
     { "source", com_source, FALSE, TRUE,
       { 1, 1, 1, 1 }, E_DEFHMASK, 1, LOTS,
       NULL,
@@ -1183,6 +1189,12 @@ struct comm nutcp_coms[] = {
       { 0, 0, 0, 0 }, E_BEGINNING, 0, 1,
       NULL,
       ": Quit %s." } ,
+    /* Enhancement-653: `exit` is a second name for `quit` -- the same
+     * function, the same optional exit code or `noask` word. */
+    { "exit", com_quit, FALSE, TRUE,
+      { 0, 0, 0, 0 }, E_BEGINNING, 0, 1,
+      NULL,
+      ": Quit %s (the same as quit)." } ,
       /* to remove circuits loaded */
     { "removecirc", com_removecirc, TRUE, FALSE,
       { 04, 0, 0, 0 }, E_DEFHMASK, 0, 1,
