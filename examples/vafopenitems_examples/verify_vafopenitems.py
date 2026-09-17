@@ -28,7 +28,9 @@
       Both the combined declaration `input real x;` and the ANSI header
       `analog function real f(input real x);` were parse errors. Both are now
       accepted, and the type is really applied -- an `integer` argument declared
-      either way rejects a real literal exactly as the separated form does.
+      either way ROUNDS a real actual exactly as the separated form does (since
+      E-647 the conversion of LRM 4.7.3/4.2.1.1: `f(2.7)` is `f(3)`; it used to
+      be refused, which this suite pinned until then).
 
   [3] `$table_model` WITH RUNTIME ARRAY DATA (LRM p274).
 
@@ -167,15 +169,18 @@ def main():
               got is not None and abs(got / 1e-3 - 6.0) < 1e-9,
               "rc=%s got=%s" % (rc, got))
 
-    # the declared type is really APPLIED, not just parsed and dropped
+    # the declared type is really APPLIED, not just parsed and dropped: an integer
+    # argument rounds a real actual (E-647, LRM 4.7.3/4.2.1.1) -- f(2.7) is f(3) = 6,
+    # where a real argument would give 5.4
     for label, decl in (
         ("combined", "analog function real f; input integer x; begin f = x*2.0; end endfunction"),
         ("ANSI", "analog function real f(input integer x); begin f = x*2.0; end endfunction"),
     ):
-        _, rc, out = build(fn_model(decl), "ti" + label)
-        check("%s: an integer argument rejects a real literal" % label,
-              rc != 0 and "expected integer" in out,
-              (out.strip().splitlines() or [""])[0][:46])
+        d, rc, out = build(fn_model(decl).replace("f(3.0)", "f(2.7)"), "ti" + label)
+        got = sim(d) if rc == 0 else None
+        check("%s: an integer argument rounds a real actual (f(2.7) = f(3) = 6)" % label,
+              got is not None and abs(got / 1e-3 - 6.0) < 1e-9,
+              "rc=%s got=%s" % (rc, got))
 
     # ---- [3] $table_model with runtime arrays ------------------------------
     # ys depends on a model-card parameter, so the table CANNOT be folded at

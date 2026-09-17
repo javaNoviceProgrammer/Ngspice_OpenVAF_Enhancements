@@ -610,7 +610,13 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // are AND-combined into the single branch condition; everything else (block
         // structure, default handling) is shared with the scalar path, which is just the
         // one-element case. Previously an array discriminant hit `todo!()` and crashed.
-        let discr_ty = self.body.expr_type(discr);
+        // Enhancement-647: an integer discriminant compared with a real item carries a
+        // cast to real (inference recorded it, `lower_expr` applies it), so the
+        // comparison's type is the cast's target, not the expression's own.
+        let discr_ty = match self.body.needs_cast(discr) {
+            Some((_, dst)) => dst.clone(),
+            None => self.body.expr_type(discr),
+        };
         let is_array = matches!(discr_ty, Type::Array { .. });
         let discr_op = match discr_ty.base_type() {
             Type::Real => Opcode::Feq,

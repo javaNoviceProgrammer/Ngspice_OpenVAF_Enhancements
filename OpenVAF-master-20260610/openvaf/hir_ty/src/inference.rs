@@ -384,20 +384,35 @@ impl Ctx<'_> {
                 // `hir_lower::stmt::lower_case`. Scalars take the same path as before
                 // (the helper falls through to `infere_expr`).
                 if let Some(ty) = self.infere_array_arg(stmt, discr) {
-                    let req = ty.to_value().map_or(TyRequirement::AnyVal, TyRequirement::Val);
+                    let mut items: Vec<(ExprId, Ty)> = Vec::new();
                     for case in case_arms {
                         if let CaseCond::Vals(vals) = &case.cond {
                             for val in vals {
                                 if let Some(val_ty) = self.infere_array_arg(stmt, *val) {
-                                    self.expect::<false>(
-                                        *val,
-                                        None,
-                                        val_ty,
-                                        Cow::Owned(vec![req.clone()]),
-                                    );
+                                    items.push((*val, val_ty));
                                 }
                             }
                         }
+                    }
+                    // Enhancement-647: LRM 5.8.3 compares the case expression with each
+                    // item; between an integer and a real that comparison is a real one
+                    // (4.2.1). An integer discriminant with a real item -- `case (sel)
+                    // 2.0:` -- was refused ("expected integer value but found real
+                    // literal") while the reverse converted; now the discriminant is
+                    // cast to real and every item is expected as real.
+                    let discr_ty = ty.to_value();
+                    let real_items = matches!(discr_ty, Some(Type::Integer | Type::Bool))
+                        && items.iter().any(|(_, t)| {
+                            matches!(t.to_value(), Some(Type::Real))
+                        });
+                    let req = if real_items {
+                        self.result.casts.insert(discr, Type::Real);
+                        TyRequirement::Val(Type::Real)
+                    } else {
+                        discr_ty.map_or(TyRequirement::AnyVal, TyRequirement::Val)
+                    };
+                    for (val, val_ty) in items {
+                        self.expect::<false>(val, None, val_ty, Cow::Owned(vec![req.clone()]));
                     }
                 }
             }
@@ -1055,6 +1070,12 @@ impl Ctx<'_> {
                     // an array literal, which has no storage — must be rejected here
                     // instead of silently skipping the writeback.
                     TyRequirement::Var(arg.ty.clone())
+                } else if arg.ty == Type::Integer {
+                    // Enhancement-647: LRM 4.7.3 assigns the actual to the formal, and
+                    // 4.2.1.1 rounds a real assigned to an integer -- `f(2.7)` into an
+                    // integer input is `f(3)`, as `k = 2.7` is `k = 3`. `Val(Integer)`
+                    // refused the real outright.
+                    TyRequirement::Assignable(Type::Integer)
                 } else {
                     TyRequirement::Val(arg.ty.clone())
                 }

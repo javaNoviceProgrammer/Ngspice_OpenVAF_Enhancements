@@ -10,6 +10,12 @@ use stdx::{impl_display, impl_idx_from, pretty};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TyRequirement {
     Val(Type),
+    /// Enhancement-647: a value ASSIGNABLE to a `<ty>` variable -- what LRM 4.2.1's
+    /// implicit conversion allows (a real into an integer rounds), where `Val(ty)`
+    /// takes only what converts losslessly. Used for a user function's scalar
+    /// integer input formal, which 4.7.3 assigns the actual to; a `$dist_*` seed or
+    /// a shift distance keeps `Val(Integer)`, since neither is an assignment.
+    Assignable(Type),
     Condition,
     AnyVal,
     ArrayAnyLength { ty: Type },
@@ -27,7 +33,9 @@ pub enum TyRequirement {
 impl TyRequirement {
     pub fn cast(&self, src: &Type) -> Option<Type> {
         match self {
-            TyRequirement::Val(ty) if src != ty => Some(ty.to_owned()),
+            TyRequirement::Val(ty) | TyRequirement::Assignable(ty) if src != ty => {
+                Some(ty.to_owned())
+            }
             TyRequirement::Condition if src != &Type::Bool => Some(Type::Bool),
             _ => None,
         }
@@ -54,6 +62,7 @@ impl TyEquivalence {
 impl_display! {
     match TyRequirement{
         TyRequirement::Val(ty) => "{} value",ty;
+        TyRequirement::Assignable(ty) => "{} value",ty;
         TyRequirement::Condition => "{} value", Type::Bool;
         TyRequirement::AnyVal => "value";
         TyRequirement::ArrayAnyLength{ty} => "array ({})", ty;
@@ -199,7 +208,7 @@ impl Ty {
                 | Ty::FunctionVar { .. },
                 TyRequirement::AnyVal,
             )
-            | (Ty::InfLiteral, TyRequirement::Val(Type::Real))
+            | (Ty::InfLiteral, TyRequirement::Val(Type::Real) | TyRequirement::Assignable(Type::Real))
             | (
                 Ty::Val(Type::EmptyArray | Type::Array { len: 0, .. }),
                 TyRequirement::ArrayAnyLength { .. }
@@ -222,6 +231,22 @@ impl Ty {
                 TyRequirement::Val(ty2),
             )
             | (Ty::Literal(ty1), TyRequirement::Literal(ty2)) => equiv.compare_ty(ty1, ty2),
+
+            // Enhancement-647: by conversion, anything assignable (4.2.1); for the
+            // semantic and exact rankings, the same as `Val`, so an overload that
+            // takes the actual's own type still wins
+            (
+                Ty::Val(ty1)
+                | Ty::Literal(ty1)
+                | Ty::Var(ty1, _)
+                | Ty::NatureAttr(ty1, _)
+                | Ty::Param(ty1, _)
+                | Ty::FunctionVar { ty: ty1, .. },
+                TyRequirement::Assignable(ty2),
+            ) => match equiv {
+                TyEquivalence::Conversion => ty1.is_assignable_to(ty2),
+                _ => equiv.compare_ty(ty1, ty2),
+            },
 
             (
                 Ty::Val(ty)
