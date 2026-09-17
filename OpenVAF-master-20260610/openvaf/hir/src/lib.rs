@@ -572,6 +572,20 @@ impl Variable {
     pub fn get_attr(&self, db: &CompilationDB, ast: &AstCache, name: &str) -> Option<ast::Attr> {
         ast.resolve_attribute(name, self.id.lookup(db).ast_id(db).erased())
     }
+
+    /// Enhancement-652 (hunt F8): the source range of the declaration itself,
+    /// as `Parameter::text_range`.
+    pub fn text_range(self, db: &CompilationDB) -> TextRange {
+        let loc = self.id.lookup(db);
+        let ast_id = loc.ast_id(db).erased();
+        db.ast_id_map(loc.scope.root_file).get_syntax(ast_id).range()
+    }
+
+    /// Enhancement-652: the lint anchor of the declaration, so an
+    /// `(* openvaf_allow="..." *)` on it is honoured.
+    pub fn lint_src(self, db: &CompilationDB) -> lints::LintSrc {
+        lints::LintSrc::item(self.id.lookup(db).ast_id(db).erased())
+    }
 }
 
 /// Book audit (lookup tables): the compile-time values of an array variable's
@@ -788,6 +802,18 @@ stdx::impl_debug! {
 impl AliasParameter {
     pub fn name(self, db: &CompilationDB) -> String {
         db.alias_data(self.id).name.to_string()
+    }
+
+    /// Enhancement-652 (hunt F8): the source range of the `aliasparam` item.
+    pub fn text_range(self, db: &CompilationDB) -> TextRange {
+        let loc = self.id.lookup(db);
+        let ast_id = loc.ast_id(db).erased();
+        db.ast_id_map(loc.scope.root_file).get_syntax(ast_id).range()
+    }
+
+    /// Enhancement-652: the lint anchor of the `aliasparam` item.
+    pub fn lint_src(self, db: &CompilationDB) -> lints::LintSrc {
+        lints::LintSrc::item(self.id.lookup(db).ast_id(db).erased())
     }
     pub fn resolve(self, db: &CompilationDB) -> Option<ResolvedAliasParameter> {
         db.resolve_alias(self.id).and_then(|alias| match alias {

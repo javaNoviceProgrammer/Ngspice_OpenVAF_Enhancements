@@ -1502,7 +1502,13 @@ operating-point variable (`print @n1[gm]`, `.save`, `.meas`) — a
 described variable declared inside a named block is local to that block
 (LRM 3.2.1) and is no longer exported as a phantom op-var; `(* type="instance" *)` on a
 parameter puts it on the instance line and under `alter`/`.dc` sweeps;
-`desc`/`units` on parameters populate the OSDI descriptor.
+`desc`/`units` on parameters populate the OSDI descriptor. Since
+[E-652](../../enhancements_doc/Enhancement-652.md) the exported names are
+judged the way ngspice looks them up -- case-folded, per table -- and a
+variable, parameter or alias that another entry of its table, ngspice's own
+`m`/`temp`/`dtemp`/`dt` or a synthesized terminal current makes unreachable
+is reported at compile time (L035), as is a `$` in a name, which ngspice's
+expression parser cannot read back (L036).
 
 ## 8. Compiler directives (LRM 10) — ✅
 

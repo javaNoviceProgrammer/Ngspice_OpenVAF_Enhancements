@@ -8,9 +8,13 @@
 //! later by the same sink.
 
 use hir::diagnostics::{BaseDB, Diagnostic, FileId, Label, LabelStyle, Report};
-use hir::lints::{builtin::discarded_contribution, builtin::probe_only_branch_short, Lint, LintSrc};
+use hir::lints::{
+    builtin::discarded_contribution, builtin::dollar_in_exported_name,
+    builtin::exported_name_collision, builtin::probe_only_branch_short, Lint, LintSrc,
+};
 use hir::{ContributionSite, FlowProbeSite};
 use syntax::sourcemap::FileSpan;
+use syntax::TextRange;
 
 /// How many source lines a single report is willing to point at per label style.
 const MAX_LABELS: usize = 4;
@@ -248,5 +252,200 @@ impl Diagnostic for ProbeOnlyBranchShort {
             ))
             .with_labels(labels)
             .with_notes(notes)
+    }
+}
+
+/// Enhancement-652 (hunt F8): a name exported to the simulator -- a
+/// parameter, an alias or an operating-point variable -- with its span and
+/// lint anchor.
+#[derive(Clone)]
+pub(crate) struct ExportedName {
+    pub name: String,
+    /// "instance parameter", "model parameter", "alias", "operating-point variable"
+    pub kind: &'static str,
+    pub range: TextRange,
+    pub lint_src: LintSrc,
+}
+
+/// What the reported declaration collides with.
+pub(crate) enum ExportedOther {
+    Declared(ExportedName),
+    /// One of ngspice's own names: its instance parameter (`m`, `temp`, ...)
+    /// or a terminal current it synthesizes (`i_<port>`, `i`).
+    Builtin { name: String, what: &'static str },
+}
+
+/// Enhancement-652 (hunt F8): two names ngspice cannot tell apart.
+///
+/// Verilog-A is case-sensitive; ngspice folds every name to lower case, so an
+/// instance's parameters, aliases and operating-point variables share ONE flat
+/// namespace with the simulator's own `m`/`temp`/`dtemp`/`dt` and the terminal
+/// currents Enhancement-394 synthesizes, and a model's parameters and aliases
+/// share another. Two entries that fold to the same name are one name to
+/// `@inst[name]`, `show` and `alter`: the first in the simulator's table wins
+/// (a parameter over a variable, an earlier declaration over a later one,
+/// ngspice's own `m` over a variable, a variable over a synthesized current)
+/// and the other is unreachable, with two rows of the same name in `show`.
+/// ngspice warns at load time (E-335/E-396); the author compiling the model
+/// never saw it. This is that warning where the author is.
+pub(crate) struct ExportedNameCollision {
+    pub module: String,
+    pub decl: ExportedName,
+    pub other: ExportedOther,
+    /// `true`: the reported declaration is what the lookup reaches, and it is
+    /// the OTHER name that is shadowed (a variable over a synthesized current)
+    pub decl_wins: bool,
+}
+
+impl Diagnostic for ExportedNameCollision {
+    fn lint(&self, _root_file: FileId, _db: &dyn BaseDB) -> Option<(Lint, LintSrc)> {
+        Some((exported_name_collision, self.decl.lint_src))
+    }
+
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let parse = db.parse(root_file);
+        let sm = db.sourcemap(root_file);
+        let folded = self.decl.name.to_ascii_lowercase();
+        let FileSpan { range, file } = parse.to_file_span(self.decl.range, &sm);
+        // the model's table is read through `@<model>[..]`/`showmod`, the
+        // instance's through `@<inst>[..]`/`show`
+        let model_level = self.decl.kind == "model parameter";
+        let (level, show, alter) = if model_level {
+            ("<model>", "showmod", "altermod")
+        } else {
+            ("<inst>", "show", "alter")
+        };
+        let mut involves_var = self.decl.kind == "operating-point variable";
+        let (title, primary, mut labels, note) = match &self.other {
+            ExportedOther::Declared(other) => {
+                involves_var |= other.kind == "operating-point variable";
+                let FileSpan { range: orange, file: ofile } = parse.to_file_span(other.range, &sm);
+                let secondary = Label {
+                    style: LabelStyle::Secondary,
+                    file_id: ofile,
+                    range: orange.into(),
+                    message: format!("info: {} '{}' is declared here", other.kind, other.name),
+                };
+                (
+                    format!(
+                        "{} '{}' and {} '{}' differ only by case, which ngspice cannot tell apart",
+                        self.decl.kind, self.decl.name, other.kind, other.name
+                    ),
+                    format!(
+                        "unreachable from ngspice: `@{level}[{folded}]` reads {} '{}'",
+                        other.kind, other.name
+                    ),
+                    vec![secondary],
+                    format!(
+                        "ngspice folds every name to lower case, so `@{level}[{folded}]`, `{show}` \
+                         and `{alter}` see one name where the model declares two -- {} '{}' comes \
+                         first in the simulator's table and wins the lookup, and `{show}` prints \
+                         two '{folded}' rows",
+                        other.kind, other.name
+                    ),
+                )
+            }
+            ExportedOther::Builtin { name, what } if self.decl_wins => (
+                format!(
+                    "{} '{}' shadows '{name}', {what}",
+                    self.decl.kind, self.decl.name
+                ),
+                format!("`@<inst>[{name}]` reads this {} instead", self.decl.kind),
+                Vec::new(),
+                format!(
+                    "ngspice folds every name to lower case; '{name}' is what \
+                     `.options savecurrents` and `print @<inst>[{name}]` expect to be {what}, \
+                     and with this name in the way it is unreachable"
+                ),
+            ),
+            ExportedOther::Builtin { name, what } => (
+                format!(
+                    "{} '{}' has the name of {what} '{name}', which wins the lookup",
+                    self.decl.kind, self.decl.name
+                ),
+                format!("unreachable from ngspice: `@<inst>[{name}]` reads {what}"),
+                Vec::new(),
+                format!(
+                    "ngspice folds every name to lower case and its own '{name}' comes first, \
+                     so the model's value can never be read back and `show` prints two \
+                     '{name}' rows"
+                ),
+            ),
+        };
+        labels.insert(
+            0,
+            Label { style: LabelStyle::Primary, file_id: file, range: range.into(), message: primary },
+        );
+        let help = if involves_var {
+            format!(
+                "help: rename one of them in the Verilog-A source of module '{}' (the \
+                 `desc`/`units` attribute is what exports a variable; dropping the attribute \
+                 hides the variable from the simulator instead of renaming it)",
+                self.module
+            )
+        } else {
+            format!("help: rename one of them in the Verilog-A source of module '{}'", self.module)
+        };
+        Report::warning().with_message(title).with_labels(labels).with_notes(vec![note, help])
+    }
+}
+
+/// Enhancement-652 (hunt F8): a `$` in an exported name.
+///
+/// `a$b` is a legal Verilog-A identifier (LRM 2.7.1) and ngspice sets
+/// `a$b=5` on a card, but `print @inst[a$b]` hands the text between the
+/// brackets to the expression parser, which reads `$b` as a shell variable:
+/// "b: no such variable", then "no such parameter a". The name is write-only;
+/// an operating-point variable with a `$` is not exported at all (its shape
+/// is reserved for the `name$paramset` twins, LRM 6.4.3).
+pub(crate) struct DollarInExportedName {
+    pub module: String,
+    pub decl: ExportedName,
+}
+
+impl Diagnostic for DollarInExportedName {
+    fn lint(&self, _root_file: FileId, _db: &dyn BaseDB) -> Option<(Lint, LintSrc)> {
+        Some((dollar_in_exported_name, self.decl.lint_src))
+    }
+
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let parse = db.parse(root_file);
+        let sm = db.sourcemap(root_file);
+        let FileSpan { range, file } = parse.to_file_span(self.decl.range, &sm);
+        let opvar = self.decl.kind == "operating-point variable";
+        let (label, note) = if opvar {
+            (
+                "not exported to the simulator".to_owned(),
+                "a `$` in an operating-point variable's name is the shape of the \
+                 `name$paramset` twins (LRM 6.4.3), so it is kept out of the exported \
+                 table; and `@<inst>[a$b]` could not read it anyway"
+                    .to_owned(),
+            )
+        } else {
+            (
+                "write-only from ngspice".to_owned(),
+                format!(
+                    "ngspice sets `{0}=...` on a card, but `print @<inst>[{0}]` hands the text \
+                     to its expression parser, which reads the `$` part as a shell variable \
+                     (\"no such variable\"), so the value can never be read back",
+                    self.decl.name
+                ),
+            )
+        };
+        Report::warning()
+            .with_message(format!(
+                "{} '{}' has a `$` in its name, which ngspice's expression parser cannot read",
+                self.decl.kind, self.decl.name
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: label,
+            }])
+            .with_notes(vec![
+                note,
+                format!("help: rename it in the Verilog-A source of module '{}'", self.module),
+            ])
     }
 }

@@ -255,5 +255,17 @@ pub mod builtin {
         // member as legal-and-unreachable, and a range spec shared with a real
         // parameter may carry one on purpose.
         pub const dead_range_member = LintData{default_lvl: Warn, documentation_id: 34};
+        // Enhancement-652 (hunt F8): two names ngspice cannot tell apart -- it
+        // folds every name to lower case -- in one of its lookup namespaces
+        // (the instance's parameters, aliases and operating-point variables
+        // plus its own `m`/`temp`/`dtemp`/`dt` and the synthesized terminal
+        // currents; the model's parameters and aliases), so one of them is
+        // unreachable from `@inst[name]`, `show` and `alter`.
+        pub const exported_name_collision = LintData{default_lvl: Warn, documentation_id: 35};
+        // Enhancement-652: a `$` in an exported name. Legal Verilog-A, but
+        // ngspice's expression parser reads `$b` in `@inst[a$b]` as a shell
+        // variable, so the name can be set on a card and never read back; an
+        // operating-point variable with a `$` is not exported at all.
+        pub const dollar_in_exported_name = LintData{default_lvl: Warn, documentation_id: 36};
     }
 }

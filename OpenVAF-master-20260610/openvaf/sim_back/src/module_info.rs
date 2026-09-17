@@ -14,7 +14,9 @@ use syntax::ast::{self, Expr};
 use syntax::sourcemap::FileSpan;
 use syntax::{AstNode, TextRange};
 
-use crate::diagnostics::ProbeOnlyBranchShort;
+use crate::diagnostics::{
+    DollarInExportedName, ExportedName, ExportedNameCollision, ExportedOther, ProbeOnlyBranchShort,
+};
 
 #[cfg(test)]
 mod tests;
@@ -80,6 +82,10 @@ impl ModuleInfo {
         let mut explicit_model: AHashSet<Parameter> = AHashSet::new();
 
         let mut resolved_attrs = AHashSet::new();
+        // Enhancement-652 (hunt F8): the alias items themselves, for their spans,
+        // and the `$`-named variables that are not exported
+        let mut alias_decls: Vec<(SmolStr, hir::AliasParameter, Parameter)> = Vec::new();
+        let mut dollar_opvars: Vec<(Variable, String)> = Vec::new();
         let mut declarations = module.rec_declarations(db);
         let mut add_diagnostic = |attr: ast::Attr, diag: &dyn Diagnostic| {
             if resolved_attrs.insert(attr.syntax().text_range()) {
@@ -131,6 +137,12 @@ impl ModuleInfo {
                     // uses the paramset", and one without a description makes the
                     // module's unavailable -- so the hidden one is not exported.
                     if name.contains('$') {
+                        // Enhancement-652 (hunt F8): a `$` the AUTHOR wrote is a
+                        // variable that silently never reaches the simulator;
+                        // reported after the loop (`add_diagnostic` holds the sink)
+                        if !is_paramset_twin_name(db, cu, &name) {
+                            dollar_opvars.push((var, name.to_string()));
+                        }
                         continue;
                     }
                     let units = units
@@ -509,7 +521,9 @@ impl ModuleInfo {
                 // and no diagnostic; skip it and let the diagnostic do the talking.
                 ScopeDef::AliasParameter(alias) => match alias.resolve(db) {
                     Some(ResolvedAliasParameter::Parameter(param)) => {
-                        params.entry(param).or_default().alias.push(declarations.to_path(name))
+                        let path = declarations.to_path(name);
+                        alias_decls.push((path.clone(), alias, param));
+                        params.entry(param).or_default().alias.push(path)
                     }
                     Some(ResolvedAliasParameter::SystemParameter(sys_fun)) => {
                         sys_fun_alias.entry(sys_fun).or_default().push(declarations.to_path(name))
@@ -523,6 +537,25 @@ impl ModuleInfo {
 
         promote_instance_dependent(db, cu, &mut params, &explicit_model, sink);
 
+        // Enhancement-652 (hunt F8): after promotion, since it decides which
+        // namespace a parameter lands in
+        for (var, name) in dollar_opvars {
+            sink.add_diagnostic(
+                &DollarInExportedName {
+                    module: module.name(db),
+                    decl: ExportedName {
+                        name,
+                        kind: "operating-point variable",
+                        range: var.text_range(db),
+                        lint_src: var.lint_src(db),
+                    },
+                },
+                cu.root_file(),
+                db,
+            );
+        }
+        check_exported_names(db, cu, module, &params, &alias_decls, &op_vars, sink);
+
         // Enhancement-555: which parameters the module tests with $param_given
         let tested = module_given_tests(db, module);
         for (param, info) in params.iter_mut() {
@@ -533,6 +566,169 @@ impl ModuleInfo {
         }
 
         ModuleInfo { module, params, op_vars, sys_fun_alias }
+    }
+}
+
+/// Enhancement-652 (hunt F8): is `name` one of the `name$<paramset>` twins
+/// elaboration synthesizes (LRM 6.4.3), rather than a `$` the author wrote?
+fn is_paramset_twin_name(db: &CompilationDB, cu: CompilationUnit, name: &str) -> bool {
+    let Some((_, suffix)) = name.rsplit_once('$') else { return false };
+    cu.modules(db).iter().any(|m| m.name(db) == suffix)
+}
+
+/// Enhancement-652 (hunt F8): the names a module exports, judged the way
+/// ngspice will look them up.
+///
+/// Verilog-A is case-sensitive; ngspice folds every name to lower case and
+/// keeps two flat tables per device: the instance's parameters, their aliases
+/// and the operating-point variables (with the simulator's own `m`/`temp`/
+/// `dtemp`/`dt` and the terminal currents Enhancement-394 synthesizes), and
+/// the model's parameters and aliases. Two entries that fold to one name are
+/// one name to `@inst[name]`, `show` and `alter`, and the first in the table
+/// wins: a parameter over a variable, an earlier declaration over a later
+/// one, ngspice's own `m` over a variable, a variable over a synthesized
+/// terminal current. ngspice warns at load time (E-335/E-396); the author
+/// compiling the model never saw it, and L029 (`reserved_parameter_name`)
+/// covered parameters only. A parameter and its own aliases are one entry
+/// (the simulator routes them to one id). Model parameters and operating-point
+/// variables live in different tables and are both reachable, so a case twin
+/// across those two is not reported.
+///
+/// A `$` in an exported name is reported beside it: legal Verilog-A, but
+/// ngspice's expression parser reads `$b` in `@inst[a$b]` as a shell
+/// variable, so a parameter with one is write-only.
+fn check_exported_names(
+    db: &CompilationDB,
+    cu: CompilationUnit,
+    module: Module,
+    params: &IndexMap<Parameter, ParamInfo, BuildHasherDefault<FxHasher>>,
+    alias_decls: &[(SmolStr, hir::AliasParameter, Parameter)],
+    op_vars: &IndexMap<Variable, OpVar, BuildHasherDefault<FxHasher>>,
+    sink: &mut ConsoleSink,
+) {
+    let module_name = module.name(db);
+    let root = cu.root_file();
+    // (entry, owner): entries of one parameter share an owner and never collide
+    let mut instance: Vec<(ExportedName, usize)> = Vec::new();
+    let mut model: Vec<(ExportedName, usize)> = Vec::new();
+    for (owner, (param, info)) in params.iter().enumerate() {
+        let kind = if info.is_instance { "instance parameter" } else { "model parameter" };
+        let ns = if info.is_instance { &mut instance } else { &mut model };
+        ns.push((
+            ExportedName {
+                name: info.name.to_string(),
+                kind,
+                range: param.text_range(db),
+                lint_src: param.lint_src(db),
+            },
+            owner,
+        ));
+        for (alias_name, alias, _) in alias_decls.iter().filter(|(_, _, target)| target == param) {
+            ns.push((
+                ExportedName {
+                    name: alias_name.to_string(),
+                    kind: "alias",
+                    range: alias.text_range(db),
+                    lint_src: alias.lint_src(db),
+                },
+                owner,
+            ));
+        }
+    }
+    let first_opvar = params.len();
+    for (i, (var, _)) in op_vars.iter().enumerate() {
+        instance.push((
+            ExportedName {
+                name: var.name(db).to_string(),
+                kind: "operating-point variable",
+                range: var.text_range(db),
+                lint_src: var.lint_src(db),
+            },
+            first_opvar + i,
+        ));
+    }
+
+    // two declared names the simulator cannot tell apart
+    for ns in [&instance, &model] {
+        for (i, (decl, owner)) in ns.iter().enumerate() {
+            let twin = ns[..i]
+                .iter()
+                .find(|(other, o)| o != owner && other.name.eq_ignore_ascii_case(&decl.name));
+            if let Some((other, _)) = twin {
+                sink.add_diagnostic(
+                    &ExportedNameCollision {
+                        module: module_name.clone(),
+                        decl: decl.clone(),
+                        other: ExportedOther::Declared(other.clone()),
+                        decl_wins: false,
+                    },
+                    root,
+                    db,
+                );
+            }
+        }
+    }
+
+    // ngspice's own instance names, over an operating-point variable (a
+    // parameter of that name is L029's, and `dtemp`/`temp`/`m` on a parameter
+    // are routed to it on purpose, E-396)
+    const RESERVED: &[&str] = &["m", "temp", "dtemp", "dt"];
+    for (decl, _) in instance.iter().filter(|(d, _)| d.kind == "operating-point variable") {
+        if let Some(reserved) = RESERVED.iter().find(|r| r.eq_ignore_ascii_case(&decl.name)) {
+            sink.add_diagnostic(
+                &ExportedNameCollision {
+                    module: module_name.clone(),
+                    decl: decl.clone(),
+                    other: ExportedOther::Builtin {
+                        name: (*reserved).to_owned(),
+                        what: "ngspice's own instance parameter",
+                    },
+                    decl_wins: false,
+                },
+                root,
+                db,
+            );
+        }
+    }
+
+    // the terminal currents ngspice synthesizes: `i_<port>`, and `i` for a
+    // two-terminal device unless the model owns `i` (routed, E-644)
+    let ports = module.ports(db);
+    let mut currents: Vec<String> = ports.iter().map(|p| format!("i_{}", p.name(db))).collect();
+    if ports.len() == 2 {
+        currents.push("i".to_owned());
+    }
+    for (decl, _) in &instance {
+        let Some(current) = currents.iter().find(|c| c.eq_ignore_ascii_case(&decl.name)) else {
+            continue;
+        };
+        if current == "i" && decl.kind != "operating-point variable" {
+            continue;
+        }
+        sink.add_diagnostic(
+            &ExportedNameCollision {
+                module: module_name.clone(),
+                decl: decl.clone(),
+                other: ExportedOther::Builtin {
+                    name: current.clone(),
+                    what: "the terminal current ngspice synthesizes (E-394)",
+                },
+                decl_wins: true,
+            },
+            root,
+            db,
+        );
+    }
+
+    // a `$` in a name the simulator is meant to read back
+    for (decl, _) in instance.iter().chain(&model) {
+        if decl.name.contains('$') && !is_paramset_twin_name(db, cu, &decl.name) {
+            sink.add_diagnostic(
+                &DollarInExportedName { module: module_name.clone(), decl: decl.clone() },
+                root,
+                db,
+            );
+        }
     }
 }
 
