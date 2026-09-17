@@ -268,6 +268,34 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
         self.call(CallBackKind::SetRetFlag(RetFlag::Abort), &[]);
     }
 
+    /// Enhancement-651 (hunt F7): the deck-derived twin of `runtime_fatal` for a
+    /// domain that HAS a natural projection. Enhancement-504/505/506 clamp a
+    /// negative noise power to 0, a negative standard deviation to the mean and
+    /// a reversed uniform range to its start, and the LRM mandates no error for
+    /// those (it does for the exponential family, which is why `runtime_fatal`
+    /// serves that one). The projection is kept -- the run goes on with the
+    /// honest substitute -- but a value fixed by the model card can only be a
+    /// mistake, so it is named, deferred to the accepted iteration like
+    /// `$warning` (LRM 9.7.3) and repeat-suppressed by the simulator, instead
+    /// of in silence. `fmt` carries its own `%g` placeholders, one per value.
+    pub fn runtime_warn(&mut self, fmt: &str, vals: &[Value]) {
+        let fmt_lit = format!("{fmt}\n");
+        let fmt = self.sconst(&fmt_lit);
+        let mut call_args = vec![fmt];
+        call_args.extend_from_slice(vals);
+        let arg_tys: Vec<FmtArg> = vals.iter().map(|_| Type::Real.into()).collect();
+        let cb = CallBackKind::Print {
+            kind: DisplayKind::Warn,
+            arg_tys: arg_tys.into_boxed_slice(),
+            dst: PrintDst::Console,
+            // as Enhancement-636's out-of-range index warning: deferred to the
+            // accepted iteration, except where there is none to defer to
+            immediate: self.in_event_ctx || self.in_analog_initial,
+            in_initial: self.in_analog_initial,
+        };
+        self.call(cb, &call_args);
+    }
+
     pub fn dec_callback(&mut self, kind: CallBackKind) -> FuncRef {
         let data = kind.signature();
         let (func_ref, changed) = self.intern.callbacks.ensure(kind);

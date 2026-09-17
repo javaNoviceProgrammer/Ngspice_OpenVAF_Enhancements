@@ -1,7 +1,9 @@
 function %(v16, v17, v20, v21) {
-    inst0 = const fn %white_noise(Spur(1))(1) -> 1
+    inst0 = fn %Warn[Console])(2) -> 0
+    inst1 = const fn %white_noise(Spur(1))(1) -> 1
     v3 = fconst 0.0
     v6 = fconst 0x1.0000000000000p0
+    v24 = sconst "<DUMMY>"
 
                                 block8:
 @0009                               v19 = flt v16, v3
@@ -9,28 +11,29 @@ function %(v16, v17, v20, v21) {
 
                                 block2:
 @000f                               v22 = fmul v20, v21
-@0010                               v23 = fgt v22, v3
+@0010                               v23 = fge v22, v3
 @0010                               br v23, block5, block6
 
                                 block5:
 @0010                               jmp block7
 
                                 block6:
+@0010                               call inst0(v24, v22)
 @0010                               jmp block7
 
                                 block7:
-@0010                               v24 = phi [v22, block5], [v3, block6]
-                                    v30 = fadd v16, v3
+@0010                               v25 = phi [v22, block5], [v3, block6]
+                                    v31 = fadd v16, v3
                                     jmp block4
 
                                 block3:
                                     jmp block4
 
                                 block4:
-                                    v48 = phi [v3, block3], [v24, block7]
-                                    v43 = phi [v16, block3], [v30, block7]
-                                    v46 = phi [v3, block3], [v6, block7]
-                                    v45 = optbarrier v43
-                                    v47 = optbarrier v46
-                                    v50 = optbarrier v48
+                                    v49 = phi [v3, block3], [v25, block7]
+                                    v44 = phi [v16, block3], [v31, block7]
+                                    v47 = phi [v3, block3], [v6, block7]
+                                    v46 = optbarrier v44
+                                    v48 = optbarrier v47
+                                    v51 = optbarrier v49
 }

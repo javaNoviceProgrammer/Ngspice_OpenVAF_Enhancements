@@ -628,14 +628,91 @@ impl BodyLoweringCtx<'_, '_, '_> {
         )
     }
 
+    /// Enhancement-651 (hunt F7): is this argument fixed once the model card is
+    /// read, and does an overridable `parameter` take part? `None` for a
+    /// run-time quantity (see `param_derived_in_body`).
+    fn card_fixed(&self, expr: ExprId) -> Option<bool> {
+        param_derived_in_body(self.ctx.db, self.body, expr, 0)
+    }
+
+    /// Enhancement-651 (hunt F7): a projection that says so.
+    ///
+    /// Enhancement-504/505/506 project an unusable argument onto its domain --
+    /// a negative noise power to 0, a negative standard deviation to the mean,
+    /// a reversed uniform range to its start -- and that stays: the projection
+    /// is the honest substitute, and the LRM mandates no error for these
+    /// (unlike the exponential family, which `dist_domain_positive` refuses).
+    /// But the compiler refuses the same value written out as a literal, and a
+    /// value the DECK fixed (`guarded`, Enhancement-509's test) can only be
+    /// the same mistake one step removed: a Monte-Carlo run whose sigma went
+    /// negative through a formula drew nothing and reported nothing. Such a
+    /// value is now named through `runtime_warn`, once per accepted point. A
+    /// run-time quantity is projected in silence exactly as before, since it
+    /// may pass through any value on its way to the solution.
+    fn project_or_warn(
+        &mut self,
+        guarded: bool,
+        ok: Value,
+        val: Value,
+        safe: Value,
+        fmt: &str,
+        vals: &[Value],
+    ) -> Value {
+        if !guarded {
+            return self.ctx.make_select(ok, |_, branch| if branch { val } else { safe });
+        }
+        let vals = vals.to_vec();
+        let fmt = fmt.to_owned();
+        self.ctx.make_select(ok, |ctx, branch| {
+            if branch {
+                val
+            } else {
+                ctx.runtime_warn(&fmt, &vals);
+                safe
+            }
+        })
+    }
+
+    /// Enhancement-651: `$rdist_normal`/`$dist_normal`'s standard deviation --
+    /// negative or NaN -> the mean with certainty (Enhancement-505's projection),
+    /// named when the deck fixed it. A zero standard deviation is legal and is
+    /// the same distribution, so it passes without a word.
+    fn sdev_or_warn(&mut self, name: &str, arg: ExprId, sdev: Value) -> Value {
+        if !self.is_param_derived(arg) {
+            // a run-time quantity: Enhancement-505's clamp, byte for byte
+            return self.clamp_non_negative(sdev);
+        }
+        let zero = self.ctx.fconst(0.0);
+        let ok = self.ctx.ins().fge(sdev, zero); // false for negatives and NaN
+        let guarded = true;
+        let fmt = format!(
+            "{name}: the argument is outside the domain of {name} (standard deviation not \
+             negative, LRM 9.13.2); it is %g -- the mean is returned with certainty"
+        );
+        self.project_or_warn(guarded, ok, sdev, zero, &fmt, &[sdev])
+    }
+
     /// Enhancement-505: `$rdist_uniform`'s bounds, ordered. The LRM requires the
     /// start below the end and hir_ty refuses a constant pair that is not; from
     /// the deck an inverted pair sampled an inverted range in silence. The high
     /// bound is raised to the low one, which degenerates the distribution to a
     /// point rather than inventing the user's intent by swapping them.
-    fn clamp_upper_bound(&mut self, lo: Value, hi: Value) -> Value {
+    /// Enhancement-651 names the pair when the deck fixed it.
+    fn upper_bound_or_warn(
+        &mut self,
+        name: &str,
+        lo_e: ExprId,
+        hi_e: ExprId,
+        lo: Value,
+        hi: Value,
+    ) -> Value {
         let ok = self.ctx.ins().fgt(hi, lo);
-        self.ctx.make_select(ok, |_, branch| if branch { hi } else { lo })
+        let guarded = matches!((self.card_fixed(lo_e), self.card_fixed(hi_e)), (Some(a), Some(b)) if a || b);
+        let fmt = format!(
+            "{name}: the arguments are outside the domain of {name} (start below end, LRM \
+             9.13.2); the start is %g and the end is %g -- the start is returned with certainty"
+        );
+        self.project_or_warn(guarded, ok, hi, lo, &fmt, &[lo, hi])
     }
 
     /// Enhancement-504: a noise POWER the model supplies must not be negative.
@@ -653,11 +730,26 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// to sum same-named sources coherently. Rejecting a negative there would
     /// break correlated noise; rejecting it here cannot, because this runs
     /// before the fold.
-    fn lower_noise_power(&mut self, expr: ExprId) -> Value {
+    ///
+    /// Enhancement-651 (hunt F7): a power the DECK fixed to a negative number or
+    /// a NaN is named (`project_or_warn`); the projection is unchanged. Zero is a
+    /// power -- `flicker_noise(kf*..., af)` with a default `kf = 0` is how a model
+    /// switches a source off -- and passes without a word, as it always did.
+    fn lower_noise_power(&mut self, name: &str, expr: ExprId) -> Value {
         let pwr = self.lower_expr(expr);
         let zero = self.ctx.fconst(0.0);
-        let ok = self.ctx.ins().fgt(pwr, zero); // false for 0, negatives and NaN
-        self.ctx.make_select(ok, |_, branch| if branch { pwr } else { zero })
+        if !self.is_param_derived(expr) {
+            // a run-time quantity: Enhancement-504's clamp, byte for byte
+            let ok = self.ctx.ins().fgt(pwr, zero); // false for 0, negatives and NaN
+            return self.ctx.make_select(ok, |_, branch| if branch { pwr } else { zero });
+        }
+        let ok = self.ctx.ins().fge(pwr, zero); // false for negatives and NaN
+        let guarded = true;
+        let fmt = format!(
+            "{name}: the argument is outside the domain of {name} (noise power not negative, \
+             LRM 4.6.4); it is %g -- the source contributes nothing"
+        );
+        self.project_or_warn(guarded, ok, pwr, zero, &fmt, &[pwr])
     }
 
     /// Enhancement-506: `flicker_noise(pwr, exp)` has TWO arguments and only the
@@ -686,11 +778,22 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// evaluates `pwr / f**exp`, and `0 / f**NaN` is still NaN. Zeroing the power
     /// alone left the spectrum exactly as poisoned as before -- the fix has to
     /// reach the argument that is actually unusable.
-    fn guard_flicker_args(&mut self, pwr: Value, exp: Value) -> (Value, Value) {
+    ///
+    /// Enhancement-651 (hunt F7): an exponent the DECK fixed to a NaN is named.
+    fn guard_flicker_args(&mut self, exp_e: ExprId, pwr: Value, exp: Value) -> (Value, Value) {
         let zero = self.ctx.fconst(0.0);
         let ok = self.ctx.ins().feq(exp, exp); // false only for NaN
         let pwr = self.ctx.make_select(ok, |_, branch| if branch { pwr } else { zero });
-        let exp = self.ctx.make_select(ok, |_, branch| if branch { exp } else { zero });
+        let guarded = self.is_param_derived(exp_e);
+        let exp = self.project_or_warn(
+            guarded,
+            ok,
+            exp,
+            zero,
+            "flicker_noise: the argument is outside the domain of flicker_noise (exponent a \
+             number); it is %g -- the source contributes nothing",
+            &[exp],
+        );
         (pwr, exp)
     }
 
@@ -3117,7 +3220,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     let name = format!("unnamed{idx}");
                     self.ctx.func.interner.get_or_intern(name)
                 };
-                let pwr = self.lower_noise_power(args[0]);
+                let pwr = self.lower_noise_power("white_noise", args[0]);
                 self.ctx.call1(CallBackKind::WhiteNoise { name, idx }, &[pwr])
             }
             BuiltIn::flicker_noise => {
@@ -3131,9 +3234,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     let name = format!("unnamed{idx}");
                     self.ctx.func.interner.get_or_intern(name)
                 };
-                let pwr = self.lower_noise_power(args[0]);
+                let pwr = self.lower_noise_power("flicker_noise", args[0]);
                 let exp = self.lower_expr(args[1]);
-                let (pwr, exp) = self.guard_flicker_args(pwr, exp); // Enhancement-506
+                let (pwr, exp) = self.guard_flicker_args(args[1], pwr, exp); // Enhancement-506
                 self.ctx.call1(CallBackKind::FlickerNoise { name, idx }, &[pwr, exp])
             }
             BuiltIn::noise_table | BuiltIn::noise_table_log => {
@@ -3637,7 +3740,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let seed = self.lower_expr(args[0]);
                 let a = self.lower_expr(args[1]);
                 let b = self.lower_expr(args[2]);
-                let b = self.clamp_upper_bound(a, b);          // Enhancement-505
+                // Enhancement-505's projection, named by Enhancement-651 when the deck fixed it
+                let b = self.upper_bound_or_warn("$rdist_uniform", args[1], args[2], a, b);
                 self.lower_rng(expr, RngFun::Uniform, seed, &[a, b])
             }
             // Enhancement-506: the INTEGER siblings below take Enhancement-505's
@@ -3655,7 +3759,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let seed = self.lower_expr(args[0]);
                 let a = self.lower_num_as_real(args[1]);
                 let b = self.lower_num_as_real(args[2]);
-                let b = self.clamp_upper_bound(a, b);          // Enhancement-506
+                let b = self.upper_bound_or_warn("$dist_uniform", args[1], args[2], a, b); // E-506, E-651
                 // `UniformInt` already returns an integral (but real) value.
                 let r = self.lower_rng(expr, RngFun::UniformInt, seed, &[a, b]);
                 self.ctx.ins().ficast(r)
@@ -3664,14 +3768,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_expr(args[1]);
                 let sdev = self.lower_expr(args[2]);
-                let sdev = self.clamp_non_negative(sdev);      // Enhancement-505
+                let sdev = self.sdev_or_warn("$rdist_normal", args[2], sdev); // E-505, E-651
                 self.lower_rng(expr, RngFun::Normal, seed, &[mean, sdev])
             }
             BuiltIn::dist_normal => {
                 let seed = self.lower_expr(args[0]);
                 let mean = self.lower_num_as_real(args[1]);
                 let sdev = self.lower_num_as_real(args[2]);
-                let sdev = self.clamp_non_negative(sdev);      // Enhancement-506
+                let sdev = self.sdev_or_warn("$dist_normal", args[2], sdev); // E-506, E-651
                 let r = self.lower_rng(expr, RngFun::Normal, seed, &[mean, sdev]);
                 let rr = self.rng_round_real(r);
                 self.ctx.ins().ficast(rr)

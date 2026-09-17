@@ -1,41 +1,45 @@
-function %(v16, v20, v21, v26, v46) {
-    inst0 = const fn %white_noise(Spur(1))(1) -> 1
-    inst1 = const fn %white_noise(Spur(2))(1) -> 1
+function %(v16, v21, v22, v27, v47) {
+    inst0 = fn %Warn[Console])(2) -> 0
+    inst1 = const fn %white_noise(Spur(1))(1) -> 1
+    inst2 = const fn %white_noise(Spur(3))(1) -> 1
     v3 = fconst 0.0
+    v18 = sconst "<DUMMY>"
 
                                 block8:
-@0003                               v17 = fgt v16, v3
+@0003                               v17 = fge v16, v3
 @0003                               br v17, block2, block3
 
                                 block2:
 @0003                               jmp block4
 
                                 block3:
+@0003                               call inst0(v18, v16)
 @0003                               jmp block4
 
                                 block4:
-@0003                               v18 = phi [v16, block2], [v3, block3]
+@0003                               v19 = phi [v16, block2], [v3, block3]
 @0009                               br v17, block5, block6
 
                                 block5:
 @0009                               jmp block7
 
                                 block6:
+@0009                               call inst0(v18, v16)
 @0009                               jmp block7
 
                                 block7:
-@0009                               v23 = phi [v16, block5], [v3, block6]
-@000a                               v25 = fadd v21, v3
-@000d                               v30 = fmul v26, v3
-                                    v58 = fmul v26, v46
-@000e                               v31 = fadd v25, v30
-                                    v44 = optbarrier v31
-                                    v45 = optbarrier v3
-                                    v50 = fneg v3
-                                    v57 = fneg v46
-                                    v54 = optbarrier v18
-                                    v55 = optbarrier v23
-                                    v59 = optbarrier v58
-                                    v60 = optbarrier v46
-                                    v61 = optbarrier v57
+@0009                               v24 = phi [v16, block5], [v3, block6]
+@000a                               v26 = fadd v22, v3
+@000d                               v31 = fmul v27, v3
+                                    v59 = fmul v27, v47
+@000e                               v32 = fadd v26, v31
+                                    v45 = optbarrier v32
+                                    v46 = optbarrier v3
+                                    v51 = fneg v3
+                                    v58 = fneg v47
+                                    v55 = optbarrier v19
+                                    v56 = optbarrier v24
+                                    v60 = optbarrier v59
+                                    v61 = optbarrier v47
+                                    v62 = optbarrier v58
 }

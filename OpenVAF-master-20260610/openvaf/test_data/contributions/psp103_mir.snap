@@ -1,120 +1,124 @@
-function %(v16, v17, v25, v30, v36, v47, v62, v72, v77, v79, v81, v94, v97) {
-    inst0 = const fn %white_noise(Spur(1))(1) -> 1
-    inst1 = const fn %ddt(1) -> 1
-    inst2 = fn %Fatal[Console])(2) -> 0
-    inst3 = fn %SetRetFlag[abort](0) -> 0
-    inst4 = const fn %white_noise(Spur(3))(1) -> 1
+function %(v16, v17, v26, v31, v37, v48, v63, v73, v78, v80, v82, v95, v98) {
+    inst0 = fn %Warn[Console])(2) -> 0
+    inst1 = const fn %white_noise(Spur(1))(1) -> 1
+    inst2 = const fn %ddt(1) -> 1
+    inst3 = fn %Fatal[Console])(2) -> 0
+    inst4 = fn %SetRetFlag[abort](0) -> 0
+    inst5 = const fn %white_noise(Spur(4))(1) -> 1
     v3 = fconst 0.0
     v6 = fconst 0x1.0000000000000p0
-    v38 = sconst "<DUMMY>"
-    v41 = fconst 0x1.0000000000000p-1
+    v20 = sconst "<DUMMY>"
+    v39 = sconst "<DUMMY>"
+    v42 = fconst 0x1.0000000000000p-1
 
                                 block17:
 @0005                               v18 = fdiv v16, v17
-@0006                               v19 = fgt v18, v3
+@0006                               v19 = fge v18, v3
 @0006                               br v19, block2, block3
 
                                 block2:
 @0006                               jmp block4
 
                                 block3:
+@0006                               call inst0(v20, v18)
 @0006                               jmp block4
 
                                 block4:
-@0006                               v20 = phi [v18, block2], [v3, block3]
-@000c                               v26 = fdiv v3, v17
-                                    v301 = fdiv v25, v17
-@0012                               v31 = fmul v30, v3
-                                    v300 = fmul v30, v25
-@0018                               v37 = fge v36, v3
-@0018                               br v37, block5, block6
+@0006                               v21 = phi [v18, block2], [v3, block3]
+@000c                               v27 = fdiv v3, v17
+                                    v302 = fdiv v26, v17
+@0012                               v32 = fmul v31, v3
+                                    v301 = fmul v31, v26
+@0018                               v38 = fge v37, v3
+@0018                               br v38, block5, block6
 
                                 block5:
 @0018                               jmp block7
 
                                 block6:
-@0018                               call inst2(v38, v36)
-@0018                               call inst3()
+@0018                               call inst3(v39, v37)
+@0018                               call inst4()
 @0018                               jmp block7
 
                                 block7:
-@0018                               v39 = phi [v36, block5], [v3, block6]
-@0018                               v40 = sqrt v39
-@001a                               v42 = fmul v40, v41
-@001c                               v43 = fmul v42, v30
-@001f                               v44 = fmul v43, v3
-                                    v298 = fmul v43, v25
-@0021                               v46 = fneg v3
-                                    v273 = fneg v44
-                                    v299 = fneg v298
-@0026                               br v37, block8, block9
+@0018                               v40 = phi [v37, block5], [v3, block6]
+@0018                               v41 = sqrt v40
+@001a                               v43 = fmul v41, v42
+@001c                               v44 = fmul v43, v31
+@001f                               v45 = fmul v44, v3
+                                    v299 = fmul v44, v26
+@0021                               v47 = fneg v3
+                                    v274 = fneg v45
+                                    v300 = fneg v299
+@0026                               br v38, block8, block9
 
                                 block8:
 @0026                               jmp block10
 
                                 block9:
-@0026                               call inst2(v38, v36)
-@0026                               call inst3()
+@0026                               call inst3(v39, v37)
+@0026                               call inst4()
 @0026                               jmp block10
 
                                 block10:
-@0026                               v55 = phi [v36, block8], [v3, block9]
-@0026                               v56 = sqrt v55
-@0028                               v57 = fmul v56, v41
-@002a                               v58 = fmul v57, v30
-@002d                               v59 = fmul v58, v3
-                                    v296 = fmul v58, v25
-@002f                               v61 = fneg v3
-                                    v274 = fneg v59
-                                    v297 = fneg v296
-@0035                               br v37, block11, block12
+@0026                               v56 = phi [v37, block8], [v3, block9]
+@0026                               v57 = sqrt v56
+@0028                               v58 = fmul v57, v42
+@002a                               v59 = fmul v58, v31
+@002d                               v60 = fmul v59, v3
+                                    v297 = fmul v59, v26
+@002f                               v62 = fneg v3
+                                    v275 = fneg v60
+                                    v298 = fneg v297
+@0035                               br v38, block11, block12
 
                                 block11:
 @0035                               jmp block13
 
                                 block12:
-@0035                               call inst2(v38, v36)
-@0035                               call inst3()
+@0035                               call inst3(v39, v37)
+@0035                               call inst4()
 @0035                               jmp block13
 
                                 block13:
-@0035                               v74 = phi [v36, block11], [v3, block12]
-@0035                               v75 = sqrt v74
-@0036                               v76 = fmul v72, v75
-@0038                               v78 = fmul v76, v77
-@003b                               v80 = fmul v78, v3
-                                    v293 = fmul v78, v79
-@0041                               v95 = fmul v36, v94
-@0043                               v96 = fmul v95, v94
-@0047                               v98 = fmul v97, v97
-@0048                               v99 = fsub v6, v98
-@0049                               v100 = fmul v96, v99
-@004a                               v101 = fgt v100, v3
-@004a                               br v101, block14, block15
+@0035                               v75 = phi [v37, block11], [v3, block12]
+@0035                               v76 = sqrt v75
+@0036                               v77 = fmul v73, v76
+@0038                               v79 = fmul v77, v78
+@003b                               v81 = fmul v79, v3
+                                    v294 = fmul v79, v80
+@0041                               v96 = fmul v37, v95
+@0043                               v97 = fmul v96, v95
+@0047                               v99 = fmul v98, v98
+@0048                               v100 = fsub v6, v99
+@0049                               v101 = fmul v97, v100
+@004a                               v102 = fge v101, v3
+@004a                               br v102, block14, block15
 
                                 block14:
 @004a                               jmp block16
 
                                 block15:
+@004a                               call inst0(v20, v101)
 @004a                               jmp block16
 
                                 block16:
-@004a                               v102 = phi [v100, block14], [v3, block15]
-                                    v107 = fadd v80, v3
-                                    v144 = optbarrier v3
-                                    v181 = optbarrier v26
-                                    v218 = optbarrier v3
-                                    v246 = optbarrier v46
-                                    v265 = optbarrier v61
-                                    v272 = optbarrier v107
-                                    v287 = optbarrier v20
-                                    v288 = optbarrier v102
-                                    v289 = optbarrier v31
-                                    v290 = optbarrier v273
+@004a                               v103 = phi [v101, block14], [v3, block15]
+                                    v108 = fadd v81, v3
+                                    v145 = optbarrier v3
+                                    v182 = optbarrier v27
+                                    v219 = optbarrier v3
+                                    v247 = optbarrier v47
+                                    v266 = optbarrier v62
+                                    v273 = optbarrier v108
+                                    v288 = optbarrier v21
+                                    v289 = optbarrier v103
+                                    v290 = optbarrier v32
                                     v291 = optbarrier v274
-                                    v294 = optbarrier v293
-                                    v302 = optbarrier v301
-                                    v303 = optbarrier v300
-                                    v304 = optbarrier v299
-                                    v305 = optbarrier v297
+                                    v292 = optbarrier v275
+                                    v295 = optbarrier v294
+                                    v303 = optbarrier v302
+                                    v304 = optbarrier v301
+                                    v305 = optbarrier v300
+                                    v306 = optbarrier v298
 }
