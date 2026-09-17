@@ -1246,9 +1246,30 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
-            BodyValidationDiagnostic::EventInConditional { stmt, form, in_loop } => {
+            BodyValidationDiagnostic::EventInConditional { stmt, form, in_loop, monitored } => {
                 let FileSpan { range, file } = self.stmt_src(stmt);
                 let place = if in_loop { "a repeat/while/for loop" } else { "a conditional" };
+                let note = if monitored {
+                    format!(
+                        "help: LRM 5.10.3.1: cross/above shall not be used inside an \
+                         if/case unless the condition is a genvar expression, and not in \
+                         repeat/while loops -- the event's internal state only advances \
+                         when this branch executes, so detection would compare against a \
+                         stale value. Move the {form} to the top level and test the \
+                         condition inside its body"
+                    )
+                } else {
+                    // Enhancement-648
+                    format!(
+                        "help: LRM 5.8: an event control statement cannot be used inside a \
+                         conditional statement unless the condition is a constant expression \
+                         -- the condition is judged at the iteration the event fires, so \
+                         `if (V(p,n) > 0) {form} ...` runs or not on the solver's first \
+                         guess. Move the {form} to the top level and test the condition \
+                         inside its body; a parameter, a literal or an `analysis()` \
+                         condition is constant and stays allowed"
+                    )
+                };
                 Report::error()
                     .with_message(format!("{form} is not allowed inside {place}"))
                     .with_labels(vec![Label {
@@ -1257,14 +1278,7 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         range: range.into(),
                         message: format!("{form} under a runtime condition"),
                     }])
-                    .with_notes(vec![format!(
-                        "help: LRM 5.10.3.1: cross/above shall not be used inside an \
-                         if/case unless the condition is a genvar expression, and not in \
-                         repeat/while loops -- the event's internal state only advances \
-                         when this branch executes, so detection would compare against a \
-                         stale value. Move the {form} to the top level and test the \
-                         condition inside its body"
-                    )])
+                    .with_notes(vec![note])
             }
             BodyValidationDiagnostic::InvalidEventExpr { stmt, ref name } => {
                 let FileSpan { range, file } = self.stmt_src(stmt);

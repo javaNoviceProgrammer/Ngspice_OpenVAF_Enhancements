@@ -398,6 +398,13 @@ pub enum BodyValidationDiagnostic {
         stmt: StmtId,
         form: &'static str,
         in_loop: bool,
+        /// Enhancement-648: `true` for cross/above (LRM 5.10.3.1's own rule and
+        /// its stale-state hazard); `false` for initial_step/final_step/timer,
+        /// which LRM 5.8's general rule forbids under any non-constant condition
+        /// -- the branch is judged at the iteration the event fires, so
+        /// `if (V(p,n) > 0) @(initial_step) ...` runs or not on the solver's
+        /// first guess. Both used to compile in silence.
+        monitored: bool,
     },
     /// LRM 5.10 (events audit): not a recognizable analog event expression;
     /// used to silently degrade to an unconditionally-executed body.
@@ -942,6 +949,18 @@ impl BodyValidator<'_> {
     /// The display form of the first monitored event (cross/above) in `event`,
     /// descending into `Or` lists -- LRM 5.10.3.1/.2 restrict where those may
     /// be placed (timer carries no such sentence and is left alone).
+    /// Enhancement-648: the spelling of an event form for a message, every form.
+    fn event_form_name(event: &Event) -> &'static str {
+        match event {
+            Event::Global { kind: hir_def::expr::GlobalEvent::InitialStep, .. } => "@(initial_step)",
+            Event::Global { kind: hir_def::expr::GlobalEvent::FinalStep, .. } => "@(final_step)",
+            Event::Timer { .. } => "@(timer)",
+            Event::Cross { .. } => "@(cross)",
+            Event::Above { .. } => "@(above)",
+            _ => "an event control",
+        }
+    }
+
     fn monitored_event_form(event: &Event) -> Option<&'static str> {
         match event {
             Event::Cross { .. } => Some("@(cross)"),
@@ -1222,13 +1241,36 @@ impl BodyValidator<'_> {
                 // event's previous-value state advances only when the branch
                 // happens to execute, so detection compares against a value
                 // stale by any number of timepoints.
+                // Enhancement-648: LRM 5.8 extends the rule to EVERY event control:
+                // "Event control statements (e.g.: timer, cross) cannot be used
+                // inside conditional statements unless the conditional expression
+                // is a constant expression." A parameter, a literal or `analysis()`
+                // condition does not switch the ctx, so those stay allowed. 5.8 names
+                // conditional statements only -- a runtime `for` over an integer
+                // variable is a non-constant loop in this walk, and the LRM does not
+                // forbid an initial_step or timer inside one -- so the general rule
+                // applies under `Conditional`, while cross/above keep 5.10.3.1's own
+                // rule, which reaches into repeat/while loops.
                 if matches!(self.ctx, BodyCtx::Conditional | BodyCtx::Loop) {
-                    if let Some(form) = Self::monitored_event_form(event) {
-                        self.diagnostics.push(BodyValidationDiagnostic::EventInConditional {
-                            stmt,
-                            form,
-                            in_loop: matches!(self.ctx, BodyCtx::Loop),
-                        });
+                    let in_loop = matches!(self.ctx, BodyCtx::Loop);
+                    match Self::monitored_event_form(event) {
+                        Some(form) => {
+                            self.diagnostics.push(BodyValidationDiagnostic::EventInConditional {
+                                stmt,
+                                form,
+                                in_loop,
+                                monitored: true,
+                            });
+                        }
+                        None if !in_loop => {
+                            self.diagnostics.push(BodyValidationDiagnostic::EventInConditional {
+                                stmt,
+                                form: Self::event_form_name(event),
+                                in_loop,
+                                monitored: false,
+                            });
+                        }
+                        None => {}
                     }
                 }
                 self.validate_event(event, stmt);
