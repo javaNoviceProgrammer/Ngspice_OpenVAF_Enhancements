@@ -99,9 +99,9 @@ pub enum TypeValidationDiagnostic {
     BadAbstol { name: Name, value: Box<str>, src: ErasedAstId },
     /// Enhancement-422: an `abstol` written but SILENTLY DISCARDED because its
     /// value did not fold to a real constant. The lowering only stores `abstol`
-    /// when `as_constexprval().as_real()` succeeds, so `abstol = 1.0/0.0`,
-    /// `abstol = 1e-6+0.0` and even `abstol = "abc"` left the nature with no
-    /// abstol at all, and said nothing.
+    /// when the fold to a real succeeds, so `abstol = "abc"` (and, until
+    /// Enhancement-649 taught the fold arithmetic, `abstol = 1e-6+0.0` too)
+    /// left the nature with no abstol at all, and said nothing.
     NonConstantAbstol { name: Name, src: ErasedAstId },
 }
 

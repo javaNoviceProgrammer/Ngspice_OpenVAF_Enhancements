@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use arena::IdxRange;
 use basedb::{AstId, AstIdMap, ErasedAstId, FileId};
-use syntax::ast::{self, BinaryOp, ParamRef, PathSegmentKind, UnaryOp};
+use syntax::ast::{self, ParamRef, PathSegmentKind};
 use syntax::name::{kw, AsIdent, AsName, Name};
 use syntax::ast::ConstraintKind;
 use syntax::{match_ast, AstNode, ConstExprValue, WalkEvent};
@@ -55,35 +55,14 @@ fn array_elem_count(dims: &[(i32, i32)]) -> Option<i64> {
 /// name still folds to `None` and takes the existing path. Division and remainder by zero
 /// fold to `None` rather than panicking, and every step is checked so an overflowing bound is
 /// reported as non-constant instead of wrapping.
+///
+/// Enhancement-649: the arithmetic itself now lives in `ast::Expr::fold_constexprval`, the
+/// one folder shared with nature and discipline attribute values, so a bound also takes
+/// `**` and the `<<<`/`>>>` shifts; a bound that folds to a real is still not an integer.
 fn fold_const_int(expr: &ast::Expr) -> Option<i32> {
-    match expr {
-        ast::Expr::ParenExpr(e) => fold_const_int(&e.expr()?),
-        ast::Expr::PrefixExpr(e) => {
-            let val = fold_const_int(&e.expr()?)?;
-            match e.op_kind()? {
-                UnaryOp::Neg => val.checked_neg(),
-                UnaryOp::Identity => Some(val),
-                _ => None,
-            }
-        }
-        ast::Expr::BinExpr(e) => {
-            let lhs = fold_const_int(&e.lhs()?)?;
-            let rhs = fold_const_int(&e.rhs()?)?;
-            match e.op_details()?.1 {
-                BinaryOp::Addition => lhs.checked_add(rhs),
-                BinaryOp::Subtraction => lhs.checked_sub(rhs),
-                BinaryOp::Multiplication => lhs.checked_mul(rhs),
-                BinaryOp::Division => lhs.checked_div(rhs),
-                BinaryOp::Remainder => lhs.checked_rem(rhs),
-                BinaryOp::LeftShift => u32::try_from(rhs).ok().and_then(|s| lhs.checked_shl(s)),
-                BinaryOp::RightShift => u32::try_from(rhs).ok().and_then(|s| lhs.checked_shr(s)),
-                _ => None,
-            }
-        }
-        _ => match expr.as_constexprval()? {
-            ConstExprValue::Int(v) => Some(v),
-            _ => None,
-        },
+    match expr.fold_constexprval()? {
+        ConstExprValue::Int(v) => Some(v),
+        _ => None,
     }
 }
 
@@ -975,7 +954,7 @@ impl Ctx {
                                     domain = Some((Domain::Discrete, id.into()));
                                 }
                                 _ => {
-                                    evaluated = attr.val().and_then(|v| v.as_constexprval());
+                                    evaluated = attr.val().and_then(|v| v.fold_constexprval());
                                 }
                             }
                         }
@@ -992,8 +971,10 @@ impl Ctx {
                         // attribute, so it never reached the `.osdi` tables
                         // either). `flow.abstol = 10u` behaved as if the line
                         // were absent.
+                        // Enhancement-649: folded as a constant expression, so
+                        // `flow.abstol = 10u*2` carries 2e-5 rather than nothing.
                         _ => {
-                            evaluated = attr.val().and_then(|v| v.as_constexprval());
+                            evaluated = attr.val().and_then(|v| v.fold_constexprval());
                         }
                     };
 
@@ -1118,8 +1099,12 @@ impl Ctx {
                     }
 
                     kw::abstol if abstol.is_none() => {
-                        let v1 =
-                            attr.val().and_then(|v| v.as_constexprval()).and_then(|v| v.as_real());
+                        // Enhancement-649: a constant EXPRESSION, as LRM A.1.6 allows,
+                        // not only a signed literal -- `abstol = 1e-3*1e-3` folds.
+                        let v1 = attr
+                            .val()
+                            .and_then(|v| v.fold_constexprval())
+                            .and_then(|v| v.as_real());
                         if let Some(v) = v1 {
                             abstol = Some((OrderedFloat(v), id.into()));
                             evaluated = Some(ConstExprValue::Float(v.into()));
@@ -1127,7 +1112,8 @@ impl Ctx {
                     }
                     _ => {
                         // All other attributes - evaluate ast expression
-                        evaluated = attr.val().and_then(|v| v.as_constexprval());
+                        // (Enhancement-649: a constant expression, not only a literal)
+                        evaluated = attr.val().and_then(|v| v.fold_constexprval());
                     }
                 };
 

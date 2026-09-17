@@ -104,6 +104,117 @@ impl ast::Expr {
     }
 }
 
+impl ast::Expr {
+    /// Enhancement-649: folds a CONSTANT EXPRESSION built from literals to its value.
+    ///
+    /// `as_constexprval` sees only a literal with an optional unary sign, and that was
+    /// all a nature or discipline attribute value ever folded to. LRM A.1.6 gives
+    /// `nature_attribute_expression ::= constant_expression | nature_identifier |
+    /// nature_access_identifier`, yet `abstol = 1e-3*1e-3` was refused as "not a real
+    /// constant" and a user-defined attribute spelled the same way reached the `.osdi`
+    /// tables with no value, in silence.
+    ///
+    /// Folds parentheses, unary `+`/`-`, binary `+ - * / % **` and, on integers, the
+    /// four shifts, with Verilog-AMS's operand rules (LRM 4.1): two integers make an
+    /// integer -- division and remainder truncate toward zero, `>>` zero-fills and
+    /// `>>>` sign-extends as the lowering does, and a negative-exponent `**` follows
+    /// IEEE 1364-2005 Table 5-6 exactly as `lower_int_pow` does at run time -- while
+    /// any real operand makes the whole result real, and a string folds only on its
+    /// own. Every integer step is checked, so an overflow or an integer division by
+    /// zero folds to `None` ("not a constant") rather than wrapping or panicking; a
+    /// real division by zero folds to the infinity or NaN it is, and the consumer
+    /// judges that (`abstol` refuses it as not finite, with the value named).
+    ///
+    /// Syntactic on purpose: it runs in the item tree, before name resolution, so a
+    /// name, a function call or a `$`-system function still folds to `None` and takes
+    /// the path it always took. (A `` `define `` has been expanded by then, so
+    /// `` `VOLTAGE_ABSTOL*10 `` folds.)
+    pub fn fold_constexprval(&self) -> Option<ConstExprValue> {
+        if let Some(v) = self.as_constexprval() {
+            return Some(v);
+        }
+        match self {
+            ast::Expr::ParenExpr(e) => e.expr()?.fold_constexprval(),
+            ast::Expr::PrefixExpr(e) => {
+                let v = e.expr()?.fold_constexprval()?;
+                match (e.op_kind()?, v) {
+                    (UnaryOp::Neg, ConstExprValue::Int(i)) => {
+                        i.checked_neg().map(ConstExprValue::Int)
+                    }
+                    (UnaryOp::Neg, ConstExprValue::Float(f)) => {
+                        Some(ConstExprValue::Float((-f.into_inner()).into()))
+                    }
+                    (UnaryOp::Identity, v @ (ConstExprValue::Int(_) | ConstExprValue::Float(_))) => {
+                        Some(v)
+                    }
+                    _ => None,
+                }
+            }
+            ast::Expr::BinExpr(e) => {
+                let lhs = e.lhs()?.fold_constexprval()?;
+                let rhs = e.rhs()?.fold_constexprval()?;
+                let op = e.op_details()?.1;
+                match (lhs, rhs) {
+                    (ConstExprValue::Int(a), ConstExprValue::Int(b)) => match op {
+                        BinaryOp::Addition => a.checked_add(b),
+                        BinaryOp::Subtraction => a.checked_sub(b),
+                        BinaryOp::Multiplication => a.checked_mul(b),
+                        BinaryOp::Division => a.checked_div(b),
+                        BinaryOp::Remainder => a.checked_rem(b),
+                        BinaryOp::Power => int_pow(a, b),
+                        BinaryOp::LeftShift | BinaryOp::ArithmeticLeftShift => {
+                            u32::try_from(b).ok().and_then(|s| a.checked_shl(s))
+                        }
+                        BinaryOp::RightShift => {
+                            u32::try_from(b).ok().and_then(|s| (a as u32).checked_shr(s)).map(|v| v as i32)
+                        }
+                        BinaryOp::ArithmeticRightShift => {
+                            u32::try_from(b).ok().and_then(|s| a.checked_shr(s))
+                        }
+                        _ => None,
+                    }
+                    .map(ConstExprValue::Int),
+                    (ConstExprValue::String(_), _) | (_, ConstExprValue::String(_)) => None,
+                    (lhs, rhs) => {
+                        let a = lhs.as_real()?;
+                        let b = rhs.as_real()?;
+                        let v = match op {
+                            BinaryOp::Addition => a + b,
+                            BinaryOp::Subtraction => a - b,
+                            BinaryOp::Multiplication => a * b,
+                            BinaryOp::Division => a / b,
+                            // LRM 4.1.4: the sign of the first operand, which is `fmod`
+                            BinaryOp::Remainder => a % b,
+                            BinaryOp::Power => a.powf(b),
+                            _ => return None,
+                        };
+                        Some(ConstExprValue::Float(v.into()))
+                    }
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+/// IEEE 1364-2005 Table 5-6: `**` on two integers. A non-negative exponent is a
+/// checked repeated product; a negative one is 1 for a base of 1, +/-1 by the
+/// exponent's parity for a base of -1, and 0 for every other base -- the table
+/// leaves `0 ** -n` undefined, and `lower_int_pow` makes it 0 at run time, so the
+/// folder says 0 too rather than give the same expression two answers.
+fn int_pow(base: i32, exp: i32) -> Option<i32> {
+    if exp >= 0 {
+        base.checked_pow(exp as u32)
+    } else {
+        Some(match base {
+            1 => 1,
+            -1 if exp % 2 == 0 => 1,
+            -1 => -1,
+            _ => 0,
+        })
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
     /// The `~` operator for bit inversion

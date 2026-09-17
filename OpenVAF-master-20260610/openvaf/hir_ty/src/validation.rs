@@ -2011,6 +2011,13 @@ impl Diagnostic for TypeValidationDiagnosticWrapped<'_> {
                         "the value was discarded, so the nature ended up with no abstol at \
                          all -- which is not what the declaration says"
                             .to_owned(),
+                        // Enhancement-649: say what does fold, now that it is more than a
+                        // literal
+                        "help: LRM A.1.6 allows a constant expression here: a literal, a \
+                         `define, or those combined with + - * / % ** and parentheses \
+                         (`abstol = 1e-3*1e-3`); a name, a function call or a string \
+                         does not fold"
+                            .to_owned(),
                     ])
             }
             TypeValidationDiagnostic::BadAbstol { ref name, ref value, src } => {

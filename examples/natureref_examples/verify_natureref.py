@@ -58,10 +58,12 @@ every reference a `nature` or `discipline` declaration makes to another nature.
       those is a usable tolerance.
 
       And separately: an abstol whose value is not a folded real constant --
-      `1.0/0.0`, `0.0/0.0`, `1e-6+0.0`, even `"abc"` -- was SILENTLY DISCARDED,
-      leaving the nature with no abstol at all, which is not what the
-      declaration says. Both halves are checked; a nature with no `abstol`
-      attribute remains perfectly legal.
+      `"abc"`, or a name -- was SILENTLY DISCARDED, leaving the nature with no
+      abstol at all, which is not what the declaration says. Both halves are
+      checked; a nature with no `abstol` attribute remains perfectly legal.
+      (Enhancement-649 taught the fold arithmetic, so `1.0/0.0` and `0.0/0.0`
+      are now refused as the inf and NaN they are, and `1e-6+0.0` is simply
+      accepted, as LRM A.1.6's constant_expression says it should be.)
 
   [5] A DISCIPLINE WHOSE `potential`/`flow` NAMED A MISSING NATURE COMPLAINED
       ABOUT THE MODEL BODY.
@@ -255,16 +257,21 @@ def main():
     BAD = "which is not a usable absolute tolerance"
     for val, note in [("0.0", "zero"), ("-1e-6", "negative"), ("-1.0", "large negative"),
                       ("1e400", "a literal that overflows to +inf"),
-                      ("-1e400", "and to -inf")]:
+                      ("-1e400", "and to -inf"),
+                      # Enhancement-649: these two now FOLD (LRM A.1.6 allows a constant
+                      # expression), so they are refused as the inf and NaN they are,
+                      # by value, rather than as "not a real constant"
+                      ("1.0/0.0", "an expression folding to inf -- E-649"),
+                      ("0.0/0.0", "an expression folding to NaN -- E-649")]:
         rejected(f"abstol = {val} ({note}) is rejected", ab(val), "a_" + re.sub(r"\W", "", val), BAD)
     NOTC = "not a real constant"
-    for val, note in [("1.0/0.0", "an expression (would be inf)"),
-                      ("0.0/0.0", "an expression (would be NaN)"),
-                      ("1e-6+0.0", "an expression that is perfectly sane"),
-                      ('"abc"', "a STRING")]:
+    for val, note in [('"abc"', "a STRING"),
+                      ("1e-6*x", "a NAME, which the item tree cannot resolve")]:
         rejected(f"abstol = {val} ({note}) -- silently discarded before -- is rejected",
                  ab(val), "n_" + re.sub(r"\W", "", val), NOTC)
-    for val in ("1e-6", "1e-12", "1.0", "1e-30"):
+    # Enhancement-649: E-422 pinned `1e-6+0.0` as refused ("an expression that is
+    # perfectly sane" -- it was, and the LRM grammar allows it); it now folds.
+    for val in ("1e-6", "1e-12", "1.0", "1e-30", "1e-6+0.0"):
         clean(f"abstol = {val} is accepted", ab(val), "ao_" + re.sub(r"\W", "", val))
     clean("a nature with NO abstol attribute at all stays legal",
           HDR + 'nature Vbase;\n units = "V"; access = Vb;\nendnature\n'
