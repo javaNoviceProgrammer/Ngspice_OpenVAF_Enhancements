@@ -26,7 +26,7 @@ only touched in passing.
 | [F3](#f3--a-corner-named-tt-is-accepted-and-unreachable-and-the-loop-runs-the-nominal-twice) | a corner named `tt`, `nom` or `nominal` in a model is accepted by the compiler and unreachable in ngspice; the `corners` loop then lists the nominal twice; `-list` duplicates are not folded | silent no-op |
 | [F4](#f4--a-corner-on-a-parameter-the-model-tests-with-param_given-flips-its-branch) | *(fixed in [E-657](../../enhancements_doc/Enhancement-657.md))* a corner on a parameter the model tests with `$param_given` marks it given and flips the model's branch — the E-555 gate covers only parameters with statistics | wrong result, silent |
 | [F5](#f5--l030-folds-an-integer-division-as-real) | L030 folds an integer division as real: `parameter integer a = 7/2` is warned as "the default 3.5", the value is 3 | wrong diagnostic |
-| [F6](#f6--finish-and-stop-in-the-analog-block-are-silent-no-ops) | `$finish` and `$stop` in the analog block are silent no-ops at the operating point and in a transient | LRM conformance |
+| [F6](#f6--finish-and-stop-in-the-analog-block-are-silent-no-ops) | *(withdrawn on re-check, see the section)* `$finish` and `$stop` in the analog block are silent no-ops at the operating point and in a transient | withdrawn |
 | [F7](#f7--the-corner-loops-under-osdimc-redraw-the-other-parameters-per-corner) | `corners` and `autocorner` under `.option osdimc` let every corner be a fresh trial: the uncornered statistical parameters redraw between corners, so the corner effect is confounded with a draw | design gap |
 | [F8](#f8--autocorner-follow-on-gaps) | `autocorner` follow-on gaps: a raw-file `run` reports every corner as "made no plot"; `meas tran` refuses the combined plot; `writemc` has no row to land on; the devices are left at the last corner without a word | usability |
 | [F9](#f9--wcd-counts-cornered-parameters-as-dimensions) | `wcd` counts the cornered parameters as free dimensions and then reports "zero gradient" where three of four axes are held by the corner | misleading |
@@ -198,6 +198,16 @@ simulator to exit"; ngspice's OSDI runtime honours `$fatal` (aborts the analysis
 located message) and, per the handbook, a `$finish` during *setup*, but a `$finish`
 reached during the solve does nothing. A model that uses `$finish` to stop a transient at
 a detected condition runs to `tstop` in silence.
+
+**Withdrawn on re-check (2026-09-18, after E-660).** The same deck — `pulse(0 1 1u 1n
+1n 5u 10u)`, `tran 0.1u 8u`, `if ($abstime > 3e-6) $finish;` — ends at 3.04 µs with
+*Note: $finish requested by a Verilog-A device at 3.044290e-06 s*, on the current
+binaries and on the E-659 ones alike; the 52 points are the count up to that time (the
+pulse edge at 1 µs takes fine steps), not a run to `tstop`. The probe harness dropped
+every output line beginning with `Note:`, so the message was never seen, and the point
+count was read as the full run. `$stop` pauses there and `resume` continues; `@(initial_step)
+$finish(2)` at an operating point completes and reports the point, with its own note —
+E-55's "accepted-point boundary" rule, as the handbook says. Nothing to fix.
 
 ## F7 — the corner loops under `osdimc` redraw the other parameters per corner
 
