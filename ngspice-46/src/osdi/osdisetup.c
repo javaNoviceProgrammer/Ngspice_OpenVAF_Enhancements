@@ -2023,6 +2023,9 @@ static char osdimc_corner[80];
 static bool osdimc_corner_on;
 static bool osdimc_corner_ok;
 static bool osdimc_corner_active;
+static bool osdimc_corner_nominal_named; /* E-655: `corner=tt` (nom, nominal) was asked for
+                                            by name -- no corner is applied, but savemc tags
+                                            the row `tt` (the `corners` command's nominal) */
 #define OSDIMC_CORNER_SAID_MAX 64
 static struct { const void *descr; char name[80]; } osdimc_corner_said[OSDIMC_CORNER_SAID_MAX];
 static int osdimc_corner_said_n;
@@ -3071,8 +3074,10 @@ static void osdimc_corner_read(void) {
     osdimc_corner[n++] = (char)tolower((unsigned char)*p);
   }
   osdimc_corner[n] = '\0';
-  if (n == 0 || !strcmp(osdimc_corner, "tt") || !strcmp(osdimc_corner, "nom") ||
-      !strcmp(osdimc_corner, "nominal"))
+  osdimc_corner_nominal_named = n > 0 && (!strcmp(osdimc_corner, "tt") ||
+                                          !strcmp(osdimc_corner, "nom") ||
+                                          !strcmp(osdimc_corner, "nominal"));
+  if (n == 0 || osdimc_corner_nominal_named)
     return;
   osdimc_corner_on = true;
 }
@@ -3390,7 +3395,27 @@ bool OSDImcEnabled(void) { return osdimc_enabled(); }
 
 /* Enhancement-654: a corner is in force for the current run (savemc records
  * the cornered parameters under it as it records draws under osdimc) */
-bool OSDImcCornerSelected(void) { return osdimc_corner_on; }
+bool OSDImcCornerSelected(void) { return osdimc_corner_on || osdimc_corner_nominal_named; }
+
+/* Enhancement-655: the distinct corner names the loaded Verilog-A models of
+ * `ckt` declare, in declaration order -- the `corners` command's default set */
+int OSDImcCornerNames(CKTcircuit *ckt, const char **names, int cap) {
+  int n = 0;
+  if (!ckt)
+    return 0;
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    n = osdimc_corner_collect(osdi_reg_entry_model(ckt->CKThead[type]), names, n, cap);
+  }
+  return n;
+}
+
+/* Enhancement-655: the corner in force for the current run, "" when none
+ * (savemc tags the row with it) */
+const char *OSDImcCornerName(void) {
+  return osdimc_corner_on ? osdimc_corner : osdimc_corner_nominal_named ? "tt" : "";
+}
 
 bool OSDImcHasStats(CKTcircuit *ckt) {
   if (!ckt)

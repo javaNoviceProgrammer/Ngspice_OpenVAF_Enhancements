@@ -259,6 +259,15 @@ struct comm spcp_coms[] = {
       "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib). With `.option savemc`, "
       "-writemc puts each listed value (an -expr name, a track<k>.<vector>, any scalar expression) onto the "
       "sample's row of the savemc file, as the writemc command does after a run." } ,
+    { "corners", com_corners, FALSE, FALSE,       /* Enhancement-655 */
+      { 0, 0, 0, 0 }, E_DEFHMASK, 0, LOTS,
+      NULL,
+      "[-list <c1>[,<c2>...]] [-nonominal] [-analysis <cmd>] [-output <expr> ...] [-mc <N> <montecarlo arguments>] : "
+      "run the analysis at every process corner the loaded Verilog-A models declare ((* corner=\"...\" *) on a "
+      "parameter, Enhancement-654), the nominal `tt` first, and record each -output into a corners<n> plot on a "
+      "`corner` index scale ($corners_plot, $corners_names, $corners_n); with -mc, a `montecarlo N <arguments>` "
+      "per corner instead, recording yield, npass, nsamples and nfailed per corner. The `corner` variable is "
+      "put back afterwards; a `.option savemc` file tags each row with its corner." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
       NULL,
@@ -973,6 +982,15 @@ struct comm nutcp_coms[] = {
       "(-lhs for a lower-variance estimate; correlations via mvnorm(), corners via .lib). With `.option savemc`, "
       "-writemc puts each listed value (an -expr name, a track<k>.<vector>, any scalar expression) onto the "
       "sample's row of the savemc file, as the writemc command does after a run." } ,
+    { "corners", com_corners, FALSE, FALSE,       /* Enhancement-655 */
+      { 0, 0, 0, 0 }, E_DEFHMASK, 0, LOTS,
+      NULL,
+      "[-list <c1>[,<c2>...]] [-nonominal] [-analysis <cmd>] [-output <expr> ...] [-mc <N> <montecarlo arguments>] : "
+      "run the analysis at every process corner the loaded Verilog-A models declare ((* corner=\"...\" *) on a "
+      "parameter, Enhancement-654), the nominal `tt` first, and record each -output into a corners<n> plot on a "
+      "`corner` index scale ($corners_plot, $corners_names, $corners_n); with -mc, a `montecarlo N <arguments>` "
+      "per corner instead, recording yield, npass, nsamples and nfailed per corner. The `corner` variable is "
+      "put back afterwards; a `.option savemc` file tags each row with its corner." } ,
     { "transpose", com_transpose, FALSE, FALSE,
       { 040000, 040000, 040000, 040000 }, E_DEFHMASK, 1, LOTS,
       NULL,

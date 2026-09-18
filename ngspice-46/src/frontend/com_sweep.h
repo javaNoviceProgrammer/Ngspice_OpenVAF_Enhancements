@@ -2,6 +2,7 @@
 #ifndef COM_SWEEP_H
 #define COM_SWEEP_H
 void com_sweep(wordlist *wl);
+void com_corners(wordlist *wl);   /* Enhancement-655: the analysis at every declared process corner */
 
 /* Enhancement-320/321/322: the `.param` fast-sweep engine, shared with the
  * optimizer (com_optimize.c). sw_fp_build captures the swept `.param` names'

@@ -87,6 +87,9 @@ static double **rows;               /* nrows x (columns at the time), NAN = not 
 static int *rowcols;
 static char **rowan;                /* the analysis name */
 static char **rowst;                /* "ok" / "failed" */
+static char **rowcn;                /* Enhancement-655: the corner in force, "" when none */
+static int any_corner;              /* some row has one: the header carries a `corner` column */
+static int header_corner;           /* the csv/txt header was written with that column */
 static struct plot **rowplot;       /* Enhancement-624 (hunt F8): the plot the row's run
                                        made -- NULL when it failed before making one; a
                                        pointer for identity only, never dereferenced (the
@@ -704,6 +707,8 @@ text_header(FILE *f)
     const char sep = fmt == FMT_CSV ? ',' : '\t';
     int i;
     fprintf(f, "trial%canalysis%cstatus", sep, sep);
+    if (any_corner)                             /* Enhancement-655 */
+        fprintf(f, "%ccorner", sep);
     for (i = 0; i < ncols; i++)
         if (col_wanted(i)) {
             putc(sep, f);
@@ -711,6 +716,7 @@ text_header(FILE *f)
         }
     putc('\n', f);
     header_cols = ncols;
+    header_corner = any_corner;
 }
 
 static void
@@ -719,6 +725,10 @@ text_row(FILE *f, int r)
     const char sep = fmt == FMT_CSV ? ',' : '\t';
     int i;
     fprintf(f, "%d%c%s%c%s", r + 1, sep, rowan[r], sep, rowst[r]);
+    if (any_corner) {                           /* Enhancement-655 */
+        putc(sep, f);
+        put_name(f, rowcn[r]);
+    }
     for (i = 0; i < ncols; i++)
         if (col_wanted(i)) {
             putc(sep, f);
@@ -754,7 +764,8 @@ text_rewrite(void)
 static void
 text_rewrite_last(void)
 {
-    if (fp && lastrow_off >= 0 && header_cols == ncols && fseek(fp, lastrow_off, SEEK_SET) == 0) {
+    if (fp && lastrow_off >= 0 && header_cols == ncols && header_corner == any_corner &&
+        fseek(fp, lastrow_off, SEEK_SET) == 0) {
         int fd = fileno(fp);
         if (ftruncate(fd, lastrow_off) == 0) {
             text_row(fp, nrows - 1);
@@ -1094,7 +1105,9 @@ xlsx_write(void)
     xlsx_str_cell(&sheet, 0, 1, "trial");
     xlsx_str_cell(&sheet, 1, 1, "analysis");
     xlsx_str_cell(&sheet, 2, 1, "status");
-    for (i = 0, c = 3; i < ncols; i++)
+    if (any_corner)                             /* Enhancement-655 */
+        xlsx_str_cell(&sheet, 3, 1, "corner");
+    for (i = 0, c = any_corner ? 4 : 3; i < ncols; i++)
         if (col_wanted(i))
             xlsx_str_cell_style(&sheet, c++, 1, cols[i].name,
                                 cols[i].written ? STYLE_WRITEMC :
@@ -1105,7 +1118,9 @@ xlsx_write(void)
         xlsx_num_cell(&sheet, 0, r + 2, (double) (r + 1));
         xlsx_str_cell(&sheet, 1, r + 2, rowan[r]);
         xlsx_str_cell(&sheet, 2, r + 2, rowst[r]);
-        for (i = 0, c = 3; i < ncols; i++)
+        if (any_corner)                         /* Enhancement-655 */
+            xlsx_str_cell(&sheet, 3, r + 2, rowcn[r]);
+        for (i = 0, c = any_corner ? 4 : 3; i < ncols; i++)
             if (col_wanted(i))
                 xlsx_num_cell(&sheet, c++, r + 2, i < rowcols[r] ? rows[r][i] : NAN);
         ds_cat_str(&sheet, "</row>");
@@ -1145,9 +1160,12 @@ mcs_reset_file(void)
         tfree(rows[r]);
         tfree(rowan[r]);
         tfree(rowst[r]);
+        tfree(rowcn[r]);                        /* Enhancement-655 */
         tfree(rowpl[r]);
     }
     tfree(rows); tfree(rowcols); tfree(rowan); tfree(rowst);
+    tfree(rowcn);
+    any_corner = header_corner = 0;
     tfree(rowplot); tfree(rowpl);
     nrows = caprows = 0;
     tfree(path);
@@ -1337,6 +1355,7 @@ MCSAVErun(const char *analysis, int ok)
         rowcols = TREALLOC(int, rowcols, caprows);
         rowan = TREALLOC(char *, rowan, caprows);
         rowst = TREALLOC(char *, rowst, caprows);
+        rowcn = TREALLOC(char *, rowcn, caprows);   /* Enhancement-655 */
         rowplot = TREALLOC(struct plot *, rowplot, caprows);
         rowpl = TREALLOC(char *, rowpl, caprows);
     }
@@ -1379,6 +1398,12 @@ MCSAVErun(const char *analysis, int ok)
             rowan[nrows] = copy(analysis ? analysis : "?");
     }
     rowst[nrows] = copy(ok == MCS_PAUSED ? "paused" : ok ? "ok" : "failed");
+    /* Enhancement-655: the corner the run was at; the column appears with
+     * the first cornered row (a file without one keeps its three fixed
+     * columns) */
+    rowcn[nrows] = copy(OSDImcCornerName());
+    if (rowcn[nrows][0])
+        any_corner = 1;
     ran_no_row = 0;                             /* Enhancement-634 (hunt D7) */
     /* Enhancement-624 (hunt F8): a run that completed made the current plot;
      * a run that failed or paused made one only if the current plot changed
@@ -1395,7 +1420,7 @@ MCSAVErun(const char *analysis, int ok)
             xlsx_write();
         return;
     }
-    if (!fp || header_cols != ncols) {
+    if (!fp || header_cols != ncols || header_corner != any_corner) {
         text_rewrite();                 /* the first row, or a new column */
         return;
     }
@@ -1473,7 +1498,8 @@ MCSAVEappend(const char *name, double value)
         return -1;
     /* Enhancement-634 (hunt D3): the three fixed columns are not names a
      * value may take -- `writemc trial=9` added a second `trial` column */
-    if (eq(name, "trial") || eq(name, "analysis") || eq(name, "status"))
+    if (eq(name, "trial") || eq(name, "analysis") || eq(name, "status") ||
+        eq(name, "corner"))                     /* Enhancement-655 */
         return -4;
     c = col_find(name);
     if (!c) {

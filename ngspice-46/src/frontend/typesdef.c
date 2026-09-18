@@ -159,6 +159,9 @@ static struct plotab plotabs[NUMPLOTTYPES] = {
      * every name in the tree that reaches plot_alloc(). */
     { "sweepwave", "sweepwave", FALSE, FALSE },
     { "sweep", "sweep", FALSE, FALSE },
+    /* Enhancement-655: the plot the `corners` command records into (corners1,
+     * corners2, ...). No earlier pattern is a substring of the name. */
+    { "corners", "corners", FALSE, FALSE },
     /* Enhancement-552: the plot `montecarlo -expr` records into (montecarlo1,
      * montecarlo2, ...). No earlier pattern is a substring of the name. */
     { "montecarlo", "montecarlo", FALSE, FALSE },

@@ -6215,3 +6215,395 @@ void com_wcd(wordlist *wl)
     outp_loop_end();          /* Enhancement-477 */
     ft_optimizing = save_optimizing;
 }
+
+
+/**********
+Enhancement-655: `corners` -- the analysis at every process corner.
+
+  corners [-list <c1>[,<c2>...]] [-nonominal] [-analysis <cmd>] [-output <expr> ...]
+  corners [-list ...] [-nonominal] [-analysis <cmd>] -mc <N> <montecarlo arguments>
+
+The Verilog-A models of the loaded circuit declare their process corners on
+their parameters (`(* corner="ss=115, ff=-10%, sf=+3sigma" *)`, Enhancement-654)
+and `.option corner=<name>` selects one for a run. This command runs them all:
+the nominal `tt` first, then every corner any loaded model declares, in
+declaration order (`-nonominal` drops the nominal, `-list` names the set, `tt`
+allowed). For each corner it sets the `corner` variable, runs the `-analysis`
+command (default `op`) and evaluates each `-output` expression (its LAST value,
+as `sweep` does); the values go into a `corners<n>` plot whose scale, `corner`,
+is the corner's index (0, 1, ...), with the names printed beside it and kept in
+$corners_names. A corner whose analysis failed, or an output that did not
+resolve there, is NaN (a gap, not a number that looks real). With `-mc <N>`
+the rest of the line is a `montecarlo` command run once per corner --
+`montecarlo <N> <arguments>` -- so every montecarlo feature (-spec/-expr/
+-track/-writemc/-lhs/-warm) applies per corner, the corner pinning the process
+parameters and the mismatch draws going on; the plot then records `yield`,
+`npass`, `nsamples` and `nfailed` per corner. A `.option savemc` file tags
+every row with its corner. The `corner` variable is put back afterwards, so
+the next run returns to the corner the deck names, or to the nominal.
+**********/
+
+#define CO_MAXCORNERS 64
+
+/* a flag token: `-name`, not a negative number */
+static int co_is_flag(const char *w)
+{
+    return w && w[0] == '-' && w[1] && !isdigit((unsigned char) w[1]) && w[1] != '.';
+}
+
+/* the analyses a corner loop must not run (the E-341 list, in this
+ * command's voice) */
+static int co_destructive(const char *analysis)
+{
+    static const char *const banned[] = { "reset", "remcirc", "destroy",
+                                          "source", "load", "quit", "exit",
+                                          NULL };
+    const char *p = analysis;
+    size_t n;
+    int i;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    for (n = 0; p[n] && p[n] != ' ' && p[n] != '\t'; n++)
+        ;
+    for (i = 0; banned[i]; i++)
+        if (strlen(banned[i]) == n && strncasecmp(p, banned[i], n) == 0) {
+            fprintf(cp_err,
+                    "corners: -analysis '%s' would destroy the circuit the corners are "
+                    "iterating over; use a real analysis (op, dc, ac, tran, ...)\n",
+                    analysis);
+            return 1;
+        }
+    return 0;
+}
+
+/* a word handed back to the lexer: quoted when it holds a space and is not
+ * quoted already (a `.control` block's reader keeps the quotes on a word) */
+static const char *co_quote(const char *w, char *buf, size_t n)
+{
+    if (!strchr(w, ' ') || w[0] == '"')
+        return w;
+    snprintf(buf, n, "\"%s\"", w);
+    return buf;
+}
+
+static int co_is_nominal(const char *w)
+{
+    return eq(w, "tt") || eq(w, "nom") || eq(w, "nominal");
+}
+
+void com_corners(wordlist *wl)
+{
+    static const char *const results[] = { "corners_n" };
+    char analysis[512] = "op";
+    int analysis_given = 0, nonominal = 0;
+    char *outname[SW_MAXOUT], *outexpr[SW_MAXOUT];
+    int nout = 0;
+    char *listed[CO_MAXCORNERS];
+    int nlisted = 0;
+    int mc_n = 0;
+    char mcargs[2048] = "";
+    const char *declared[CO_MAXCORNERS];
+    const char *set[CO_MAXCORNERS + 1];
+    int ndecl = 0, nset = 0, c, k, i;
+    char prev[80];
+    int had_prev;
+    double *data = NULL;
+    int failed[CO_MAXCORNERS + 1];
+    int outbad[SW_MAXOUT];
+    char names[1200];
+    int save_optimizing = ft_optimizing;
+    int ncolumn;
+    struct plot *pl;
+    struct dvec *sc;
+
+    hs_clear_results(results, 1);
+    cp_remvar("corners_plot");
+    cp_remvar("corners_names");
+    memset(outbad, 0, sizeof outbad);
+
+    /* --- parse --- */
+    while (wl && wl->wl_word) {
+        const char *w = wl->wl_word;
+        if (eq(w, "-list")) {
+            wl = wl->wl_next;
+            if (!wl || !wl->wl_word || co_is_flag(wl->wl_word)) {
+                fprintf(cp_err, "corners: -list needs corner names (comma- or space-separated)\n");
+                goto cleanup;
+            }
+            while (wl && wl->wl_word && !co_is_flag(wl->wl_word)) {
+                char *tok = copy(wl->wl_word), *save = NULL;
+                char *t = strtok_r(tok, ", \t", &save);
+                for (; t; t = strtok_r(NULL, ", \t", &save)) {
+                    char *q;
+                    if (nlisted >= CO_MAXCORNERS) {
+                        fprintf(cp_err, "corners: more than %d corners listed\n", CO_MAXCORNERS);
+                        tfree(tok);
+                        goto cleanup;
+                    }
+                    listed[nlisted] = copy(t);
+                    for (q = listed[nlisted]; *q; q++)
+                        *q = (char) tolower((unsigned char) *q);
+                    if (co_is_nominal(listed[nlisted])) {
+                        tfree(listed[nlisted]);
+                        listed[nlisted] = copy("tt");
+                    }
+                    nlisted++;
+                }
+                tfree(tok);
+                wl = wl->wl_next;
+            }
+        } else if (eq(w, "-nonominal")) {
+            nonominal = 1;
+            wl = wl->wl_next;
+        } else if (eq(w, "-analysis")) {
+            wl = wl->wl_next;
+            if (!wl || !wl->wl_word) {
+                fprintf(cp_err, "corners: -analysis needs a command\n");
+                goto cleanup;
+            }
+            snprintf(analysis, sizeof analysis, "%s", wl->wl_word);
+            analysis_given = 1;
+            wl = wl->wl_next;
+        } else if (eq(w, "-output")) {
+            wl = wl->wl_next;
+            while (wl && wl->wl_word && !co_is_flag(wl->wl_word)) {
+                if (nout >= SW_MAXOUT) {
+                    fprintf(cp_err, "corners: more than %d outputs\n", SW_MAXOUT);
+                    goto cleanup;
+                }
+                sw_add_output_token(outname, outexpr, &nout, wl->wl_word);
+                wl = wl->wl_next;
+            }
+        } else if (eq(w, "-mc")) {
+            char *end;
+            long n;
+            wl = wl->wl_next;
+            if (!wl || !wl->wl_word) {
+                fprintf(cp_err, "corners: -mc needs the number of samples per corner\n");
+                goto cleanup;
+            }
+            n = strtol(wl->wl_word, &end, 10);
+            if (*end || n <= 0) {
+                fprintf(cp_err, "corners: -mc needs a positive integer, not '%s'\n", wl->wl_word);
+                goto cleanup;
+            }
+            mc_n = (int) n;
+            /* everything after -mc N belongs to montecarlo, verbatim (a word
+             * with a space -- a quoted analysis -- is quoted again) */
+            for (wl = wl->wl_next; wl && wl->wl_word; wl = wl->wl_next) {
+                size_t used = strlen(mcargs);
+                char qb[600];
+                if (used + strlen(wl->wl_word) + 4 >= sizeof mcargs) {
+                    fprintf(cp_err, "corners: the montecarlo arguments are too long\n");
+                    goto cleanup;
+                }
+                snprintf(mcargs + used, sizeof mcargs - used, "%s%s",
+                         used ? " " : "", co_quote(wl->wl_word, qb, sizeof qb));
+            }
+            break;
+        } else {
+            fprintf(cp_err, "corners: unknown option '%s' (options: -list, -nonominal, -analysis, "
+                            "-output, -mc)\n", w);
+            goto cleanup;
+        }
+    }
+    if (mc_n && analysis_given && !strstr(mcargs, "-analysis")) {
+        /* the -analysis given before -mc is montecarlo's too */
+        char tmp[2048], qb[600];
+        snprintf(tmp, sizeof tmp, "-analysis %s%s%s", co_quote(analysis, qb, sizeof qb),
+                 mcargs[0] ? " " : "", mcargs);
+        snprintf(mcargs, sizeof mcargs, "%s", tmp);
+    }
+    if (mc_n && (nout || strstr(mcargs, "-output"))) {
+        fprintf(cp_err, "corners: -output records a value per corner; under -mc a corner is a "
+                        "montecarlo run -- use its -expr or -spec instead\n");
+        goto cleanup;
+    }
+
+    if (ft_curckt == NULL || ft_curckt->ci_ckt == NULL) {
+        fprintf(cp_err, "corners: no circuit loaded\n");
+        goto cleanup;
+    }
+    if (if_refuse_stale("corners"))             /* Enhancement-632 (hunt F20) */
+        goto cleanup;
+    if (!mc_n && co_destructive(analysis))
+        goto cleanup;
+
+    /* --- the corner set --- */
+    ndecl = OSDImcCornerNames(ft_curckt->ci_ckt, declared, CO_MAXCORNERS);
+    if (ndecl == 0) {
+        fprintf(cp_err, "corners: no loaded Verilog-A model declares a corner -- a parameter "
+                        "declares them with (* corner=\"ss=..., ff=...\" *) (Enhancement-654)\n");
+        goto cleanup;
+    }
+    if (nlisted) {
+        for (i = 0; i < nlisted; i++) {
+            int known = eq(listed[i], "tt");
+            for (k = 0; k < ndecl && !known; k++)
+                if (eq(listed[i], declared[k]))
+                    known = 1;
+            if (!known) {
+                fprintf(cp_err, "corners: '%s' is a corner no loaded model declares (declared:",
+                        listed[i]);
+                for (k = 0; k < ndecl; k++)
+                    fprintf(cp_err, "%s %s", k ? "," : "", declared[k]);
+                fprintf(cp_err, ")\n");
+                goto cleanup;
+            }
+            set[nset++] = listed[i];
+        }
+    } else {
+        if (!nonominal)
+            set[nset++] = "tt";
+        for (k = 0; k < ndecl && nset < CO_MAXCORNERS; k++)
+            set[nset++] = declared[k];
+    }
+    names[0] = '\0';
+    for (c = 0; c < nset; c++) {
+        size_t used = strlen(names);
+        if (used + strlen(set[c]) + 2 < sizeof names)
+            snprintf(names + used, sizeof names - used, "%s%s", c ? " " : "", set[c]);
+    }
+
+    /* --- run --- */
+    had_prev = cp_getvar("corner", CP_STRING, prev, sizeof prev);
+    ncolumn = mc_n ? 4 : (nout ? nout : 1);
+    data = TMALLOC(double, (size_t) nset * (size_t) ncolumn);
+    for (c = 0; c < nset * ncolumn; c++)
+        data[c] = NAN;
+    if (mc_n)
+        fprintf(cp_out, "corners: %d corner%s (%s), montecarlo %d per corner%s%s\n", nset,
+                nset == 1 ? "" : "s", names, mc_n, mcargs[0] ? ": " : "", mcargs);
+    else
+        fprintf(cp_out, "corners: %d corner%s (%s), analysis '%s'%s\n", nset,
+                nset == 1 ? "" : "s", names, analysis,
+                nout ? "" : " (no -output: the per-corner plots are kept, nothing is recorded)");
+    outp_loop_begin("corners", "corner", nset, sw_loopbar_mode());   /* Enhancement-477 */
+    for (c = 0; c < nset; c++) {
+        if (ft_intrpt) {
+            fprintf(cp_err, "corners: interrupted after %d of %d corners\n", c, nset);
+            nset = c;
+            break;
+        }
+        outp_loop_point(c);
+        cp_vset("corner", CP_STRING, set[c]);
+        failed[c] = 0;
+        if (mc_n) {
+            char cmd[2200];
+            double v;
+            snprintf(cmd, sizeof cmd, "montecarlo %d %s", mc_n, mcargs);
+            ft_optimizing = save_optimizing;    /* montecarlo prints its own summary */
+            fprintf(cp_out, "corners: --- corner %s ---\n", set[c]);
+            sw_run_cmd(cmd);
+            if (cp_getvar("montecarlo_n", CP_REAL, &v, 0)) {
+                data[c * 4 + 2] = v;
+                if (cp_getvar("montecarlo_yield", CP_REAL, &v, 0))
+                    data[c * 4 + 0] = v;
+                if (cp_getvar("montecarlo_npass", CP_REAL, &v, 0))
+                    data[c * 4 + 1] = v;
+                if (cp_getvar("montecarlo_nfailed", CP_REAL, &v, 0))
+                    data[c * 4 + 3] = v;
+            } else {
+                failed[c] = 1;                  /* montecarlo refused or published nothing */
+            }
+        } else {
+            ft_optimizing = TRUE;               /* silence the per-corner chatter */
+            sw_run_cmd(analysis);
+            failed[c] = sw_run_failed();
+            for (k = 0; k < nout; k++) {
+                int ok = 0;
+                double v = sw_eval_expr_ok(outexpr[k], &ok);
+                if (!ok)
+                    outbad[k]++;
+                data[c * ncolumn + k] = (failed[c] || !ok) ? NAN : v;
+            }
+            ft_optimizing = save_optimizing;
+        }
+    }
+    outp_loop_end();
+    ft_optimizing = save_optimizing;
+    if (had_prev)
+        cp_vset("corner", CP_STRING, prev);
+    else
+        cp_remvar("corner");
+    if (nset == 0)
+        goto cleanup;
+
+    /* --- the plot --- */
+    pl = plot_alloc("corners");
+    pl->pl_name = copy("Corners");
+    pl->pl_title = copy(names);
+    plot_new(pl);
+    plot_setcur(pl->pl_typename);
+    sc = dvec_alloc(copy("corner"), SV_NOTYPE, (short) (VF_REAL | VF_PERMANENT), nset, NULL);
+    for (c = 0; c < nset; c++)
+        sc->v_realdata[c] = (double) c;
+    vec_new(sc);                                 /* first permanent -> scale */
+    if (mc_n) {
+        static const char *const mcnames[] = { "yield", "npass", "nsamples", "nfailed" };
+        for (k = 0; k < 4; k++) {
+            struct dvec *v = dvec_alloc(copy(mcnames[k]), SV_NOTYPE,
+                                        (short) (VF_REAL | VF_PERMANENT), nset, NULL);
+            for (c = 0; c < nset; c++)
+                v->v_realdata[c] = data[c * 4 + k];
+            vec_new(v);
+        }
+    } else {
+        for (k = 0; k < nout; k++) {
+            struct dvec *v;
+            if (outbad[k] >= nset) {
+                fprintf(cp_err, "Error: corners -output %s never resolved -- no such vector; "
+                                "that column is not recorded.\n", outexpr[k]);
+                continue;
+            }
+            if (outbad[k] > 0)
+                fprintf(cp_err, "Warning: corners -output %s did not resolve at %d of %d corners; "
+                                "those entries are nan.\n", outexpr[k], outbad[k], nset);
+            v = dvec_alloc(copy(outname[k]), SV_NOTYPE, (short) (VF_REAL | VF_PERMANENT), nset, NULL);
+            for (c = 0; c < nset; c++)
+                v->v_realdata[c] = data[c * ncolumn + k];
+            vec_new(v);
+        }
+    }
+    hs_set_result("corners_n", (double) nset);
+    cp_vset("corners_plot", CP_STRING, pl->pl_typename);
+    cp_vset("corners_names", CP_STRING, names);
+
+    /* --- the table --- */
+    fprintf(cp_out, "corners: %d corner%s into plot '%s' (now current); the `corner` scale is the index\n",
+            nset, nset == 1 ? "" : "s", pl->pl_typename);
+    fprintf(cp_out, "  %-4s %-12s", "idx", "corner");
+    if (mc_n)
+        fprintf(cp_out, " %12s %8s %8s %8s", "yield", "npass", "nsamples", "nfailed");
+    else
+        for (k = 0; k < nout; k++)
+            fprintf(cp_out, " %14.14s", outname[k]);
+    fprintf(cp_out, "\n");
+    for (c = 0; c < nset; c++) {
+        fprintf(cp_out, "  %-4d %-12s", c, set[c]);
+        if (failed[c]) {
+            fprintf(cp_out, " %s", mc_n ? "(montecarlo published nothing)" : "(the analysis failed)");
+        } else if (mc_n) {
+            fprintf(cp_out, " %11.3f%% %8.0f %8.0f %8.0f", 100.0 * data[c * 4 + 0],
+                    data[c * 4 + 1], data[c * 4 + 2], data[c * 4 + 3]);
+        } else {
+            for (k = 0; k < nout; k++) {
+                double v = data[c * ncolumn + k];
+                if (isnan(v))
+                    fprintf(cp_out, " %14s", "nan");
+                else
+                    fprintf(cp_out, " %14.6g", v);
+            }
+        }
+        fprintf(cp_out, "\n");
+    }
+
+cleanup:
+    for (k = 0; k < nout; k++) {
+        tfree(outname[k]);
+        tfree(outexpr[k]);
+    }
+    for (i = 0; i < nlisted; i++)
+        tfree(listed[i]);
+    tfree(data);
+}

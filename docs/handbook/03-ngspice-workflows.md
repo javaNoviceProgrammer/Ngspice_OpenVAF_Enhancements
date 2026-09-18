@@ -616,6 +616,28 @@ loaded model declares refuses the run, naming the declared ones. `tt`, `nom` and
 cornered parameter recentres a percentage or sigma corner. `.lib` corner
 sections are untouched and compose with this.
 
+All of them at once is the `corners` command
+([E-655](../../enhancements_doc/Enhancement-655.md);
+[`examples/cornerscmd_examples/`](../../examples/cornerscmd_examples/)):
+
+```spice
+corners -output v(out) gain=v(out)/v(in)           * tt, then every declared corner
+corners -list ss,ff -nonominal -analysis "tran 1u 10u" -output v(out)
+corners -mc 200 -analysis op -spec v(out) -max 1.2  * a montecarlo per corner
+print corner v(out)                                * the corners<n> plot: index scale
+echo $corners_names                                * "tt ss ff sf fs"
+```
+
+For each corner it sets the `corner` variable, runs the analysis and records
+each `-output`'s last value into a `corners<n>` plot whose scale `corner` is the
+corner's index, the names printed beside the values and kept in
+`$corners_names`. A corner whose analysis failed is `nan`. With `-mc N` the
+rest of the line is a `montecarlo` run once per corner — the corner pins the
+process parameters, the mismatch draws go on — and the plot holds `yield`,
+`npass`, `nsamples` and `nfailed`. A `.option savemc` file gains a `corner`
+column with the first cornered row, so the rows of a corner Monte Carlo sort
+by corner. The `corner` variable is put back afterwards.
+
 ## 3.8 XSPICE code models
 
 Alongside the OpenVAF/OSDI device path, this ngspice is built with **XSPICE**

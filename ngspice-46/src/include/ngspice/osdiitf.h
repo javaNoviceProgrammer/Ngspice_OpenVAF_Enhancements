@@ -238,6 +238,8 @@ typedef struct OSDImcSnapshotItem {
 typedef void (*OSDImcSnapshotFn)(const OSDImcSnapshotItem *it, void *ctx);
 extern bool OSDImcEnabled(void);
 extern bool OSDImcCornerSelected(void);   /* Enhancement-654: `.option corner=<name>` is in force */
+extern int OSDImcCornerNames(CKTcircuit *ckt, const char **names, int cap); /* E-655: the declared names */
+extern const char *OSDImcCornerName(void); /* E-655: the corner in force, "" when none */
 extern bool OSDImcHasStats(CKTcircuit *ckt);
 extern void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx);
 
