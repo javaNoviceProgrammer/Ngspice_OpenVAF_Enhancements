@@ -77,6 +77,10 @@ analyses is suppressed via `ft_optimizing`.
 
 /* Run one command synchronously through the command table (like the optimizer's
  * opt_run_cmd): cp_evloop() would defer it to the outer interpreter. */
+static int sw_running_cmd;      /* Enhancement-656: a loop command's own run is in progress */
+void sw_inner_run_begin(void) { sw_running_cmd++; }
+void sw_inner_run_end(void) { sw_running_cmd--; }
+
 static void sw_run_cmd(const char *cmdstr)
 {
     wordlist *wl = cp_lexer((char *) cmdstr);
@@ -106,7 +110,9 @@ static void sw_run_cmd(const char *cmdstr)
              * baseline and sample the SAME nominal N times) */
             OSDImcPreserveTrial();
         }
+        sw_running_cmd++;
         cp_coms[i].co_func(wl->wl_next);
+        sw_running_cmd--;
         if (agereset) {
             aging_internal_reset--;
             alter_journal_replay();  /* Enhancement-544: the user's alters ... */
@@ -6606,4 +6612,311 @@ cleanup:
     for (i = 0; i < nlisted; i++)
         tfree(listed[i]);
     tfree(data);
+}
+
+
+/**********
+Enhancement-656: `.option autocorner` -- a run-class command at every corner.
+
+A schematic's directive text holds options and dot cards, not a control
+script, so the `corners` command (E-655) is out of its reach. With
+`.option autocorner` set, every run-class command -- `op`, `tran`, `ac`,
+`dc`, ..., the batch-mode `run` and the shared library's -- runs at the
+nominal `tt` and then at every process corner the loaded Verilog-A models
+declare (E-654), in declaration order, exactly as `set corner=<name>`
+followed by the command would. The per-corner analysis plots are kept, each
+named with its corner (`Transient Analysis (corner ss)`), so batch-mode
+`.print`/`.plot` cards -- which serve every plot of their type (E-602) --
+print each corner; and for each plot the nominal run made, a combined plot
+`autocorner<n>` is built and made current: the nominal's vectors under their
+own names, and each other corner's under `<name>_<corner>`, resampled onto
+the nominal's scale (linear, real and imaginary parts alike) so that one
+scale serves them all -- the form a host that reads the current plot's
+vectors against its scale (KiCad) can draw. $autocorner_plot names the
+combined plot, $autocorner_plots the per-corner ones, $autocorner_names the
+corners, $autocorner_n their count. A corner whose run failed makes no plot
+and is said. The `corner` variable is put back afterwards. The option does
+not apply inside a loop command (sweep, montecarlo, corners, wcd, highsigma,
+optimize: they set the corner or hold a trial themselves), to `resume`, or
+when no loaded model declares a corner.
+**********/
+
+static int ac_inside;          /* the loop's own runs must not loop again */
+
+static void ac_clear_results(void)
+{
+    cp_remvar("autocorner_n");
+    cp_remvar("autocorner_names");
+    cp_remvar("autocorner_plots");
+    cp_remvar("autocorner_plot");
+}
+
+int autocorner_wanted(const char *what)
+{
+    const char *names[CO_MAXCORNERS];
+    int wanted;
+    /* inside a loop command's own runs (sweep's dc handover runs before the
+     * command raises ft_optimizing, so the counter is the safe signal), or
+     * inside this loop: never */
+    if (ac_inside || ft_optimizing || sw_running_cmd > 0)
+        return 0;
+    if (eq(what, "resume") || eq(what, "sens2"))
+        return 0;
+    wanted = cp_getvar("autocorner", CP_BOOL, NULL, 0) && ft_curckt && ft_curckt->ci_ckt &&
+             OSDImcCornerNames(ft_curckt->ci_ckt, names, CO_MAXCORNERS) > 0;
+    if (!wanted)
+        ac_clear_results();     /* a plain run: the last loop's answers must not outlive it */
+    return wanted;
+}
+
+/* linear interpolation of a (possibly complex) vector `src`, whose own scale
+ * is `sx[slen]`, onto `dx[dlen]`; a matching scale is copied outright */
+static void ac_resample(const struct dvec *src, const double *sx, int slen,
+                        struct dvec *dst, const double *dx, int dlen)
+{
+    int same = (slen == dlen);
+    int j;
+    if (same && sx && dx)
+        for (j = 0; j < dlen; j++)
+            if (fabs(sx[j] - dx[j]) > 1e-12 * (fabs(dx[j]) + 1e-300)) {
+                same = 0;
+                break;
+            }
+    if (same || !sx || !dx || slen < 2) {
+        for (j = 0; j < dlen; j++) {
+            int i = j < slen ? j : slen - 1;
+            if (isreal(dst))
+                dst->v_realdata[j] = isreal(src) ? src->v_realdata[i]
+                                                 : src->v_compdata[i].cx_real;
+            else if (isreal(src)) {
+                dst->v_compdata[j].cx_real = src->v_realdata[i];
+                dst->v_compdata[j].cx_imag = 0.0;
+            } else
+                dst->v_compdata[j] = src->v_compdata[i];
+        }
+        return;
+    }
+    if (isreal(src)) {
+        for (j = 0; j < dlen; j++) {
+            double y = sw_interp(sx, src->v_realdata, slen, dx[j]);
+            if (isreal(dst))
+                dst->v_realdata[j] = y;
+            else {
+                dst->v_compdata[j].cx_real = y;
+                dst->v_compdata[j].cx_imag = 0.0;
+            }
+        }
+    } else {
+        double *re = TMALLOC(double, slen), *im = TMALLOC(double, slen);
+        for (j = 0; j < slen; j++) {
+            re[j] = src->v_compdata[j].cx_real;
+            im[j] = src->v_compdata[j].cx_imag;
+        }
+        for (j = 0; j < dlen; j++) {
+            double yr = sw_interp(sx, re, slen, dx[j]);
+            double yi = sw_interp(sx, im, slen, dx[j]);
+            if (isreal(dst))
+                dst->v_realdata[j] = hypot(yr, yi);
+            else {
+                dst->v_compdata[j].cx_real = yr;
+                dst->v_compdata[j].cx_imag = yi;
+            }
+        }
+        tfree(re);
+        tfree(im);
+    }
+}
+
+/* the k-th plot a run created, newest first in plot_list up to `before` */
+static struct plot *ac_new_plot(struct plot *before, int k)
+{
+    struct plot *pl, *found[64];
+    int n = 0, i;
+    for (pl = plot_list; pl && pl != before && n < 64; pl = pl->pl_next)
+        found[n++] = pl;
+    /* creation order: the oldest new plot first */
+    i = n - 1 - k;
+    return (i >= 0 && i < n) ? found[i] : NULL;
+}
+
+static int ac_count_new(struct plot *before)
+{
+    struct plot *pl;
+    int n = 0;
+    for (pl = plot_list; pl && pl != before; pl = pl->pl_next)
+        n++;
+    return n;
+}
+
+int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
+{
+    const char *declared[CO_MAXCORNERS];
+    const char *set[CO_MAXCORNERS + 1];
+    struct plot *before[CO_MAXCORNERS + 1];
+    int nnew[CO_MAXCORNERS + 1];
+    int nset = 0, ndecl, c, k, j, err = 0, any_err = 0, nfam = 0;
+    char prev[80], names[1200], plots[1200];
+    int had_prev;
+    char *combined = NULL;
+
+    if (ac_inside)
+        return run(what, wl);
+    ndecl = OSDImcCornerNames(ft_curckt->ci_ckt, declared, CO_MAXCORNERS);
+    set[nset++] = "tt";
+    for (k = 0; k < ndecl && nset < CO_MAXCORNERS; k++)
+        set[nset++] = declared[k];
+    names[0] = '\0';
+    for (c = 0; c < nset; c++) {
+        size_t used = strlen(names);
+        if (used + strlen(set[c]) + 2 < sizeof names)
+            snprintf(names + used, sizeof names - used, "%s%s", c ? " " : "", set[c]);
+    }
+    fprintf(cp_out, "autocorner: %s at %d corner%s (%s)\n", what, nset, nset == 1 ? "" : "s", names);
+
+    had_prev = cp_getvar("corner", CP_STRING, prev, sizeof prev);
+    ac_inside = 1;
+    for (c = 0; c < nset; c++) {
+        before[c] = plot_list;
+        cp_vset("corner", CP_STRING, set[c]);
+        err = run(what, wl);
+        nnew[c] = ac_count_new(before[c]);
+        if (err || nnew[c] == 0) {
+            any_err = 1;
+            fprintf(cp_err, "autocorner: corner %s: the run %s\n", set[c],
+                    nnew[c] == 0 ? "made no plot" : "failed");
+        }
+        for (k = 0; k < nnew[c]; k++) {
+            struct plot *pl = ac_new_plot(before[c], k);
+            if (pl && pl->pl_name) {
+                char *nm = tprintf("%s (corner %s)", pl->pl_name, set[c]);
+                tfree(pl->pl_name);
+                pl->pl_name = nm;
+            }
+        }
+        if (ft_intrpt) {
+            fprintf(cp_err, "autocorner: interrupted after %d of %d corners\n", c + 1, nset);
+            nset = c + 1;
+            break;
+        }
+    }
+    ac_inside = 0;
+    if (had_prev)
+        cp_vset("corner", CP_STRING, prev);
+    else
+        cp_remvar("corner");
+
+    /* --- the combined plots: one per plot the nominal run made --- */
+    plots[0] = '\0';
+    for (k = 0; k < nnew[0]; k++) {
+        struct plot *tt = ac_new_plot(before[0], k);
+        struct plot *pw;
+        struct dvec *scale = tt ? tt->pl_scale : NULL;
+        struct dvec *v, *xs = NULL;
+        double *dx = NULL;                      /* the scale's real part, for the resampling */
+        int dlen = 0, nvec = 0;
+        int scale_is_point;                     /* an op plot's scale is just its first vector */
+        if (!tt)
+            continue;
+        pw = plot_alloc("autocorner");
+        pw->pl_name = tprintf("%s at corners", tt->pl_name ? tt->pl_name : what);
+        pw->pl_title = tprintf("%s at corners: %s", what, names);
+        plot_new(pw);
+        plot_setcur(pw->pl_typename);
+        scale_is_point = scale && scale->v_length == 1;
+        if (scale && scale->v_length > 0) {
+            /* the nominal's scale, kept as it is -- an ac plot's frequency
+             * is complex -- with its real part as the resampling axis */
+            xs = dvec_alloc(copy(scale->v_name), (int) scale->v_type,
+                            (short) ((isreal(scale) ? VF_REAL : VF_COMPLEX) | VF_PERMANENT),
+                            scale->v_length, NULL);
+            dx = TMALLOC(double, scale->v_length);
+            for (j = 0; j < scale->v_length; j++) {
+                if (isreal(scale)) {
+                    xs->v_realdata[j] = scale->v_realdata[j];
+                    dx[j] = scale->v_realdata[j];
+                } else {
+                    xs->v_compdata[j] = scale->v_compdata[j];
+                    dx[j] = scale->v_compdata[j].cx_real;
+                }
+            }
+            vec_new(xs);                            /* first permanent -> scale */
+            dlen = xs->v_length;
+        }
+        for (v = tt->pl_dvecs; v; v = v->v_next) {
+            if (!v->v_name || v->v_length < 1)
+                continue;
+            if (v == scale && !scale_is_point)
+                continue;                           /* the axis itself, copied above */
+            for (c = 0; c < nset; c++) {
+                struct plot *cp = c == 0 ? tt : (k < nnew[c] ? ac_new_plot(before[c], k) : NULL);
+                struct dvec *src = NULL, *nv;
+                const double *sx = NULL;
+                double *sxbuf = NULL;
+                int slen = 0, len;
+                char *nm;
+                if (!cp)
+                    continue;
+                if (c == 0) {
+                    if (v == scale)
+                        continue;                   /* an op plot's first vector: the copy above */
+                    src = v;
+                } else
+                    for (src = cp->pl_dvecs; src; src = src->v_next)
+                        if (src->v_name && eq(src->v_name, v->v_name))
+                            break;
+                if (!src || src->v_length < 1)
+                    continue;
+                if (cp->pl_scale && cp->pl_scale->v_length == src->v_length && slen == 0) {
+                    /* the corner's own axis, real part */
+                    sxbuf = TMALLOC(double, src->v_length);
+                    for (j = 0; j < src->v_length; j++)
+                        sxbuf[j] = isreal(cp->pl_scale) ? cp->pl_scale->v_realdata[j]
+                                                        : cp->pl_scale->v_compdata[j].cx_real;
+                    sx = sxbuf;
+                    slen = src->v_length;
+                }
+                len = dlen > 0 ? dlen : v->v_length;
+                nm = c == 0 ? copy(v->v_name) : tprintf("%s_%s", v->v_name, set[c]);
+                nv = dvec_alloc(nm, (int) v->v_type,
+                                (short) ((isreal(v) ? VF_REAL : VF_COMPLEX) | VF_PERMANENT),
+                                len, NULL);
+                ac_resample(src, sx, slen, nv, dx, len);
+                vec_new(nv);
+                nvec++;
+                tfree(sxbuf);
+            }
+        }
+        tfree(dx);
+        if (nfam == 0)
+            combined = pw->pl_typename;
+        nfam++;
+        {
+            size_t used = strlen(plots);
+            for (c = 0; c < nset; c++) {
+                struct plot *cp = k < nnew[c] ? ac_new_plot(before[c], k) : NULL;
+                if (!cp)
+                    continue;
+                used = strlen(plots);
+                if (used + strlen(cp->pl_typename) + strlen(set[c]) + 6 < sizeof plots)
+                    snprintf(plots + used, sizeof plots - used, "%s%s", used ? " " : "", cp->pl_typename);
+            }
+        }
+        fprintf(cp_out, "autocorner: %d vector%s of %s and its %d corner plot%s into '%s'%s: "
+                        "the nominal's under their names, a corner's as <name>_<corner> "
+                        "(v(out_%s), i(v1_%s)), resampled onto %s\n",
+                nvec, nvec == 1 ? "" : "s", tt->pl_typename, nset - 1, nset == 2 ? "" : "s",
+                pw->pl_typename, k == nnew[0] - 1 ? " (now current)" : "",
+                nset > 1 ? set[1] : "ss", nset > 1 ? set[1] : "ss",
+                xs && !scale_is_point ? xs->v_name : "the nominal's index");
+    }
+    if (nfam) {
+        double n = (double) nset;
+        cp_vset("autocorner_n", CP_REAL, &n);
+        cp_vset("autocorner_names", CP_STRING, names);
+        cp_vset("autocorner_plots", CP_STRING, plots);
+        cp_vset("autocorner_plot", CP_STRING, plot_cur ? plot_cur->pl_typename : combined);
+    } else {
+        ac_clear_results();
+    }
+    return any_err;
 }

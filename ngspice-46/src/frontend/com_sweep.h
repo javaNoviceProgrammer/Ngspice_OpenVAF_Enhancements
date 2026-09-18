@@ -3,6 +3,13 @@
 #define COM_SWEEP_H
 void com_sweep(wordlist *wl);
 void com_corners(wordlist *wl);   /* Enhancement-655: the analysis at every declared process corner */
+/* Enhancement-656: `.option autocorner` -- a run-class command at every declared corner */
+int  autocorner_wanted(const char *what);
+/* a loop command's own analysis run is in progress (the optimizer's opt_run_cmd
+ * brackets its runs with these; sw_run_cmd does so itself) */
+void sw_inner_run_begin(void);
+void sw_inner_run_end(void);
+int  autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *));
 
 /* Enhancement-320/321/322: the `.param` fast-sweep engine, shared with the
  * optimizer (com_optimize.c). sw_fp_build captures the swept `.param` names'

@@ -162,6 +162,9 @@ static struct plotab plotabs[NUMPLOTTYPES] = {
     /* Enhancement-655: the plot the `corners` command records into (corners1,
      * corners2, ...). No earlier pattern is a substring of the name. */
     { "corners", "corners", FALSE, FALSE },
+    /* Enhancement-656: the combined plot `.option autocorner` makes current
+     * (autocorner1, ...). No earlier pattern is a substring of the name. */
+    { "autocorner", "autocorner", FALSE, FALSE },
     /* Enhancement-552: the plot `montecarlo -expr` records into (montecarlo1,
      * montecarlo2, ...). No earlier pattern is a substring of the name. */
     { "montecarlo", "montecarlo", FALSE, FALSE },

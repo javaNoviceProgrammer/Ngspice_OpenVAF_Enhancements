@@ -234,7 +234,9 @@ static void opt_run_cmd(const char *cmdstr)
              * Monte-Carlo saw NO osdimc variation at all. */
             OSDImcPreserveTrial();
         }
+        sw_inner_run_begin();           /* Enhancement-656: not an autocorner run */
         cp_coms[i].co_func(wl->wl_next);
+        sw_inner_run_end();
         if (agereset) {
             aging_internal_reset--;
             alter_journal_replay();  /* Enhancement-544: the user's alters ... */

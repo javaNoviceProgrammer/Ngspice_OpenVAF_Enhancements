@@ -638,6 +638,28 @@ process parameters, the mismatch draws go on — and the plot holds `yield`,
 column with the first cornered row, so the rows of a corner Monte Carlo sort
 by corner. The `corner` variable is put back afterwards.
 
+A schematic's directive text holds no control script, so for it the corner
+analysis is an option ([E-656](../../enhancements_doc/Enhancement-656.md);
+[`examples/autocorner_examples/`](../../examples/autocorner_examples/)):
+
+```spice
+.option autocorner          * every run at tt and then at every declared corner
+.tran 1u 1m
+```
+
+With it set, every run-class command — `op`, `tran`, `ac`, the batch-mode
+`run`, the shared library's — runs at the nominal and then at every corner the
+loaded models declare. The per-corner plots are kept, named with their corner
+(`Transient Analysis (corner ss)`), so batch `.print` cards print each corner;
+and a combined `autocorner<n>` plot is made current: the nominal's vectors
+under their own names and each corner's as `<name>_<corner>` — `v(out_ss)`,
+`i(v1_ff)` — resampled onto the nominal's scale, so a host that draws the
+current plot's vectors against its scale shows every corner side by side.
+`$autocorner_plot`, `$autocorner_plots`, `$autocorner_names` and
+`$autocorner_n` describe the run. The option is inert inside a loop command
+(`sweep`, `montecarlo`, `corners`, `optimize`, `wcd`, `highsigma`) and without a
+declared corner, and the `corner` variable is put back afterwards.
+
 ## 3.8 XSPICE code models
 
 Alongside the OpenVAF/OSDI device path, this ngspice is built with **XSPICE**

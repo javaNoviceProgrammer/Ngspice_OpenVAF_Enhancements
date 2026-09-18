@@ -30,6 +30,7 @@ Modified: 2000 AlansFixes
 #ifdef XSPICE
 /* gtri - add - 12/12/90 - wbk - include ipc stuff */
 #include "ngspice/ipctiein.h"
+#include "com_sweep.h"      /* Enhancement-656: autocorner */
 /* gtri - end - 12/12/90 */
 #endif
 
@@ -223,6 +224,11 @@ static int dosim(
     /* set file type to binary or to what is given by environmental
        variable SPICE_ASCIIRAWFILE in ivars.c */
     bool ascii = AsciiRawFile;
+    /* Enhancement-656: `.option autocorner` -- this run at every process corner
+     * the loaded Verilog-A models declare, the nominal first; the per-corner
+     * plots are kept, named, and a combined plot is made current */
+    if (autocorner_wanted(what))
+        return autocorner_run(what, wl, dosim);
     if (eq(what, "run") && wl) {
         dofile = TRUE;
     }
