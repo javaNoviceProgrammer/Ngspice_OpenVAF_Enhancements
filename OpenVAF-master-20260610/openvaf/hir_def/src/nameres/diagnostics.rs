@@ -87,6 +87,9 @@ impl PathResolveError {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum DefDiagnostic {
     AlreadyDeclared { old: ScopeDefItem, new: ScopeDefItem, name: Name },
+    /// Enhancement-665 (hunt F11): a nature whose `access` function carries the
+    /// nature's own name (`nature Qx; access = Qx;`)
+    NatureAccessNamedAsNature { item: ScopeDefItem, name: Name },
     /// A module instantiation (`resistor r1(...)`) referenced a module name
     /// that doesn't exist anywhere at the top level of this file.
     UnknownInstantiatedModule { ast_id: ErasedAstId, module: Name },
@@ -173,6 +176,29 @@ impl Diagnostic for DefDiagnosticWrapped<'_> {
                 Report::error()
                     .with_message(format!("'{}' was already declared in this scope", name))
                     .with_labels(labels)
+            }
+            DefDiagnostic::NatureAccessNamedAsNature { item, name } => {
+                let FileSpan { range, file } = self.parse.to_file_span(
+                    item.text_range(self.db, self.ast_id_map, self.parse).unwrap(),
+                    self.sm,
+                );
+                Report::error()
+                    .with_message(format!(
+                        "nature '{name}' names its access function '{name}' too; the access \
+                         function needs a name of its own"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "the access function's name is the nature's".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 3.6.1 -- `nature Charge; access = Q; ...`: the access \
+                         function (Q) is what the analog block calls, the nature (Charge) is \
+                         what a discipline names; the two live in one scope"
+                            .to_owned(),
+                    ])
             }
             DefDiagnostic::UnknownInstantiatedModule { ast_id, module } => {
                 let range = self.ast_id_map.get_syntax(*ast_id).range();

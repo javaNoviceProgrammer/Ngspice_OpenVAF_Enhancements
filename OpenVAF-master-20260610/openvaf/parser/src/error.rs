@@ -56,6 +56,13 @@ pub enum SyntaxError {
     /// could start (`I(` as a net declaration with discipline `I`), and one
     /// mistake came back as three errors, none naming it.
     StmtOutsideAnalog,
+    /// Enhancement-665 (hunt F11): a bare identifier followed by `begin` --
+    /// `forever begin ... end`, a loop Verilog-A does not have. It read as an
+    /// expression statement missing its `;` plus "'forever' was not found".
+    IdentBeforeBlock,
+    /// Enhancement-665 (hunt F11): `(* desc= *)` -- an attribute with `=` and
+    /// no value; it was the generic expression-start list.
+    AttrWithoutValue,
     // ExtraToken { span: Span, token: Token },
     //
     // #[error("Unexpected Token!")]

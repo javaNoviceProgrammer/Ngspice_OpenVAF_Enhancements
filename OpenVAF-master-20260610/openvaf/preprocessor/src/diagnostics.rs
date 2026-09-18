@@ -78,7 +78,7 @@ impl_display! {
         InvalidTextFormat {  file, ..} => "failed to read {}: file contents are not valid text", file;
         UnexpectedEof { expected ,..} => "unexpected EOF, expected {}",expected;
         MissingOrUnexpectedToken { expected, ..} => "unexpected token, expected '{}'", expected;
-        UnexpectedToken(_) => "encountered unexpected token!";
+        UnexpectedToken(_) => "unexpected character(s) in the source: not a token of Verilog-A here";
         MacroOverwritten { name, .. } => "macro '`{}' was overwritten", name;
         UndefPredefined { name, .. } => "'`undef' has no effect on the predefined macro '`{}'", name;
         AmsOnlyDirective { name, .. } => "'`{}' is an AMS-only directive and is ignored in Verilog-A", name;

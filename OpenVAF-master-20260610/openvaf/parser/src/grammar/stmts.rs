@@ -48,6 +48,16 @@ fn empty_stmt(p: &mut Parser, m: Marker) {
 fn expr_or_assign_stmt<const SEMICOLON: bool>(p: &mut Parser, m: Marker) {
     let kind = if assign_or_expr(p) { ASSIGN_STMT } else { EXPR_STMT };
 
+    // Enhancement-665 (hunt F11): `forever begin ... end` and its kin -- a bare
+    // identifier before a `begin` is a loop keyword Verilog-A does not have.
+    // Said as such, the identifier wrapped in an error node (so it resolves no
+    // name), and the block parses as the next statement.
+    if kind == EXPR_STMT && p.at(BEGIN_KW) {
+        p.error(crate::SyntaxError::IdentBeforeBlock);
+        m.complete(p, ERROR);
+        return;
+    }
+
     if SEMICOLON {
         p.expect(T![;]);
     }

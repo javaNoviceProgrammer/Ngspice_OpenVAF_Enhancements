@@ -81,7 +81,31 @@ const MAX_EXPR_DEPTH: u32 = 1000;
 /// token that is perfectly valid, with no hint that a depth limit exists. It now
 /// reports `ExprTooDeep`, keeping the same recovery.
 fn expr_too_deep(p: &mut Parser) {
-    p.err_recover(crate::SyntaxError::ExprTooDeep, EXPR_RECOVERY_SET);
+    p.error(crate::SyntaxError::ExprTooDeep);
+    // Enhancement-665 (hunt F15): the old recovery bumped one token and handed
+    // the rest of the expression (`p997+p998)`) back to the statement parser,
+    // which read it as declarations -- "'p997' was not found", "'p998' was
+    // already declared". Skip to the end of the expression instead: the
+    // closing bracket of the enclosing pair, or the `;` (or an end keyword)
+    // at bracket depth zero.
+    let m = p.start();
+    let mut depth: u32 = 0;
+    loop {
+        match p.current() {
+            EOF => break,
+            T!['('] | T!['['] | T!['{'] | T!["'{"] => depth += 1,
+            T![')'] | T![']'] | T!['}'] => {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            T![;] | T![endmodule] | T![endfunction] | T![end] if depth == 0 => break,
+            _ => {}
+        }
+        p.bump_any();
+    }
+    m.complete(p, ERROR);
 }
 
 // Parses expression with binding power of at least bp.

@@ -146,6 +146,33 @@ impl<'a> SyntaxTreeBuilder<'a> {
                 }
                 return;
             }
+            // Enhancement-665 (hunt F11): the identifier BEFORE the current
+            // token (the parser stopped at `begin`)
+            parser::SyntaxError::IdentBeforeBlock => {
+                let span = match self.token_pos.checked_sub(1).map(|i| self.tokens[i]) {
+                    Some(prev) if !prev.kind.is_trivia() => {
+                        TextRange::at(self.text_pos - prev.span.range.len(), prev.span.range.len())
+                    }
+                    _ => TextRange::at(self.text_pos, 0.into()),
+                };
+                if !mem::replace(&mut self.panic, true) && self.last_error.is_none() {
+                    self.errors.push(SyntaxError::IdentBeforeBlock { span });
+                }
+                return;
+            }
+            // Enhancement-665 (hunt F11): same shape as CommaExpr, the span is
+            // the `*)` or `,` the parser stopped at
+            parser::SyntaxError::AttrWithoutValue => {
+                let span = if self.token_pos + n_trivia == self.tokens.len() {
+                    TextRange::at(self.text_pos, 0.into())
+                } else {
+                    TextRange::at(pos, self.tokens[self.token_pos + n_trivia].span.range.len())
+                };
+                if !mem::replace(&mut self.panic, true) && self.last_error.is_none() {
+                    self.errors.push(SyntaxError::AttrWithoutValue { span });
+                }
+                return;
+            }
             parser::SyntaxError::ExprTooDeep => {
                 let span = if self.token_pos + n_trivia == self.tokens.len() {
                     TextRange::at(self.text_pos, 0.into())

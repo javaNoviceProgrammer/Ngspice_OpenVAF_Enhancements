@@ -14,6 +14,37 @@ pub(crate) fn parse_text(
     root_file: FileId,
     Preprocess { ts, sm, .. }: &Preprocess,
 ) -> (GreenNode, Vec<SyntaxError>, Vec<(TextRange, SourceContext, TextSize)>) {
+    // Enhancement-665 (hunt F11): `1e3n`, `0.5e`, `1meg` -- the lexer ends the
+    // number before letters it cannot take into it and the parser then
+    // complained about the leftover identifier in the range-clause vocabulary
+    // ("expected 'exclude' or 'from'"). A number immediately followed by an
+    // identifier (no white space, one source context) is a malformed literal:
+    // the letters become trivia here, so the rest parses, and the literal is
+    // reported as a whole with its text.
+    let mut ts_fixed: Vec<::preprocessor::Token> = (**ts).clone();
+    let mut suffix_errors: Vec<(usize, String)> = Vec::new();
+    for i in 0..ts_fixed.len().saturating_sub(1) {
+        let (a, b) = (ts_fixed[i], ts_fixed[i + 1]);
+        let is_num = matches!(
+            a.kind,
+            crate::SyntaxKind::INT_NUMBER
+                | crate::SyntaxKind::STD_REAL_NUMBER
+                | crate::SyntaxKind::SI_REAL_NUMBER
+        );
+        if is_num
+            && b.kind == crate::SyntaxKind::IDENT
+            && a.span.ctx == b.span.ctx
+            && a.span.range.end() == b.span.range.start()
+        {
+            let decl = sm.ctx_data(a.span.ctx).decl;
+            let text = sources.file_text(decl.file).ok();
+            let (fa, fb) = (a.span.to_file_span(sm).range, b.span.to_file_span(sm).range);
+            let combined = text.map(|t| format!("{}{}", &t[fa], &t[fb])).unwrap_or_default();
+            suffix_errors.push((i, combined));
+            ts_fixed[i + 1].kind = crate::SyntaxKind::COMMENT;
+        }
+    }
+    let ts = &ts_fixed;
     // tokens without whitespaces/comments
     let mut parser_tokens: Vec<_> = ts
         .iter()
@@ -129,7 +160,16 @@ pub(crate) fn parse_text(
         }
     }
 
-    let (tree, parser_errors, ctx_map) = builder.finish();
+    let (tree, mut parser_errors, ctx_map) = builder.finish();
+    // Enhancement-665: the malformed literals, in the tree's text coordinates
+    for (i, text) in suffix_errors {
+        let mut start = TextSize::from(0);
+        for t in &ts[..i] {
+            start += t.span.range.len();
+        }
+        let len = ts[i].span.range.len() + ts[i + 1].span.range.len();
+        parser_errors.push(SyntaxError::NumberSuffix { span: TextRange::at(start, len), text });
+    }
 
     (tree, parser_errors, ctx_map)
 }

@@ -140,9 +140,19 @@ impl<'a> ConsoleSink<'a> {
             } else {
                 String::new()
             };
+            // Enhancement-665 (hunt F11): the summary named the elaborated copy
+            // (`x.va__namerange.va`) when the last pass ran on one; the file
+            // that could not be compiled is the author's
+            let mut shown = target_name.to_string();
+            for suffix in ELABORATION_BUFFER_SUFFIXES {
+                if let Some(base) = shown.strip_suffix(suffix) {
+                    shown = base.trim_start_matches('/').to_owned();
+                    break;
+                }
+            }
             let message = format!(
                 "could not compile `{}` due to {} previous errors{}",
-                target_name, self.error_cnt, warn
+                shown, self.error_cnt, warn
             );
 
             self.print_simple_message(Severity::Error, message);

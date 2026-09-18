@@ -28,6 +28,20 @@ pub enum SyntaxError {
     CommaExpr {
         span: TextRange,
     },
+    /// Enhancement-665 (hunt F11): a bare identifier before `begin` (`forever`)
+    IdentBeforeBlock {
+        span: TextRange,
+    },
+    /// Enhancement-665 (hunt F11): `(* desc= *)`, an attribute without a value
+    AttrWithoutValue {
+        span: TextRange,
+    },
+    /// Enhancement-665 (hunt F11): a number immediately followed by letters the
+    /// lexer could not take into it -- `1e3n`, `0.5e`, `1meg`
+    NumberSuffix {
+        span: TextRange,
+        text: String,
+    },
     /// Enhancement-589: a case statement without a single item
     EmptyCase {
         span: TextRange,
@@ -190,6 +204,9 @@ impl_display! {
         SurplusToken {found,..} => "unexpected token {}", found;
         ExprTooDeep{..} => "expression nests too deeply";
         CommaExpr{..} => "a parenthesised list is not an expression";
+        IdentBeforeBlock{..} => "a bare identifier before `begin`: not an analog statement";
+        AttrWithoutValue{..} => "the attribute has no value after '='";
+        NumberSuffix{text,..} => "malformed number literal `{}`", text;
         EmptyCase{..} => "case statement has no items; a case needs at least one `value: statement` or `default:` item";
         StmtOutsideAnalog{..} => "statement outside an analog block";
         RealLiteralOverflow{..} => "real literal is too large to represent";

@@ -3544,6 +3544,23 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 let step_size = self.lower_expr(args[0]);
                 let zero = self.ctx.fconst(0.0);
                 let usable = self.ctx.ins().fgt(step_size, zero); // false for 0, <0 and NaN
+                // Enhancement-665 (hunt F12): a bound the DECK fixed to a value
+                // that is not positive is a mistake one step removed from the
+                // literal hir_ty refuses -- said once per accepted point
+                // (Enhancement-651's rule); a run-time quantity is dropped in
+                // silence as before, since it may pass through 0 on its way.
+                if self.is_param_derived(args[0]) {
+                    let sv = step_size;
+                    self.ctx.make_cond(usable, |ctx, ok| {
+                        if !ok {
+                            ctx.runtime_warn(
+                                "$bound_step: the bound is %g, not positive; it is ignored and \
+                                 the incumbent bound stands",
+                                &[sv],
+                            );
+                        }
+                    });
+                }
                 let cur = self.ctx.use_place(PlaceKind::BoundStep);
                 // LRM 9.17.2 (kernel audit): "the next time step taken is no
                 // larger than the SMALLEST $bound_step() argument currently
@@ -3675,6 +3692,26 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BuiltIn::absdelay => {
                 let y_expr = self.lower_expr(args[0]);
                 let mut td = self.lower_expr(args[1]);
+                // Enhancement-665 (hunt F12): LRM 4.5.7 -- the delay "must be
+                // non-negative". A literal is refused by hir_ty; a parameter (or a
+                // variable) the deck fixed to a negative value ran in silence.
+                // Enhancement-651's rule: project onto the domain (0, no delay),
+                // and say so once per accepted point when the deck fixed it; a
+                // run-time quantity is projected in silence.
+                {
+                    let zero = self.ctx.fconst(0.0);
+                    let ok = self.ctx.ins().fge(td, zero); // false for negatives and NaN
+                    let guarded = self.is_param_derived(args[1]);
+                    td = self.project_or_warn(
+                        guarded,
+                        ok,
+                        td,
+                        zero,
+                        "absdelay: the delay is %g, negative (LRM 4.5.7 requires a non-negative \
+                         delay); 0 is used",
+                        &[td],
+                    );
+                }
                 if signature == ABSDELAY_MAX {
                     // LRM 4.5.7: "If td becomes greater than maxdelay, maxdelay
                     // will be used as a substitute for td."

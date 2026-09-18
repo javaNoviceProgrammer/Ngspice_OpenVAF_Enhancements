@@ -681,6 +681,7 @@ impl ModuleInfo {
         for (var, name) in dollar_opvars {
             sink.add_diagnostic(
                 &DollarInExportedName {
+                    bad: '$',
                     module: module.name(db),
                     decl: ExportedName {
                         name,
@@ -859,11 +860,24 @@ fn check_exported_names(
         );
     }
 
-    // a `$` in a name the simulator is meant to read back
+    // a `$` in a name the simulator is meant to read back -- Enhancement-665
+    // (hunt F13): or any other character ngspice's parsers cannot take in a
+    // parameter name (`\foo+bar` exports `foo+bar`, which `@n1[foo+bar]`
+    // reads as a subtraction)
     for (decl, _) in instance.iter().chain(&model) {
-        if decl.name.contains('$') && !is_paramset_twin_name(db, cu, &decl.name) {
+        // an array element (`q[0]`) and an inlined child's dotted path are
+        // names ngspice reads; everything else outside letters, digits and
+        // `_` is not
+        let bad = decl
+            .name
+            .chars()
+            .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '[' | ']' | '.')));
+        if let Some(bad) = bad {
+            if bad == '$' && is_paramset_twin_name(db, cu, &decl.name) {
+                continue;
+            }
             sink.add_diagnostic(
-                &DollarInExportedName { module: module_name.clone(), decl: decl.clone() },
+                &DollarInExportedName { module: module_name.clone(), decl: decl.clone(), bad },
                 root,
                 db,
             );
@@ -1798,6 +1812,17 @@ fn parse_corner_list(text: &str) -> Vec<Result<(String, CornerKind, f64), (Strin
         .filter(|e| !e.is_empty())
         .map(|entry| {
             let Some((name, value)) = entry.split_once('=') else {
+                // Enhancement-665 (hunt F11): `ss=0.5 %` -- the space split the
+                // percent sign (or `sigma`) off its number, and the number was
+                // taken as an absolute value
+                let lower = entry.to_ascii_lowercase();
+                if lower == "%" || lower == "sigma" || lower == "sigmas" {
+                    return Err((
+                        entry.to_owned(),
+                        "a percentage or a sigma count is written without a space (`ss=+10%`, \
+                         `ss=+3sigma`); the number before it was read as an absolute value",
+                    ));
+                }
                 return Err((entry.to_owned(), "an entry is <name>=<value>; there is no '='"));
             };
             let mut chars = name.chars();

@@ -401,6 +401,9 @@ impl Diagnostic for ExportedNameCollision {
 pub(crate) struct DollarInExportedName {
     pub module: String,
     pub decl: ExportedName,
+    /// Enhancement-665 (hunt F13): the offending character -- `$`, or any
+    /// other one an escaped identifier smuggled into an exported name
+    pub bad: char,
 }
 
 impl Diagnostic for DollarInExportedName {
@@ -421,7 +424,7 @@ impl Diagnostic for DollarInExportedName {
                  table; and `@<inst>[a$b]` could not read it anyway"
                     .to_owned(),
             )
-        } else {
+        } else if self.bad == '$' {
             (
                 "write-only from ngspice".to_owned(),
                 format!(
@@ -431,11 +434,21 @@ impl Diagnostic for DollarInExportedName {
                     self.decl.name
                 ),
             )
+        } else {
+            (
+                "unreachable from ngspice".to_owned(),
+                format!(
+                    "an escaped identifier exports its text as it is: `@<inst>[{0}]` and \
+                     `{0}=...` on a card are read by ngspice's parsers, which take `{1}` as \
+                     an operator or a separator; keep an exported name to letters, digits and `_`",
+                    self.decl.name, self.bad
+                ),
+            )
         };
         Report::warning()
             .with_message(format!(
-                "{} '{}' has a `$` in its name, which ngspice's expression parser cannot read",
-                self.decl.kind, self.decl.name
+                "{} '{}' has a `{}` in its name, which ngspice's expression parser cannot read",
+                self.decl.kind, self.decl.name, self.bad
             ))
             .with_labels(vec![Label {
                 style: LabelStyle::Primary,

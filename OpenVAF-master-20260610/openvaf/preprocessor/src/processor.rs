@@ -377,7 +377,13 @@ impl<'a> Processor<'a> {
                 })
             }
         } else {
-            errors.push(MacroNotFound { name: call.name.to_owned(), span })
+            errors.push(MacroNotFound { name: call.name.to_owned(), span });
+            // Enhancement-665 (hunt F11): the reference expanded to nothing and
+            // the parser then complained about the hole (`= ;`). The error is
+            // reported and the compile fails either way; a `0` in the hole
+            // keeps the parse going without a knock-on.
+            let hole = self.synth_token("0", tokens::SyntaxKind::INT_NUMBER, span);
+            dst.push(hole);
         }
     }
 

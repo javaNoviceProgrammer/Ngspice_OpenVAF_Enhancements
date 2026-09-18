@@ -4499,6 +4499,46 @@ fn check_param_default_range(
         }
     }
 
+    // Enhancement-665 (hunt F13): a `string` parameter's constant default against
+    // its constant `from {...}`/`exclude` set -- `parameter string s = "z" from
+    // {"x", "y"}` compiled without a word, and the run-time check judges given
+    // values only, so the parameter ran at a value its own range excludes.
+    if db.param_data(param).ty == Some(Type::String) {
+        let Some(sdef) = const_str_in(db, body, infer, exprs.default, 0) else { return };
+        let (mut has_from, mut from_all_const, mut from_ok, mut excluded) =
+            (false, true, false, false);
+        for constraint in exprs.bounds.iter() {
+            match (constraint.kind, constraint.val) {
+                (ConstraintKind::From, ConstraintValue::Value(e)) => {
+                    has_from = true;
+                    match const_str_in(db, body, infer, e, 0) {
+                        Some(s) if s == sdef => from_ok = true,
+                        Some(_) => {}
+                        None => from_all_const = false,
+                    }
+                }
+                (ConstraintKind::Exclude, ConstraintValue::Value(e)) => {
+                    if const_str_in(db, body, infer, e, 0).as_deref() == Some(sdef.as_str()) {
+                        excluded = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if excluded || (has_from && from_all_const && !from_ok) {
+            if let Some(&stmt) = body.entry_stmts.first() {
+                diagnostics.push(BodyValidationDiagnostic::ParamDefaultOutOfRange {
+                    param,
+                    expr: exprs.default,
+                    value: format!("\"{sdef}\""),
+                    excluded,
+                    stmt,
+                });
+            }
+        }
+        return;
+    }
+
     let Some(value) = const_num_in(db, body, infer, exprs.default, 0) else { return };
 
     // Enhancement-640: a real default that folds to an infinity or a NaN. The

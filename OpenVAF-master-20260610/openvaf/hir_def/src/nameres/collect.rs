@@ -300,13 +300,23 @@ impl DefCollector<'_> {
                     let id = NatureLoc { root_file: self.root_file, id: nature }.intern(self.db);
                     self.insert_decl(root_scope, self.tree[nature].name.clone(), id);
                     if let Some((name, attr)) = self.tree[nature].access.clone() {
-                        self.insert_decl(
-                            root_scope,
-                            name,
-                            ScopeDefItem::NatureAccess(
-                                NatureAttrLoc { nature: id, id: attr }.intern(self.db).into(),
-                            ),
-                        )
+                        let access = ScopeDefItem::NatureAccess(
+                            NatureAttrLoc { nature: id, id: attr }.intern(self.db).into(),
+                        );
+                        // Enhancement-665 (hunt F11): `nature Qx; access = Qx;` --
+                        // the access function's name is the nature's own. Inserting
+                        // it gave "'Qx' was already declared in this scope" and two
+                        // knock-ons (the discipline's flow "is not a nature", an
+                        // "illegal access"); name the rule instead and leave the
+                        // nature's own declaration standing.
+                        if name == self.tree[nature].name {
+                            self.map.diagnostics.push(DefDiagnostic::NatureAccessNamedAsNature {
+                                item: access,
+                                name,
+                            });
+                        } else {
+                            self.insert_decl(root_scope, name, access)
+                        }
                     }
                 }
                 RootItem::Discipline(discipline) => {

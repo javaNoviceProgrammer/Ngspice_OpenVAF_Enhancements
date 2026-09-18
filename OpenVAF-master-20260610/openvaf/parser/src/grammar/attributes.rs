@@ -30,7 +30,12 @@ fn attr(p: &mut Parser, recovery: TokenSet) {
 
     name_r(p, ATTR_RECOVERY_SET.union(recovery));
     if p.eat(T![=]) {
-        expr(p);
+        // Enhancement-665 (hunt F11): `(* desc= *)` -- nothing after the `=`
+        if p.at_ts(TokenSet::new(&[T!["*)"], T![,], EOF])) {
+            p.error(crate::SyntaxError::AttrWithoutValue);
+        } else {
+            expr(p);
+        }
     }
     m.complete(p, ATTR);
 }

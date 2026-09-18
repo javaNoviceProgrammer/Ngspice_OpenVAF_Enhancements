@@ -530,6 +530,63 @@ impl Diagnostic for SyntaxError {
                             .to_owned(),
                     ])
             }
+            // Enhancement-665 (hunt F11)
+            SyntaxError::IdentBeforeBlock { span } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "an identifier, then a block".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: `forever`, `always` and `initial` are not analog statements; a \
+                         loop in an analog block is `repeat (n)`, `while (cond)` or `for (...)` \
+                         (LRM A.6.4), and an assignment needs `=` before its value"
+                            .to_owned(),
+                    ])
+            }
+            SyntaxError::AttrWithoutValue { span } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "a value was expected here".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: an attribute is `name` or `name = value` (a string, a number or \
+                         a constant expression); `(* desc=\"...\" *)`"
+                            .to_owned(),
+                    ])
+            }
+            SyntaxError::NumberSuffix { span, ref text } => {
+                let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
+                let help = if text.to_ascii_lowercase().ends_with("meg") {
+                    "help: `meg` is SPICE's mega; in Verilog-A the scale factor is one letter, \
+                     `1M` (LRM 2.6.2: T G M K k m u n p f a)"
+                        .to_owned()
+                } else if text.contains(['e', 'E']) && text.chars().last().is_some_and(|c| c.is_ascii_alphabetic() && c != 'e' && c != 'E') {
+                    "help: LRM 2.6.2 -- a real number has an exponent (`1e3`) or a scale factor \
+                     (`1k`), not both; write the value one way"
+                        .to_owned()
+                } else {
+                    "help: LRM 2.6.2 -- a real number is digits, an optional fraction, and an \
+                     exponent (`1e3`, with digits after the `e`) or one scale-factor letter \
+                     (`1k`); nothing else may follow the digits"
+                        .to_owned()
+                };
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id,
+                        range: range.into(),
+                        message: "not a number Verilog-A can read".to_owned(),
+                    }])
+                    .with_notes(vec![help])
+            }
             SyntaxError::ExprTooDeep { span } => {
                 let FileSpan { range, file: file_id } = parse.to_file_span(span, &sm);
                 Report::error()
