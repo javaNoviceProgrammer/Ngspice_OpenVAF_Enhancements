@@ -393,6 +393,12 @@ pub fn compile<'a>(
         let mut corner_counts: Vec<u32> = Vec::new();
         let mut corner_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
         let mut corner_names_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
+        // Enhancement-657 (hunt F4): one u32 per INFOS entry, 1 when the module
+        // tests $param_given on the parameter (E-555's gate, which the statistics
+        // record carries as OSDI_DIST_GATED but a corner-only parameter had no
+        // way to say); exported only when some entry is gated
+        let mut corner_gated_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
+        let mut any_corner_gated = false;
         let mut param_given_fns_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // E-555
         let mut param_range_counts: Vec<u32> = Vec::new(); // E-558
         let mut param_ranges_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
@@ -566,7 +572,7 @@ pub fn compile<'a>(
                 // Enhancement-654: the declared corners of this module
                 let corners = cguint.corner_params();
                 corner_counts.push(corners.len() as u32);
-                for (param_id, kind, value, name) in corners {
+                for (param_id, kind, value, name, gated) in corners {
                     corner_infos_ll.push(cx.const_struct(
                         corner_info_ty,
                         &[
@@ -576,6 +582,8 @@ pub fn compile<'a>(
                         ],
                     ));
                     corner_names_ll.push(cx.const_str_uninterned(&name));
+                    corner_gated_ll.push(cx.const_unsigned_int(gated as u32)); // E-657
+                    any_corner_gated |= gated;
                 }
 
                 descriptor.to_ll_val(&cx, &tys)
@@ -591,6 +599,12 @@ pub fn compile<'a>(
             cx.export_array("OSDI_CORNER_COUNTS", cx.ty_int(), &counts_ll, true, false);
             cx.export_array("OSDI_CORNER_INFOS", corner_info_ty, &corner_infos_ll, true, false);
             cx.export_array("OSDI_CORNER_NAMES", cx.ty_ptr(), &corner_names_ll, true, false);
+            // Enhancement-657 (hunt F4): the gate, in INFOS order, only when some
+            // entry is gated -- an older simulator ignores the symbol, an object
+            // without it is read as ungated (the E-654 behaviour)
+            if any_corner_gated {
+                cx.export_array("OSDI_CORNER_GATED", cx.ty_int(), &corner_gated_ll, true, false);
+            }
         }
         // Enhancement-555: one given-flag entry point per descriptor, in order
         cx.export_array("OSDI_PARAM_GIVEN_FNS", cx.ty_ptr(), &param_given_fns_ll, true, false);

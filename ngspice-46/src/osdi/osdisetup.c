@@ -1993,6 +1993,8 @@ typedef struct OsdiMcNominal {
   int given;         /* E-555: the given flag when the nominal was captured
                         (0/1; -1 when the object has no entry point) */
   bool gated_noted;  /* E-555: the "not drawn" note was printed once */
+  bool corner_gated_noted; /* Enhancement-657 (hunt F4): the corner's "left at
+                              its nominal" note was printed once */
   bool zero_noted;   /* Enhancement-620 (hunt F16): the "sigma is 0" note was printed once */
   bool stale;        /* Enhancement-614 (hunt F2): the deck never gave this
                         parameter and a user wrote another parameter of its
@@ -3103,6 +3105,37 @@ static const OsdiCornerParam *osdimc_corner_lookup(const OsdiRegistryEntry *entr
   return hit;
 }
 
+/* Enhancement-657 (hunt F4): does the model test $param_given on this
+ * cornered parameter? (every entry of a parameter carries the same bit) */
+static bool osdimc_corner_gated(const OsdiRegistryEntry *entry, uint32_t id) {
+  const OsdiCornerParam *cinfos = entry->corner_param_infos;
+  for (uint32_t s = 0; cinfos && s < entry->num_corner_params; s++)
+    if (cinfos[s].param_id == id)
+      return cinfos[s].gated != 0;
+  return false;
+}
+
+/* Enhancement-657 (hunt F4): the E-555 note, worded for a corner. A corner
+ * on a parameter the model tests with $param_given moved it through the
+ * setter, which marked it given, and the model took its "given" branch at
+ * the corner's value instead of the default it derives when the parameter is
+ * not given -- the branch flipped, the way a draw would have. The gate lived
+ * in the statistics record only, so a corner-only parameter slipped through,
+ * and one with statistics beside the corner got the draw's note, which names
+ * the wrong mechanism. Said once per parameter. */
+static void osdimc_say_corner_gated(OsdiMcNominal *e, const char *owner,
+                                    const char *param) {
+  if (e->corner_gated_noted)
+    return;
+  e->corner_gated_noted = true;
+  fprintf(stderr,
+          "corner %s: %s:%s is not given by the deck and the model tests "
+          "$param_given(%s): the corner's write would switch the model to its "
+          "\"given\" branch instead of moving it -- left at its nominal. Give "
+          "it on the card, or altermod it, for the corner to move it.\n",
+          osdimc_corner, owner, param, param);
+}
+
 /* is this parameter held by the corner in force? (the draw appliers skip it) */
 static bool osdimc_cornered(const OsdiRegistryEntry *entry, uint32_t id) {
   return osdimc_corner_on && osdimc_corner_ok &&
@@ -3259,8 +3292,12 @@ static void osdimc_corner_write_one(const OsdiRegistryEntry *entry,
   double val;
   if (!e || e->pinned)
     return;   /* no nominal (a failed card), or a machine write owns the value */
-  if (info && osdimc_gated_off(info, e)) {              /* E-555 */
-    osdimc_say_gated(e, owner_name, pname);
+  /* Enhancement-657 (hunt F4): E-555's gate, from the corner table for a
+   * corner-only parameter and from the statistics record for one that has
+   * both (an object from a pre-E-657 compiler carries only the latter) */
+  if (e->given == 0 && (osdimc_corner_gated(entry, id) ||
+                        (info && (info->dist & OSDI_DIST_GATED)))) {
+    osdimc_say_corner_gated(e, owner_name, pname);
     return;
   }
   if (!cp) {

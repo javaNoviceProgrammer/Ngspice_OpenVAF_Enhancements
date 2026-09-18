@@ -10,6 +10,10 @@ entries through a new OSDI side table; ngspice's `.option corner=<name>`
 (or `set corner=<name>` between runs) writes every cornered parameter's
 value on each run, the first one included. A cornered parameter does not
 draw under `.option osdimc`; a name no loaded model declares refuses the
-run; `tt`, `nom` and `unset corner` return to the nominal.
+run; `tt`, `nom` and `unset corner` return to the nominal. A cornered
+parameter the model tests with `$param_given` and the deck never gave is
+left at its nominal with a note (Enhancement-657, the E-555 rule exported
+for corners as `OSDI_CORNER_GATED`); given on the card, or `altermod`ed,
+it moves.
 
-Run: `python3 verify_vacorner.py` (18 checks per solver, both solvers).
+Run: `python3 verify_vacorner.py` (23 checks per solver, both solvers).

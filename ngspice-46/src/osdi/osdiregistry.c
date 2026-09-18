@@ -651,6 +651,11 @@ extern OsdiObjectFile load_object_file(const char *input) {
   const void *corner_infos_base = sym;
   sym = GET_SYM(handle, "OSDI_CORNER_NAMES");
   const char *const *corner_names_base = (const char *const *)sym;
+  /* Optional (Enhancement-657, hunt F4): one uint32 per INFOS entry, 1 when
+   * the model tests $param_given on the parameter; absent from an object
+   * whose cornered parameters are all untested */
+  sym = GET_SYM(handle, "OSDI_CORNER_GATED");
+  const uint32_t *corner_gated_base = (const uint32_t *)sym;
   uint32_t corner_info_offset = 0;
 
   /* Optional (Enhancement-555): one given-flag entry point per descriptor */
@@ -893,6 +898,8 @@ extern OsdiObjectFile load_object_file(const char *input) {
           merged[s].kind = in->kind;
           merged[s].value = in->value;
           merged[s].name = corner_names_base[corner_info_offset + s];
+          merged[s].gated =                        /* Enhancement-657 */
+              corner_gated_base ? corner_gated_base[corner_info_offset + s] : 0;
         }
         corner_params_ptr = merged;
       } else {

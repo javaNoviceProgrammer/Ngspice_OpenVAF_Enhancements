@@ -352,10 +352,14 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
     }
 
     /// Enhancement-654: the declared corners of every parameter that carries
-    /// them, in `param_opvar()` order: (id, kind, value, name). kind 0 = an
-    /// absolute value, 1 = a fraction of the nominal, 2 = a multiple of the
+    /// them, in `param_opvar()` order: (id, kind, value, name, gated). kind 0 =
+    /// an absolute value, 1 = a fraction of the nominal, 2 = a multiple of the
     /// declared sigma (the parameter then also has a `stat_params` entry).
-    pub fn corner_params(&self) -> Vec<(u32, u32, f64, String)> {
+    /// Enhancement-657 (hunt F4): `gated` -- the module tests `$param_given`
+    /// on the parameter (E-555), so a write that marks it given switches the
+    /// model's branch; the simulator moves it to the corner only when the deck
+    /// gave it.
+    pub fn corner_params(&self) -> Vec<(u32, u32, f64, String, bool)> {
         let kind_of = |k: CornerKind| match k {
             CornerKind::Absolute => 0u32,
             CornerKind::Relative => 1,
@@ -366,8 +370,9 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         let mut id = 0u32;
         for param in inst_data.params.keys() {
             if let OsdiInstanceParam::User(param) = param {
-                for c in &module.info.params[param].corners {
-                    res.push((id, kind_of(c.kind), c.value, c.name.to_string()));
+                let param_info = &module.info.params[param];
+                for c in &param_info.corners {
+                    res.push((id, kind_of(c.kind), c.value, c.name.to_string(), param_info.given_tested));
                 }
             }
             id += 1;
@@ -378,7 +383,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                 continue;
             }
             for c in &param_info.corners {
-                res.push((id, kind_of(c.kind), c.value, c.name.to_string()));
+                res.push((id, kind_of(c.kind), c.value, c.name.to_string(), param_info.given_tested));
             }
             id += 1;
         }

@@ -263,6 +263,11 @@ typedef struct OsdiCornerParam {
   uint32_t kind;
   double value;
   const char *name;
+  uint32_t gated;  /* Enhancement-657 (hunt F4): the model tests $param_given
+                      on the parameter (from the optional OSDI_CORNER_GATED
+                      array, one u32 per INFOS entry; absent = 0) -- the corner
+                      moves it only when the deck gave it, as E-555 draws it
+                      only then */
 }OsdiCornerParam;
 
 /* Enhancement-364: noise-source kinds, mirrored from the compiler-side header

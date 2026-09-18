@@ -42,6 +42,16 @@ Checks (per solver):
   [17] `osdimc_verbose` says each cornered write and how it was formed
   [18] a `montecarlo` loop under a corner: every sample row holds the
        cornered value, the uncornered one varies
+  [19] Enhancement-657 (hunt F4): a corner on a parameter the model tests
+       with `$param_given`, not given by the deck, is left at its nominal
+       with a corner-worded note once (the compiler exports the E-555 gate
+       in OSDI_CORNER_GATED); an untested one beside it moves
+  [20] the same parameter given on the card moves to the corner, no note
+  [21] statistics beside the corner: the note is the corner's, not the
+       draw's; under `.option osdimc` the parameter neither moves nor draws
+  [22] the `corners` loop: the gated parameter at its nominal in every row,
+       the notes once
+  [23] `altermod` makes it given: the corner then moves it
 """
 import os
 import re
@@ -98,6 +108,21 @@ inout p, n; electrical p, n;
 (* corner="ss=3,ff=4" *)                          parameter real c = 1;
 (* corner="  ss=3 ,  ff=4 , " *)                  parameter real d = 1;
 analog I(p,n) <+ V(p,n)*(u+sc+a+b+c+d)*0 + V(p,n);
+endmodule
+''',
+    # Enhancement-657 (hunt F4): a corner on a $param_given-tested parameter
+    "cg": '''`include "disciplines.vams"
+module cg(p, n);
+inout p, n; electrical p, n;
+(* corner="ss=2, ff=0.5" *)  parameter real a = 1;   // corner only, tested
+(* std=0.1, corner="ss=2" *) parameter real b = 1;   // statistics beside it, tested
+(* corner="ss=3" *)          parameter real c = 1;   // untested
+real ga, gb;
+analog begin
+  ga = $param_given(a) ? a : 10;
+  gb = $param_given(b) ? b : 10;
+  I(p,n) <+ V(p,n)*(ga + gb + c)*1e-3;
+end
 endmodule
 ''',
 }
@@ -295,6 +320,56 @@ rs = [colv(r, A + "sm[r]") for r in rows]
 qs = [colv(r, A + "sm[q]") for r in rows]
 check("[18] a `montecarlo` loop under a corner: every sample row holds the cornered value, the uncornered one varies",
       len(rows) >= 4 and all(near(r, 110.0) for r in rs) and len(set(qs)) > 1, f"rows={len(rows)} r={rs} q={qs}")
+
+# Enhancement-657 (hunt F4): the E-555 gate on a corner
+HEADG = ("* vacorner {tag}\n.control\npre_osdi cg.osdi\n.endc\n{opts}\n"
+         "v1 in 0 dc 1\nn1 in 0 gm\n.model gm cg {card}\n.control\n{body}\n.endc\n.end\n")
+
+
+def rung(body, tag, opts="", card=""):
+    path = os.path.join(WORK, f"{tag}.cir")
+    with open(path, "w") as f:
+        f.write(HEADG.format(tag=tag, opts=opts, body=body, card=card))
+    p = subprocess.run([NGSPICE, "-b", path], capture_output=True, text=True, timeout=300, cwd=WORK)
+    return p.returncode, p.stdout + p.stderr
+
+
+NOTE_A = "corner ss: gm:a is not given by the deck and the model tests $param_given(a): the corner's write would switch the model to its \"given\" branch instead of moving it -- left at its nominal. Give it on the card, or altermod it, for the corner to move it."
+NOTE_B = NOTE_A.replace("gm:a", "gm:b").replace("(a)", "(b)")
+PG = f"print i(v1) {A}gm[a] {A}gm[b] {A}gm[c]\n"
+
+# [19] corner only, not given: nominal, the note once, the untested neighbour moves
+rc, out = rung("op\n" + PG + "op\n" + PG, "c19", ".option corner=ss")
+check("[19] a corner on a `$param_given`-tested parameter the deck never gave: left at 1 with the corner's note once (two runs); the untested `c` moves to 3; i = -(10+10+3) mA",
+      vals(out, A + "gm[a]") == [1.0, 1.0] and vals(out, A + "gm[c]") == [3.0, 3.0] and all(near(i, -0.023) for i in vals(out, "i(v1)"))
+      and out.count(NOTE_A) == 1 and "a draw would switch" not in out,
+      f"a={vals(out, A + 'gm[a]')} c={vals(out, A + 'gm[c]')} i={vals(out, 'i(v1)')} notes={out.count(NOTE_A)}")
+
+# [20] given on the card: the corner moves it, no note for it
+rc, out = rung("op\n" + PG, "c20", ".option corner=ss", card="a=1")
+check("[20] `a=1` on the card: the corner moves it to 2, no note for `a`; i = -(2+10+3) mA",
+      val(out, A + "gm[a]") == 2.0 and near(val(out, "i(v1)"), -0.015) and "gm:a is not given" not in out,
+      f"a={val(out, A + 'gm[a]')} i={val(out, 'i(v1)')}")
+
+# [21] statistics beside the corner: the corner's note, not the draw's; under osdimc neither moved nor drawn
+rc, out = rung("op\n" + PG, "c21", ".option corner=ss")
+rc2, out2 = rung("op\n" + PG + "op\n" + PG + "op\n" + PG, "c21b", ".option corner=ss osdimc")
+check("[21] `b` (std beside the corner, tested): the note is the corner's, once, not the draw's; under `.option osdimc` b stays 1 on three trials",
+      out.count(NOTE_B) == 1 and "a draw would switch" not in out and val(out, A + "gm[b]") == 1.0
+      and vals(out2, A + "gm[b]") == [1.0, 1.0, 1.0] and "a draw would switch" not in out2 and out2.count(NOTE_B) == 1,
+      f"b={val(out, A + 'gm[b]')} notes={out.count(NOTE_B)} osdimc b={vals(out2, A + 'gm[b]')} draw_note={'a draw would switch' in out2}")
+
+# [22] the corners loop
+rc, out = rung(f"corners -output i=i(v1) a={A}gm[a] c={A}gm[c]\necho \"A: $&a C: $&c I: $&i\"\n", "c22")
+check("[22] the `corners` loop (tt ss ff): `a` 1 in every row, `c` 1 3 1, i -21 -23 -21 mA; the notes once each",
+      "A: 1 1 1 C: 1 3 1 I: -0.021 -0.023 -0.021" in out and out.count(NOTE_A) == 1 and out.count(NOTE_B) == 1,
+      out[-260:].replace("\n", "|"))
+
+# [23] altermod makes it given
+rc, out = rung("altermod gm a=1\nset corner=ss\nop\n" + PG, "c23")
+check("[23] `altermod gm a=1` then `set corner=ss`: given now, the corner moves it to 2; i = -15 mA",
+      val(out, A + "gm[a]") == 2.0 and near(val(out, "i(v1)"), -0.015) and "gm:a is not given" not in out,
+      f"a={val(out, A + 'gm[a]')} i={val(out, 'i(v1)')}")
 
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)

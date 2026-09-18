@@ -613,8 +613,12 @@ usual corner-plus-mismatch flow. A parameter that names other corners only sits
 at nominal; a model type without the name runs at nominal, said once; a name no
 loaded model declares refuses the run, naming the declared ones. `tt`, `nom` and
 `unset corner` (without a deck option) return to the nominal; `altermod` of a
-cornered parameter recentres a percentage or sigma corner. `.lib` corner
-sections are untouched and compose with this.
+cornered parameter recentres a percentage or sigma corner. A cornered parameter
+the model tests with `$param_given` and the deck never gave is left at its
+nominal, said once ([E-657](../../enhancements_doc/Enhancement-657.md) — the E-555
+rule for a draw: the write would flip the model to its "given" branch instead
+of moving it; give it on the card, or `altermod` it, for the corner to move
+it). `.lib` corner sections are untouched and compose with this.
 
 All of them at once is the `corners` command
 ([E-655](../../enhancements_doc/Enhancement-655.md);
