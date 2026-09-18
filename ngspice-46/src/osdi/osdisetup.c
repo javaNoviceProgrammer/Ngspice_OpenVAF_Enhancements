@@ -35,6 +35,7 @@
 static void osdimc_report_setup_failure(void);
 static bool osdimc_armed_now(void);
 static bool osdimc_enabled(void);
+static int osdimc_corner_priority;   /* Enhancement-663 (hunt F7), see osdimc_enabled */
 
 /* Enhancement-558: `; range <text>, <p> = <v>...` for an out-of-bounds message
  * -- the declared range as the source spells it (an object without the
@@ -2295,6 +2296,7 @@ void OSDImcSigmaScale(double s) { osdimc_scale = (s > 0.0) ? s : 1.0; }
  * continuing at trial 91828). Called from ft_sigintr_cleanup(): once control
  * is back at the prompt, no loop command is legitimately in progress. */
 void OSDImcInterruptReset(void) {
+  osdimc_corner_priority = 0;          /* Enhancement-663 */
   osdimc_hold_depth = 0;
   osdimc_held_advanced = false;
   osdimc_keep_trial = false;
@@ -2527,9 +2529,32 @@ static void osdimc_clear_run_writes(void) {
     osdimc_tbl[i].run_writes = 0;
 }
 
+/* Enhancement-663 (hunt F7): a corner loop takes priority over the automatic
+ * Monte Carlo. Under `.option osdimc` (`automc`) every corner run of the
+ * `corners` command and of `.option autocorner` was a fresh trial: the
+ * cornered parameters pinned, the other statistical ones drawn again, so the
+ * corner-to-corner difference of any output carried a fresh mismatch draw --
+ * and after any prior run the `tt` row was a random sample too, the cornered
+ * parameter itself drawn there. A corner table is a PVT tool: while a plain
+ * corner loop runs (this depth is nonzero) the option is disabled, said
+ * once by the loop, every corner runs at the nominal of the statistical
+ * parameters, and the trial sequence restarts afterwards as after `unset
+ * osdimc`. `corners -mc N` (a montecarlo per corner) and a `corners` nested
+ * inside another loop command's sample do not use this. */
+void OSDImcCornerPriority(bool on) {
+  if (on)
+    osdimc_corner_priority++;
+  else if (osdimc_corner_priority > 0)
+    osdimc_corner_priority--;
+}
+
+/* is the option set at all, whatever the corner loop does with it */
+bool OSDImcOptionSet(void) {
+  return cp_getvar("osdimc", CP_BOOL, NULL, 0) || cp_getvar("automc", CP_BOOL, NULL, 0);
+}
+
 static bool osdimc_enabled(void) {
-  return cp_getvar("osdimc", CP_BOOL, NULL, 0) ||
-         cp_getvar("automc", CP_BOOL, NULL, 0);
+  return osdimc_corner_priority == 0 && OSDImcOptionSet();
 }
 
 /* splitmix64: the draw is a pure hash of its inputs, no stored RNG state */

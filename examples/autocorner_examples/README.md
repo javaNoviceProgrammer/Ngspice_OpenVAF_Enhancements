@@ -11,4 +11,4 @@ the nominal's scale — the form a schematic host reads. The option is inert
 inside loop commands and without a declared corner; the `corner` variable
 is put back afterwards.
 
-Run: `python3 verify_autocorner.py` (14 checks per solver, both solvers).
+Run: `python3 verify_autocorner.py` (15 checks per solver, both solvers).

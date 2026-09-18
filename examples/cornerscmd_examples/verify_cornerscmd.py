@@ -49,6 +49,13 @@ Checks (per solver):
        `-analysis` followed by a flag is refused
   [22] Enhancement-662 (hunt F3): a name listed twice (`-list TT,SS,ss,nom`,
        folded) runs once, said once per duplicate
+  [23] Enhancement-663 (hunt F7): a plain loop takes priority over
+       `.option osdimc`: the option is disabled for the loop with a warning,
+       every corner at the nominal of the statistical parameters (was a fresh
+       draw per corner, the tt row a random sample after any prior run); the
+       sequence restarts afterwards; `-mc N` still draws, without the warning
+  [24] nested inside a montecarlo sample the loop shares that sample (no
+       warning): q[tt] - q[ff] is 0 in every sample
 """
 import os
 import re
@@ -314,6 +321,19 @@ check("[22] `-list TT,SS,ss,nom`: two corners (tt ss), 100 115; 'ss' and 'tt' ea
       "corners: 2 corners (tt ss)" in out and "A: 100 115 N: tt ss" in out
       and "corners: 'ss' is listed twice; it runs once" in out and "corners: 'tt' is listed twice; it runs once" in out,
       out[-260:].replace("\n", "|"))
+
+# Enhancement-663 (hunt F7): corners take priority over the automatic Monte Carlo
+rc, out = run(f"op\ncorners -list tt ss ff -output q={A}sm[q] r={A}sm[r]\necho \"A: q=$&q r=$&r\"\nop\nprint {A}sm[q]\nop\nprint {A}sm[q]\n"
+              f"corners -list tt ss -mc 2 -analysis op -spec {A}sm[q] -max 100\n", "c23", ".option osdimc mcseed=3")
+qs = [float(m) for m in re.findall(re.escape(A + "sm[q]") + r" = ([-+0-9.eE]+)", out)]
+check("[23] under `.option osdimc` a plain `corners` after a prior run: the warning, q 10 at tt/ss/ff and r 100/110/90 (nominal statistics); the next runs restart the sequence (10, then drawn); `-mc 2` warns not",
+      out.count("Warning: corners takes priority over .option osdimc (automc)") == 1 and "A: q=10 10 10 r=100 110 90" in out
+      and len(qs) == 2 and qs[0] == 10.0 and qs[1] != 10.0 and "montecarlo 2 per corner" in out,
+      f"warnings={out.count('takes priority')} q_after={qs} " + out[-160:].replace("\n", "|"))
+
+rc, out = run(f"montecarlo 3 -analysis \"corners -list tt ss ff -output q={A}sm[q]\" -spec q[0]-q[2] -max 1e-9 -min -1e-9 -seed 3\n", "c24", ".option osdimc mcseed=3")
+check("[24] `montecarlo 3 -analysis \"corners ...\"`: the loop shares each sample (q[tt] - q[ff] = 0 in 3 of 3), no priority warning",
+      "yield  : 100.000%  (3 / 3 pass)" in out and "takes priority" not in out, out[-200:].replace("\n", "|"))
 
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)

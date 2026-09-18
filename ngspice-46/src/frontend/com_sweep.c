@@ -6321,6 +6321,7 @@ void com_corners(wordlist *wl)
     int ncolumn;
     struct plot *pl;
     struct dvec *sc;
+    int prio_on = 0, hold_on = 0;               /* Enhancement-663 (hunt F7) */
 
     hs_clear_results(results, 1);
     cp_remvar("corners_plot");
@@ -6514,6 +6515,27 @@ void com_corners(wordlist *wl)
     }
 
     /* --- run --- */
+    /* Enhancement-663 (hunt F7): a plain loop takes priority over the
+     * automatic Monte Carlo -- standalone, the option is disabled for the
+     * loop and every corner runs at the nominal of the statistical
+     * parameters, said once; nested inside another loop command's sample
+     * (a `montecarlo N -analysis "corners ..."`), the loop shares that one
+     * sample instead (the E-535 hold), so the corner table's distribution is
+     * what the outer command measures. `-mc N` draws per corner by design. */
+    if (!mc_n) {
+        if (sw_running_cmd == 0) {
+            if (OSDImcOptionSet())
+                fprintf(cp_err, "Warning: corners takes priority over .option osdimc (automc): the "
+                                "option is disabled for this loop and every corner runs at the "
+                                "nominal of the statistical parameters; `corners -mc N` draws "
+                                "them per corner\n");
+            OSDImcCornerPriority(TRUE);
+            prio_on = 1;
+        } else {
+            OSDImcHoldTrial(TRUE);
+            hold_on = 1;
+        }
+    }
     had_prev = cp_getvar("corner", CP_STRING, prev, sizeof prev);
     ncolumn = mc_n ? 4 : (nout ? nout : 1);
     data = TMALLOC(double, (size_t) nset * (size_t) ncolumn);
@@ -6647,6 +6669,10 @@ void com_corners(wordlist *wl)
     }
 
 cleanup:
+    if (prio_on)
+        OSDImcCornerPriority(FALSE);            /* Enhancement-663 */
+    if (hold_on)
+        OSDImcHoldTrial(FALSE);
     for (k = 0; k < nout; k++) {
         tfree(outname[k]);
         tfree(outexpr[k]);
@@ -6790,6 +6816,8 @@ static int ac_count_new(struct plot *before)
     return n;
 }
 
+static CKTcircuit *ac_osdimc_said_ckt;      /* Enhancement-663: the warning, once per circuit */
+
 int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
 {
     const char *declared[CO_MAXCORNERS];
@@ -6814,6 +6842,18 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
             snprintf(names + used, sizeof names - used, "%s%s", c ? " " : "", set[c]);
     }
     fprintf(cp_out, "autocorner: %s at %d corner%s (%s)\n", what, nset, nset == 1 ? "" : "s", names);
+    /* Enhancement-663 (hunt F7): the corner pass takes priority over the
+     * automatic Monte Carlo -- the option is disabled for the pass, said once
+     * per circuit; every corner runs at the nominal of the statistical
+     * parameters (a schematic host's corner plots must be deterministic) */
+    if (OSDImcOptionSet() && ac_osdimc_said_ckt != ft_curckt->ci_ckt) {
+        ac_osdimc_said_ckt = ft_curckt->ci_ckt;
+        fprintf(cp_err, "Warning: .option autocorner takes priority over .option osdimc (automc): "
+                        "the option is disabled for the corner pass and every corner runs at the "
+                        "nominal of the statistical parameters; use the `corners -mc N` command "
+                        "for a montecarlo per corner\n");
+    }
+    OSDImcCornerPriority(TRUE);
 
     had_prev = cp_getvar("corner", CP_STRING, prev, sizeof prev);
     ac_inside = 1;
@@ -6842,6 +6882,7 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
         }
     }
     ac_inside = 0;
+    OSDImcCornerPriority(FALSE);                /* Enhancement-663 */
     if (had_prev)
         cp_vset("corner", CP_STRING, prev);
     else

@@ -34,6 +34,10 @@ Checks (per solver):
   [12] a batch `run` under `.option savemc` tags its rows tt, ss, ff
   [13] the `run` command loops too (the shared library's path)
   [14] the combined vectors keep their type (a voltage stays a voltage)
+  [15] Enhancement-663 (hunt F7): `.option autocorner` takes priority over
+       `.option osdimc`: the option is disabled for the corner pass, said once
+       per circuit, and the copies are deterministic (vth 0.45 at tt on the
+       second run too, where it drew before)
 """
 import os
 import re
@@ -80,6 +84,15 @@ module cn(p, n);
 inout p, n; electrical p, n;
 (* std=1 *) parameter real z = 1;
 analog I(p,n) <+ V(p,n)*z*1e-3;
+endmodule
+''',
+    # Enhancement-663 (hunt F7): a cornered parameter beside an uncornered statistical one
+    "cq": '''`include "disciplines.vams"
+module cq(p, n);
+inout p, n; electrical p, n;
+(* corner="ss=2" *) parameter real w = 1;
+(* std=1 *)         parameter real q = 10;
+analog I(p,n) <+ V(p,n)*w*1e-3 + V(p,n)*q*0;
 endmodule
 ''',
 }
@@ -210,6 +223,15 @@ check("[13] the `run` command loops too", "autocorner: run at 3 corners" in out 
 rc, out = run("op\ndisplay\n", "a14")
 m = re.search(r"^\s*out_ss\s*:\s*(\w+)", out, re.M)
 check("[14] the combined vectors keep their type (a voltage stays a voltage)", m is not None and m.group(1) == "voltage", m.group(0) if m else out[-200:].replace("\n", "|"))
+
+# Enhancement-663 (hunt F7): autocorner takes priority over the automatic Monte Carlo
+HEADQ = ("* autocorner {tag}\n.control\npre_osdi cq.osdi\n.endc\n{opts}\nv1 in 0 dc 1\nn1 in 0 qm\n.model qm cq\n{cards}\n.control\n{body}\n.endc\n.end\n")
+rc, out = run(f"save {A}qm[q] {A}qm[w]\nop\nop\nsetplot autocorner2\nprint \"{A}qm[q]\" \"{A}qm[q]_ss\" \"{A}qm[w]_ss\"\n", "a15",
+              ".option autocorner osdimc mcseed=3", head=HEADQ)
+check("[15] `.option autocorner osdimc`: the warning once for two runs; q 10 at tt and at ss on the second pass (a draw before), w 2 at ss",
+      out.count("Warning: .option autocorner takes priority over .option osdimc (automc)") == 1
+      and near(val(out, '"' + A + 'qm[q]"'), 10.0) and near(val(out, '"' + A + 'qm[q]_ss"'), 10.0) and near(val(out, '"' + A + 'qm[w]_ss"'), 2.0),
+      f"warnings={out.count('takes priority')} " + out[-200:].replace("\n", "|"))
 
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)

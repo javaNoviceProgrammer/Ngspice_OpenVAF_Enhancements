@@ -641,7 +641,10 @@ corner's index, the names printed beside the values and kept in
 `$corners_names`. A corner whose analysis failed is `nan`. With `-mc N` the
 rest of the line is a `montecarlo` run once per corner — the corner pins the
 process parameters, the mismatch draws go on — and the plot holds `yield`,
-`npass`, `nsamples` and `nfailed`. A `.option savemc` file gains a `corner`
+`npass`, `nsamples` and `nfailed`. A plain loop takes priority over `.option osdimc`:
+the option is disabled for the loop, with a warning, and every corner runs at the
+nominal of the statistical parameters; nested inside a `montecarlo` sample the loop
+shares that sample ([E-663](../../enhancements_doc/Enhancement-663.md)). A `.option savemc` file gains a `corner`
 column with the first cornered row, so the rows of a corner Monte Carlo sort
 by corner. The `corner` variable is put back afterwards.
 
@@ -666,6 +669,8 @@ current plot's vectors against its scale shows every corner side by side.
 `$autocorner_n` describe the run. The option is inert inside a loop command
 (`sweep`, `montecarlo`, `corners`, `optimize`, `wcd`, `highsigma`) and without a
 declared corner, and the `corner` variable is put back afterwards.
+`.option autocorner` takes priority over `.option osdimc` the same way, the option
+disabled for the corner pass and said once per circuit ([E-663](../../enhancements_doc/Enhancement-663.md)).
 
 ## 3.8 XSPICE code models
 

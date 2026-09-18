@@ -272,6 +272,11 @@ extern void OSDImcCircuitChanged(void);
  * PreserveTrial so montecarlo/highsigma samples keep drawing; SigmaScale
  * is highsigma's -scale inflation for attribute-declared sigmas. */
 extern void OSDImcHoldTrial(bool on);
+/* Enhancement-663 (hunt F7): while nonzero, `.option osdimc`/`automc` is
+ * disabled -- a plain corner loop takes priority over the automatic Monte
+ * Carlo; OSDImcOptionSet says whether the option is set at all */
+extern void OSDImcCornerPriority(bool on);
+extern bool OSDImcOptionSet(void);
 extern void OSDImcPreserveTrial(void);
 extern void OSDImcSigmaScale(double s);
 /* E-536: the hunt round's known-open repairs.
