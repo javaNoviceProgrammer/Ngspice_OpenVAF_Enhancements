@@ -4323,6 +4323,20 @@ fn hir_lower_max_runtime_table() -> usize {
 /// and refusing a module because of its default would police a value no
 /// simulation need ever use. That is the same rule under which a parameter's
 /// default is not checked against its own `from`/`exclude` range.
+/// Enhancement-664 (hunt F5): does the inference type `expr` as an integer?
+/// (an integer literal, an integer parameter or variable, or an expression
+/// inferred integer -- the operands LRM 4.2's integer division rule governs)
+fn is_integer_typed(infer: &InferenceResult, expr: ExprId) -> bool {
+    matches!(
+        infer.expr_types.get(expr),
+        Some(Ty::Val(Type::Integer))
+            | Some(Ty::Literal(Type::Integer))
+            | Some(Ty::Param(Type::Integer, _))
+            | Some(Ty::Var(Type::Integer, _))
+            | Some(Ty::FunctionVar { ty: Type::Integer, .. })
+    )
+}
+
 pub(crate) fn const_num_in(
     db: &dyn HirTyDB,
     body: &Body,
@@ -4365,7 +4379,19 @@ pub(crate) fn const_num_in(
                 // A zero divisor is left to the division checks, which
                 // report it themselves; folding it here would hand the
                 // caller an inf and produce a second, confusing complaint.
-                BinaryOp::Division if r != 0.0 => Some(l / r),
+                // Enhancement-664 (hunt F5): LRM 4.2 -- "integer division
+                // truncates any fractional part toward zero". This folded
+                // `7/2` as 3.5, so L030 complained that an integer parameter's
+                // default 3.5 cannot be held while the model ran with 3, and
+                // `7/2*2 from [0:6]` was judged 7 against its range where the
+                // model ran with 6 (L027 the wrong way round, either way).
+                BinaryOp::Division if r != 0.0 => {
+                    if is_integer_typed(infer, lhs) && is_integer_typed(infer, rhs) {
+                        Some((l / r).trunc())
+                    } else {
+                        Some(l / r)
+                    }
+                }
                 _ => None,
             }
         }

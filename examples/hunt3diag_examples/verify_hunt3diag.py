@@ -126,6 +126,33 @@ check("[b] -A lossy_integer_constant silences it", ok2 and "L030" not in msg2, f
 ok3, msg3 = compile_src(LOSSY, "li_deny", "-E", "L030")
 check("[b] -E L030 (the id) makes it an error", not ok3 and "error[L030]" in msg3, first_line(msg3))
 
+# Enhancement-664 (hunt F5 of 2026-09-18): the constant folder behind L030 and L027
+# divided two integers as reals -- `7/2` was "the default 3.5" where the model
+# runs with 3 (LRM 4.2: integer division truncates toward zero), and
+# `7/2*2 from [0:6]` was judged 7 against its range where the model runs with 6.
+LOSSY2 = """module li2(p, n); inout p, n; electrical p, n;
+  parameter integer q = 7/2;
+  parameter integer m = -7/2;
+  parameter integer d = 7/2*2 from [0:6];
+  parameter integer k = 7/2 from (3:9];
+  parameter integer e = 7.0/2;
+  parameter real    r = 7/2;
+  analog begin
+    $strobe("q=%d m=%d d=%d k=%d e=%d r=%g", q, m, d, k, e, r);
+    I(p,n) <+ V(p,n) / 1k;
+  end
+endmodule
+"""
+ok, msg = compile_src(LOSSY2, "li2")
+w30 = re.findall(r"warning\[L030\]: (.*)", msg)
+w27 = re.findall(r"warning\[L027\]: (.*)", msg)
+check("[b] integer division folds per LRM 4.2: no L030 for 7/2, -7/2 or 7/2*2; L030 for 7.0/2 (3.5) only",
+      ok and len(w30) == 1 and "'e' has the default 3.5" in w30[0], "; ".join(w30))
+check("[b] ...and the range check judges the folded integer: 7/2*2 is 6 (inside [0:6]), 7/2 is 3 (outside (3:9], L027)",
+      len(w27) == 1 and "'k'" in w27[0], "; ".join(w27) or first_line(msg))
+out = run("v1 1 0 1\nn1 1 0 mm\n.model mm li2", "op", "li2", "li2_run")
+check("[b] ...matching the model at run time: q=3 m=-3 d=6 k=3 e=4 r=3", "q=3 m=-3 d=6 k=3 e=4 r=3" in out, out[-200:].replace("\n", "|"))
+
 # ------------------------------------------------------------- [c] ---
 L022 = """module bre(p, n); inout p, n; electrical p, n;
   electrical a; branch (p, a) b1;
