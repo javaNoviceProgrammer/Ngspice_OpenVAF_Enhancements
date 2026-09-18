@@ -14,6 +14,8 @@ run; `tt`, `nom` and `unset corner` return to the nominal. A cornered
 parameter the model tests with `$param_given` and the deck never gave is
 left at its nominal with a note (Enhancement-657, the E-555 rule exported
 for corners as `OSDI_CORNER_GATED`); given on the card, or `altermod`ed,
-it moves.
+it moves. A cornered parameter's nominal is captured at every setup,
+corner on or off, so a corner selected after a nominal run under
+`.option osdimc` is applied in full on its first run (Enhancement-658).
 
-Run: `python3 verify_vacorner.py` (23 checks per solver, both solvers).
+Run: `python3 verify_vacorner.py` (26 checks per solver, both solvers).

@@ -2742,7 +2742,18 @@ static void osdimc_capture(const OsdiRegistryEntry *entry, GENmodel *inModel) {
   const OsdiStatParam *infos = entry->stat_param_infos;
   const OsdiCornerParam *cinfos = entry->corner_param_infos;   /* Enhancement-654 */
   const bool stats = entry->num_stat_params > 0 && infos && osdimc_enabled();
-  const bool corners = entry->num_corner_params > 0 && cinfos && osdimc_corner_on;
+  /* Enhancement-658 (hunt F1): a cornered parameter is captured at every
+   * setup, corner on or off, as a statistical one is under `osdimc`. It was
+   * captured only while a corner was on, so a nominal run under `osdimc`
+   * left the table populated (the statistical parameters) and not stale
+   * with no entry for a corner-only parameter; `set corner=ss` then took
+   * OSDImcNewRun's direct path -- draws, then the corner -- and the corner
+   * writer found no entry and returned in silence: the first cornered run
+   * had the statistical parameters at their corner and the others at
+   * nominal, the second run all of them. The same through the `corners`
+   * loop (its `ss` row nominal, its `ff` row right), `.option autocorner`
+   * and a `sweep` as the first cornered run. */
+  const bool corners = entry->num_corner_params > 0 && cinfos;
 
   if (!stats && !corners) {
     return;
@@ -2755,8 +2766,9 @@ static void osdimc_capture(const OsdiRegistryEntry *entry, GENmodel *inModel) {
       for (uint32_t s = 0; s < entry->num_stat_params; s++)
         osdimc_capture_id(entry, descr, gen_model, model, infos[s].param_id);
     /* Enhancement-654: a cornered parameter needs its nominal too -- for a
-     * relative or sigma corner, and for the restore when the corner goes
-     * off (osdimc_find makes a second capture of a statistical one a no-op) */
+     * relative or sigma corner, for the restore when the corner goes off,
+     * and (E-658) for a corner selected after the nominal run (osdimc_find
+     * makes a second capture of a statistical one a no-op) */
     if (corners)
       for (uint32_t s = 0; s < entry->num_corner_params; s++)
         osdimc_capture_id(entry, descr, gen_model, model, cinfos[s].param_id);

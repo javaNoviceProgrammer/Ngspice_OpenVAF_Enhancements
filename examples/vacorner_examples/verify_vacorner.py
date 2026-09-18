@@ -52,6 +52,12 @@ Checks (per solver):
   [22] the `corners` loop: the gated parameter at its nominal in every row,
        the notes once
   [23] `altermod` makes it given: the corner then moves it
+  [24] Enhancement-658 (hunt F1): under `.option osdimc` a nominal run and
+       then `set corner=ss`: the FIRST cornered run has every cornered
+       parameter at its corner, the corner-only ones included
+  [25] the `corners` loop under `.option osdimc`: the `ss` row right
+  [26] a `sweep` as the first cornered run under `.option osdimc`: its
+       first point right
 """
 import os
 import re
@@ -370,6 +376,21 @@ rc, out = rung("altermod gm a=1\nset corner=ss\nop\n" + PG, "c23")
 check("[23] `altermod gm a=1` then `set corner=ss`: given now, the corner moves it to 2; i = -15 mA",
       val(out, A + "gm[a]") == 2.0 and near(val(out, "i(v1)"), -0.015) and "gm:a is not given" not in out,
       f"a={val(out, A + 'gm[a]')} i={val(out, 'i(v1)')}")
+
+# Enhancement-658 (hunt F1): a corner selected after a nominal run under osdimc
+rc, out = run("op\nset corner=ss\nop\n" + PR + "\nop\n" + PR, "c24", ".option osdimc")
+got = [vals(out, n) for n in RM] + [vals(out, A + "n1[ri]")]
+check("[24] `.option osdimc`, a nominal `op`, then `set corner=ss`: the first cornered run has rsh 115, k 2.2, vth 0.51, ri 1200 (not only vth), and so does the second",
+      got[0] == [115.0, 115.0] and got[1] == [2.2, 2.2] and all(near(v, 0.51) for v in got[2]) and len(got[2]) == 2 and got[4] == [1200.0, 1200.0],
+      f"rsh={got[0]} k={got[1]} vth={got[2]} ri={got[4]}")
+
+rc, out = run(f"corners -list tt ss ff -output rsh={A}rm[rsh] k={A}rm[k] ri={A}n1[ri]\necho \"A: $&rsh $&k $&ri\"\n", "c25", ".option osdimc")
+check("[25] the `corners` loop under `.option osdimc`: tt 100/2/1000, ss 115/2.2/1200, ff 88/1.8/1000",
+      "A: 100 115 88 2 2.2 1.8 1000 1200 1000" in out, out[-160:].replace("\n", "|"))
+
+rc, out = run(f"op\nset corner=ss\nsweep v1 1 2 1 -analysis op -output rsh={A}rm[rsh] k={A}rm[k]\necho \"A: $&rsh $&k\"\n", "c26", ".option osdimc")
+check("[26] a `sweep` as the first cornered run under `.option osdimc`: both points 115 and 2.2",
+      "A: 115 115 2.2 2.2" in out, out[-160:].replace("\n", "|"))
 
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)

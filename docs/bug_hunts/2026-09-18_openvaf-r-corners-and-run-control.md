@@ -21,7 +21,7 @@ only touched in passing.
 
 | # | finding | kind |
 |---|---|---|
-| [F1](#f1--under-option-osdimc-the-first-run-at-a-corner-corners-only-the-parameters-that-carry-statistics) | under `.option osdimc`, the **first run at a corner** after a nominal run corners only the parameters that also carry statistics; the corner-only ones stay nominal until the next run | wrong result, silent |
+| [F1](#f1--under-option-osdimc-the-first-run-at-a-corner-corners-only-the-parameters-that-carry-statistics) | *(fixed in [E-658](../../enhancements_doc/Enhancement-658.md))* under `.option osdimc`, the **first run at a corner** after a nominal run corners only the parameters that also carry statistics; the corner-only ones stay nominal until the next run | wrong result, silent |
 | [F2](#f2--a-quoted-word-on-the-corners-line-keeps-its-quotes) | a quoted word on the `corners` line keeps its quotes: `-analysis "dc v1 0 1 0.5"` becomes an unknown command and every corner is NaN, `-output "g=…"` likewise; `sweep` and `montecarlo` unquote the same spelling | wrong result |
 | [F3](#f3--a-corner-named-tt-is-accepted-and-unreachable-and-the-loop-runs-the-nominal-twice) | a corner named `tt`, `nom` or `nominal` in a model is accepted by the compiler and unreachable in ngspice; the `corners` loop then lists the nominal twice; `-list` duplicates are not folded | silent no-op |
 | [F4](#f4--a-corner-on-a-parameter-the-model-tests-with-param_given-flips-its-branch) | *(fixed in [E-657](../../enhancements_doc/Enhancement-657.md))* a corner on a parameter the model tests with `$param_given` marks it given and flips the model's branch — the E-555 gate covers only parameters with statistics | wrong result, silent |
