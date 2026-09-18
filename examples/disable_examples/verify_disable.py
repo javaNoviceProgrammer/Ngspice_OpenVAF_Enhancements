@@ -78,6 +78,65 @@ def main():
     print(f"  8 iters, 4 add   V(b)={got:.5f}  expected={exp:.5f}  "
           f"{'PASS' if good else 'FAIL'}")
 
+    # Enhancement-661 (hunt F18 of 2026-09-18): VAMS-2023 A.6.4 allows `disable`
+    # only inside an analog event block; the loop idioms above are an openvaf
+    # extension, said under L011 (break/continue are the standard loop exits,
+    # LRM 5.11). Inside `@(initial_step)` no word. And a named `begin : b` block
+    # inside an analog function -- legal, with or without a disable -- crashed
+    # the compiler ("block is named", the E-646 local-variable walk).
+    def compile_text(name, src, *flags):
+        with open(os.path.join(HERE, name + ".va"), "w") as fh:
+            fh.write(src)
+        r = subprocess.run([OPENVAF, *flags, name + ".va", "-o", name + ".osdi"], cwd=HERE,
+                           capture_output=True, text=True)
+        os.remove(os.path.join(HERE, name + ".va"))   # scratch, not a committed model
+        return r.returncode, r.stdout + r.stderr
+
+    r = subprocess.run([OPENVAF, "break_demo.va", "-o", "break_demo.osdi"], cwd=HERE,
+                       capture_output=True, text=True)
+    log = r.stdout + r.stderr
+    good = (r.returncode == 0 and log.count("warning[L011]: `disable` outside an event control is an openvaf extension") == 1
+            and "a loop exit is `break` or `continue` (LRM 5.11)" in log)
+    ok &= good
+    print(f"  break_demo: `disable` outside an event control -> L011 once, naming break/continue  {'PASS' if good else 'FAIL'}")
+
+    rc, log = compile_text("_evt", '`include "disciplines.vams"\nmodule evt_demo(p, n);\ninout p, n; electrical p, n;\n'
+                           'integer s;\nanalog begin @(initial_step) begin : blk s = 1; disable blk; s = 2; end\n'
+                           'I(p, n) <+ V(p, n) * 1e-3; end\nendmodule\n')
+    good = rc == 0 and "L011" not in log and "warning" not in log
+    ok &= good
+    print(f"  `disable` inside an @(initial_step) block: standard, no word  {'PASS' if good else 'FAIL'}")
+
+    rc, log = compile_text("_fnb", '`include "disciplines.vams"\nmodule fnb_demo(p, n);\ninout p, n; electrical p, n;\n'
+                           'analog function real f; input x; real x; begin : b f = 2 * x; end endfunction\n'
+                           'analog I(p, n) <+ V(p, n) * 1e-3 * f(1.0);\nendmodule\n')
+    good = rc == 0 and "crashed" not in log and "warning" not in log
+    ok &= good
+    print(f"  a named block inside an analog function compiles (crashed: 'block is named')  {'PASS' if good else 'FAIL'}")
+    if good:
+        deck = "* fnb\nvin a 0 dc 1\nn1 a 0 mm\n.model mm fnb_demo\n.control\npre_osdi _fnb.osdi\nop\nprint i(vin)\n.endc\n.end\n"
+        with open(os.path.join(HERE, "_d.cir"), "w") as fh:
+            fh.write(deck)
+        out = subprocess.run([NGSPICE, "-b", "_d.cir"], cwd=HERE, capture_output=True, text=True).stdout
+        good = "i(vin) = -2.00000e-03" in out
+        ok &= good
+        print(f"  ...and runs: f(1) = 2 -> i = -2 mA  {'PASS' if good else 'FAIL'}")
+
+    rc, log = compile_text("_fnd", '`include "disciplines.vams"\nmodule fnd_demo(p, n);\ninout p, n; electrical p, n;\n'
+                           'analog function real f; input x; real x; begin : b f = x; disable b; f = 2 * x; end endfunction\n'
+                           'analog I(p, n) <+ V(p, n) * 1e-3 * f(1.0);\nendmodule\n')
+    good = rc == 0 and log.count("warning[L011]: `disable` in an analog function is an openvaf extension") == 1
+    ok &= good
+    print(f"  `disable` inside an analog function: compiles, L011 worded for a function  {'PASS' if good else 'FAIL'}")
+    if good:
+        deck = "* fnd\nvin a 0 dc 1\nn1 a 0 mm\n.model mm fnd_demo\n.control\npre_osdi _fnd.osdi\nop\nprint i(vin)\n.endc\n.end\n"
+        with open(os.path.join(HERE, "_d.cir"), "w") as fh:
+            fh.write(deck)
+        out = subprocess.run([NGSPICE, "-b", "_d.cir"], cwd=HERE, capture_output=True, text=True).stdout
+        good = "i(vin) = -1.00000e-03" in out
+        ok &= good
+        print(f"  ...and the disable ends the block: f(1) = 1 -> i = -1 mA  {'PASS' if good else 'FAIL'}")
+
     print("ALL PASS" if ok else "SOME CHECKS FAILED")
     sys.exit(0 if ok else 1)
 

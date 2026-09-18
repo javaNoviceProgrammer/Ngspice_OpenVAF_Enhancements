@@ -35,7 +35,8 @@ pub struct RecDeclarations<'a> {
 
 impl<'a> RecDeclarations<'a> {
     pub(super) fn new(scope: super::Scope, db: &'a CompilationDB) -> RecDeclarations<'a> {
-        let (scope_id, def_map) = scope.def_map_and_scope(db);
+        let (scope_id, def_map) =
+            scope.def_map_and_scope(db).expect("a module or function scope has a def map");
         RecDeclarations { path: Vec::new(), stack: vec![Scope::new(def_map, scope_id, None)], db }
     }
 

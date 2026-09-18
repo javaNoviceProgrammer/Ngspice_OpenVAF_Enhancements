@@ -44,6 +44,22 @@ def main():
         ok = ok and good
         print(f"{n:>3} {count:>22} {exp:>18}  {'PASS' if good else 'FAIL'}")
 
+    # Enhancement-661 (hunt F18 of 2026-09-18): `do ... while` is not a Verilog-AMS
+    # loop (LRM 5.9 has repeat, while, for) -- an openvaf extension, said once
+    # under L011 non_standard_code; -A non_standard_code silences it.
+    r = subprocess.run([OPENVAF, "dowhile_demo.va", "-o", "dowhile_demo.osdi"], cwd=HERE,
+                       capture_output=True, text=True)
+    log = r.stdout + r.stderr
+    good = (r.returncode == 0 and log.count("warning[L011]: `do ... while` in an analog context is an openvaf extension") == 1
+            and "LRM 5.9 has `repeat`, `while` and `for`" in log)
+    ok = ok and good
+    print(f"\nL011 warning once for the do-while, with the LRM note  {'PASS' if good else 'FAIL'}")
+    r = subprocess.run([OPENVAF, "-A", "non_standard_code", "dowhile_demo.va", "-o", "dowhile_demo.osdi"],
+                       cwd=HERE, capture_output=True, text=True)
+    good = r.returncode == 0 and "L011" not in r.stdout + r.stderr and round(gain(3) * 1e3) == 3
+    ok = ok and good
+    print(f"-A non_standard_code silences it; the loop still runs (n=3 -> 3)  {'PASS' if good else 'FAIL'}")
+
     print("\nALL PASS" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)
 

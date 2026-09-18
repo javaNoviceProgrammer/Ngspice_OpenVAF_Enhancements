@@ -38,7 +38,7 @@ only touched in passing.
 | [F15](#f15--the-nesting-limit-trips-on-a-flat-sum-of-a-thousand-parameters-and-recovers-with-nonsense) | a flat sum of 999 parameters trips "expression nests too deeply" and the recovery then reports `'p997' was not found in the current scope` and `'p998' was already declared in this scope`; 600 terms compile | diagnostic |
 | [F16](#f16--a-strobe-with-solution-independent-arguments-runs-in-the-setup-pass-not-per-point) | *(fixed in [E-660](../../enhancements_doc/Enhancement-660.md): the double print and the stale pre-draw, pre-corner copy; a hoisted task keeps its once-per-setup timing by design, see the write-up)* a `$strobe` whose arguments depend on nothing the solver computes runs in the setup pass: twice per analysis (setup and temperature) and never per point — two lines for a 73-point transient, where a strobe reading `V(p,n)` prints 73; `$info`/`$warning`/`$error` with constant arguments the same | wrong output |
 | [F17](#f17--noautocorner-is-a-known-option-that-turns-nothing-off) | `noautocorner` is registered as a known option (no "unknown option" warning), but neither `.option autocorner noautocorner` nor a later `set noautocorner` turns the loop off; only `unset autocorner` does — and `noosdimc` behaves the same against `osdimc`, so this is the shared `no`-spelling contract, not E-656's alone | silent no-op |
-| [F18](#f18--break-continue-and-disable-are-accepted-in-an-analog-block-without-a-word) | `break`, `continue`, `do … while` and `disable <block>` are accepted in an analog block without a word and act with their SystemVerilog meaning (`disable` ends the block's evaluation, contributions after it included); `>>>` in the same position gets an "openvaf extension" warning, these get none | silent extension |
+| [F18](#f18--break-continue-and-disable-are-accepted-in-an-analog-block-without-a-word) | *(fixed in [E-661](../../enhancements_doc/Enhancement-661.md) for `do…while` and `disable` — L011 warnings; `break`/`continue` are VAMS-2023 5.11 jump statements and legal, the finding was wrong there; a named block inside an analog function crashed the compiler, found on the way and fixed)* `break`, `continue`, `do … while` and `disable <block>` are accepted in an analog block without a word and act with their SystemVerilog meaning (`disable` ends the block's evaluation, contributions after it included); `>>>` in the same position gets an "openvaf extension" warning, these get none | silent extension |
 
 Dropped after checking the LRM: `casex`/`casez` in an analog block (A.6.7 lists them),
 several analog blocks in one module (§6.2 allows them, combined in order), a `timer`
@@ -412,6 +412,14 @@ contributions after it are skipped in silence, which is a model that compiles ev
 and behaves differently here. `do … while` is accepted in silence too (`do s = s + 1; while
 (s < 3);` gives 3). `return` outside a function, `goto`, `unique case`, `assign`, `wire`,
 `initial`/`always` are refused.
+
+**Re-read against VAMS-2023 (E-661).** `break` and `continue` are the LRM 5.11 jump
+statements, listed under `analog_statement` in A.6.4 and implemented by E-520 with
+5.9.3's genvar exclusion enforced — legal, not an extension. `disable` is listed under
+`analog_event_statement` only, so the loop idioms above are the extension; `do … while`
+is not in the LRM at all. Both now carry L011. Probing `disable` in a function found
+that any named block in an analog function crashed the compiler; fixed in the same
+enhancement.
 
 ## Smaller notes (not pursued)
 

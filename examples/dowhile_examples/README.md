@@ -3,7 +3,9 @@
 Demonstrates the `do ... while` loop, using **version11's own** `openvaf-r` and
 `ngspice-46`. A `do` loop runs its body **once before** the condition is first
 tested — the one loop construct OpenVAF previously didn't parse (`for`, `while`,
-and `repeat` already worked).
+and `repeat` already worked). It is not a Verilog-AMS loop (LRM 5.9 has the other
+three), so since Enhancement-661 the compiler says so once under L011
+`non_standard_code`; `-A non_standard_code` silences it, and the suite checks both.
 
 ```verilog
 do begin

@@ -1,8 +1,12 @@
 # `disable` statement example (version10, Enhancement-9)
 
-Demonstrates the Verilog-AMS **`disable <named_block>;`** statement, added to
-OpenVAF in Enhancement-9. Verilog-A has no `break`/`continue` keywords —
-`disable` is *the* early-exit mechanism, and both idioms are built from it.
+Demonstrates the **`disable <named_block>;`** statement, added to OpenVAF in
+Enhancement-9, as a loop `break` and `continue`. Since VAMS-2023 the standard
+loop exits are `break`/`continue` (LRM 5.11, Enhancement-520), and `disable` is
+Verilog-AMS only inside an analog event block (A.6.4); the idioms below are an
+openvaf extension, said under L011 since Enhancement-661, whose checks here also
+pin a `disable` inside `@(initial_step)` (no word) and a named block inside an
+analog function (it crashed the compiler).
 
 ## Semantics
 

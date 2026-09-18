@@ -418,26 +418,34 @@ pub enum Scope {
 }
 
 impl Scope {
-    fn def_map_and_scope(self, db: &CompilationDB) -> (LocalScopeId, Arc<DefMap>) {
+    /// `None` for a named block that declares nothing and holds no nested
+    /// named block: `collect_block_map` builds no def map for it (nothing to
+    /// resolve there). Enhancement-661 (hunt F18): this used to be an
+    /// `expect("block is named")`, and the E-646 walk of a function's locals
+    /// -- which reaches every named block of the body -- crashed the
+    /// compiler on `analog function real f; ... begin : b f = 2*x; end`, a
+    /// legal analog_function_seq_block (LRM A.6.4), with or without a
+    /// `disable` inside.
+    fn def_map_and_scope(self, db: &CompilationDB) -> Option<(LocalScopeId, Arc<DefMap>)> {
         match self {
             Scope::Module(module) => {
                 let id = module.lookup(db);
-                (id.scope.local_scope, id.def_map(db))
+                Some((id.scope.local_scope, id.def_map(db)))
             }
             Scope::Block(block) => {
-                let def_map = db.block_def_map(block.id).expect("block is named");
-                (def_map.entry(), def_map)
+                let def_map = db.block_def_map(block.id)?;
+                Some((def_map.entry(), def_map))
             }
             Scope::Function(func) => {
                 let def_map = db.function_def_map(func.id);
-                (def_map.entry(), def_map)
+                Some((def_map.entry(), def_map))
             }
         }
     }
 
     /// Iterates over all child modules.
     pub fn children(self, db: &CompilationDB) -> Vec<Scope> {
-        let (scope, def_map) = self.def_map_and_scope(db);
+        let Some((scope, def_map)) = self.def_map_and_scope(db) else { return Vec::new() };
         def_map[scope]
             .children
             .values()
@@ -454,7 +462,7 @@ impl Scope {
 
     /// Iterates over all child modules.
     pub fn declarations(self, db: &CompilationDB) -> Vec<(Name, ScopeDef)> {
-        let (scope, def_map) = self.def_map_and_scope(db);
+        let Some((scope, def_map)) = self.def_map_and_scope(db) else { return Vec::new() };
         def_map[scope]
             .declarations
             .iter()

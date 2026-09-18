@@ -1,8 +1,6 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
-use basedb::lints::builtin::{dead_range_member, 
-    const_simparam, contribution_to_input_port, lossy_integer_constant,
-    param_default_out_of_range, rng_in_loop, runtime_format_string, trivial_probe,
-    unknown_analysis_name, unknown_limit_function, unknown_simparam, variant_const_simparam,
+use basedb::lints::builtin::{
+    dead_range_member, const_simparam, contribution_to_input_port, lossy_integer_constant, param_default_out_of_range, rng_in_loop, runtime_format_string, trivial_probe, unknown_analysis_name, unknown_limit_function, unknown_simparam, variant_const_simparam, non_standard_code,
 };
 use basedb::lints::{self, Lint, LintSrc};
 use basedb::{AstIdMap, BaseDB, FileId};
@@ -164,6 +162,12 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             BodyValidationDiagnostic::RngInLoop { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, rng_in_loop);
                 Some((rng_in_loop, src))
+            }
+            // Enhancement-661 (hunt F18)
+            BodyValidationDiagnostic::NonStandardDoWhile { stmt }
+            | BodyValidationDiagnostic::NonStandardDisable { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, non_standard_code);
+                Some((non_standard_code, src))
             }
             BodyValidationDiagnostic::UnknownLimitFunction { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, unknown_limit_function);
@@ -1495,6 +1499,42 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                          past the crossing regardless of the requested tolerance; write \
                          0.0 (LRM: 'the simulator shall apply a suitable value') to \
                          accept that without this warning"
+                            .to_owned(),
+                    ])
+            }
+            // Enhancement-661 (hunt F18)
+            BodyValidationDiagnostic::NonStandardDoWhile { stmt } => {
+                let FileSpan { range, file } = self.stmt_src(stmt);
+                Report::warning()
+                    .with_message("`do ... while` in an analog context is an openvaf extension")
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "not a Verilog-AMS loop".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: LRM 5.9 has `repeat`, `while` and `for`; a `do ... while` runs its \
+                         body once before the first test, which other Verilog-A compilers refuse \
+                         -- write the body once and then a `while`, or keep it and accept this"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::NonStandardDisable { stmt, in_function } => {
+                let FileSpan { range, file } = self.stmt_src(stmt);
+                let place = if in_function { "in an analog function" } else { "outside an event control" };
+                Report::warning()
+                    .with_message(format!("`disable` {place} is an openvaf extension"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "not a Verilog-AMS analog statement here".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: VAMS-2023 A.6.4 allows `disable <block>` only inside an `@(...)` \
+                         event block; a loop exit is `break` or `continue` (LRM 5.11), and a block \
+                         ended by `disable` here skips the contributions after it in silence"
                             .to_owned(),
                     ])
             }

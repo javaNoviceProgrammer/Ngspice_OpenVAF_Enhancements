@@ -491,6 +491,20 @@ pub enum BodyValidationDiagnostic {
     ReturnOutsideFunction {
         stmt: StmtId,
     },
+    /// Enhancement-661 (hunt F18): `do … while` is not a Verilog-AMS loop
+    /// (LRM 5.9 has `repeat`, `while` and `for`) -- an openvaf extension
+    /// (E-19), said under L011 like the arithmetic shifts.
+    NonStandardDoWhile {
+        stmt: StmtId,
+    },
+    /// Enhancement-661 (hunt F18): `disable` outside an analog event control.
+    /// VAMS-2023 A.6.4 lists `disable_statement` under `analog_event_statement`
+    /// only; in the plain analog block or an analog function it is an openvaf
+    /// extension -- one that skips the contributions after it in silence.
+    NonStandardDisable {
+        stmt: StmtId,
+        in_function: bool,
+    },
     /// VAMS-2023 Table 9-7 / 9.10 NOTE: `$realtime` is deprecated in the
     /// analog context; here it behaves as `$abstime` (absolute seconds, no
     /// `timescale scaling).
@@ -624,6 +638,7 @@ impl BodyValidationDiagnostic {
             diagnostics: Vec::new(),
             ctx,
             loop_depth: 0,
+            event_depth: 0,
             loop_writes: Vec::new(),
             disable_scopes: Vec::new(),
             in_paramset: false,
@@ -879,6 +894,9 @@ struct BodyValidator<'a> {
     /// becomes `BodyCtx::Loop` when the controlling expression is non-constant,
     /// so `repeat(3)` would be missed.
     loop_depth: u32,
+    /// Enhancement-661: number of enclosing analog event controls (`ctx` is
+    /// replaced, not stacked, by a loop or a condition inside the event body)
+    event_depth: u32,
     /// Enhancement-642: the names each enclosing runtime loop can write (its
     /// body and, for a `for`, its increment), innermost last -- what
     /// `collect_loop_writes` finds. A draw whose seed reads one of them is a
@@ -1301,7 +1319,9 @@ impl BodyValidator<'_> {
                 // compiled silently.
                 let old = replace(&mut self.ctx, BodyCtx::EventControl);
                 event.walk_child_exprs(|e| self.validate_expr(e, stmt));
+                self.event_depth += 1;              /* Enhancement-661 */
                 self.validate_stmt(body);
+                self.event_depth -= 1;
                 self.ctx = old;
                 return;
             }
@@ -1348,6 +1368,13 @@ impl BodyValidator<'_> {
             }
 
             Stmt::Disable { ref name } => {
+                // Enhancement-661 (hunt F18): standard only inside an event block
+                if self.event_depth == 0 {
+                    self.diagnostics.push(BodyValidationDiagnostic::NonStandardDisable {
+                        stmt,
+                        in_function: matches!(self.owner, DefWithBodyId::FunctionId(_)),
+                    });
+                }
                 // Enhancement-390: resolve against the enclosing named blocks.
                 if !self.disable_scopes.iter().any(|n| n == name) {
                     self.diagnostics.push(BodyValidationDiagnostic::UnresolvedDisable {
@@ -1400,6 +1427,10 @@ impl BodyValidator<'_> {
                 // Enhancement-375: reject a loop that provably cannot finish before
                 // it can be emitted into a model that hangs the simulator.
                 self.check_loop_termination(stmt, cond);
+                // Enhancement-661 (hunt F18): not a Verilog-AMS loop
+                if matches!(self.body.stmts[stmt], Stmt::DoWhile { .. }) {
+                    self.diagnostics.push(BodyValidationDiagnostic::NonStandardDoWhile { stmt });
+                }
 
                 // Enhancement-642: what the loop writes, for the seed test of
                 // the draw-in-a-loop lint (a `repeat` body counts too)
