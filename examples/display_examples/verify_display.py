@@ -138,5 +138,61 @@ if ok3:
     check("lines that differ per instance are never coalesced, even interleaved",
           npass >= 1 and len(dist) == 8 * npass, f"({len(dist)} for {npass} passes)")
 
+# --- Enhancement-660 (hunt F16 of 2026-09-18): the setup pass's output ------
+# A hoisted display/severity task (solution-independent arguments) printed
+# twice per analysis -- ngspice's setup pass and its temperature pass -- the
+# first copy before the draws and the corner were applied. The setup pass's
+# copies are now held and superseded by the temperature pass's.
+ok4 = compile_va("display_setup.va")[1]
+check("display_setup.va compiles", ok4)
+if ok4:
+    def run_setup(body, opts="", card="mm dispsetup"):
+        deck = (f"* display setup\n.control\npre_osdi display_setup.osdi\n.endc\n{opts}\n"
+                f"V1 a 0 DC 1\nN1 a 0 mm\n.model {card}\n.control\n{body}\n.endc\n.end\n")
+        with open(os.path.join(HERE, "_s.cir"), "w") as fh:
+            fh.write(deck)
+        r = subprocess.run([NGSPICE, "-b", "_s.cir"], capture_output=True, text=True,
+                           timeout=120, cwd=HERE)
+        return r.stdout + r.stderr
+
+    def n(log, text):
+        return sum(1 for l in log.splitlines() if text in l)
+
+    log = run_setup("op\ntran 1u 70u\nprint length(v(a))\n")
+    m = re.findall(r"length\(v\(a\)\) = ([0-9.e+]+)", log)
+    npts = int(float(m[-1])) if m else -1
+    check("a hoisted $strobe, $info and $warning print once per analysis (op + tran: 2 each, was 4)",
+          n(log, "SETUP-const") == 2 and n(log, "SETUP-var y=3") == 2 and n(log, "SETUP-info") == 2
+          and n(log, "SETUP-warn") == 2 and n(log, "EVT-strobe") == 2,
+          f"(const {n(log, 'SETUP-const')}, var {n(log, 'SETUP-var')}, info {n(log, 'SETUP-info')}, "
+          f"warn {n(log, 'SETUP-warn')}, evt {n(log, 'EVT-strobe')})")
+    check("...while the solution-dependent $strobe still prints once per accepted point",
+          npts > 10 and n(log, "POINT v=") == 1 + npts, f"({n(log, 'POINT v=')} lines, {npts} tran points)")
+
+    log = run_setup("op\n", ".option corner=ss")
+    check("under `.option corner=ss` the banner prints once, with the cornered value (was rsh=100 then rsh=115)",
+          n(log, "SETUP-banner") == 1 and n(log, "SETUP-banner rsh=115 ") == 1,
+          f"({[l for l in log.splitlines() if 'SETUP-banner' in l]})")
+
+    log = run_setup("op\nop\nop\n", ".option osdimc")
+    vals = re.findall(r"SETUP-banner rsh=([-0-9.e+]+)", log)
+    check("under `.option osdimc` one banner per run, the drawn value from the second run on",
+          len(vals) == 3 and float(vals[0]) == 100.0 and all(float(v) != 100.0 for v in vals[1:]),
+          f"({vals})")
+
+    log = run_setup("dc temp 27 47 10\n")
+    check("a `.dc temp` sweep prints the banner at every temperature point, once each",
+          n(log, "T=310.15") == 1 and n(log, "T=320.15") == 1, f"({[l for l in log.splitlines() if 'SETUP-banner' in l]})")
+
+    log = run_setup("op\naltermod mm rsh=50\nop\n")
+    check("an `altermod` re-setup prints the banner once with the new value",
+          n(log, "SETUP-banner rsh=100 ") == 1 and n(log, "SETUP-banner rsh=50 ") == 1,
+          f"({[l for l in log.splitlines() if 'SETUP-banner' in l]})")
+
+    log = run_setup("op\n", card="mm dispsetup rsh=-1")
+    check("a setup that fails ($fatal on the card's value) still shows what its code said before, once",
+          n(log, "SETUP-banner rsh=-1 ") == 1 and "SETUP-fatal" in log,
+          f"(banner {n(log, 'SETUP-banner')}, fatal {n(log, 'SETUP-fatal')})")
+
 print(f"\n{'ALL PASS' if failed == 0 else 'FAILURES'}: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

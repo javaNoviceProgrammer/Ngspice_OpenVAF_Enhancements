@@ -1,0 +1,23 @@
+// Enhancement-660 (hunt F16 of 2026-09-18): display and severity tasks whose
+// arguments are solution-independent run in the model's setup code (the
+// compiler hoists them) -- ngspice runs that code twice per analysis (its
+// setup pass and its temperature pass) and printed each such line twice,
+// the first copy before the draws and the corner were applied.
+`include "disciplines.vams"
+module dispsetup(p, n);
+inout p, n; electrical p, n;
+(* std=0.1, corner="ss=115" *) parameter real rsh = 100;
+real y;
+analog begin
+  y = 3;
+  $strobe("SETUP-const");
+  $strobe("SETUP-var y=%g", y);
+  $strobe("SETUP-banner rsh=%g T=%g", rsh, $temperature);
+  $info("SETUP-info");
+  $warning("SETUP-warn");
+  $strobe("POINT v=%g", V(p, n));
+  @(initial_step) $strobe("EVT-strobe");
+  if (rsh < 0) $fatal(0, "SETUP-fatal");
+  I(p, n) <+ V(p, n) / rsh;
+end
+endmodule

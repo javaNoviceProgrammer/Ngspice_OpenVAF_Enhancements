@@ -21,8 +21,16 @@ widths, precision, all conversions (`%d %h %H %o %b %c %s %e %f %g`),
 `%%`, `%m` (module path), escape sequences, bare-argument defaults, and
 all five display kinds.
 
+Enhancement-660 (hunt F16 of 2026-09-18) adds `display_setup.va`: a display
+or severity task whose arguments are solution-independent runs in the
+model's setup code, which ngspice runs twice per analysis, and printed
+twice -- the first copy before the draws and the corner were applied. The
+setup pass's copies are now held and superseded by the temperature pass's;
+six checks (once per analysis, the corner and the draw banners, a `.dc temp`
+sweep, an `altermod`, a failed setup).
+
 ## Run
 
 ```bash
-python3 verify_display.py    # 22 checks
+python3 verify_display.py    # 30 checks
 ```

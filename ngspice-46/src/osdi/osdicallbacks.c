@@ -280,11 +280,51 @@ static int pending_len, pending_cap;
  * print through immediately, as they always did. */
 static bool display_managed;
 
+/* Enhancement-660 (hunt F16): the SETUP pass's messages are held and
+ * superseded by the temperature pass. ngspice runs every OSDI model's
+ * init-resident code twice per analysis -- OSDIsetup's own setup loops and
+ * then OSDItemp, which CKTdoJob runs after CKTsetup in every job -- so a
+ * $strobe, $info, $warning or $error whose arguments are solution-independent
+ * (a parameter banner, a range check: the code the compiler hoists) printed
+ * twice per analysis. The setup pass is also the stale one: E-535's draws and
+ * E-654's corner are applied at the END of OSDIsetup, after its setup loops,
+ * so under `.option corner=ss` a banner printed `rsh=100` and then `rsh=115`
+ * for one operating point. The setup pass's messages are therefore held here
+ * and dropped when the temperature pass re-enters (its copies, evaluated on
+ * the values the analysis runs with, are the ones that print); released to
+ * the output if the setup failed (the reason must show), or at the first
+ * Newton iteration if no temperature pass came. $fatal and LOG_FLAG_IMMEDIATE
+ * messages are never held. */
+static OsdiPendingMsg *held;
+static int held_len, held_cap;
+static bool setup_pass;
+
+static void osdi_setup_hold(char *text, int head_len, uint32_t sev, bool to_err) {
+  if (held_len >= held_cap) {
+    held_cap = held_cap ? 2 * held_cap : 16;
+    held = TREALLOC(OsdiPendingMsg, held, held_cap);
+  }
+  held[held_len++] = (OsdiPendingMsg){
+      .text = text, .head_len = head_len, .sev = sev, .to_err = to_err, .monitor = false};
+}
+
+static void osdi_setup_release(bool emit) {
+  for (int i = 0; i < held_len; i++) {
+    if (emit)
+      osdi_emit(held[i].text, held[i].head_len, held[i].to_err, held[i].sev);
+    tfree(held[i].text);
+  }
+  held_len = 0;
+  setup_pass = false;
+}
+
 /* previous flushed text of the k-th $monitor message, for change detection */
 static char **monitor_prev;
 static int monitor_prev_cap;
 
 void osdi_display_iter_begin(void) {
+  if (setup_pass)                /* Enhancement-660: no temperature pass came */
+    osdi_setup_release(true);
   osdi_display_repeat_summary(); /* F4: a setup's run of repeats ends here */
   display_managed = true;
   for (int i = 0; i < pending_len; i++) {
@@ -305,7 +345,7 @@ void osdi_display_iter_begin(void) {
  * re-ran (an opvar it assigned updated correctly). Clearing the flag (and any
  * stale pending from a prior analysis) makes every setup behave like the
  * first; the first load iteration re-arms deferral via iter_begin. */
-void osdi_display_reenter_setup(void) {
+static void osdi_display_reenter_common(void) {
   osdi_display_repeat_summary(); /* F4 */
   display_managed = false;
   /* Round-3 audit: a model whose last `$write` never terminated its line would
@@ -320,6 +360,18 @@ void osdi_display_reenter_setup(void) {
   pending_len = 0;
 }
 
+/* OSDItemp: the temperature pass re-evaluates what the setup pass evaluated,
+ * on the values the analysis runs with -- the held copies are superseded
+ * (Enhancement-660) */
+void osdi_display_reenter_setup(void) {
+  osdi_setup_release(false);
+  osdi_display_reenter_common();
+}
+
+/* Enhancement-660: OSDIsetup failed for a card -- what its init-resident code
+ * said before the failure must show, and no temperature pass will repeat it */
+void osdi_display_setup_failed(void) { osdi_setup_release(true); }
+
 /* A fresh analysis is starting (OSDIsetup). Do everything reenter_setup does,
  * AND (hunt N5, bug 4) drop the $monitor change-detection history: it compares
  * the k-th monitor line of this point against the k-th of the PREVIOUS flushed
@@ -330,13 +382,15 @@ void osdi_display_reenter_setup(void) {
  * never per temperature point -- a `.dc temp` sweep runs OSDItemp (hence
  * reenter_setup) per point and must keep its cross-point history intact. */
 void osdi_display_setup_phase(void) {
-  osdi_display_reenter_setup();
+  osdi_display_reenter_common();
   for (int i = 0; i < monitor_prev_cap; i++) {
     if (monitor_prev[i]) {
       tfree(monitor_prev[i]);
       monitor_prev[i] = NULL;
     }
   }
+  setup_pass = true;   /* Enhancement-660: hold this pass's messages (called
+                          once per device type; the earlier types' stay held) */
 }
 
 void osdi_display_flush(void) {
@@ -639,6 +693,12 @@ void osdi_log(void *handle_, char *msg, uint32_t lvl) {
     /* LRM 9.4.6/9.5.9/9.7.3 deferral: output waits for the accepted iteration
      * unless the compiler tagged it immediate (event-gated, or an `analog
      * initial` block, which fires on the initial-step iteration). */
+    /* Enhancement-660 (hunt F16): the setup pass's copy, superseded by the
+     * temperature pass's (see osdi_setup_hold) */
+    if (setup_pass && level != LOG_LVL_FATAL && !(lvl & LOG_FLAG_IMMEDIATE)) {
+      osdi_setup_hold(text, head_len, sev, to_err);
+      return;
+    }
     if (display_managed && defers && !(lvl & LOG_FLAG_IMMEDIATE)) {
       osdi_log_defer(text, head_len, sev, to_err, level == LOG_LVL_MONITOR);
       return;

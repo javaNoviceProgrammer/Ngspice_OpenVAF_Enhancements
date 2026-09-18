@@ -825,7 +825,9 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
   }
 
   osdi_display_setup_phase();   /* Enhancement-535: init-resident displays
-                                 * print immediately during (re-)setup */
+                                 * print during (re-)setup; Enhancement-660:
+                                 * this pass's are held and superseded by
+                                 * OSDItemp's, which CKTdoJob runs next */
   for (gen_model = inModel; gen_model; gen_model = gen_model->GENnextModel) {
     void *model = osdi_model_data(gen_model);
 
@@ -835,6 +837,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
     res = handle_init_info(init_info, descr, &handle, NULL, model);
     if (res) {
       errRtn = "OSDI setup_model";
+      osdi_display_setup_failed();           /* Enhancement-660 */
       if (first_err == OK)
         first_err = res;                     /* Enhancement-426 */
       continue;
@@ -913,6 +916,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
       res = handle_init_info(init_info, descr, &handle, inst, model);
       if (res) {
         errRtn = "OSDI setup_instance";
+        osdi_display_setup_failed();         /* Enhancement-660 */
         if (first_err == OK)
           first_err = res;                   /* Enhancement-426 */
         continue;
@@ -1347,8 +1351,10 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
   /* Enhancement-654: a corner no loaded model declares refuses the run (said
    * by OSDImcNewRun); otherwise the corner's writes for a pending run -- the
    * first after a source, or a stale table -- now that the nominals are in */
-  if (osdimc_corner_refused())
+  if (osdimc_corner_refused()) {
+    osdi_display_setup_failed();             /* Enhancement-660 */
     return E_PARMVAL;
+  }
   if (osdimc_apply_is_pending() && osdimc_corner_selected() &&
       ckt->CKThead[inModel->GENmodType] && osdi_devtype_is_osdi(inModel->GENmodType))
     osdimc_apply_corner_type(ckt, inModel->GENmodType,
