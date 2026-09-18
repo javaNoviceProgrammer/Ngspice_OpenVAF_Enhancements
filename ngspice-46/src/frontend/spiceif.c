@@ -552,6 +552,7 @@ if_is_option(const char *name)
            cp_getvar by OSDImcNewRun/osdimc_enabled (osdisetup.c), so the
            cards WORK and belong here for the same reason `reusesetup` does. */
         "osdimc", "automc", "mcseed", "osdimc_verbose",
+        "corner",                    /* Enhancement-654: read by OSDImcNewRun (osdisetup.c) */
         /* Enhancement-610: read through cp_getvar by mcsave.c */
         "savemc", "nosavemc", "automc_save", "osdimc_save",
         /* Enhancement-619: the workbook's fonts, read by mcsave.c's xlsx writer */

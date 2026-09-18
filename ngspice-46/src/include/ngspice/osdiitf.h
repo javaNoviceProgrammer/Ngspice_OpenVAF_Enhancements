@@ -54,6 +54,10 @@ typedef struct OsdiRegistryEntry {
   uint32_t num_stat_params;
   const void *stat_param_infos;  /* OsdiStatParam records built by the registry from the
                                     .osdi's OSDI_STAT_PARAM_INFOS (+ TRUNCS, E-554) */
+  uint32_t num_corner_params;    /* Enhancement-654: (parameter, corner) entries of the
+                                    Verilog-A `(* corner= *)` attributes */
+  const void *corner_param_infos; /* OsdiCornerParam records built by the registry from
+                                     OSDI_CORNER_INFOS + NAMES; NULL in an object without */
   const void *param_given_fn;    /* E-555: this descriptor's OsdiParamGivenFn, or NULL */
   const char *const *param_ranges; /* E-558: the declared range of each parameter as
                                       text, param_opvar order, "" for none; NULL in an
@@ -233,6 +237,7 @@ typedef struct OSDImcSnapshotItem {
 } OSDImcSnapshotItem;
 typedef void (*OSDImcSnapshotFn)(const OSDImcSnapshotItem *it, void *ctx);
 extern bool OSDImcEnabled(void);
+extern bool OSDImcCornerSelected(void);   /* Enhancement-654: `.option corner=<name>` is in force */
 extern bool OSDImcHasStats(CKTcircuit *ckt);
 extern void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx);
 

@@ -106,7 +106,7 @@ impl ModuleInfo {
                     // the shadow-variable typo (`parameter real r; (* std *)
                     // real r_i;`) then runs a Monte-Carlo that varies
                     // nothing. Name the misplacement instead.
-                    for stat_name in ["std", "std_rel", "dist"] {
+                    for stat_name in ["std", "std_rel", "dist", "corner"] {
                         if let Some(attr) = var.get_attr(db, &ast, stat_name) {
                             add_diagnostic(attr.clone(), &StatOnNonParam { attr });
                         }
@@ -495,6 +495,126 @@ impl ModuleInfo {
                         }
                     };
 
+                    // Enhancement-654: `(* corner="ss=115, ff=-10%, sf=+3sigma" *)`
+                    // names the parameter's position at each process corner
+                    // (a project extension beside the statistics above). One
+                    // string attribute, `name=value` entries separated by
+                    // commas and/or whitespace; a value is a real literal with
+                    // an optional scale factor (an absolute value), such a
+                    // number followed by `%` (a fraction of the nominal) or
+                    // by `sigma` (a multiple of the declared standard
+                    // deviation, so it needs `std`/`std_rel`). Names are
+                    // folded to lower case, as ngspice folds a deck. The
+                    // entries ride the OSDI_CORNER_* side-table to the
+                    // simulator, whose `.option corner=<name>` applies them
+                    // (ngspice's osdisetup.c).
+                    let corners: Vec<ParamCorner> = {
+                        let n = param.attr_count(db, &ast, "corner");
+                        if n > 1 {
+                            let attr = param.get_attr(db, &ast, "corner").unwrap();
+                            add_diagnostic(
+                                attr.clone(),
+                                &DuplicateStatAttr { attr, name: "corner", count: n },
+                            );
+                        }
+                        match param.get_attr(db, &ast, "corner") {
+                            None => Vec::new(),
+                            Some(attr) => {
+                                let lit = attr.val().and_then(|e| e.as_str_literal());
+                                let reason = if param.ty(db) != Type::Real {
+                                    Some(match param.ty(db) {
+                                        Type::Integer => {
+                                            "a corner needs a real parameter; this one is an integer"
+                                        }
+                                        Type::String => {
+                                            "a corner needs a real parameter; this one is a string"
+                                        }
+                                        _ => "a corner needs a real parameter; this one is not real",
+                                    })
+                                } else if param.is_local(db) {
+                                    Some("a localparam cannot be set by the simulator")
+                                } else {
+                                    None
+                                };
+                                match (lit, reason) {
+                                    (None, _) => {
+                                        add_diagnostic(attr.clone(), &IllegalCornerAttr { attr });
+                                        Vec::new()
+                                    }
+                                    (Some(_), Some(reason)) => {
+                                        add_diagnostic(
+                                            attr.clone(),
+                                            &CornerIgnored { attr, reason },
+                                        );
+                                        Vec::new()
+                                    }
+                                    (Some(lit), None) => {
+                                        let mut out: Vec<ParamCorner> = Vec::new();
+                                        // (folded name, name as written)
+                                        let mut seen: Vec<(String, String)> = Vec::new();
+                                        for item in parse_corner_list(&lit) {
+                                            match item {
+                                                Err((entry, why)) => add_diagnostic(
+                                                    attr.clone(),
+                                                    &CornerEntryMalformed {
+                                                        attr: attr.clone(),
+                                                        entry,
+                                                        why,
+                                                    },
+                                                ),
+                                                Ok((written, kind, value)) => {
+                                                    let folded = written.to_ascii_lowercase();
+                                                    if let Some((_, first)) =
+                                                        seen.iter().find(|(f, _)| *f == folded)
+                                                    {
+                                                        add_diagnostic(
+                                                            attr.clone(),
+                                                            &CornerNameTwice {
+                                                                attr: attr.clone(),
+                                                                first: first.clone(),
+                                                                second: written,
+                                                            },
+                                                        );
+                                                        continue;
+                                                    }
+                                                    if kind == CornerKind::Sigma && stat.is_none()
+                                                    {
+                                                        add_diagnostic(
+                                                            attr.clone(),
+                                                            &CornerSigmaWithoutStd {
+                                                                attr: attr.clone(),
+                                                                name: written,
+                                                            },
+                                                        );
+                                                        continue;
+                                                    }
+                                                    if kind == CornerKind::Relative
+                                                        && param.default_const(db) == Some(0.0)
+                                                    {
+                                                        add_diagnostic(
+                                                            attr.clone(),
+                                                            &RelCornerOnZeroDefault {
+                                                                attr: attr.clone(),
+                                                                name: written.clone(),
+                                                            },
+                                                        );
+                                                    }
+                                                    seen.push((folded.clone(), written));
+                                                    out.push(ParamCorner {
+                                                        name: folded.into(),
+                                                        kind,
+                                                        value,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                        out
+                                    }
+                                }
+                            }
+                        }
+                    };
+
                     params.insert(
                         param,
                         ParamInfo {
@@ -508,6 +628,7 @@ impl ModuleInfo {
                             given_tested: false,
                             dynamic_bounds: false,
                             stat,
+                            corners,
                             range_text: param.bounds_source(db),
                             default_value: param.default_const(db),
                             paramset_own,
@@ -1230,16 +1351,189 @@ impl Diagnostic for StatOnNonParam {
             .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
         Report::warning()
             .with_message(format!(
-                "'{}' attribute is ignored here: statistics attributes apply to parameters",
+                "'{}' attribute is ignored here: statistics and corner attributes apply to parameters",
                 self.attr.name().unwrap(),
             ))
             .with_labels(vec![Label {
                 style: LabelStyle::Primary,
                 file_id: file,
                 range: range.into(),
-                message: "this declaration is not a parameter; nothing will vary under .option osdimc"
+                message: "this declaration is not a parameter; nothing will vary under .option osdimc or .option corner"
                     .to_owned(),
             }])
+    }
+}
+
+/// Enhancement-654: `(* corner=... *)` whose value is not a string literal.
+struct IllegalCornerAttr {
+    attr: ast::Attr,
+}
+
+impl Diagnostic for IllegalCornerAttr {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::error()
+            .with_message(
+                "illegal expression supplied to 'corner' attribute; expected a string of \
+                 name=value entries",
+            )
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "expected a string literal".to_owned(),
+            }])
+            .with_notes(vec![
+                "help: `(* corner=\"ss=115, ff=88\" *)` -- entries separated by commas and/or \
+                 spaces; a value is a number (2.2n), a percentage of the nominal (+10%) or a \
+                 multiple of the declared sigma (-3sigma)"
+                    .to_owned(),
+            ])
+    }
+}
+
+/// Enhancement-654: one entry of a `corner` string that does not parse.
+struct CornerEntryMalformed {
+    attr: ast::Attr,
+    entry: String,
+    why: &'static str,
+}
+
+impl Diagnostic for CornerEntryMalformed {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::error()
+            .with_message(format!("corner entry '{}' is malformed: {}", self.entry, self.why))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "in this attribute".to_owned(),
+            }])
+            .with_notes(vec![
+                "help: `corner=\"ss=115, ff=-10%, sf=+3sigma\"` -- entries separated by commas \
+                 and/or spaces; a value is a number with an optional scale factor, a percentage \
+                 of the nominal, or a multiple of the declared sigma"
+                    .to_owned(),
+            ])
+    }
+}
+
+/// Enhancement-654: a corner named twice on one parameter -- possibly in two
+/// spellings that fold to the same name.
+struct CornerNameTwice {
+    attr: ast::Attr,
+    first: String,
+    second: String,
+}
+
+impl Diagnostic for CornerNameTwice {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        let message = if self.first == self.second {
+            format!("corner '{}' is given twice on this parameter", self.second)
+        } else {
+            format!(
+                "corners '{}' and '{}' are the same corner: names are folded to lower case, as \
+                 ngspice folds a deck",
+                self.first, self.second
+            )
+        };
+        Report::error()
+            .with_message(message)
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "in this attribute".to_owned(),
+            }])
+            .with_notes(vec!["help: keep one entry per corner".to_owned()])
+    }
+}
+
+/// Enhancement-654: a corner given in sigmas on a parameter without statistics.
+struct CornerSigmaWithoutStd {
+    attr: ast::Attr,
+    name: String,
+}
+
+impl Diagnostic for CornerSigmaWithoutStd {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::error()
+            .with_message(format!(
+                "corner '{}' is given in sigmas, but this parameter declares no statistics",
+                self.name
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "no `std` or `std_rel` on this parameter".to_owned(),
+            }])
+            .with_notes(vec![
+                "help: declare `(* std=<sigma> *)` or `(* std_rel=<fraction> *)` beside it, or \
+                 give the corner as a value (115) or a percentage of the nominal (+10%)"
+                    .to_owned(),
+            ])
+    }
+}
+
+/// Enhancement-654: a `corner` attribute on a parameter the simulator cannot
+/// set -- an integer, a string, a localparam.
+struct CornerIgnored {
+    attr: ast::Attr,
+    reason: &'static str,
+}
+
+impl Diagnostic for CornerIgnored {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::warning()
+            .with_message(format!("'corner' attribute is ignored: {}", self.reason))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "no corner is exported for this parameter".to_owned(),
+            }])
+    }
+}
+
+/// Enhancement-654: a percentage corner on a default of 0 moves nothing.
+struct RelCornerOnZeroDefault {
+    attr: ast::Attr,
+    name: String,
+}
+
+impl Diagnostic for RelCornerOnZeroDefault {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::warning()
+            .with_message(format!(
+                "corner '{}' is a percentage of a default of 0: the parameter is 0 at that \
+                 corner unless the netlist gives it",
+                self.name
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "a percentage of the nominal, which defaults to 0".to_owned(),
+            }])
+            .with_notes(vec!["help: give the corner as an absolute value".to_owned()])
     }
 }
 
@@ -1370,6 +1664,9 @@ pub struct ParamInfo {
     pub dynamic_bounds: bool,
     /// `(* std= / std_rel= / dist= *)` statistics for `.option osdimc`
     pub stat: Option<ParamStat>,
+    /// Enhancement-654: `(* corner="…" *)` -- the parameter's position at
+    /// each named process corner, for `.option corner=<name>`
+    pub corners: Vec<ParamCorner>,
     /// Book audit (paramsets), LRM 6.4.2: the default's value when it is a
     /// compile-time constant, for the simulator's paramset selection.
     pub default_value: Option<f64>,
@@ -1381,6 +1678,90 @@ pub struct ParamInfo {
     /// are the only ones its selection judges and counts; false for a
     /// target-module parameter passed through, and for a plain module
     pub paramset_own: bool,
+}
+
+/// Enhancement-654: one entry of a parameter's `(* corner="…" *)` attribute,
+/// exported through the OSDI `OSDI_CORNER_INFOS` side-table for the
+/// simulator's `.option corner=<name>`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParamCorner {
+    /// the corner's name, folded to lower case (ngspice folds the deck)
+    pub name: SmolStr,
+    pub kind: CornerKind,
+    /// the absolute value; the fraction of the nominal (`+10%` is 0.1); or
+    /// the multiple of the declared sigma
+    pub value: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CornerKind {
+    Absolute,
+    Relative,
+    Sigma,
+}
+
+/// Enhancement-654: the value of one corner entry -- a real literal with an
+/// optional LRM 2.5.1 scale factor, or such a number followed by `%` or by
+/// `sigma` (case-insensitive). `inf`, `nan` and anything else is refused.
+fn parse_corner_value(text: &str) -> Option<(CornerKind, f64)> {
+    let (num, kind) = if let Some(n) = text.strip_suffix('%') {
+        (n, CornerKind::Relative)
+    } else if text.len() > 5 && text[text.len() - 5..].eq_ignore_ascii_case("sigma") {
+        (&text[..text.len() - 5], CornerKind::Sigma)
+    } else {
+        (text, CornerKind::Absolute)
+    };
+    let (mant, scale) = match num.chars().last()? {
+        'T' => (&num[..num.len() - 1], 1e12),
+        'G' => (&num[..num.len() - 1], 1e9),
+        'M' => (&num[..num.len() - 1], 1e6),
+        'K' | 'k' => (&num[..num.len() - 1], 1e3),
+        'm' => (&num[..num.len() - 1], 1e-3),
+        'u' => (&num[..num.len() - 1], 1e-6),
+        'n' => (&num[..num.len() - 1], 1e-9),
+        'p' => (&num[..num.len() - 1], 1e-12),
+        'f' => (&num[..num.len() - 1], 1e-15),
+        'a' => (&num[..num.len() - 1], 1e-18),
+        _ => (num, 1.0),
+    };
+    // strictly a real literal: sign, digits, one dot, one exponent
+    if !mant.chars().any(|c| c.is_ascii_digit())
+        || !mant.chars().all(|c| c.is_ascii_digit() || matches!(c, '+' | '-' | '.' | 'e' | 'E'))
+    {
+        return None;
+    }
+    let v: f64 = mant.parse().ok()?;
+    if !v.is_finite() {
+        return None;
+    }
+    let v = v * scale;
+    Some((kind, if kind == CornerKind::Relative { v / 100.0 } else { v }))
+}
+
+/// Enhancement-654: the `name=value` entries of a `corner` attribute, split
+/// on commas and/or whitespace; a bad entry is returned with the reason so
+/// each can be reported on its own.
+fn parse_corner_list(text: &str) -> Vec<Result<(String, CornerKind, f64), (String, &'static str)>> {
+    text.split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|e| !e.is_empty())
+        .map(|entry| {
+            let Some((name, value)) = entry.split_once('=') else {
+                return Err((entry.to_owned(), "an entry is <name>=<value>; there is no '='"));
+            };
+            let mut chars = name.chars();
+            let head_ok = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+            if name.is_empty() || !head_ok || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Err((entry.to_owned(), "the corner name is not an identifier"));
+            }
+            match parse_corner_value(value) {
+                Some((kind, v)) => Ok((name.to_owned(), kind, v)),
+                None => Err((
+                    entry.to_owned(),
+                    "the value is not a number (115, 2.2n), a percentage (+10%) or sigmas (-3sigma)",
+                )),
+            }
+        })
+        .collect()
 }
 
 /// Declared statistics of a parameter, exported through the OSDI

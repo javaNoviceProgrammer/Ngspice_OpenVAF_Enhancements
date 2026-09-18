@@ -1248,7 +1248,9 @@ MCSAVErun(const char *analysis, int ok)
      * back to their nominals (or swept). */
     mcs_swept_clear();                          /* Enhancement-626 (hunt F10) */
     dcjob = mcs_dc_job(analysis);
-    if (ft_curckt->ci_ckt && (OSDImcEnabled() || cols_have_osdi())) {
+    /* Enhancement-654: a run under `.option corner=<name>` records the
+     * cornered parameters (and the statistical ones, at nominal) as well */
+    if (ft_curckt->ci_ckt && (OSDImcEnabled() || OSDImcCornerSelected() || cols_have_osdi())) {
         struct mcs_snap_ctx sc;
         sc.dc = dcjob != NULL;
         OSDImcSnapshot(ft_curckt->ci_ckt, osdi_cb, &sc);

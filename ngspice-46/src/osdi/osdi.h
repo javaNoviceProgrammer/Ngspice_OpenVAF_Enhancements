@@ -240,6 +240,31 @@ typedef struct OsdiStatParam {
                         parameters' values of that trial */
 }OsdiStatParam;
 
+/* Enhancement-654: a parameter's position at a named process corner, from the
+ * Verilog-A `(* corner="ss=115, ff=-10%, sf=+3sigma" *)` attribute. Rides the
+ * OSDI_CORNER_{COUNTS,INFOS,NAMES} side-table symbols (the statistics
+ * mechanism above): INFOS is one 16-byte record per (parameter, corner) in
+ * param_opvar order, NAMES the corner's name for each record as a C string.
+ * Layout matches the compiler's OsdiCornerInfo (openvaf/osdi/src/lib.rs). */
+#define OSDI_CORNER_ABS 0u   /* value: the parameter's value at the corner */
+#define OSDI_CORNER_REL 1u   /* value: a fraction of the nominal (+10% is 0.1) */
+#define OSDI_CORNER_SIGMA 2u /* value: a multiple of the declared sigma (the
+                                parameter then has an OSDI_STAT_PARAM_INFOS
+                                entry, which the compiler guarantees) */
+typedef struct OsdiCornerInfo {
+  uint32_t param_id;
+  uint32_t kind;
+  double value;
+}OsdiCornerInfo;
+
+/* the in-memory record the registry builds per descriptor */
+typedef struct OsdiCornerParam {
+  uint32_t param_id;
+  uint32_t kind;
+  double value;
+  const char *name;
+}OsdiCornerParam;
+
 /* Enhancement-364: noise-source kinds, mirrored from the compiler-side header
  * openvaf/osdi/header/osdi_0_4.h. The field `noise_source_type` was already in
  * the descriptor; these names were simply never copied across, which is why

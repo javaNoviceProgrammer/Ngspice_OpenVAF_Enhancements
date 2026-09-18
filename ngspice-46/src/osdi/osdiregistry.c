@@ -643,6 +643,16 @@ extern OsdiObjectFile load_object_file(const char *input) {
   sym = GET_SYM(handle, "OSDI_STAT_PARAM_DERIVED");
   const uint32_t *stat_param_derived_base = (const uint32_t *)sym;
 
+  /* Optional (Enhancement-654): the declared process corners, one record per
+   * (parameter, corner name) with the name in a parallel C-string array */
+  sym = GET_SYM(handle, "OSDI_CORNER_COUNTS");
+  const uint32_t *corner_counts = (const uint32_t *)sym;
+  sym = GET_SYM(handle, "OSDI_CORNER_INFOS");
+  const void *corner_infos_base = sym;
+  sym = GET_SYM(handle, "OSDI_CORNER_NAMES");
+  const char *const *corner_names_base = (const char *const *)sym;
+  uint32_t corner_info_offset = 0;
+
   /* Optional (Enhancement-555): one given-flag entry point per descriptor */
   sym = GET_SYM(handle, "OSDI_PARAM_GIVEN_FNS");
   const void *const *param_given_fns = (const void *const *)sym;
@@ -866,6 +876,31 @@ extern OsdiObjectFile load_object_file(const char *input) {
       }
     }
 
+    /* Enhancement-654: this descriptor's corner entries */
+    uint32_t n_corner_params = 0;
+    const void *corner_params_ptr = NULL;
+    if (corner_counts) {
+      n_corner_params = corner_counts[i];
+      if (n_corner_params > 0 && corner_infos_base && corner_names_base) {
+        const size_t corner_info_size = 16;
+        const char *rec = (const char *)corner_infos_base +
+                          corner_info_offset * corner_info_size;
+        OsdiCornerParam *merged = TMALLOC(OsdiCornerParam, n_corner_params);
+        for (uint32_t s = 0; s < n_corner_params; s++) {
+          const OsdiCornerInfo *in =
+              (const OsdiCornerInfo *)(rec + s * corner_info_size);
+          merged[s].param_id = in->param_id;
+          merged[s].kind = in->kind;
+          merged[s].value = in->value;
+          merged[s].name = corner_names_base[corner_info_offset + s];
+        }
+        corner_params_ptr = merged;
+      } else {
+        n_corner_params = 0;
+      }
+      corner_info_offset += corner_counts[i];
+    }
+
     /* Enhancement-558: this descriptor's slice of the range texts */
     const char *const *param_ranges_ptr = NULL;
     if (param_range_counts && param_ranges_base) {
@@ -942,6 +977,8 @@ extern OsdiObjectFile load_object_file(const char *input) {
 
         .num_stat_params = n_stat_params,
         .stat_param_infos = stat_params_ptr,
+        .num_corner_params = n_corner_params,                            /* E-654 */
+        .corner_param_infos = corner_params_ptr,
         .param_given_fn = param_given_fns ? param_given_fns[i] : NULL, /* E-555 */
         .param_ranges = param_ranges_ptr,                               /* E-558 */
         .paramset_family = paramset_families ? paramset_families[i] : NULL, /* E-565 */

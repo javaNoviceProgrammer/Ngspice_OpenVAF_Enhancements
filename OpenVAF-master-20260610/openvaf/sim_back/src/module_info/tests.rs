@@ -99,6 +99,7 @@ fn parameters() {
                     given_tested: false,
                     dynamic_bounds: false,
                     stat: None,
+                    corners: [],
                     default_value: Some(
                         2.0,
                     ),
@@ -119,6 +120,7 @@ fn parameters() {
                     given_tested: false,
                     dynamic_bounds: false,
                     stat: None,
+                    corners: [],
                     default_value: Some(
                         3.0,
                     ),
@@ -139,6 +141,7 @@ fn parameters() {
                     given_tested: false,
                     dynamic_bounds: false,
                     stat: None,
+                    corners: [],
                     default_value: Some(
                         3.0,
                     ),

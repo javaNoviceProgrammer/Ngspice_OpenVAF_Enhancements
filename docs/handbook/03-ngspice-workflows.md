@@ -588,6 +588,34 @@ across Newton iterations — see [§2.11](02-verilog-a-language.md#modeling-func
 which is the right tool for per-device mismatch, with the simulator-side
 idioms above layered on top for lot-level variation.
 
+**Process corners** live in the source the same way
+([E-654](../../enhancements_doc/Enhancement-654.md);
+[`examples/vacorner_examples/`](../../examples/vacorner_examples/)): one
+`corner` attribute per parameter names its position at each corner, and
+`.option corner=<name>` in the deck — or `set corner=<name>` between runs —
+selects one.
+
+```verilog
+(* corner="ss=115, ff=88" *)                     parameter real rsh = 100;   // a value
+(* corner="ss=+10% ff=-10%" *)                  parameter real k   = 2.0;   // of the nominal
+(* std=0.02, corner="ss=+3sigma, ff=-3sigma" *)  parameter real vth = 0.45;  // of the declared sigma
+```
+
+Entries are `name=value`, separated by commas and/or whitespace; a value is a
+real literal with an optional scale factor, a percentage of the nominal, or a
+multiple of the declared `std`/`std_rel` (through the transform a draw uses, so a
+lognormal stays in its log domain and a `trunc` clamps it); names fold to lower
+case. The corner is written through the ordinary parameter setter on every run,
+the first one included, so `showmod` shows it and `.option savemc` records it. A
+cornered parameter does not draw under `.option osdimc` — the corner pins the
+process coordinate and mismatch on the other parameters goes on, which is the
+usual corner-plus-mismatch flow. A parameter that names other corners only sits
+at nominal; a model type without the name runs at nominal, said once; a name no
+loaded model declares refuses the run, naming the declared ones. `tt`, `nom` and
+`unset corner` (without a deck option) return to the nominal; `altermod` of a
+cornered parameter recentres a percentage or sigma corner. `.lib` corner
+sections are untouched and compose with this.
+
 ## 3.8 XSPICE code models
 
 Alongside the OpenVAF/OSDI device path, this ngspice is built with **XSPICE**

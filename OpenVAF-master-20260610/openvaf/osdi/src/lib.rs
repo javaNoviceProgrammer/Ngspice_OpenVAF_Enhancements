@@ -383,6 +383,16 @@ pub fn compile<'a>(
         let mut stat_param_truncs_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // E-554
         let mut stat_param_derived_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // E-633
         let mut any_derived = false;
+        // Enhancement-654: { param_id: u32, kind: u32, value: f64 } -- one entry
+        // per (parameter, corner name) of a `(* corner="…" *)` attribute, with
+        // the corner's name in a parallel C-string array. kind 0: an absolute
+        // value, 1: a fraction of the nominal, 2: a multiple of the declared
+        // sigma. Consumed by ngspice's `.option corner=<name>` (osdisetup.c).
+        let corner_info_ty =
+            cx.ty_struct("OsdiCornerInfo", &[cx.ty_int(), cx.ty_int(), cx.ty_double()]);
+        let mut corner_counts: Vec<u32> = Vec::new();
+        let mut corner_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
+        let mut corner_names_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
         let mut param_given_fns_ll: Vec<&llvm_sys::LLVMValue> = Vec::new(); // E-555
         let mut param_range_counts: Vec<u32> = Vec::new(); // E-558
         let mut param_ranges_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
@@ -553,11 +563,35 @@ pub fn compile<'a>(
                     }
                 }
 
+                // Enhancement-654: the declared corners of this module
+                let corners = cguint.corner_params();
+                corner_counts.push(corners.len() as u32);
+                for (param_id, kind, value, name) in corners {
+                    corner_infos_ll.push(cx.const_struct(
+                        corner_info_ty,
+                        &[
+                            cx.const_unsigned_int(param_id),
+                            cx.const_unsigned_int(kind),
+                            cx.const_real(value),
+                        ],
+                    ));
+                    corner_names_ll.push(cx.const_str_uninterned(&name));
+                }
+
                 descriptor.to_ll_val(&cx, &tys)
             })
             .collect();
 
         cx.export_array("OSDI_DESCRIPTORS", tys.osdi_descriptor, &descriptors, true, false);
+        // Enhancement-654: the declared corners, only when some module declares
+        // one -- an older simulator sees no new symbol, an older object has none
+        if corner_counts.iter().any(|&n| n > 0) {
+            let counts_ll: Vec<_> =
+                corner_counts.iter().map(|&n| cx.const_unsigned_int(n)).collect();
+            cx.export_array("OSDI_CORNER_COUNTS", cx.ty_int(), &counts_ll, true, false);
+            cx.export_array("OSDI_CORNER_INFOS", corner_info_ty, &corner_infos_ll, true, false);
+            cx.export_array("OSDI_CORNER_NAMES", cx.ty_ptr(), &corner_names_ll, true, false);
+        }
         // Enhancement-555: one given-flag entry point per descriptor, in order
         cx.export_array("OSDI_PARAM_GIVEN_FNS", cx.ty_ptr(), &param_given_fns_ll, true, false);
         // Enhancement-558: the declared ranges, one C string per parameter in
@@ -875,6 +909,9 @@ impl OsdiModule<'_> {
             literals.get_or_intern(&param.unit);
             literals.get_or_intern(&param.description);
             literals.get_or_intern(&param.group);
+            for corner in &param.corners {
+                literals.get_or_intern(&*corner.name); // Enhancement-654
+            }
         }
 
         for (var, opvar_info) in self.info.op_vars.iter() {

@@ -26,6 +26,7 @@
 #include "ngspice/randnumb.h"    /* Enhancement-622: the shared -inflate scope */
 #include "ngspice/stringutil.h"  /* E-555: cieq */
 #include <string.h>
+#include <ctype.h>               /* Enhancement-654: tolower */
 
 /*
  * Handles any errors raised by the setup_instance and setup_model functions
@@ -719,6 +720,14 @@ static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry
                                  int seed, bool verbose);           /* Enhancement-633 */
 static bool osdimc_apply_is_pending(void);
 static bool osdimc_walk_active(void);       /* MC hunt F3 */
+/* Enhancement-654: `.option corner=<name>` */
+static void osdimc_corner_read(void);
+static bool osdimc_corner_check(CKTcircuit *ckt);
+static void osdimc_corner_run(CKTcircuit *ckt);
+static void osdimc_apply_corner_type(CKTcircuit *ckt, int type, bool verbose);
+static bool osdimc_cornered(const OsdiRegistryEntry *entry, uint32_t id);
+static bool osdimc_corner_selected(void);   /* a corner is in force */
+static bool osdimc_corner_refused(void);    /* ... and no loaded model declares it */
 
 
 /* Enhancement-572: the one reader of `.option mcseed`. It was probed as CP_NUM
@@ -1335,6 +1344,15 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
     osdimc_apply_type(ckt, inModel->GENmodType, seed535,
                       cp_getvar("osdimc_verbose", CP_BOOL, NULL, 0));
   }
+  /* Enhancement-654: a corner no loaded model declares refuses the run (said
+   * by OSDImcNewRun); otherwise the corner's writes for a pending run -- the
+   * first after a source, or a stale table -- now that the nominals are in */
+  if (osdimc_corner_refused())
+    return E_PARMVAL;
+  if (osdimc_apply_is_pending() && osdimc_corner_selected() &&
+      ckt->CKThead[inModel->GENmodType] && osdi_devtype_is_osdi(inModel->GENmodType))
+    osdimc_apply_corner_type(ckt, inModel->GENmodType,
+                             cp_getvar("osdimc_verbose", CP_BOOL, NULL, 0));
   /* Enhancement-633 (hunt F21): the draws of the parameters whose default
    * is derived from other parameters -- on the default re-resolved from this
    * trial's other draws, which are all in place now, pending or not */
@@ -1995,6 +2013,21 @@ static CKTcircuit *osdimc_ckt;      /* table belongs to this circuit */
 static unsigned long osdimc_trial;  /* 1 = nominal baseline, 2+ = drawn */
 static unsigned long osdimc_current_trial(void) { return osdimc_trial; }
 static bool osdimc_active;          /* drawn values are currently applied */
+
+/* Enhancement-654: `.option corner=<name>` -- the corner in force for this
+ * run (folded to lower case; empty = nominal), whether it is one some loaded
+ * model declares (else the setup refuses the run), whether a corner value is
+ * currently written into some parameter, and the (model type, name) pairs
+ * the "declares no corner of that name" note was printed for. */
+static char osdimc_corner[80];
+static bool osdimc_corner_on;
+static bool osdimc_corner_ok;
+static bool osdimc_corner_active;
+#define OSDIMC_CORNER_SAID_MAX 64
+static struct { const void *descr; char name[80]; } osdimc_corner_said[OSDIMC_CORNER_SAID_MAX];
+static int osdimc_corner_said_n;
+static bool osdimc_corner_selected(void) { return osdimc_corner_on; }
+static bool osdimc_corner_refused(void) { return osdimc_corner_on && !osdimc_corner_ok; }
 
 /* bug-hunt F5: which trial a setup failure was last reported for */
 static unsigned long osdimc_failed_trial_reported;
@@ -2660,54 +2693,68 @@ static double osdimc_value(uint64_t key, const OsdiStatParam *info,
  * the deck never set (Enhancement-476 recorded that defaults are applied
  * during setup) -- and only inserting MISSING entries, so the drawn values a
  * later trial has already written are never mistaken for nominals. */
+static void osdimc_capture_id(const OsdiRegistryEntry *entry,
+                              const OsdiDescriptor *descr, GENmodel *gen_model,
+                              void *model, uint32_t id) {
+  if (id >= descr->num_instance_params) { /* model parameter */
+    OsdiMcNominal *e = osdimc_find(model, id);
+    if (!e || e->stale) {
+      double val;
+      void *src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
+      if (src) {
+        memcpy(&val, src, sizeof(double));
+        if (e)          /* Enhancement-614: the re-resolved default */
+          osdimc_refresh(e, val, osdimc_query_given(entry, NULL, model, id));
+        else
+          osdimc_insert(model, id, val,
+                        osdimc_query_given(entry, NULL, model, id));
+      }
+    }
+  } else { /* instance parameter */
+    for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+         gen_inst = gen_inst->GENnextInstance) {
+      void *inst = osdi_instance_data((OsdiRegistryEntry *)entry, gen_inst);
+      OsdiMcNominal *e = osdimc_find(inst, id);
+      if (!e || e->stale) {
+        double val;
+        void *src = descr->access(inst, model, id,
+                                  ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
+        if (src) {
+          memcpy(&val, src, sizeof(double));
+          if (e)        /* Enhancement-614: the re-resolved default */
+            osdimc_refresh(e, val, osdimc_query_given(entry, inst, model, id));
+          else
+            osdimc_insert(inst, id, val,
+                          osdimc_query_given(entry, inst, model, id));
+        }
+      }
+    }
+  }
+}
+
 static void osdimc_capture(const OsdiRegistryEntry *entry, GENmodel *inModel) {
   const OsdiDescriptor *descr = entry->descriptor;
   const OsdiStatParam *infos = entry->stat_param_infos;
+  const OsdiCornerParam *cinfos = entry->corner_param_infos;   /* Enhancement-654 */
+  const bool stats = entry->num_stat_params > 0 && infos && osdimc_enabled();
+  const bool corners = entry->num_corner_params > 0 && cinfos && osdimc_corner_on;
 
-  if (entry->num_stat_params == 0 || !infos || !osdimc_enabled()) {
+  if (!stats && !corners) {
     return;
   }
 
   for (GENmodel *gen_model = inModel; gen_model;
        gen_model = gen_model->GENnextModel) {
     void *model = osdi_model_data(gen_model);
-    for (uint32_t s = 0; s < entry->num_stat_params; s++) {
-      uint32_t id = infos[s].param_id;
-      if (id >= descr->num_instance_params) { /* model parameter */
-        OsdiMcNominal *e = osdimc_find(model, id);
-        if (!e || e->stale) {
-          double val;
-          void *src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
-          if (src) {
-            memcpy(&val, src, sizeof(double));
-            if (e)          /* Enhancement-614: the re-resolved default */
-              osdimc_refresh(e, val, osdimc_query_given(entry, NULL, model, id));
-            else
-              osdimc_insert(model, id, val,
-                            osdimc_query_given(entry, NULL, model, id));
-          }
-        }
-      } else { /* instance parameter */
-        for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
-             gen_inst = gen_inst->GENnextInstance) {
-          void *inst = osdi_instance_data((OsdiRegistryEntry *)entry, gen_inst);
-          OsdiMcNominal *e = osdimc_find(inst, id);
-          if (!e || e->stale) {
-            double val;
-            void *src = descr->access(inst, model, id,
-                                      ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
-            if (src) {
-              memcpy(&val, src, sizeof(double));
-              if (e)        /* Enhancement-614: the re-resolved default */
-                osdimc_refresh(e, val, osdimc_query_given(entry, inst, model, id));
-              else
-                osdimc_insert(inst, id, val,
-                              osdimc_query_given(entry, inst, model, id));
-            }
-          }
-        }
-      }
-    }
+    if (stats)
+      for (uint32_t s = 0; s < entry->num_stat_params; s++)
+        osdimc_capture_id(entry, descr, gen_model, model, infos[s].param_id);
+    /* Enhancement-654: a cornered parameter needs its nominal too -- for a
+     * relative or sigma corner, and for the restore when the corner goes
+     * off (osdimc_find makes a second capture of a statistical one a no-op) */
+    if (corners)
+      for (uint32_t s = 0; s < entry->num_corner_params; s++)
+        osdimc_capture_id(entry, descr, gen_model, model, cinfos[s].param_id);
   }
 }
 
@@ -2981,7 +3028,369 @@ static void osdimc_write(const OsdiDescriptor *descr, void *inst, void *model,
  * a pinned value and a pending draw are reported as they ran). The callback
  * gets the owner -- the model card's name for a process parameter, the
  * instance's for a mismatch one -- and the parameter's name. */
+/* ====================================================================== *
+ *        Enhancement-654: `.option corner=<name>` -- process corners       *
+ * ====================================================================== *
+ *
+ * A Verilog-A parameter declared with `(* corner="ss=115, ff=-10%,
+ * sf=+3sigma" *)` names its position at each process corner: an absolute
+ * value, a fraction of the nominal, or a multiple of the declared sigma
+ * (through the transform a draw uses -- a lognormal's log domain, a
+ * truncation's clamp, a uniform's half-width). The compiler exports the
+ * entries through OSDI_CORNER_{COUNTS,INFOS,NAMES}; `.option corner=<name>`
+ * (or `set corner=<name>` between runs) writes every such parameter's value
+ * at that corner through the ordinary setter on each run-class command --
+ * on the FIRST run too, through the pending path the draws use (nominals
+ * are resolvable only after one setup pass, so OSDIsetup applies them right
+ * after its setup loops, before OSDItemp evaluates the init-resident code).
+ *
+ *   - A cornered parameter does not draw under `.option osdimc` besides:
+ *     the corner pins the process coordinate; mismatch on the other
+ *     parameters goes on (a wcd/highsigma walk coordinate on it is consumed
+ *     and ignored, so the walk's dimensions do not shift).
+ *   - A parameter that names other corners but not this one sits at its
+ *     nominal; a model type that declares corners but none of this name runs
+ *     at nominal, said once per (type, name); a name no loaded model declares
+ *     fails the run (a typo must not run the nominal under a corner's name).
+ *   - `tt`, `nom` and `nominal` are the nominal. `unset corner` puts every
+ *     cornered parameter back on the next run.
+ *   - `alter`/`altermod` of a cornered parameter recentres it (the E-531
+ *     rule): a relative or sigma corner then moves with the new nominal, an
+ *     absolute one writes its value over it at the next run.
+ */
+static void osdimc_corner_read(void) {
+  char buf[sizeof osdimc_corner];
+  size_t n = 0;
+  osdimc_corner_on = false;
+  osdimc_corner[0] = '\0';
+  if (!cp_getvar("corner", CP_STRING, buf, sizeof buf))
+    return;
+  for (const char *p = buf; *p && n + 1 < sizeof osdimc_corner; p++) {
+    if (*p == '"' || *p == ' ' || *p == '\t')
+      continue;
+    osdimc_corner[n++] = (char)tolower((unsigned char)*p);
+  }
+  osdimc_corner[n] = '\0';
+  if (n == 0 || !strcmp(osdimc_corner, "tt") || !strcmp(osdimc_corner, "nom") ||
+      !strcmp(osdimc_corner, "nominal"))
+    return;
+  osdimc_corner_on = true;
+}
+
+/* the entry of parameter `id` for the corner in force, or NULL; `has_any`
+ * says whether the parameter names any corner at all */
+static const OsdiCornerParam *osdimc_corner_lookup(const OsdiRegistryEntry *entry,
+                                                   uint32_t id, bool *has_any) {
+  const OsdiCornerParam *cinfos = entry->corner_param_infos;
+  const OsdiCornerParam *hit = NULL;
+  if (has_any)
+    *has_any = false;
+  if (!cinfos)
+    return NULL;
+  for (uint32_t s = 0; s < entry->num_corner_params; s++) {
+    if (cinfos[s].param_id != id)
+      continue;
+    if (has_any)
+      *has_any = true;
+    if (!hit && !strcmp(cinfos[s].name, osdimc_corner))
+      hit = &cinfos[s];
+  }
+  return hit;
+}
+
+/* is this parameter held by the corner in force? (the draw appliers skip it) */
+static bool osdimc_cornered(const OsdiRegistryEntry *entry, uint32_t id) {
+  return osdimc_corner_on && osdimc_corner_ok &&
+         osdimc_corner_lookup(entry, id, NULL) != NULL;
+}
+
+static const OsdiStatParam *osdimc_stat_of(const OsdiRegistryEntry *entry, uint32_t id) {
+  const OsdiStatParam *infos = entry->stat_param_infos;
+  for (uint32_t s = 0; infos && s < entry->num_stat_params; s++)
+    if (infos[s].param_id == id)
+      return &infos[s];
+  return NULL;
+}
+
+/* the parameter's value at the corner: the entry's value, nominal * (1 + f),
+ * or the draw transform at coordinate z (a truncation clamps z as the wcd
+ * walk is clamped; a uniform's sigma is its half-width) */
+static double osdimc_corner_value(const OsdiCornerParam *cp,
+                                  const OsdiStatParam *info, double nominal) {
+  double z, sigma;
+  switch (cp->kind) {
+  case OSDI_CORNER_ABS:
+    return cp->value;
+  case OSDI_CORNER_REL:
+    return nominal * (1.0 + cp->value);
+  default:
+    break;
+  }
+  if (!info)
+    return nominal;   /* the compiler refuses sigmas without statistics */
+  z = cp->value;
+  if (info->trunc > 0.0 && fabs(z) > info->trunc)
+    z = copysign(info->trunc, z);
+  sigma = osdimc_sigma(info, nominal);
+  if (info->dist & OSDI_DIST_LOGNORMAL)
+    return nominal * exp(sigma * z);
+  return nominal + sigma * z;
+}
+
+static void osdimc_corner_describe(const OsdiCornerParam *cp, char *buf, size_t n) {
+  switch (cp->kind) {
+  case OSDI_CORNER_ABS:
+    snprintf(buf, n, "absolute");
+    break;
+  case OSDI_CORNER_REL:
+    snprintf(buf, n, "%+g%%", 100.0 * cp->value);
+    break;
+  default:
+    snprintf(buf, n, "%+g sigma", cp->value);
+    break;
+  }
+}
+
+/* the distinct corner names a descriptor declares, appended to `names` */
+static int osdimc_corner_collect(const OsdiRegistryEntry *entry, const char **names,
+                                 int n, int cap) {
+  const OsdiCornerParam *cinfos = entry->corner_param_infos;
+  for (uint32_t s = 0; cinfos && s < entry->num_corner_params; s++) {
+    int k;
+    for (k = 0; k < n; k++)
+      if (!strcmp(names[k], cinfos[s].name))
+        break;
+    if (k == n && n < cap)
+      names[n++] = cinfos[s].name;
+  }
+  return n;
+}
+
+static void osdimc_corner_join(const char **names, int n, char *buf, size_t cap) {
+  size_t used = 0;
+  buf[0] = '\0';
+  for (int k = 0; k < n && used + 2 < cap; k++) {
+    int w = snprintf(buf + used, cap - used, "%s%s", k ? ", " : "", names[k]);
+    if (w < 0)
+      break;
+    used += (size_t)w;
+  }
+}
+
+/* Enhancement-654: does some loaded Verilog-A model of this circuit declare
+ * the corner in force? Said once per run when none does; the setup then
+ * refuses the run (E_PARMVAL) rather than run the nominal under the name. */
+static bool osdimc_corner_check(CKTcircuit *ckt) {
+  const char *names[64];
+  int n = 0;
+  bool any_model = false;
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    any_model = true;
+    n = osdimc_corner_collect(osdi_reg_entry_model(ckt->CKThead[type]), names, n, 64);
+  }
+  for (int k = 0; k < n; k++)
+    if (!strcmp(names[k], osdimc_corner))
+      return true;
+  if (!any_model)
+    return true;   /* no Verilog-A device at all: nothing to corner, nothing to refuse */
+  {
+    char list[512];
+    osdimc_corner_join(names, n, list, sizeof list);
+    if (n)
+      fprintf(stderr, "Error: .option corner=%s: no loaded Verilog-A model declares a corner "
+                      "of that name (declared: %s); the run is refused\n",
+              osdimc_corner, list);
+    else
+      fprintf(stderr, "Error: .option corner=%s: no loaded Verilog-A model declares any "
+                      "corner; the run is refused\n", osdimc_corner);
+  }
+  return false;
+}
+
+/* said once per (model type, corner name): the type declares corners, but
+ * none of this name, so its parameters stay at nominal */
+static void osdimc_corner_say_missing(const OsdiRegistryEntry *entry) {
+  const OsdiDescriptor *descr = entry->descriptor;
+  const char *names[64];
+  char list[512];
+  for (int i = 0; i < osdimc_corner_said_n; i++)
+    if (osdimc_corner_said[i].descr == descr &&
+        !strcmp(osdimc_corner_said[i].name, osdimc_corner))
+      return;
+  if (osdimc_corner_said_n < OSDIMC_CORNER_SAID_MAX) {
+    osdimc_corner_said[osdimc_corner_said_n].descr = descr;
+    snprintf(osdimc_corner_said[osdimc_corner_said_n].name,
+             sizeof osdimc_corner_said[0].name, "%s", osdimc_corner);
+    osdimc_corner_said_n++;
+  }
+  osdimc_corner_join(names, osdimc_corner_collect(entry, names, 0, 64), list, sizeof list);
+  fprintf(stderr, "Note: corner %s: model '%s' declares no corner of that name (declared: "
+                  "%s); it runs at nominal\n", osdimc_corner, descr->name, list);
+}
+
+/* the first entry of a parameter is the one the appliers act on (a parameter
+ * has one entry per corner name) */
+static bool osdimc_corner_first(const OsdiCornerParam *cinfos, uint32_t s) {
+  for (uint32_t t = 0; t < s; t++)
+    if (cinfos[t].param_id == cinfos[s].param_id)
+      return false;
+  return true;
+}
+
+/* write one owner's cornered parameter: its value at the corner in force,
+ * or its nominal when it names other corners only and a corner was applied
+ * before (nothing is written to a parameter already at nominal) */
+static void osdimc_corner_write_one(const OsdiRegistryEntry *entry,
+                                    const OsdiDescriptor *descr, void *inst,
+                                    void *model, const char *owner_name,
+                                    uint32_t id, bool verbose) {
+  const void *owner = inst ? inst : model;
+  OsdiMcNominal *e = osdimc_find(owner, id);
+  const OsdiCornerParam *cp = osdimc_corner_lookup(entry, id, NULL);
+  const OsdiStatParam *info = osdimc_stat_of(entry, id);
+  const char *pname = descr->param_opvar[id].name[0];
+  double val;
+  if (!e || e->pinned)
+    return;   /* no nominal (a failed card), or a machine write owns the value */
+  if (info && osdimc_gated_off(info, e)) {              /* E-555 */
+    osdimc_say_gated(e, owner_name, pname);
+    return;
+  }
+  if (!cp) {
+    if (!osdimc_corner_active)
+      return;
+    osdimc_write(descr, inst, model, id, e->nominal);
+    osdimc_restore_given(entry, inst, model, id, e);
+    return;
+  }
+  val = osdimc_corner_value(cp, info, e->nominal);
+  if (!isfinite(val)) {
+    fprintf(stderr, "corner %s: %s:%s is not finite; the parameter is left at its "
+                    "nominal\n", osdimc_corner, owner_name, pname);
+    val = e->nominal;
+  }
+  osdimc_write(descr, inst, model, id, val);
+  osdimc_corner_active = true;
+  if (verbose) {
+    char how[48];
+    osdimc_corner_describe(cp, how, sizeof how);
+    printf("corner %s: %s:%s = %g (nominal %g, %s)\n", osdimc_corner, owner_name,
+           pname, val, e->nominal, how);
+  }
+}
+
+/* the corner's writes for one device type (or the nominal, see above) */
+static void osdimc_apply_corner_type(CKTcircuit *ckt, int type, bool verbose) {
+  OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+  const OsdiDescriptor *descr = entry->descriptor;
+  const OsdiCornerParam *cinfos = entry->corner_param_infos;
+  bool declares = false;
+  if (entry->num_corner_params == 0 || !cinfos)
+    return;
+  for (uint32_t s = 0; s < entry->num_corner_params; s++)
+    if (!strcmp(cinfos[s].name, osdimc_corner))
+      declares = true;
+  if (!declares)
+    osdimc_corner_say_missing(entry);
+  for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
+       gen_model = gen_model->GENnextModel) {
+    void *model = osdi_model_data(gen_model);
+    for (uint32_t s = 0; s < entry->num_corner_params; s++) {
+      uint32_t id = cinfos[s].param_id;
+      if (!osdimc_corner_first(cinfos, s))
+        continue;
+      if (id >= descr->num_instance_params) {
+        osdimc_corner_write_one(entry, descr, NULL, model,
+                                (char *)gen_model->GENmodName, id, verbose);
+      } else {
+        for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+             gen_inst = gen_inst->GENnextInstance) {
+          void *inst = osdi_instance_data(entry, gen_inst);
+          osdimc_corner_write_one(entry, descr, inst, model,
+                                  (char *)gen_inst->GENname, id, verbose);
+        }
+      }
+    }
+  }
+}
+
+/* the corner has gone off: every cornered parameter back to its nominal */
+static void osdimc_corner_restore(CKTcircuit *ckt) {
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+    const OsdiDescriptor *descr = entry->descriptor;
+    const OsdiCornerParam *cinfos = entry->corner_param_infos;
+    if (entry->num_corner_params == 0 || !cinfos)
+      continue;
+    for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
+         gen_model = gen_model->GENnextModel) {
+      void *model = osdi_model_data(gen_model);
+      for (uint32_t s = 0; s < entry->num_corner_params; s++) {
+        uint32_t id = cinfos[s].param_id;
+        if (!osdimc_corner_first(cinfos, s))
+          continue;
+        if (id >= descr->num_instance_params) {
+          OsdiMcNominal *e = osdimc_find(model, id);
+          if (e && !e->stale && !e->pinned) {
+            osdimc_write(descr, NULL, model, id, e->nominal);
+            osdimc_restore_given(entry, NULL, model, id, e);
+          }
+        } else {
+          for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+               gen_inst = gen_inst->GENnextInstance) {
+            void *inst = osdi_instance_data(entry, gen_inst);
+            OsdiMcNominal *e = osdimc_find(inst, id);
+            if (e && !e->stale && !e->pinned) {
+              osdimc_write(descr, inst, model, id, e->nominal);
+              osdimc_restore_given(entry, inst, model, id, e);
+            }
+          }
+        }
+      }
+    }
+  }
+  osdimc_corner_active = false;
+}
+
+/* the corner's part of a run: the writes now, or pending for the setup when
+ * the nominal table is empty or stale (the path the draws use), or the
+ * restore when the corner has just gone off */
+static void osdimc_corner_run(CKTcircuit *ckt) {
+  bool verbose;
+  if (!osdimc_corner_on) {
+    if (osdimc_corner_active)
+      osdimc_corner_restore(ckt);
+    return;
+  }
+  if (!osdimc_corner_ok)
+    return;               /* the setup refuses the run */
+  /* with the statistics off nothing else clears the pins a completed
+   * command's writes left (an `altermod` goes through the setter too), and
+   * a pinned entry is one the corner would leave alone; outside a hold they
+   * are leftovers, exactly as OSDImcNewRun treats them on the draw path */
+  if (osdimc_hold_depth == 0)
+    osdimc_clear_pins();
+  if (osdimc_tbl_len == 0 || osdimc_any_stale()) {
+    osdimc_apply_pending = true;
+    return;
+  }
+  verbose = cp_getvar("osdimc_verbose", CP_BOOL, NULL, 0);
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    osdimc_apply_corner_type(ckt, type, verbose);
+  }
+}
+
 bool OSDImcEnabled(void) { return osdimc_enabled(); }
+
+/* Enhancement-654: a corner is in force for the current run (savemc records
+ * the cornered parameters under it as it records draws under osdimc) */
+bool OSDImcCornerSelected(void) { return osdimc_corner_on; }
 
 bool OSDImcHasStats(CKTcircuit *ckt) {
   if (!ckt)
@@ -2991,6 +3400,8 @@ bool OSDImcHasStats(CKTcircuit *ckt) {
       continue;
     OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
     if (entry->num_stat_params > 0 && entry->stat_param_infos)
+      return true;
+    if (entry->num_corner_params > 0 && entry->corner_param_infos)   /* E-654 */
       return true;
   }
   return false;
@@ -3020,6 +3431,29 @@ static void osdimc_snapshot_item(OSDImcSnapshotFn fn, void *ctx,
   fn(&it, ctx);
 }
 
+static void osdimc_snapshot_id(OSDImcSnapshotFn fn, void *ctx,
+                               const OsdiRegistryEntry *entry,
+                               const OsdiDescriptor *descr, GENmodel *gen_model,
+                               void *model, uint32_t id) {
+  const char *pname = descr->param_opvar[id].name[0];
+  if (id >= descr->num_instance_params) {
+    void *src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
+    if (src)
+      osdimc_snapshot_item(fn, ctx, (char *)gen_model->GENmodName, pname,
+                           *(double *)src, 1, osdimc_find(model, id));
+  } else {
+    for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+         gen_inst = gen_inst->GENnextInstance) {
+      void *inst = osdi_instance_data((OsdiRegistryEntry *)entry, gen_inst);
+      void *src = descr->access(inst, model, id,
+                                ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
+      if (src)
+        osdimc_snapshot_item(fn, ctx, (char *)gen_inst->GENname, pname,
+                             *(double *)src, 0, osdimc_find(inst, id));
+    }
+  }
+}
+
 void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx) {
   if (!ckt || !fn)
     return;
@@ -3029,37 +3463,27 @@ void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx) {
     OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
     const OsdiDescriptor *descr = entry->descriptor;
     const OsdiStatParam *infos = entry->stat_param_infos;
-    if (entry->num_stat_params == 0 || !infos)
+    const OsdiCornerParam *cinfos = entry->corner_param_infos;   /* E-654 */
+    const bool stats = entry->num_stat_params > 0 && infos;
+    const bool corners = entry->num_corner_params > 0 && cinfos;
+    if (!stats && !corners)
       continue;
     for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
          gen_model = gen_model->GENnextModel) {
       void *model = osdi_model_data(gen_model);
-      for (uint32_t s = 0; s < entry->num_stat_params; s++) {
-        uint32_t id = infos[s].param_id;
-        const char *pname = descr->param_opvar[id].name[0];
-        if (id >= descr->num_instance_params) {
-          void *src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
-          if (src)
-            osdimc_snapshot_item(fn, ctx, (char *)gen_model->GENmodName, pname,
-                                 *(double *)src, 1, osdimc_find(model, id));
-        } else {
-          for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
-               gen_inst = gen_inst->GENnextInstance) {
-            void *inst = osdi_instance_data(entry, gen_inst);
-            void *src = descr->access(inst, model, id,
-                                      ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
-            if (src)
-              osdimc_snapshot_item(fn, ctx, (char *)gen_inst->GENname, pname,
-                                   *(double *)src, 0, osdimc_find(inst, id));
-          }
-        }
-      }
+      if (stats)
+        for (uint32_t s = 0; s < entry->num_stat_params; s++)
+          osdimc_snapshot_id(fn, ctx, entry, descr, gen_model, model, infos[s].param_id);
+      /* Enhancement-654: a cornered parameter without statistics is a
+       * process parameter the run set too -- once per parameter */
+      if (corners)
+        for (uint32_t s = 0; s < entry->num_corner_params; s++)
+          if (osdimc_corner_first(cinfos, s) && !osdimc_stat_of(entry, cinfos[s].param_id))
+            osdimc_snapshot_id(fn, ctx, entry, descr, gen_model, model, cinfos[s].param_id);
     }
   }
 }
 
-/* The per-run entry point: called by if_run for every run-class command
- * (`run`, `tran`, `op`, ... -- everything but `resume`). */
 void OSDImcNewRun(CKTcircuit *ckt) {
   int seed = 1;
   bool verbose;
@@ -3083,11 +3507,14 @@ void OSDImcNewRun(CKTcircuit *ckt) {
       osdimc_ckt = ckt;
       osdimc_tbl_len = 0;
       osdimc_active = false;
+      osdimc_corner_active = false;     /* Enhancement-654 */
       if (!keep)
         osdimc_trial = 0;
     }
   }
   osdimc_clear_run_writes();          /* Enhancement-626 (hunt F10) */
+  osdimc_corner_read();               /* Enhancement-654: the corner in force */
+  osdimc_corner_ok = !osdimc_corner_on || osdimc_corner_check(ckt);
 
   if (!osdimc_enabled()) {
     /* option switched off: put every drawn parameter back to its nominal.
@@ -3152,6 +3579,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
     }
     osdimc_trial = 0;
     osdimc_apply_pending = false;
+    osdimc_corner_run(ckt);           /* Enhancement-654: a corner with the statistics off */
     return;
   }
 
@@ -3173,6 +3601,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
       osdimc_trial++;
     } else if (osdimc_trial <= 1 && !osdimc_walk_on) {   /* MC hunt F3 */
       osdimc_apply_pending = false;
+      osdimc_corner_run(ckt);         /* Enhancement-654 */
       return;
     }
   } else {
@@ -3188,6 +3617,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
    * nominal baseline. */
   if (osdimc_trial < 2 && !osdimc_walk_on) {   /* MC hunt F3: a walk is not a draw */
     osdimc_apply_pending = false;
+    osdimc_corner_run(ckt);           /* Enhancement-654: the baseline may be cornered */
     return;
   }
 
@@ -3210,6 +3640,7 @@ void OSDImcNewRun(CKTcircuit *ckt) {
     }
     osdimc_apply_type(ckt, type, seed, verbose);
   }
+  osdimc_corner_run(ckt);             /* Enhancement-654: after the draws */
 }
 
 /* Enhancement-535: apply the CURRENT trial's draws to one device type. Split
@@ -3260,6 +3691,13 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
             continue; /* no nominal (a failed card stays undrawn), or a
                          machine write owns the value (hunt bug 14) */
           }
+          if (osdimc_cornered(entry, id)) {           /* Enhancement-654 */
+            if (osdimc_walk_on) {
+              double zz;
+              (void)osdimc_walk_value(&infos[s], e->nominal, &walk_k, &zz);
+            }
+            continue;
+          }
           if (osdimc_gated_off(&infos[s], e)) {         /* E-555 */
             osdimc_say_gated(e, (char *)gen_model->GENmodName,
                              descr->param_opvar[id].name[0]);
@@ -3304,6 +3742,13 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
             void *inst = osdi_instance_data(entry, gen_inst);
             OsdiMcNominal *e = osdimc_find(inst, id);
             if (!e || e->pinned) {
+              continue;
+            }
+            if (osdimc_cornered(entry, id)) {         /* Enhancement-654 */
+              if (osdimc_walk_on) {
+                double zz;
+                (void)osdimc_walk_value(&infos[s], e->nominal, &walk_k, &zz);
+              }
               continue;
             }
             if (osdimc_gated_off(&infos[s], e)) {       /* E-555 */
@@ -3410,7 +3855,8 @@ static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry
         continue;
       if (id >= descr->num_instance_params) {
         OsdiMcNominal *e = osdimc_find(model, id);
-        if (e && e->given == 0 && !e->pinned && !osdimc_gated_off(&infos[s], e)) {
+        if (e && e->given == 0 && !e->pinned && !osdimc_gated_off(&infos[s], e) &&
+            !osdimc_cornered(entry, id)) {                /* Enhancement-654 */
           (void)given_fn(NULL, model, id, 2);
           rederive_model = true;
         }
@@ -3419,7 +3865,8 @@ static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry
              gen_inst = gen_inst->GENnextInstance) {
           void *inst = osdi_instance_data(entry, gen_inst);
           OsdiMcNominal *e = osdimc_find(inst, id);
-          if (e && e->given == 0 && !e->pinned && !osdimc_gated_off(&infos[s], e)) {
+          if (e && e->given == 0 && !e->pinned && !osdimc_gated_off(&infos[s], e) &&
+            !osdimc_cornered(entry, id)) {                /* Enhancement-654 */
             (void)given_fn(inst, model, id, 2);
             rederive_inst = true;
           }
@@ -3465,7 +3912,8 @@ static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry
       if (id >= descr->num_instance_params) {
         OsdiMcNominal *e = osdimc_find(model, id);
         double val, z = 0.0, nom;
-        if (!e || e->pinned || osdimc_gated_off(&infos[s], e))
+        if (!e || e->pinned || osdimc_gated_off(&infos[s], e) ||
+            osdimc_cornered(entry, id))                    /* Enhancement-654 */
           continue;
         if (!(infos[s].derived && e->given == 0)) {
           if (osdimc_walk_on)                 /* consumed by osdimc_apply_type */
@@ -3501,7 +3949,8 @@ static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry
           void *inst = osdi_instance_data(entry, gen_inst);
           OsdiMcNominal *e = osdimc_find(inst, id);
           double val, z = 0.0, nom;
-          if (!e || e->pinned || osdimc_gated_off(&infos[s], e))
+          if (!e || e->pinned || osdimc_gated_off(&infos[s], e) ||
+            osdimc_cornered(entry, id))                    /* Enhancement-654 */
             continue;
           if (!(infos[s].derived && e->given == 0)) {
             if (osdimc_walk_on)

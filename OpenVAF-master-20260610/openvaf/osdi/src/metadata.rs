@@ -18,7 +18,7 @@ use llvm_sys::LLVMValue;
 use mir::{ValueDef, F_ZERO};
 use mir_llvm::CodegenCx;
 use sim_back::dae::{MatrixEntry, NoiseSourceKind, ResidualNatureKind};
-use sim_back::{ParamStat, SimUnknownKind};
+use sim_back::{CornerKind, ParamStat, SimUnknownKind};
 use smol_str::SmolStr;
 use stdx::iter::zip;
 
@@ -345,6 +345,40 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                     stat.trunc,
                     param_info.default_value.is_none(),
                 ));
+            }
+            id += 1;
+        }
+        res
+    }
+
+    /// Enhancement-654: the declared corners of every parameter that carries
+    /// them, in `param_opvar()` order: (id, kind, value, name). kind 0 = an
+    /// absolute value, 1 = a fraction of the nominal, 2 = a multiple of the
+    /// declared sigma (the parameter then also has a `stat_params` entry).
+    pub fn corner_params(&self) -> Vec<(u32, u32, f64, String)> {
+        let kind_of = |k: CornerKind| match k {
+            CornerKind::Absolute => 0u32,
+            CornerKind::Relative => 1,
+            CornerKind::Sigma => 2,
+        };
+        let OsdiCompilationUnit { inst_data, model_data, module, .. } = self;
+        let mut res = Vec::new();
+        let mut id = 0u32;
+        for param in inst_data.params.keys() {
+            if let OsdiInstanceParam::User(param) = param {
+                for c in &module.info.params[param].corners {
+                    res.push((id, kind_of(c.kind), c.value, c.name.to_string()));
+                }
+            }
+            id += 1;
+        }
+        for param in model_data.params.keys() {
+            let param_info = &module.info.params[param];
+            if param_info.is_instance {
+                continue;
+            }
+            for c in &param_info.corners {
+                res.push((id, kind_of(c.kind), c.value, c.name.to_string()));
             }
             id += 1;
         }
