@@ -58,6 +58,9 @@ Checks (per solver):
   [25] the `corners` loop under `.option osdimc`: the `ss` row right
   [26] a `sweep` as the first cornered run under `.option osdimc`: its
        first point right
+  [27] Enhancement-662 (hunt F3): a corner named `tt`, `nom` or `nominal`
+       is refused at compile time -- those spellings select the nominal in
+       ngspice and the entry could never be reached
 """
 import os
 import re
@@ -391,6 +394,25 @@ check("[25] the `corners` loop under `.option osdimc`: tt 100/2/1000, ss 115/2.2
 rc, out = run(f"op\nset corner=ss\nsweep v1 1 2 1 -analysis op -output rsh={A}rm[rsh] k={A}rm[k]\necho \"A: $&rsh $&k\"\n", "c26", ".option osdimc")
 check("[26] a `sweep` as the first cornered run under `.option osdimc`: both points 115 and 2.2",
       "A: 115 115 2.2 2.2" in out, out[-160:].replace("\n", "|"))
+
+# Enhancement-662 (hunt F3): the nominal's spellings as corner names
+with open(os.path.join(WORK, "ctt.va"), "w") as f:
+    f.write('''`include "disciplines.vams"
+module ctt(p, n);
+inout p, n; electrical p, n;
+(* corner="tt=5, ss=7" *)      parameter real a = 1;
+(* corner="Nominal=8, ff=9" *) parameter real b = 1;
+(* corner="nom=6" *)           parameter real c = 1;
+analog I(p,n) <+ V(p,n)*1e-3*(a+b+c);
+endmodule
+''')
+r = subprocess.run([VAF, "ctt.va", "-o", "ctt.osdi"], capture_output=True, text=True, cwd=WORK)
+o = r.stdout + r.stderr
+check("[27] corners named `tt`, `Nominal` and `nom` are refused: three errors naming the nominal, each located in its attribute, the help naming the nominal rule",
+      r.returncode != 0 and o.count("names the nominal: ngspice's `.option corner=tt` (`nom`, `nominal`) selects the nominal and never reaches this entry") == 3
+      and "corner 'tt' names" in o and "corner 'Nominal' names" in o and "corner 'nom' names" in o
+      and "the nominal needs no entry" in o and not os.path.exists(os.path.join(WORK, "ctt.osdi")),
+      f"rc={r.returncode} errors={o.count('names the nominal')}")
 
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)

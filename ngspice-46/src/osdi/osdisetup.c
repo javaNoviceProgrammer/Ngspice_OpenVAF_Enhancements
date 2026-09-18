@@ -3081,6 +3081,8 @@ static void osdimc_write(const OsdiDescriptor *descr, void *inst, void *model,
  *     rule): a relative or sigma corner then moves with the new nominal, an
  *     absolute one writes its value over it at the next run.
  */
+static bool osdimc_corner_is_nominal_name(const char *name);   /* E-662 */
+
 static void osdimc_corner_read(void) {
   char buf[sizeof osdimc_corner];
   size_t n = 0;
@@ -3094,9 +3096,7 @@ static void osdimc_corner_read(void) {
     osdimc_corner[n++] = (char)tolower((unsigned char)*p);
   }
   osdimc_corner[n] = '\0';
-  osdimc_corner_nominal_named = n > 0 && (!strcmp(osdimc_corner, "tt") ||
-                                          !strcmp(osdimc_corner, "nom") ||
-                                          !strcmp(osdimc_corner, "nominal"));
+  osdimc_corner_nominal_named = n > 0 && osdimc_corner_is_nominal_name(osdimc_corner);
   if (n == 0 || osdimc_corner_nominal_named)
     return;
   osdimc_corner_on = true;
@@ -3207,12 +3207,23 @@ static void osdimc_corner_describe(const OsdiCornerParam *cp, char *buf, size_t 
   }
 }
 
-/* the distinct corner names a descriptor declares, appended to `names` */
+/* Enhancement-662 (hunt F3): the nominal's spellings -- `.option corner=tt`,
+ * `nom`, `nominal` select the nominal (osdimc_corner_read), so a declared
+ * corner of that name (an object from a compiler before E-662, which refuses
+ * them) is unreachable and is no corner to loop over */
+static bool osdimc_corner_is_nominal_name(const char *name) {
+  return !strcmp(name, "tt") || !strcmp(name, "nom") || !strcmp(name, "nominal");
+}
+
+/* the distinct corner names a descriptor declares, appended to `names` --
+ * the nominal's spellings left out (E-662) */
 static int osdimc_corner_collect(const OsdiRegistryEntry *entry, const char **names,
                                  int n, int cap) {
   const OsdiCornerParam *cinfos = entry->corner_param_infos;
   for (uint32_t s = 0; cinfos && s < entry->num_corner_params; s++) {
     int k;
+    if (osdimc_corner_is_nominal_name(cinfos[s].name))
+      continue;
     for (k = 0; k < n; k++)
       if (!strcmp(names[k], cinfos[s].name))
         break;

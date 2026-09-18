@@ -6356,6 +6356,17 @@ void com_corners(wordlist *wl)
                         tfree(listed[nlisted]);
                         listed[nlisted] = copy("tt");
                     }
+                    /* Enhancement-662 (hunt F3): `-list TT,SS,ss` ran ss twice --
+                     * the names were folded but not folded together */
+                    for (k = 0; k < nlisted; k++)
+                        if (eq(listed[k], listed[nlisted]))
+                            break;
+                    if (k < nlisted) {
+                        fprintf(cp_err, "corners: '%s' is listed twice; it runs once\n",
+                                listed[nlisted]);
+                        tfree(listed[nlisted]);
+                        continue;
+                    }
                     nlisted++;
                 }
                 tfree(tok);

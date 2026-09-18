@@ -47,6 +47,8 @@ Checks (per solver):
   [20] a double-quoted -output expression with spaces, and a quoted -list
   [21] an unquoted multi-word -analysis is collected up to the next flag;
        `-analysis` followed by a flag is refused
+  [22] Enhancement-662 (hunt F3): a name listed twice (`-list TT,SS,ss,nom`,
+       folded) runs once, said once per duplicate
 """
 import os
 import re
@@ -305,6 +307,13 @@ rc, out = run(f"corners -list tt ss -analysis tran 1u 3u -output rsh={A}rm[rsh]\
 check("[21] an unquoted `-analysis tran 1u 3u` is collected up to the next flag (100 115); `-analysis -output` is refused",
       "analysis 'tran 1u 3u'" in out and "A: 100 115" in out and "unknown option '1u'" not in out
       and "corners: -analysis needs a command" in out, out[-240:].replace("\n", "|"))
+
+# Enhancement-662 (hunt F3): duplicates in -list are folded together
+rc, out = run(f"corners -list TT,SS,ss,nom -output rsh={A}rm[rsh]\necho \"A: $&rsh N: $corners_names\"\n", "c22")
+check("[22] `-list TT,SS,ss,nom`: two corners (tt ss), 100 115; 'ss' and 'tt' each said to be listed twice and run once",
+      "corners: 2 corners (tt ss)" in out and "A: 100 115 N: tt ss" in out
+      and "corners: 'ss' is listed twice; it runs once" in out and "corners: 'tt' is listed twice; it runs once" in out,
+      out[-260:].replace("\n", "|"))
 
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)

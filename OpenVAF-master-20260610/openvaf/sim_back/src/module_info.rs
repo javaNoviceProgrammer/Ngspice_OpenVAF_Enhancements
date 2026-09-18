@@ -564,6 +564,24 @@ impl ModuleInfo {
                                                 ),
                                                 Ok((written, kind, value)) => {
                                                     let folded = written.to_ascii_lowercase();
+                                                    // Enhancement-662 (hunt F3): the nominal's
+                                                    // spellings can never be selected -- ngspice's
+                                                    // `.option corner=tt` (nom, nominal) IS the
+                                                    // nominal -- and the loops ran the nominal
+                                                    // twice under two names
+                                                    if matches!(
+                                                        folded.as_str(),
+                                                        "tt" | "nom" | "nominal"
+                                                    ) {
+                                                        add_diagnostic(
+                                                            attr.clone(),
+                                                            &CornerNameReserved {
+                                                                attr: attr.clone(),
+                                                                name: written,
+                                                            },
+                                                        );
+                                                        continue;
+                                                    }
                                                     if let Some((_, first)) =
                                                         seen.iter().find(|(f, _)| *f == folded)
                                                     {
@@ -1454,6 +1472,40 @@ impl Diagnostic for CornerNameTwice {
                 message: "in this attribute".to_owned(),
             }])
             .with_notes(vec!["help: keep one entry per corner".to_owned()])
+    }
+}
+
+/// Enhancement-662 (hunt F3): a corner named `tt`, `nom` or `nominal` -- the
+/// spellings ngspice reads as the nominal (`.option corner=tt`), so the entry
+/// could never be selected, and the `corners`/`autocorner` loops, which put
+/// `tt` first and then every declared name, ran the nominal twice.
+struct CornerNameReserved {
+    attr: ast::Attr,
+    name: String,
+}
+
+impl Diagnostic for CornerNameReserved {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        Report::error()
+            .with_message(format!(
+                "corner '{}' names the nominal: ngspice's `.option corner=tt` (`nom`, `nominal`) \
+                 selects the nominal and never reaches this entry",
+                self.name
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "in this attribute".to_owned(),
+            }])
+            .with_notes(vec![
+                "help: the nominal needs no entry -- a parameter sits at its default there; give a \
+                 process corner another name (ss, ff, sf, fs, ...)"
+                    .to_owned(),
+            ])
     }
 }
 

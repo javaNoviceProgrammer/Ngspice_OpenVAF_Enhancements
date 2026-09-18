@@ -10,4 +10,4 @@ a `corner` column with the first cornered row, and a named nominal
 (`.option corner=tt`) tags its rows too. The `corner` variable is put back
 afterwards.
 
-Run: `python3 verify_cornerscmd.py` (21 checks per solver, both solvers).
+Run: `python3 verify_cornerscmd.py` (22 checks per solver, both solvers).
