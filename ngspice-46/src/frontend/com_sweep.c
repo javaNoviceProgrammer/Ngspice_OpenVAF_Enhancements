@@ -6337,7 +6337,10 @@ void com_corners(wordlist *wl)
                 goto cleanup;
             }
             while (wl && wl->wl_word && !co_is_flag(wl->wl_word)) {
-                char *tok = copy(wl->wl_word), *save = NULL;
+                /* Enhancement-659 (hunt F2): `-list "ss ff"` split into
+                 * `"ss` and `ff"`, and the first was "a corner no loaded
+                 * model declares" */
+                char *tok = cp_unquote(wl->wl_word), *save = NULL;
                 char *t = strtok_r(tok, ", \t", &save);
                 for (; t; t = strtok_r(NULL, ", \t", &save)) {
                     char *q;
@@ -6362,22 +6365,50 @@ void com_corners(wordlist *wl)
             nonominal = 1;
             wl = wl->wl_next;
         } else if (eq(w, "-analysis")) {
+            /* Enhancement-659 (hunt F2): the words up to the next flag, each
+             * cp_unquote()d, joined with single spaces -- the collect_until_flag
+             * rule `sweep` and `montecarlo` follow. This took ONE word
+             * verbatim, so `-analysis "dc v1 0 1 0.5"` -- the handbook's own
+             * spelling; the lexer keeps double quotes on a word and strips
+             * single ones -- reached the command lookup as `"dc v1 0 1 0.5"`,
+             * every corner ran an unknown command and recorded nan, while an
+             * unquoted `tran 1u 3u` stopped at `tran` and refused `1u` as an
+             * unknown option. Refused rather than truncated (E-434). */
             wl = wl->wl_next;
-            if (!wl || !wl->wl_word) {
+            if (!wl || !wl->wl_word || co_is_flag(wl->wl_word)) {
                 fprintf(cp_err, "corners: -analysis needs a command\n");
                 goto cleanup;
             }
-            snprintf(analysis, sizeof analysis, "%s", wl->wl_word);
+            analysis[0] = '\0';
+            while (wl && wl->wl_word && !co_is_flag(wl->wl_word)) {
+                char *tok = cp_unquote(wl->wl_word);
+                if (strlen(analysis) + strlen(tok) + 2 > sizeof analysis) {
+                    fprintf(cp_err, "corners: -analysis command is too long (limit %d characters)\n",
+                            (int) sizeof analysis - 1);
+                    tfree(tok);
+                    goto cleanup;
+                }
+                if (analysis[0])
+                    strncat(analysis, " ", sizeof analysis - strlen(analysis) - 1);
+                strncat(analysis, tok, sizeof analysis - strlen(analysis) - 1);
+                tfree(tok);
+                wl = wl->wl_next;
+            }
             analysis_given = 1;
-            wl = wl->wl_next;
         } else if (eq(w, "-output")) {
             wl = wl->wl_next;
             while (wl && wl->wl_word && !co_is_flag(wl->wl_word)) {
+                char *tok;
                 if (nout >= SW_MAXOUT) {
                     fprintf(cp_err, "corners: more than %d outputs\n", SW_MAXOUT);
                     goto cleanup;
                 }
-                sw_add_output_token(outname, outexpr, &nout, wl->wl_word);
+                /* Enhancement-659 (hunt F2): `-output "g=v(out) / v(in)"` kept
+                 * its quotes -- the column was `"g` and the expression carried
+                 * a trailing quote, never resolved */
+                tok = cp_unquote(wl->wl_word);
+                sw_add_output_token(outname, outexpr, &nout, tok);
+                tfree(tok);
                 wl = wl->wl_next;
             }
         } else if (eq(w, "-mc")) {

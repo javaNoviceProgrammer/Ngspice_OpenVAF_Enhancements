@@ -42,6 +42,11 @@ Checks (per solver):
   [17] `oldhelp corners` prints the entry
   [18] a deck that names a corner in .option: the loop still visits tt and
        the deck's corner is back afterwards
+  [19] Enhancement-659 (hunt F2): a double-quoted -analysis is unquoted
+       (the lexer keeps those quotes on the word): the analysis runs
+  [20] a double-quoted -output expression with spaces, and a quoted -list
+  [21] an unquoted multi-word -analysis is collected up to the next flag;
+       `-analysis` followed by a flag is refused
 """
 import os
 import re
@@ -284,6 +289,22 @@ vals = re.findall(re.escape(A + "rm[rsh]") + r" = ([0-9.e+-]+)", out)
 check("[18] a deck that names a corner in .option: the loop still visits tt, and the deck's corner is back afterwards",
       len(rows) == 4 and rows[0][1] == "tt" and round(float(rows[0][2][0])) == 100 and [round(float(v)) for v in vals] == [88],
       f"rows={[(r[1], r[2][0]) for r in rows]} after={vals}")
+
+# Enhancement-659 (hunt F2): quoted words on the corners line
+rc, out = run("corners -list tt ss -analysis \"dc v1 0 1 0.5\" -output v(out)\necho \"A: $&v(out)\"\n", "c19")
+check("[19] `-analysis \"dc v1 0 1 0.5\"` (double quotes) runs the dc at every corner: 0.5 0.5, no unknown command",
+      "analysis 'dc v1 0 1 0.5'" in out and "A: 0.5 0.5" in out and "unknown command" not in out and "never resolved" not in out,
+      out[-240:].replace("\n", "|"))
+
+rc, out = run(f"corners -list \"ss ff\" -output \"g=v(out) / v(in)\" rsh={A}rm[rsh]\necho \"A: $&g $&rsh $corners_names\"\n", "c20")
+check("[20] `-list \"ss ff\"` and `-output \"g=v(out) / v(in)\"`: two corners, the column `g` 0.5 0.5, rsh 115 88",
+      "A: 0.5 0.5 115 88 ss ff" in out and "no loaded model declares" not in out and "never resolved" not in out,
+      out[-240:].replace("\n", "|"))
+
+rc, out = run(f"corners -list tt ss -analysis tran 1u 3u -output rsh={A}rm[rsh]\necho \"A: $&rsh\"\ncorners -analysis -output v(out)\n", "c21")
+check("[21] an unquoted `-analysis tran 1u 3u` is collected up to the next flag (100 115); `-analysis -output` is refused",
+      "analysis 'tran 1u 3u'" in out and "A: 100 115" in out and "unknown option '1u'" not in out
+      and "corners: -analysis needs a command" in out, out[-240:].replace("\n", "|"))
 
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)

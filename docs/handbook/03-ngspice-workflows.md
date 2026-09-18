@@ -632,6 +632,8 @@ print corner v(out)                                * the corners<n> plot: index 
 echo $corners_names                                * "tt ss ff sf fs"
 ```
 
+The `-analysis` may be several bare words up to the next flag, or one quoted
+word in either quote style ([E-659](../../enhancements_doc/Enhancement-659.md)).
 For each corner it sets the `corner` variable, runs the analysis and records
 each `-output`'s last value into a `corners<n>` plot whose scale `corner` is the
 corner's index, the names printed beside the values and kept in
