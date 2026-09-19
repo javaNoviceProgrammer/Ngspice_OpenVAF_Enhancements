@@ -241,3 +241,29 @@ impl_display! {
         MultipleCaseDefaults{..} => "a case statement has more than one `default` arm";
     }
 }
+
+impl SyntaxError {
+    /// Enhancement-672: the range the error is reported at, when it has one.
+    pub fn primary_range(&self) -> Option<TextRange> {
+        match self {
+            SyntaxError::UnexpectedToken { span, .. }
+            | SyntaxError::SurplusToken { span, .. }
+            | SyntaxError::ExprTooDeep { span, .. }
+            | SyntaxError::CommaExpr { span, .. }
+            | SyntaxError::IdentBeforeBlock { span, .. }
+            | SyntaxError::AttrWithoutValue { span, .. }
+            | SyntaxError::NumberSuffix { span, .. }
+            | SyntaxError::EmptyCase { span, .. }
+            | SyntaxError::StmtOutsideAnalog { span, .. }
+            | SyntaxError::RealLiteralOverflow { span, .. }
+            | SyntaxError::ZeroWidthLiteral { span, .. }
+            | SyntaxError::InvalidBasedLiteral { span, .. }
+            | SyntaxError::MalformedRealLiteral { span, .. }
+            | SyntaxError::OctalEscapeTooLarge { span, .. }
+            | SyntaxError::UnknownStringEscape { span, .. }
+            | SyntaxError::MultilineStringLiteral { span, .. }
+            | SyntaxError::MissingToken { span, .. } => Some(*span),
+            _ => None,
+        }
+    }
+}

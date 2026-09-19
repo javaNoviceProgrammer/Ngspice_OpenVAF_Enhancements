@@ -63,6 +63,24 @@ impl<T> Parse<T> {
     pub fn syntax_node(&self) -> SyntaxNode {
         SyntaxNode::new_root(self.green.clone())
     }
+    /// Enhancement-672 (hunt F5 of 2026-09-19): drop the syntax errors located
+    /// at a HOLE -- the `0` the preprocessor leaves where an undeclared macro
+    /// was referenced (Enhancement-665). The reference is reported in its own
+    /// right; whatever the parser says about the token standing in for it is a
+    /// knock-on. In expression position the hole parses and there is nothing to
+    /// drop; at file scope (a misspelled directive alone on its line) it was
+    /// "unexpected token integer; expected 'discipline', 'nature' or 'module'"
+    /// at a position inside the virtual `__macro_synth.va`.
+    fn without_hole_errors(self, sm: &sourcemap::SourceMap) -> Parse<T> {
+        let at_hole = |err: &SyntaxError| {
+            err.primary_range().map_or(false, |range| sm.is_hole(self.to_ctx_span(range, sm).ctx))
+        };
+        if !self.errors.iter().any(at_hole) {
+            return self;
+        }
+        let errors: Vec<SyntaxError> = self.errors.iter().filter(|e| !at_hole(e)).cloned().collect();
+        Parse { green: self.green, errors: Arc::new(errors), ctx_map: self.ctx_map, _ty: PhantomData }
+    }
 
     fn find_ctx_range(&self, global_pos: TextSize) -> (TextRange, SourceContext, TextSize) {
         let found = self
@@ -227,7 +245,7 @@ impl SourceFile {
 
         assert_eq!(root.kind(), SyntaxKind::SOURCE_FILE);
 
-        Parse::new(green, errors, ctx_map)
+        Parse::new(green, errors, ctx_map).without_hole_errors(&preprocess.sm)
     }
 }
 

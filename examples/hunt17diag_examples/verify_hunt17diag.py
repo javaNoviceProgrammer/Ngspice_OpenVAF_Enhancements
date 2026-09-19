@@ -16,7 +16,10 @@ openvaf-r (and ngspice for the two run-time cases).
   e  a non-ASCII identifier was "encountered unexpected token!" (no noun).
   f  `(* desc= *)` was the generic expression-start list; now "no value after '='".
   g  an undeclared macro reference left a hole the parser then complained
-     about (`= ;`); the reference now leaves a `0` behind, one error.
+     about (`= ;`); the reference now leaves a `0` behind, one error. E-672:
+     at file scope and in statement position the `0` itself drew a second
+     error inside the virtual `__macro_synth.va`; a syntax error at a hole is
+     dropped, and `__LINE__` in the same position is still reported.
   h  `(* corner="ss=0.5 %" *)` blamed the stray `%`; now the reason (no space).
   i  `parameter string s = "z" from {"x", "y"}` compiled without L027.
   j  an escaped identifier `\\foo+bar` exported `foo+bar`, which ngspice reads as
@@ -120,6 +123,22 @@ check("[f] `(* desc= *)`: 'no value after =', not the expression-start list", no
 ok, msg = compile_src("`define X 1\n`undef X\n" + H + "parameter real r = `X;\n" + T, "undefuse")
 e = errors(msg)
 check("[g] an undeclared macro reference: one error, no knock-on about the hole it left", not ok and len(e) == 1 and "has not been declared" in e[0], "; ".join(e))
+# Enhancement-672 (hunt F5 of 2026-09-19): the hole at FILE scope -- a
+# misspelled directive alone on its line -- was "unexpected token integer;
+# expected 'discipline', 'nature' or 'module'" at a position inside the virtual
+# `__macro_synth.va`. The hole's context is marked and the parser drops any
+# syntax error located at it; a legitimate synthesized token (`__LINE__`) in
+# the same position is not a hole and is still reported.
+ok, msg = compile_src("`unknown_directive\n" + H + T, "undeffile")
+e = errors(msg)
+check("[g] ...at file scope (a misspelled directive alone on its line): one error, nothing about `__macro_synth.va`",
+      not ok and len(e) == 1 and "has not been declared" in e[0] and "__macro_synth" not in msg, "; ".join(e))
+ok, msg = compile_src(H + "analog begin\n`nosuch\n I(p,n) <+ V(p,n)*1e-3;\nend\nendmodule\n", "undefstmt")
+e = errors(msg)
+check("[g] ...in statement position: one error", not ok and len(e) == 1 and "has not been declared" in e[0], "; ".join(e))
+ok, msg = compile_src("`__LINE__\n" + H + T, "linefile")
+e = errors(msg)
+check("[g] ...`__LINE__` alone at file scope is not a hole: still refused as an unexpected integer", not ok and len(e) == 1 and "unexpected token integer" in e[0], "; ".join(e))
 
 # ------------------------------------------------------------- [h] ---
 ok, msg = compile_src(H + '(* corner="ss=0.5 %" *) parameter real r = 1;\n' + T, "cornerpct")

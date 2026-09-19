@@ -146,6 +146,7 @@ impl SourceMap {
             ctx_tree: vec![SourceContextData {
                 decl: FileSpan { range: TextRange::up_to(root_file_len), file: root_file },
                 call_site: None,
+                is_hole: false,
             }]
             .into(),
         }
@@ -247,7 +248,25 @@ impl SourceMap {
     }
 
     pub(crate) fn add_ctx(&mut self, decl: FileSpan, call_site: CtxSpan) -> SourceContext {
-        self.ctx_tree.push_and_get_key(SourceContextData { decl, call_site: Some(call_site) })
+        self.ctx_tree.push_and_get_key(SourceContextData {
+            decl,
+            call_site: Some(call_site),
+            is_hole: false,
+        })
+    }
+
+    /// Enhancement-672: a context for a hole token (see `SourceContextData::is_hole`).
+    pub(crate) fn add_hole_ctx(&mut self, decl: FileSpan, call_site: CtxSpan) -> SourceContext {
+        self.ctx_tree.push_and_get_key(SourceContextData {
+            decl,
+            call_site: Some(call_site),
+            is_hole: true,
+        })
+    }
+
+    /// Enhancement-672: does `ctx` back a hole left for an undeclared macro?
+    pub fn is_hole(&self, ctx: SourceContext) -> bool {
+        self.ctx_tree[ctx].is_hole
     }
 }
 
@@ -271,4 +290,9 @@ impl SourceContext {
 pub struct SourceContextData {
     pub decl: FileSpan,
     pub call_site: Option<CtxSpan>,
+    /// Enhancement-672 (hunt F5 of 2026-09-19): this context backs a HOLE --
+    /// the `0` the preprocessor leaves where an undeclared macro was referenced
+    /// (Enhancement-665). The reference is already reported; a syntax error
+    /// located at the hole is a knock-on and is dropped by the parser.
+    pub is_hole: bool,
 }

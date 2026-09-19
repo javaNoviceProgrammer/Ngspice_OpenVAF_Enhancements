@@ -12,4 +12,4 @@ hunt items are pinned as expected behaviour instead: the text after an
 `` `ifdef `` name is the conditional group, and `$discontinuity(-1)` is the
 limiting-discontinuity marker.
 
-Run: `python3 verify_hunt17diag.py` (20 checks per solver, both solvers).
+Run: `python3 verify_hunt17diag.py` (23 checks per solver, both solvers).

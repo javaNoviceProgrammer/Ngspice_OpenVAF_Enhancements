@@ -382,7 +382,12 @@ impl<'a> Processor<'a> {
             // the parser then complained about the hole (`= ;`). The error is
             // reported and the compile fails either way; a `0` in the hole
             // keeps the parse going without a knock-on.
-            let hole = self.synth_token("0", tokens::SyntaxKind::INT_NUMBER, span);
+            // Enhancement-672 (hunt F5 of 2026-09-19): at file scope -- a
+            // misspelled directive alone on its line -- the `0` is not an item
+            // and the parser reported it, at a position inside the virtual
+            // `__macro_synth.va`. The hole's context is marked and the parser
+            // drops any syntax error located at it (see `Parse::without_hole_errors`).
+            let hole = self.synth_token_in(true, "0", tokens::SyntaxKind::INT_NUMBER, span);
             dst.push(hole);
         }
     }
@@ -406,6 +411,19 @@ impl<'a> Processor<'a> {
     /// `call_site`, so diagnostics walk back to the macro call that
     /// synthesized the token.
     fn synth_token(&mut self, text: &str, kind: SyntaxKind, call_site: CtxSpan) -> Token {
+        self.synth_token_in(false, text, kind, call_site)
+    }
+
+    /// `synth_token`, with `hole` marking the context as an undeclared-macro
+    /// hole (Enhancement-672) so the parser can tell it from a legitimate
+    /// synthesized token such as `` `__LINE__ ``.
+    fn synth_token_in(
+        &mut self,
+        hole: bool,
+        text: &str,
+        kind: SyntaxKind,
+        call_site: CtxSpan,
+    ) -> Token {
         let file = self.synth_file_id();
         let start = TextSize::of(self.synth_buf.as_str());
         self.synth_buf.push_str(text);
@@ -413,7 +431,11 @@ impl<'a> Processor<'a> {
         // a newline between fragments keeps the scratch readable and keeps
         // neighbouring fragments from ever lexing into one another
         self.synth_buf.push('\n');
-        let ctx = self.source_map.add_ctx(FileSpan { file, range }, call_site);
+        let ctx = if hole {
+            self.source_map.add_hole_ctx(FileSpan { file, range }, call_site)
+        } else {
+            self.source_map.add_ctx(FileSpan { file, range }, call_site)
+        };
         Token { kind, span: CtxSpan { range: TextRange::up_to(TextSize::of(text)), ctx } }
     }
 
