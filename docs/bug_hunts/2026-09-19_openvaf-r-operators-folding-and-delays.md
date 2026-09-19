@@ -26,7 +26,7 @@ corners, the loop commands, hierarchy) were only touched in passing.
 
 | # | finding | kind |
 |---|---|---|
-| [F1](#f1--after-the-transient-op-fallback-every-delayed-output-is-lost-for-the-whole-transient) | after ngspice finds the operating point through the **"Transient op" fallback**, every `absdelay` and every `transition` with a delay in every loaded OSDI model loses its delay for the whole transient: read into a variable it is 0 at every point, contributed it passes the input through undelayed; an `idt` with an initial condition starts 1e-5 off. Gmin stepping and source stepping alone do not trigger it, `uic` avoids it | wrong result, silent |
+| [F1](#f1--after-the-transient-op-fallback-every-delayed-output-is-lost-for-the-whole-transient) | *(fixed in [E-671](../../enhancements_doc/Enhancement-671.md): the OSDI accepted-timepoint list starts over at the transient's first Newton solve, whatever the fallback left in it)* after ngspice finds the operating point through the **"Transient op" fallback**, every `absdelay` and every `transition` with a delay in every loaded OSDI model loses its delay for the whole transient: read into a variable it is 0 at every point, contributed it passes the input through undelayed; an `idt` with an initial condition starts 1e-5 off. Gmin stepping and source stepping alone do not trigger it, `uic` avoids it | wrong result, silent |
 | [F2](#f2--pow00-x-folds-to-0-for-every-exponent) | `pow(0.0, x)` and `0.0 ** x` with a literal zero base fold to 0 for every `x`: `pow(0.0, 0.0)` written out is 1, `pow(0.0, x)` at `x = 0` is 0; a negative `x` gives 0 where the same expression with a parameter base is the run-time domain `$fatal`; the derivative folds to 0 with it | wrong result, silent |
 | [F3](#f3--l030-says-clipped-where-the-integer-default-wraps) | L030 says an integer default that overflows is "clipped to 2147483647" while the stored default wraps: `2147483647 + 1` is −2147483648, `100000 * 100000` is 1410065408, `-2147483647 - 2` is 2147483647, `2147483647 * 2` is −2; the lint evaluates the default as a real, the folder as a 32-bit integer; a real literal (`1e10`) really is clipped | wrong diagnostic |
 | [F4](#f4--simparamstr-of-an-unknown-name-hands-strobe-an-invalid-string) | `$simparam$str("instance")` (or any name the simulator does not provide, no default) hands `$strobe` an invalid string — `instance=�` on stdout — before the run aborts with the run-time `$fatal`; the compile-time L025 warning is right, the value that reaches the model is garbage | memory hygiene |
@@ -80,6 +80,15 @@ and without the integrator, integrator in another instance, an ngspice inductor 
 the same fallback, `uic`, `noopiter`, `gminsteps=0`).
 
 ## F1 — after the "Transient op" fallback, every delayed output is lost for the whole transient
+
+*Fixed in [E-671](../../enhancements_doc/Enhancement-671.md): the fallback left the shared
+accepted-timepoint list (`CKTtimePoints`/`CKTtimeIndex`, which E-1's delay history is
+indexed by) filled with its own ~100 points, and the real transient appended its times
+after them; `absdelay_ensure_timepoints` now starts the list over at index 0 whenever
+`MODEINITTRAN` is set. The lookup's binary search over the non-monotonic list explains
+both symptoms: the operating-point value (0) while t − td lay inside the fallback's
+1 µs horizon, whatever point it fell on beyond it. Pinned in `tranopdelay_examples`,
+11 checks per solver, 5 of which fail on the E-670 binaries.*
 
 This is the finding of the hour and it is on the ngspice/OSDI side. When the operating
 point before a `.tran` cannot be found by plain Newton, ngspice tries dynamic gmin

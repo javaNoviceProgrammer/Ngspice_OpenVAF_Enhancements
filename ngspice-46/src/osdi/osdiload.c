@@ -59,17 +59,38 @@ static void absdelay_grow_hist(OsdiExtraInstData *extra, uint32_t n_delays,
 
 /* Ensure CKTtimePoints is allocated (if no LTRA device is in the circuit
  * optran.c leaves it NULL).  We allocate it ourselves on the first transient
- * call and let optran.c's nextTime: grow it thereafter.                    */
-static void absdelay_ensure_timepoints(CKTcircuit *ckt) {
+ * call and let optran.c's nextTime: grow it thereafter.
+ *
+ * Enhancement-671: `init_tran` is MODEINITTRAN -- the first Newton solve of a
+ * transient, at t = 0. The timeline then has to START OVER at index 0 whatever
+ * it holds, not only when it is NULL or its index is negative. The case that
+ * needed this is the "Transient op" rung of CKTop (optran.c): it frees the
+ * list dctran.c set up, runs a short transient of its own with the sources
+ * frozen (default 1 us in 10 ns steps) during which this very function
+ * allocates the list and OSDIaccept fills ~100 points of history, and returns
+ * without resetting either. dctran.c's own reset (CKTtimeIndex = -1, FREE)
+ * runs BEFORE CKTop, so the real transient's MODEINITTRAN found a non-NULL
+ * list with the index at the fallback's last point, kept it, and appended its
+ * own times after the fallback's -- a non-monotonic timeline whose first
+ * microsecond was the frozen operating point. absdelay_lookup's binary search
+ * over that returned the operating-point value (a delayed opvar read 0 for
+ * the whole run) or, once t - td passed the fallback's horizon, whatever
+ * point the search fell on (a delayed contribution passed its input through
+ * undelayed); `transition` with a delay is `slew(absdelay())` and went with
+ * it. Gmin and source stepping do not run a transient and were unaffected;
+ * `uic` skips the operating point altogether. Both dctran.c re-raises of
+ * MODEINITTRAN are under `firsttime`, i.e. still at t = 0, so the reset is
+ * always at the origin of the transient being started.                    */
+static void absdelay_ensure_timepoints(CKTcircuit *ckt, bool init_tran) {
   if (ckt->CKTtimePoints == NULL) {
     uint32_t cap = (ckt->CKTtimeListSize > 0) ? (uint32_t)ckt->CKTtimeListSize : 256;
     ckt->CKTtimePoints = TMALLOC(double, cap);
     ckt->CKTtimeListSize = (int)cap;
     ckt->CKTtimeIndex = 0;
-    ckt->CKTtimePoints[0] = 0.0;
-  } else if (ckt->CKTtimeIndex < 0) {
+    ckt->CKTtimePoints[0] = ckt->CKTtime;
+  } else if (ckt->CKTtimeIndex < 0 || init_tran) {
     ckt->CKTtimeIndex = 0;
-    ckt->CKTtimePoints[0] = 0.0;
+    ckt->CKTtimePoints[0] = ckt->CKTtime;
   }
 }
 
@@ -198,7 +219,7 @@ static void absdelay_stamp_tran(CKTcircuit *ckt, GENinstance *gen_inst,
   /* On the first transient call: allocate CKTtimePoints if needed and
    * initialize the history arrays.                                        */
   if (is_init_tran) {
-    absdelay_ensure_timepoints(ckt);
+    absdelay_ensure_timepoints(ckt, true);
     uint32_t cap = (uint32_t)(ckt->CKTtimeListSize > 0
                                   ? (uint32_t)ckt->CKTtimeListSize
                                   : 256) + 64;
@@ -321,7 +342,7 @@ static void last_crossing_stamp(void *inst, OsdiExtraInstData *extra,
    * absdelay_stamp_tran. Ensure it here too; the call is idempotent (see
    * absdelay_ensure_timepoints). */
   if (is_tran) {
-    absdelay_ensure_timepoints(ckt);
+    absdelay_ensure_timepoints(ckt, is_init_tran);
   }
 
   const OsdiLastCrossingInfo *infos =
