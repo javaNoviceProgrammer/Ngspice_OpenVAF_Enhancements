@@ -121,6 +121,58 @@ safe = [
 for nm, ex, v0, ref, lbl in safe:
     check_val(nm, ex, v0, ref, "[safe] " + lbl)
 
+# ---- Enhancement-674 (hunt F2 of 2026-09-19): pow(0.0, x) folded to 0 for every x ----
+# The simplifier returned 0 for a literal-zero base whatever the exponent:
+# right for x > 0, wrong at x = 0 (pow(0, 0) is 1 -- and the literal spelling
+# pow(0.0, 0.0) already said so, so the two spellings disagreed) and for x < 0
+# (+inf in C, the run-time domain fatal for a deck-fixed base). The rule is
+# gone; pow(x, 0.0) = 1 and pow(x, 1.0) = x hold for every x and stay.
+check_val("pow0_x0", f"{K}*pow(0.0, V(a,b))", 0.0, K * 1.0,
+          "[bug] pow(0.0, V) at V = 0 == 1, not 0")
+check_val("pow0_x1", f"{K}*pow(0.0, V(a,b))", 1.0, 0.0,
+          "pow(0.0, V) at V = 1 == 0 (unchanged)")
+check_val("pow0_op", f"{K}*(0.0 ** V(a,b))", 0.0, K * 1.0,
+          "[bug] 0.0 ** V at V = 0 == 1, not 0 (the same instruction)")
+check_val("powx_0", f"{K}*pow(V(a,b), 0.0)", -3.0, K * 1.0,
+          "pow(V, 0.0) == 1 for every V (the rule that stays)")
+check_val("powx_1", f"{K}*pow(V(a,b), 1.0)", -3.0, K * -3.0,
+          "pow(V, 1.0) == V (the rule that stays)")
+
+
+def opvar_value(name, expr, v0):
+    """y = expr as an operating-point variable, read at one DC point; the
+    solve itself does not depend on it, so an infinite value can be read."""
+    body = (f'`include "disciplines.vams"\n'
+            f'module dut(a,b); inout a,b; electrical a,b;\n'
+            f'(*desc="y"*) real y;\n'
+            f'analog begin y = {expr}; I(a,b) <+ 1e-3*V(a,b); end\n'
+            f'endmodule\n')
+    va = os.path.join(HERE, name + ".va")
+    open(va, "w").write(body)
+    r = subprocess.run([OPENVAF, va, "-o", os.path.join(HERE, name + ".osdi")],
+                       capture_output=True, text=True, cwd=HERE)
+    if r.returncode:
+        return None, "COMPILE-FAIL: " + (r.stderr.strip().splitlines() or [""])[-1][:70]
+    A = "@"
+    deck = (f"* {name}\nVb a 0 DC {v0}\nN1 a 0 dm\n.model dm dut\n"
+            f".control\npre_osdi {name}.osdi\ndc Vb {v0} {v0} 1\nprint {A}n1[y]\n.endc\n.end\n")
+    open(os.path.join(HERE, name + ".cir"), "w").write(deck)
+    out = subprocess.run([NGSPICE, "-b", name + ".cir"], capture_output=True,
+                         text=True, cwd=HERE, timeout=60)
+    txt = out.stdout + out.stderr
+    m = re.search(r"n1\[y\]\s*=\s*(\S+)", txt)
+    if not m:
+        return None, "NO-DC"
+    try:
+        return float(m.group(1)), None
+    except ValueError:
+        return None, f"UNREADABLE: {m.group(1)}"
+
+
+v, err = opvar_value("pow0_xneg", "pow(0.0, V(a,b))", -1.0)
+check("[bug] pow(0.0, V) at V = -1 is +inf (C's pow), not 0",
+      err is None and math.isinf(v) and v > 0, err or f"(got={v})")
+
 # tidy generated files
 import glob
 for pat in ("*.va", "*.osdi", "*.cir"):

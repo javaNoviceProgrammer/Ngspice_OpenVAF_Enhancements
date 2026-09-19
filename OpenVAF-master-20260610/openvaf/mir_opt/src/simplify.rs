@@ -630,9 +630,14 @@ impl<'a, FP: Arithmetic, M: Fn(Value, &Function) -> Value> SimplifyCtx<'a, FP, M
             return Some(val);
         }
 
-        if lhs == F_ZERO {
-            return Some(F_ZERO);
-        }
+        // Enhancement-674 (hunt F2 of 2026-09-19): `pow(0.0, x)` with a
+        // run-time exponent used to fold to 0 here, which is right only for
+        // x > 0: pow(0, 0) is 1 (the `rhs == F_ZERO` rule above says so for the
+        // literal spelling, so the two spellings disagreed), pow(0, x < 0) is
+        // +inf in C and the run-time domain fatal for a deck-fixed base, and
+        // pow(0, NaN) is NaN. The exponent's sign is not known here, so there
+        // is no zero-base rule; the call stays and the value is the library's.
+        // `pow(x, 1.0) = x` below holds for every x and stays.
 
         if rhs == F_ONE {
             return Some(lhs);

@@ -27,7 +27,7 @@ corners, the loop commands, hierarchy) were only touched in passing.
 | # | finding | kind |
 |---|---|---|
 | [F1](#f1--after-the-transient-op-fallback-every-delayed-output-is-lost-for-the-whole-transient) | *(fixed in [E-671](../../enhancements_doc/Enhancement-671.md): the OSDI accepted-timepoint list starts over at the transient's first Newton solve, whatever the fallback left in it)* after ngspice finds the operating point through the **"Transient op" fallback**, every `absdelay` and every `transition` with a delay in every loaded OSDI model loses its delay for the whole transient: read into a variable it is 0 at every point, contributed it passes the input through undelayed; an `idt` with an initial condition starts 1e-5 off. Gmin stepping and source stepping alone do not trigger it, `uic` avoids it | wrong result, silent |
-| [F2](#f2--pow00-x-folds-to-0-for-every-exponent) | `pow(0.0, x)` and `0.0 ** x` with a literal zero base fold to 0 for every `x`: `pow(0.0, 0.0)` written out is 1, `pow(0.0, x)` at `x = 0` is 0; a negative `x` gives 0 where the same expression with a parameter base is the run-time domain `$fatal`; the derivative folds to 0 with it | wrong result, silent |
+| [F2](#f2--pow00-x-folds-to-0-for-every-exponent) | *(fixed in [E-674](../../enhancements_doc/Enhancement-674.md): the zero-base rule is removed from the simplifier; `pow(x, 0.0)` and `pow(x, 1.0)` stay)* `pow(0.0, x)` and `0.0 ** x` with a literal zero base fold to 0 for every `x`: `pow(0.0, 0.0)` written out is 1, `pow(0.0, x)` at `x = 0` is 0; a negative `x` gives 0 where the same expression with a parameter base is the run-time domain `$fatal`; the derivative folds to 0 with it | wrong result, silent |
 | [F3](#f3--l030-says-clipped-where-the-integer-default-wraps) | L030 says an integer default that overflows is "clipped to 2147483647" while the stored default wraps: `2147483647 + 1` is −2147483648, `100000 * 100000` is 1410065408, `-2147483647 - 2` is 2147483647, `2147483647 * 2` is −2; the lint evaluates the default as a real, the folder as a 32-bit integer; a real literal (`1e10`) really is clipped | wrong diagnostic |
 | [F4](#f4--simparamstr-of-an-unknown-name-hands-strobe-an-invalid-string) | `$simparam$str("instance")` (or any name the simulator does not provide, no default) hands `$strobe` an invalid string — `instance=�` on stdout — before the run aborts with the run-time `$fatal`; the compile-time L025 warning is right, the value that reaches the model is garbage | memory hygiene |
 | [F5](#f5--an-undeclared-macro-at-file-scope-still-raises-a-second-error-in-a-phantom-file) | an undeclared macro reference at file scope (outside any module) raises "has not been declared" and then a second error, "unexpected token integer; expected 'discipline', 'nature' or 'module'", at `/<file>__macro_synth.va:1:1` — a file that does not exist; E-665 removed the same knock-on in expression position only | diagnostic |
@@ -183,6 +183,12 @@ nothing says so. The fix belongs where the Transient op hands over to the transi
 `ngspice-46` (the OSDI `init`/`eval` sequence under `MODETRANOP`), not in the compiler.
 
 ## F2 — `pow(0.0, x)` folds to 0 for every exponent
+
+*Fixed in [E-674](../../enhancements_doc/Enhancement-674.md): the `lhs == F_ZERO → 0` rule
+is removed from `simplify_pow_inst`; the call stays and the value is the library's (+inf, 1, 0
+at x = −1, 0, 1), the derivative follows the autodiff guard. The companion `0.0 * x` and
+`0.0 / x` folds are untouched. Pinned in `mathident_examples` (six checks, three of which fail
+on the E-670 binaries).*
 
 `mir_opt/src/simplify.rs`, `simplify_pow_inst`: after `rhs == 0 → 1` and the
 constant-constant fold, `if lhs == F_ZERO { return Some(F_ZERO) }`. So a literal zero

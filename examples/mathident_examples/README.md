@@ -35,7 +35,7 @@ fix did not over-reach. (Rewrites that are only unsound for Inf/NaN inputs, like
 
 ## Verification
 
-`verify_mathident.py` — 12 checks: each formerly-buggy law compiled to OSDI,
+`verify_mathident.py` — 18 checks (12 before E-674): each formerly-buggy law compiled to OSDI,
 biased, and read back via DC (the wrong cancellation shows as a wrong current);
 plus the still-valid cancellations confirmed correct and `sqrt` of a positive
 argument unaffected. A compiler property, identical under both linear solvers,
