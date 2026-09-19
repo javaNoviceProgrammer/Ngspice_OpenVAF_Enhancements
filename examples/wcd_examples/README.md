@@ -94,4 +94,9 @@ be refused as "drawing no Gaussian .params".
 python3 verify_wcd.py
 ```
 
-Runs under both linear solvers (31 checks), all against the analytic Gaussian tail.
+Runs under both linear solvers (39 checks), all against the analytic Gaussian tail.
+
+Since [E-667](../../enhancements_doc/Enhancement-667.md) (hunt F9): a parameter
+the corner in force holds (`.option osdimc corner=ss`) is not a walk dimension;
+the banner names the held ones, and the flat-metric and nothing-to-search
+refusals name them too (`wcdcorner.va`, `wcdheld.va`).

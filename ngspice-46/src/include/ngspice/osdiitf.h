@@ -335,6 +335,7 @@ extern double OSDImcSampleLogLR(CKTcircuit *ckt);
 extern void OSDImcWalk(const double *z, int n);
 extern int  OSDImcWalkNdim(void);
 extern int  OSDImcWalkNuniform(void);
+extern int  OSDImcWalkCornered(char *buf, size_t cap);   /* E-667 (hunt F9): held by the corner, named */
 extern int  OSDImcWalkClamped(void);   /* E-554 */
 /* Enhancement-555: read (op 0), set (1) or clear (2) the given flag of an OSDI
  * parameter; -1 when the device is not OSDI or its object has no entry point.

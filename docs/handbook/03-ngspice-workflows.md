@@ -609,7 +609,10 @@ case. The corner is written through the ordinary parameter setter on every run,
 the first one included, so `showmod` shows it and `.option savemc` records it. A
 cornered parameter does not draw under `.option osdimc` — the corner pins the
 process coordinate and mismatch on the other parameters goes on, which is the
-usual corner-plus-mismatch flow. A parameter that names other corners only sits
+usual corner-plus-mismatch flow; a `wcd` walk under the corner has the held
+parameters as no dimension, its banner counting the free ones and naming the
+held, and its flat-metric refusal naming them too
+([E-667](../../enhancements_doc/Enhancement-667.md)). A parameter that names other corners only sits
 at nominal; a model type without the name runs at nominal, said once; a name no
 loaded model declares refuses the run, naming the declared ones. `tt`, `nom` and
 `unset corner` (without a deck option) return to the nominal; `altermod` of a

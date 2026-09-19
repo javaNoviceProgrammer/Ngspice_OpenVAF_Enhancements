@@ -2145,7 +2145,7 @@ static void osdimc_say_applied(const char *owner, const char *param,
                                double val, double nominal,
                                const OsdiStatParam *info, double z);
 static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
-                              int *nunif);
+                              int *nunif, int *ncorner);
 
 /* hunt F16 (2026-09-05): `osdi -f` swaps the registered device to the new
  * descriptor IN PLACE (E-229), and a circuit resolves its device type through
@@ -3806,7 +3806,7 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
      * on the same coordinate whatever order (or how many times) it runs. */
     int walk_k = 0, walk_nu = 0;
     if (osdimc_walk_on)
-      osdimc_walk_count(ckt, type, &walk_k, &walk_nu);
+      osdimc_walk_count(ckt, type, &walk_k, &walk_nu, NULL);
 
     for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
          gen_model = gen_model->GENnextModel) {
@@ -3823,13 +3823,9 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
             continue; /* no nominal (a failed card stays undrawn), or a
                          machine write owns the value (hunt bug 14) */
           }
-          if (osdimc_cornered(entry, id)) {           /* Enhancement-654 */
-            if (osdimc_walk_on) {
-              double zz;
-              (void)osdimc_walk_value(&infos[s], e->nominal, &walk_k, &zz);
-            }
-            continue;
-          }
+          if (osdimc_cornered(entry, id))             /* Enhancement-654 */
+            continue;   /* E-667 (hunt F9): held by the corner -- not a walk
+                           dimension, no coordinate (osdimc_walk_count agrees) */
           if (osdimc_gated_off(&infos[s], e)) {         /* E-555 */
             osdimc_say_gated(e, (char *)gen_model->GENmodName,
                              descr->param_opvar[id].name[0]);
@@ -3876,13 +3872,8 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
             if (!e || e->pinned) {
               continue;
             }
-            if (osdimc_cornered(entry, id)) {         /* Enhancement-654 */
-              if (osdimc_walk_on) {
-                double zz;
-                (void)osdimc_walk_value(&infos[s], e->nominal, &walk_k, &zz);
-              }
-              continue;
-            }
+            if (osdimc_cornered(entry, id))           /* Enhancement-654 */
+              continue;                               /* E-667: no coordinate */
             if (osdimc_gated_off(&infos[s], e)) {       /* E-555 */
               osdimc_say_gated(e, (char *)gen_inst->GENname,
                                descr->param_opvar[id].name[0]);
@@ -3969,7 +3960,7 @@ static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry
   uint64_t kdimbase = osdimc_mix(((uint64_t)(uint32_t)seed << 32) ^ 0x6c6873ull);
   int walk_k = 0, walk_nu = 0;
   if (osdimc_walk_on)
-    osdimc_walk_count(ckt, type, &walk_k, &walk_nu);
+    osdimc_walk_count(ckt, type, &walk_k, &walk_nu, NULL);
 
   for (GENmodel *gen_model = inModel; gen_model;
        gen_model = gen_model->GENnextModel) {
@@ -4177,10 +4168,34 @@ static void osdimc_say_applied(const char *owner, const char *param,
  * Gaussian ones, which take a walk coordinate each, and uniform ones, which
  * are held. Mirrors osdimc_apply_type's skips exactly (no nominal captured,
  * or pinned), so an index computed here is the index the applier uses. */
+/* E-667: append `owner:param` to a space-separated list; `...` when full */
+static void osdimc_join_name(char *buf, size_t cap, size_t *used,
+                             const char *owner, const char *param) {
+  size_t need = strlen(owner) + strlen(param) + 2;
+  if (*used + need + 4 >= cap) {
+    if (*used + 4 < cap && (*used == 0 || buf[*used - 1] != '.'))
+      snprintf(buf + *used, cap - *used, "%s...", *used ? " " : "");
+    *used = strlen(buf);
+    return;
+  }
+  snprintf(buf + *used, cap - *used, "%s%s:%s", *used ? " " : "", owner, param);
+  *used = strlen(buf);
+}
+
+/* Enhancement-667 (hunt F9): a parameter the corner in force holds is not a
+ * walk dimension. E-654 kept it in the count and had the applier consume and
+ * ignore its coordinate, so `wcd` under `.option corner=ss` announced "4
+ * statistical dimensions" with three of them pinned, searched a space three
+ * of whose axes did nothing, and on a metric of the pinned ones alone said the
+ * metric "does not respond to any statistical parameter". The held entries are
+ * counted apart (`ncorner`), take no coordinate, and OSDImcWalkCornered names
+ * them for the message. */
 static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
-                              int *nunif) {
+                              int *nunif, int *ncorner) {
   *ngauss = 0;
   *nunif = 0;
+  if (ncorner)
+    *ncorner = 0;
   if (!ckt)
     return;
   for (int type = 0; type < upto && type < DEVmaxnum; type++) {
@@ -4197,6 +4212,11 @@ static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
       for (uint32_t s = 0; s < entry->num_stat_params; s++) {
         uint32_t id = infos[s].param_id;
         int *cnt = (infos[s].dist & OSDI_DIST_UNIFORM) ? nunif : ngauss;
+        if (osdimc_cornered(entry, id)) {                 /* E-667 */
+          if (!ncorner)
+            continue;
+          cnt = ncorner;
+        }
         if (id >= descr->num_instance_params) {
           OsdiMcNominal *e = osdimc_find(model, id);
           if (e && !e->pinned && !osdimc_gated_off(&infos[s], e)) /* E-555 */
@@ -4235,8 +4255,60 @@ int OSDImcWalkNdim(void) {
   int g, u;
   if (!osdimc_enabled())
     return 0;
-  osdimc_walk_count(osdimc_ckt, DEVmaxnum, &g, &u);
+  osdimc_walk_count(osdimc_ckt, DEVmaxnum, &g, &u, NULL);
   return g;
+}
+
+/* Enhancement-667 (hunt F9): the statistical parameters the corner in force
+ * holds -- not walk dimensions -- counted, and named `owner:param` into `buf`
+ * (a process parameter under its model, a mismatch one under each instance;
+ * the list is cut with `...` at the buffer's end) */
+int OSDImcWalkCornered(char *buf, size_t cap) {
+  CKTcircuit *ckt = osdimc_ckt;
+  int n = 0;
+  size_t used = 0;
+  if (buf && cap)
+    buf[0] = '\0';
+  if (!osdimc_enabled() || !ckt)
+    return 0;
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+    const OsdiDescriptor *descr = entry->descriptor;
+    const OsdiStatParam *infos = entry->stat_param_infos;
+    if (entry->num_stat_params == 0 || !infos)
+      continue;
+    for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
+         gen_model = gen_model->GENnextModel) {
+      void *model = osdi_model_data(gen_model);
+      for (uint32_t s = 0; s < entry->num_stat_params; s++) {
+        uint32_t id = infos[s].param_id;
+        const char *pname = descr->param_opvar[id].name[0];
+        if (!osdimc_cornered(entry, id))
+          continue;
+        if (id >= descr->num_instance_params) {
+          OsdiMcNominal *e = osdimc_find(model, id);
+          if (e && !e->pinned && !osdimc_gated_off(&infos[s], e)) {
+            n++;
+            if (buf && cap)
+              osdimc_join_name(buf, cap, &used, (char *)gen_model->GENmodName, pname);
+          }
+        } else {
+          for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+               gen_inst = gen_inst->GENnextInstance) {
+            OsdiMcNominal *e = osdimc_find(osdi_instance_data(entry, gen_inst), id);
+            if (e && !e->pinned && !osdimc_gated_off(&infos[s], e)) {
+              n++;
+              if (buf && cap)
+                osdimc_join_name(buf, cap, &used, (char *)gen_inst->GENname, pname);
+            }
+          }
+        }
+      }
+    }
+  }
+  return n;
 }
 
 /* E-554: how many walk coordinates the last application held at a `trunc`
@@ -4321,7 +4393,7 @@ int OSDImcWalkNuniform(void) {
   int g, u;
   if (!osdimc_enabled())
     return 0;
-  osdimc_walk_count(osdimc_ckt, DEVmaxnum, &g, &u);
+  osdimc_walk_count(osdimc_ckt, DEVmaxnum, &g, &u, NULL);
   return u;
 }
 

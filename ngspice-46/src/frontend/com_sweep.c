@@ -5898,10 +5898,12 @@ void com_wcd(wordlist *wl)
      * added it reported a 4-sigma event at 106 sigma -- the sigma the model
      * declares was invisible to the walk. They follow the netlist dimensions
      * in u; a bounded uniform has no Gaussian coordinate and is held. */
-    int nnet = ndim, nmodel = 0, nunif = 0;
+    int nnet = ndim, nmodel = 0, nunif = 0, ncorner = 0;
+    char held[240] = "";                    /* E-667 (hunt F9): held by the corner, named */
     if (OSDImcActive()) {
         nmodel = OSDImcWalkNdim();
         nunif = OSDImcWalkNuniform();
+        ncorner = OSDImcWalkCornered(held, sizeof held);
     }
     ndim = nnet + nmodel;
     wcd_nnet = nnet;
@@ -5929,6 +5931,15 @@ void com_wcd(wordlist *wl)
     }
 
     if (ndim < 1) {
+        if (ncorner > 0)
+            /* Enhancement-667 (hunt F9): every model-declared statistic is
+             * pinned by the corner in force -- say which, not "declares none" */
+            fprintf(cp_err, "wcd: the deck draws no Gaussian .params and every "
+                            "model-declared statistical parameter is held by corner "
+                            "%s (%d: %s) -- nothing to search over (run without the "
+                            "corner to search over them)\n",
+                    OSDImcCornerName(), ncorner, held);
+        else
         fprintf(cp_err, "wcd: the deck draws no Gaussian .params%s -- nothing "
                         "to search over (use agauss/gauss in a .param%s)\n",
                 OSDImcActive() ? " and its models declare no Gaussian statistics"
@@ -5956,8 +5967,12 @@ void com_wcd(wordlist *wl)
     }
 
     {
-        char dimnote[96] = "";
-        if (OSDImcActive())               /* MC hunt F3 */
+        char dimnote[360] = "";
+        if (OSDImcActive() && ncorner > 0)  /* Enhancement-667 (hunt F9) */
+            snprintf(dimnote, sizeof dimnote,
+                     " (%d netlist .param, %d model-declared; %d held by corner %s: %s)",
+                     nnet, nmodel, ncorner, OSDImcCornerName(), held);
+        else if (OSDImcActive())          /* MC hunt F3 */
             snprintf(dimnote, sizeof dimnote,
                      " (%d netlist .param, %d model-declared)", nnet, nmodel);
         fprintf(cp_out, "wcd: %d statistical dimension%s%s, analysis '%s', "
@@ -6064,6 +6079,14 @@ void com_wcd(wordlist *wl)
                                 "-- no worst-case distance is reported (widen `trunc` "
                                 "to search further)\n",
                         nclamped, nclamped == 1 ? "" : "s");
+            else if (ncorner > 0)
+                /* Enhancement-667 (hunt F9): the axes the corner pins are not
+                 * searched; a metric that hangs on them alone is flat here */
+                fprintf(cp_err, "wcd: the metric does not respond to any free statistical "
+                                "parameter (zero gradient); %d %s held by corner %s (%s) and "
+                                "not searched -- cannot locate an MPFP (run without the "
+                                "corner to search over them)\n",
+                        ncorner, ncorner == 1 ? "is" : "are", OSDImcCornerName(), held);
             else
                 fprintf(cp_err, "wcd: the metric does not respond to any statistical "
                                 "parameter (zero gradient) -- cannot locate an MPFP\n");

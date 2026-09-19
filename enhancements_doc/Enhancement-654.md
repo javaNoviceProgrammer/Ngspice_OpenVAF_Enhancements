@@ -75,7 +75,8 @@ the init-resident code. The rules:
 - A cornered parameter does not draw under `.option osdimc`: the corner pins the
   process coordinate, mismatch on the other parameters goes on. A `wcd` or
   `highsigma` walk coordinate on it is consumed and ignored, so the walk's
-  dimensions do not shift.
+  dimensions do not shift (since [E-667](Enhancement-667.md) it is no
+  dimension at all: the count is of the free axes and the held ones are named).
 - A parameter that names other corners but not this one sits at its nominal. A
   model type that declares corners but none of this name runs at nominal, said
   once per (type, name). A name no loaded Verilog-A model declares fails the run:

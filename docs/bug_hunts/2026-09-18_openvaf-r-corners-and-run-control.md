@@ -29,7 +29,7 @@ only touched in passing.
 | [F6](#f6--finish-and-stop-in-the-analog-block-are-silent-no-ops) | *(withdrawn on re-check, see the section)* `$finish` and `$stop` in the analog block are silent no-ops at the operating point and in a transient | withdrawn |
 | [F7](#f7--the-corner-loops-under-osdimc-redraw-the-other-parameters-per-corner) | *(fixed in [E-663](../../enhancements_doc/Enhancement-663.md): the loops take priority over `osdimc`, decided by the user)* `corners` and `autocorner` under `.option osdimc` let every corner be a fresh trial: the uncornered statistical parameters redraw between corners, so the corner effect is confounded with a draw | design gap |
 | [F8](#f8--autocorner-follow-on-gaps) | *(fixed in [E-666](../../enhancements_doc/Enhancement-666.md): all five, and the banner's own `i(v1_ss)` which was not reachable either)* `autocorner` follow-on gaps: a raw-file `run` reports every corner as "made no plot"; `meas tran` refuses the combined plot; `writemc` has no row to land on; the devices are left at the last corner without a word | usability |
-| [F9](#f9--wcd-counts-cornered-parameters-as-dimensions) | `wcd` counts the cornered parameters as free dimensions and then reports "zero gradient" where three of four axes are held by the corner | misleading |
+| [F9](#f9--wcd-counts-cornered-parameters-as-dimensions) | *(fixed in [E-667](../../enhancements_doc/Enhancement-667.md))* `wcd` counts the cornered parameters as free dimensions and then reports "zero gradient" where three of four axes are held by the corner | misleading |
 | [F10](#f10--a-corner-that-moves-a-paramsets-own-parameter-out-of-its-member-aborts-with-a-generic-error) | a corner that moves a paramset's own parameter out of the selected member's range aborts the run at setup with a generic message that names neither the corner nor the member | diagnostic |
 | [F11](#f11--diagnostic-slips) | *(fixed in [E-665](../../enhancements_doc/Enhancement-665.md), except `` `ifdef Z 6 ``, which is the LRM's conditional group and is withdrawn)* diagnostic slips: `1e3n`, `0.5e` and `1meg` die as "expected 'exclude' or 'from'"; a bus-index error names an internal file `x.va__namerange.va`; a nature whose access function has the nature's name is "already declared" plus four cascades; `forever`; a non-ASCII identifier; junk after an `` `ifdef `` name; `(* desc= *)`; the knock-on `;` error after an undeclared macro; `corner="ss=0.5 %"` blames `%` | diagnostics |
 | [F12](#f12--run-time-domain-silences) | *(fixed in [E-665](../../enhancements_doc/Enhancement-665.md) for `absdelay` and `$bound_step`; `$discontinuity(-1)` is the limiting-discontinuity marker, withdrawn)* run-time domain silences: `absdelay` with a negative delay from a parameter or a variable, `$bound_step` negative from a parameter, `$discontinuity(-1)` — the literal forms are refused, the deck-fixed and run-time ones say nothing | silent |
@@ -257,6 +257,10 @@ devices follow the `corner` variable when the loop ends.*
   nothing, while the current plot is the combined one.
 
 ## F9 — `wcd` counts cornered parameters as dimensions
+
+*Fixed in [E-667](../../enhancements_doc/Enhancement-667.md): the count is of the
+free axes, the held ones are named in the banner and in both refusals, and a
+cornered parameter takes no walk coordinate.*
 
 Under `.option osdimc corner=ss` with three of the four model-declared statistical
 parameters cornered, `wcd` announces "4 statistical dimensions (4 model-declared)" and

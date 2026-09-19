@@ -282,6 +282,54 @@ chk("-max below -min: refused as contradictory, no beta (1=yes)",
     1.0 if ("the limits are contradictory" in out and grab(out, BETA) is None) else 0.0,
     1.0, 0.0)
 
+# ---- Enhancement-667 (hunt F9, 2026-09-18): a parameter the corner in force
+# holds is not a walk dimension. Under `.option osdimc corner=ss` with three of
+# four model-declared parameters cornered, wcd announced "4 statistical
+# dimensions", printed four MPFP coordinates three of which did nothing, and on
+# a metric of the held ones alone said the metric "does not respond to any
+# statistical parameter". The count is 1 now, the held ones are named, and the
+# flat-metric and nothing-to-search refusals name them too.
+for va in ("wcdcorner", "wcdheld"):
+    rc_c = subprocess.run([OPENVAF, va + ".va", "-o", va + ".osdi"], cwd=HERE,
+                          capture_output=True, text=True, timeout=300)
+    chk(va + ".va compiles (0 = clean)", float(rc_c.returncode), 0.0, 0.0,
+        (rc_c.stdout + rc_c.stderr).strip().splitlines()[-1][:60] if rc_c.returncode else "")
+CORNER_DECK = """* wcd under a corner that holds three of four statistical parameters
+.control
+pre_osdi %s.osdi
+.endc
+.option osdimc corner=ss
+V1 a 0 DC 1
+N1 a 0 mm
+.model mm %s
+.control
+wcd -metric %s -analysis op%s
+.endc
+.end
+"""
+imax_c = -1.0 / 1090.0                                        # R = 1050 + 4 * 10
+out = run(CORNER_DECK % ("wcdcorner", "wcdcorner", "i(v1) -max %.12g" % imax_c, ""), "_corner.cir")
+chk("corner=ss holds r, p, q: 1 statistical dimension (was 4)", grab(out, NDIM), 1.0, 0.0)
+chk("corner=ss: beta = 4 on the one free axis (R = 1050 + dr, FORM exact)", grab(out, BETA), 4.0, 1e-3)
+named = ("(0 netlist .param, 1 model-declared; 3 held by corner ss: mm:r mm:p mm:q)" in out
+         and re.search(r"^\s*u0=\+4\.0000\s*$", out, re.M) is not None)
+chk("corner=ss: the banner names the three held parameters and the MPFP has one coordinate (1=yes)",
+    1.0 if named else 0.0, 1.0, 0.0)
+out = run(CORNER_DECK % ("wcdcorner", "wcdcorner", "i(v1) -max %.12g" % imax_c, " -is 2000 -seed 1"), "_corneris.cir")
+pis = grab(out, r"P\(fail\), mean-shift : ([-\d.eE+]+)")
+chk("corner=ss: mean-shift IS over the one free dimension vs analytic Phi(-4)", pis, phi_bar(4.0), 0.15,
+    "the shift lands on dr alone")
+out = run(CORNER_DECK % ("wcdcorner", "wcdcorner", "@" + "mm[p] -max 3", ""), "_cornerflat.cir")
+flat = ("does not respond to any free statistical parameter (zero gradient); 3 are held by corner ss "
+        "(mm:r mm:p mm:q) and not searched" in out and grab(out, BETA) is None)
+chk("corner=ss, a metric of the held parameters alone: the flat-metric refusal names them (1=yes)",
+    1.0 if flat else 0.0, 1.0, 0.0)
+out = run(CORNER_DECK % ("wcdheld", "wcdheld", "i(v1) -max -0.9m", ""), "_cornerheld.cir")
+heldall = ("every model-declared statistical parameter is held by corner ss (2: mm:r mm:p) -- nothing to "
+           "search over" in out and "declare no Gaussian statistics" not in out)
+chk("corner=ss holds every statistical parameter: the refusal says so, not 'declares none' (1=yes)",
+    1.0 if heldall else 0.0, 1.0, 0.0)
+
 print("Enhancement-305: worst-case distance / MPFP vs the analytic Gaussian tail")
 bad = 0
 for w, v, g, wt, n in rows:
@@ -294,8 +342,9 @@ for w, v, g, wt, n in rows:
 for f in os.listdir(HERE):
     if f.startswith("_") and f.endswith(".cir"):
         os.remove(os.path.join(HERE, f))
-if os.path.exists(os.path.join(HERE, "wcdmc.osdi")):
-    os.remove(os.path.join(HERE, "wcdmc.osdi"))
+for osdi in ("wcdmc.osdi", "wcdcorner.osdi", "wcdheld.osdi"):
+    if os.path.exists(os.path.join(HERE, osdi)):
+        os.remove(os.path.join(HERE, osdi))
 
 print(f"\n{len(rows)-bad}/{len(rows)} checks passed")
 print("ALL PASS" if bad == 0 else "FAILURES PRESENT")

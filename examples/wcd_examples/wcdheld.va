@@ -1,0 +1,12 @@
+// Enhancement-667 (hunt F9): every statistical parameter cornered -- under
+// `.option osdimc corner=ss` there is nothing for wcd to search over, and the
+// refusal must say the corner holds them, not that the models declare none.
+`include "disciplines.vams"
+
+module wcdheld(a, b);
+  inout a, b;
+  electrical a, b;
+  (* std=25.0, corner="ss=+2sigma" *) parameter real r = 1000.0 from (0:inf);
+  (* std=1.0, corner="ss=+1" *)       parameter real p = 0.0;
+  analog I(a, b) <+ V(a, b) / r + 0.0 * p * V(a, b);
+endmodule
