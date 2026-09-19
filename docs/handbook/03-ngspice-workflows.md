@@ -614,7 +614,12 @@ parameters as no dimension, its banner counting the free ones and naming the
 held, and its flat-metric refusal naming them too
 ([E-667](../../enhancements_doc/Enhancement-667.md)). A parameter that names other corners only sits
 at nominal; a model type without the name runs at nominal, said once; a name no
-loaded model declares refuses the run, naming the declared ones. `tt`, `nom` and
+loaded model declares refuses the run, naming the declared ones. A corner that
+moves a parameter out of its range — its own, or the range of the paramset
+member the instance was bound to at the nominal — fails the run with a second
+line naming the corner, the nominal it moved the parameter from, the member,
+and the sibling member that accepts the value
+([E-668](../../enhancements_doc/Enhancement-668.md)). `tt`, `nom` and
 `unset corner` (without a deck option) return to the nominal; `altermod` of a
 cornered parameter recentres a percentage or sigma corner. A cornered parameter
 the model tests with `$param_given` and the deck never gave is left at its

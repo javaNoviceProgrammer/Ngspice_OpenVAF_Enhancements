@@ -30,7 +30,7 @@ only touched in passing.
 | [F7](#f7--the-corner-loops-under-osdimc-redraw-the-other-parameters-per-corner) | *(fixed in [E-663](../../enhancements_doc/Enhancement-663.md): the loops take priority over `osdimc`, decided by the user)* `corners` and `autocorner` under `.option osdimc` let every corner be a fresh trial: the uncornered statistical parameters redraw between corners, so the corner effect is confounded with a draw | design gap |
 | [F8](#f8--autocorner-follow-on-gaps) | *(fixed in [E-666](../../enhancements_doc/Enhancement-666.md): all five, and the banner's own `i(v1_ss)` which was not reachable either)* `autocorner` follow-on gaps: a raw-file `run` reports every corner as "made no plot"; `meas tran` refuses the combined plot; `writemc` has no row to land on; the devices are left at the last corner without a word | usability |
 | [F9](#f9--wcd-counts-cornered-parameters-as-dimensions) | *(fixed in [E-667](../../enhancements_doc/Enhancement-667.md))* `wcd` counts the cornered parameters as free dimensions and then reports "zero gradient" where three of four axes are held by the corner | misleading |
-| [F10](#f10--a-corner-that-moves-a-paramsets-own-parameter-out-of-its-member-aborts-with-a-generic-error) | a corner that moves a paramset's own parameter out of the selected member's range aborts the run at setup with a generic message that names neither the corner nor the member | diagnostic |
+| [F10](#f10--a-corner-that-moves-a-paramsets-own-parameter-out-of-its-member-aborts-with-a-generic-error) | *(fixed in [E-668](../../enhancements_doc/Enhancement-668.md): the failure names the corner, the nominal, the member and the sibling that accepts the value; the member is not re-selected)* a corner that moves a paramset's own parameter out of the selected member's range aborts the run at setup with a generic message that names neither the corner nor the member | diagnostic |
 | [F11](#f11--diagnostic-slips) | *(fixed in [E-665](../../enhancements_doc/Enhancement-665.md), except `` `ifdef Z 6 ``, which is the LRM's conditional group and is withdrawn)* diagnostic slips: `1e3n`, `0.5e` and `1meg` die as "expected 'exclude' or 'from'"; a bus-index error names an internal file `x.va__namerange.va`; a nature whose access function has the nature's name is "already declared" plus four cascades; `forever`; a non-ASCII identifier; junk after an `` `ifdef `` name; `(* desc= *)`; the knock-on `;` error after an undeclared macro; `corner="ss=0.5 %"` blames `%` | diagnostics |
 | [F12](#f12--run-time-domain-silences) | *(fixed in [E-665](../../enhancements_doc/Enhancement-665.md) for `absdelay` and `$bound_step`; `$discontinuity(-1)` is the limiting-discontinuity marker, withdrawn)* run-time domain silences: `absdelay` with a negative delay from a parameter or a variable, `$bound_step` negative from a parameter, `$discontinuity(-1)` — the literal forms are refused, the deck-fixed and run-time ones say nothing | silent |
 | [F13](#f13--three-declaration-checks-that-do-not-fire) | *(fixed in [E-665](../../enhancements_doc/Enhancement-665.md) for the string default and the escaped identifier; the base nature without `abstol` is E-422's recorded decision, left as it is)* three declaration checks that do not fire: a string parameter whose default is outside its `from` set (L027 skips strings); a base nature without `abstol` (LRM 3.6.1 requires it); an escaped identifier with an operator character becomes an unreachable ngspice parameter name | conformance |
@@ -271,6 +271,12 @@ treat the held axes as free; the honest count is 1, and the honest message names
 three held by the corner.
 
 ## F10 — a corner that moves a paramset's own parameter out of its member aborts with a generic error
+
+*Fixed in [E-668](../../enhancements_doc/Enhancement-668.md): a second line under
+the range line names the corner, the nominal it moved the parameter from, the
+member the instance was bound to at the nominal, and the sibling member that
+accepts the value. The selection is not re-judged (a member is a device type of
+its own); the note says how to get there.*
 
 Two `rs` paramsets over one module, members `l from (0:2u]` and `l from (2u:inf)`, both
 with `(* corner="ss=+20%" *)` on `l`; the instance gives `l=1.9u`, selecting the first

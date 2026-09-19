@@ -18,4 +18,10 @@ it moves. A cornered parameter's nominal is captured at every setup,
 corner on or off, so a corner selected after a nominal run under
 `.option osdimc` is applied in full on its first run (Enhancement-658).
 
-Run: `python3 verify_vacorner.py` (27 checks per solver, both solvers).
+Since [E-668](../../enhancements_doc/Enhancement-668.md) (hunt F10): a corner
+that moves a parameter out of its range — its own, or the range of the
+paramset member the instance was bound to at the nominal — fails the run
+with a second line naming the corner, the nominal it moved the parameter
+from, the member, and the sibling member that accepts the value.
+
+Run: `python3 verify_vacorner.py` (31 checks per solver, both solvers).

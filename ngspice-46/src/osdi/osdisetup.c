@@ -37,6 +37,13 @@ static bool osdimc_armed_now(void);
 static bool osdimc_enabled(void);
 static int osdimc_corner_priority;   /* Enhancement-663 (hunt F7), see osdimc_enabled */
 
+/* Enhancement-668 (hunt F10): the second line of an out-of-bounds message
+ * when the corner in force put the value there -- defined with the corner
+ * machinery below */
+static void osdi_oob_corner_note(const OsdiDescriptor *descr, void *inst, void *model,
+                                 uint32_t id, double v, const char *owner,
+                                 char *buf, size_t n);
+
 /* Enhancement-558: `; range <text>, <p> = <v>...` for an out-of-bounds message
  * -- the declared range as the source spells it (an object without the
  * OSDI_PARAM_RANGES symbol gives nothing) and the current value of every
@@ -148,10 +155,18 @@ static int handle_init_info(OsdiInitInfo info, const OsdiDescriptor *descr,
       osdi_range_note(descr, inst, model, id, range, sizeof range);
       if (scalar_real && src) {
         double v;
+        char note[700];
         memcpy(&v, src, sizeof(double));
         printf("Parameter %s of '%s' is out of bounds (value %g%s)!\n", param,
                handle && handle->name ? (char *)handle->name : descr->name, v,
                range);
+        /* Enhancement-668 (hunt F10): a corner put it there -- say so, and
+         * for a paramset member, which member the value lands in */
+        osdi_oob_corner_note(descr, inst, model, id, v,
+                             handle && handle->name ? (char *)handle->name : descr->name,
+                             note, sizeof note);
+        if (note[0])
+          printf("%s\n", note);
       } else if (scalar_int && src) {
         /* Enhancement-601 (D4 of the 2026-09-10 hunt): an INTEGER parameter
          * was refused without its value -- for one the deck gave as a real
@@ -3229,6 +3244,74 @@ static void osdimc_corner_describe(const OsdiCornerParam *cp, char *buf, size_t 
   default:
     snprintf(buf, n, "%+g sigma", cp->value);
     break;
+  }
+}
+
+/* Enhancement-668 (hunt F10): a corner that moves a parameter out of its
+ * range -- its own, or the range of the paramset member the instance was
+ * bound to at the nominal (LRM 6.4.2, E-644: the member is chosen from the
+ * instance's parameters when the card is materialised, and a corner is a
+ * per-run write on top) -- failed the run with the E-558 line alone, which
+ * names the parameter, the value and the range but not the corner that moved
+ * it nor the member. This is the second line: the corner and the nominal it
+ * moved the parameter from; for a member, the family, the fact that the
+ * choice was made at the nominal, and which sibling accepts the value. */
+static void osdi_oob_corner_note(const OsdiDescriptor *descr, void *inst, void *model,
+                                 uint32_t id, double v, const char *owner,
+                                 char *buf, size_t n) {
+  const OsdiRegistryEntry *entry = NULL;
+  int type = -1, head;
+  const void *own = inst ? inst : model;
+  OsdiMcNominal *e;
+  const OsdiCornerParam *cp;
+  const char *pname = descr->param_opvar[id].name[0];
+  char how[48];
+  size_t len;
+  buf[0] = '\0';
+  if (!osdimc_corner_on || !osdimc_corner_ok || !own)
+    return;
+  for (int t = 0; t < DEVmaxnum && !entry; t++) {
+    if (!osdi_devtype_is_osdi(t) || !ft_sim->devices[t])
+      continue;
+    const OsdiRegistryEntry *r = (const OsdiRegistryEntry *)ft_sim->devices[t]->registry_entry;
+    if (r && r->descriptor == descr) {
+      entry = r;
+      type = t;
+    }
+  }
+  if (!entry)
+    return;
+  cp = osdimc_corner_lookup(entry, id, NULL);
+  e = osdimc_find(own, id);
+  if (!cp || !e || e->nominal == v)
+    return;                   /* not this corner's doing */
+  osdimc_corner_describe(cp, how, sizeof how);
+  snprintf(buf, n, "  corner %s moved %s of '%s' there from its nominal %g (%s)",
+           osdimc_corner, pname, owner, e->nominal, how);
+  len = strlen(buf);
+  head = osdi_paramset_family_of(type);
+  if (head < 0)
+    return;
+  snprintf(buf + len, n - len, "; '%s' was bound to member '%s' of the paramset family "
+           "'%s' at the nominal (LRM 6.4.2)", owner, descr->name, entry->paramset_family);
+  len = strlen(buf);
+  {
+    int nacc = 0;
+    for (int t = 0; t < DEVmaxnum && len < n; t++) {
+      if (t == type || !osdi_devtype_is_osdi(t) || osdi_paramset_family_of(t) != head)
+        continue;
+      if (osdi_member_accepts(t, pname, v) == 1) {
+        snprintf(buf + len, n - len, "%s '%s'", nacc ? "," : "; member", ft_sim->devices[t]->name);
+        len = strlen(buf);
+        nacc++;
+      }
+    }
+    if (nacc)
+      snprintf(buf + len, n - len, " accept%s %g: give %s on the instance inside the member "
+               "the corner lands in, or name that member on the card",
+               nacc == 1 ? "s" : "", v, pname);
+    else
+      snprintf(buf + len, n - len, "; no member of the family accepts %g", v);
   }
 }
 

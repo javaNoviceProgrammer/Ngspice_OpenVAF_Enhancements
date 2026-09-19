@@ -588,6 +588,32 @@ static int osdi_member_param(int t, const char *name)
   return -1;
 }
 
+/* Enhancement-668 (hunt F10): does member `type`'s parameter `pname` accept
+ * `v`? 1 when it does or has no range text to judge by, 0 when its declared
+ * range refuses it, -1 when the member has no such parameter. For the
+ * out-of-bounds note that names the member a corner's value lands in. */
+int osdi_member_accepts(int type, const char *pname, double v)
+{
+  if (type < 0 || !osdi_devtype_is_osdi(type))
+    return -1;
+  const OsdiRegistryEntry *e =
+      (const OsdiRegistryEntry *)DEVices[type]->DEVpublic.registry_entry;
+  if (!e || !e->descriptor)
+    return -1;
+  const OsdiDescriptor *d = e->descriptor;
+  for (uint32_t k = 0; k < d->num_params; k++) {
+    const OsdiParamOpvar *po = &d->param_opvar[k];
+    for (uint32_t a = 0; a <= po->num_alias; a++) {
+      if (!po->name[a] || strcmp(po->name[a], pname) != 0)
+        continue;
+      if (!e->param_ranges || !e->param_ranges[k] || !*e->param_ranges[k])
+        return 1;
+      return osdi_range_accepts(e->param_ranges[k], v) ? 1 : 0;
+    }
+  }
+  return -1;
+}
+
 /* Enhancement-644: is `type` the head of an overloaded paramset family --
  * the member whose name IS the family name, the one a `.model` card of that
  * name is bound to before anything selects? */

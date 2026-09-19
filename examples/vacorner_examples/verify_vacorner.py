@@ -61,6 +61,16 @@ Checks (per solver):
   [27] Enhancement-662 (hunt F3): a corner named `tt`, `nom` or `nominal`
        is refused at compile time -- those spellings select the nominal in
        ngspice and the entry could never be reached
+  [28] Enhancement-668 (hunt F10): a corner that moves a paramset member's
+       own parameter out of the member's range: the out-of-bounds line gains
+       a second line naming the corner, the nominal it moved the parameter
+       from, the member the instance was bound to at the nominal, and the
+       sibling member that accepts the value
+  [29] a plain model parameter the corner moves out of its own range: the
+       corner line, no member part
+  [30] no note when the corner stays inside the range, nor when a card value
+       is out of range with no corner in force
+  [31] the `corners` loop: the `ss` row fails and the note is printed once
 """
 import os
 import re
@@ -413,6 +423,76 @@ check("[27] corners named `tt`, `Nominal` and `nom` are refused: three errors na
       and "corner 'tt' names" in o and "corner 'Nominal' names" in o and "corner 'nom' names" in o
       and "the nominal needs no entry" in o and not os.path.exists(os.path.join(WORK, "ctt.osdi")),
       f"rc={r.returncode} errors={o.count('names the nominal')}")
+
+# Enhancement-668 (hunt F10): a corner that leaves a range -- the member's or its own
+for name, src in {
+    "cps": '''`include "disciplines.vams"
+module res_va(p, n);
+inout p, n; electrical p, n;
+parameter real l = 1u from (0:inf);
+parameter real rsh = 100;
+analog I(p,n) <+ V(p,n) / (rsh * l / 1u);
+endmodule
+paramset rs res_va;
+(* corner="ss=+20%" *) parameter real l = 1u from (0:2u];
+.l = l; .rsh = 100;
+endparamset
+paramset rs res_va;
+(* corner="ss=+20%" *) parameter real l = 3u from (2u:inf);
+.l = l; .rsh = 200;
+endparamset
+''',
+    "cpl": '''`include "disciplines.vams"
+module plain_va(p, n);
+inout p, n; electrical p, n;
+(* corner="ss=+20%" *) parameter real l = 1u from (0:2u];
+analog I(p,n) <+ V(p,n) * l / 1u * 1e-3;
+endmodule
+''',
+}.items():
+    with open(os.path.join(WORK, name + ".va"), "w") as f:
+        f.write(src)
+    r = subprocess.run([VAF, name + ".va", "-o", name + ".osdi"], capture_output=True, text=True, cwd=WORK)
+    if r.returncode != 0:
+        print(r.stdout + r.stderr)
+        sys.exit(1)
+
+
+def runp(body, tag, opts="", osdi="cps", inst="n1 in 0 rm l=1.9u", card=".model rm rs"):
+    path = os.path.join(WORK, f"{tag}.cir")
+    with open(path, "w") as f:
+        f.write(f"* vacorner {tag}\n.control\npre_osdi {osdi}.osdi\n.endc\n{opts}\nv1 in 0 dc 1\n{inst}\n{card}\n"
+                f".control\n{body}\n.endc\n.end\n")
+    p = subprocess.run([NGSPICE, "-b", path], capture_output=True, text=True, timeout=300, cwd=WORK)
+    return p.returncode, p.stdout + p.stderr
+
+
+NOTE28 = ("  corner ss moved l of 'n1' there from its nominal 1.9e-06 (+20%); 'n1' was bound to member 'rs' of the "
+          "paramset family 'rs' at the nominal (LRM 6.4.2); member 'rs__2' accepts 2.28e-06: give l on the instance "
+          "inside the member the corner lands in, or name that member on the card")
+rc, out = runp("op\n", "c28", ".option corner=ss")
+check("[28] a corner moves a paramset member's own parameter out of the member's range: the second line names the corner, the nominal, the member and the sibling that accepts the value",
+      "Parameter l of 'n1' is out of bounds (value 2.28e-06; range from (0:2u])!" in out and NOTE28 in out
+      and "OSDI setup_instance (OSDItemp)" in out, out[-400:].replace("\n", "|"))
+
+rc, out = runp("op\n", "c29", ".option corner=ss", "cpl", "n1 in 0 pm", ".model pm plain_va l=1.9u")
+check("[29] a plain model parameter the corner moves out of its own range: the corner line, no member part",
+      "Parameter l of 'pm' is out of bounds (value 2.28e-06; range from (0:2u])!" in out
+      and "  corner ss moved l of 'pm' there from its nominal 1.9e-06 (+20%)\n" in out and "member" not in out,
+      out[-300:].replace("\n", "|"))
+
+rc, o1 = runp(f"op\nprint {A}pm[l]\n", "c30a", ".option corner=ss", "cpl", "n1 in 0 pm", ".model pm plain_va l=1.5u")
+rc, o2 = runp("op\n", "c30b", "", "cpl", "n1 in 0 pm", ".model pm plain_va l=2.5u")
+check("[30] no note when the corner stays inside the range (l 1.8u runs), nor when a card value is out of range with no corner in force",
+      near(val(o1, A + "pm[l]"), 1.8e-6) and "out of bounds" not in o1 and "corner ss moved" not in o1
+      and "Parameter l of 'pm' is out of bounds (value 2.5e-06" in o2 and "corner" not in o2.replace("vacorner c30b", ""),
+      (o1[-150:] + "||" + o2[-200:]).replace("\n", "|"))
+
+rc, out = runp(f"corners -output l={A}n1[l]\n", "c31")
+rows = re.findall(r"^\s*(\d+)\s+(\w+)\s+(.*)$", out, re.M)
+check("[31] the `corners` loop: the tt row 1.9e-06, the ss row failed, the note printed once",
+      out.count(NOTE28) == 1 and any(r[1] == "tt" and "1.9e-06" in r[2] for r in rows)
+      and any(r[1] == "ss" and "the analysis failed" in r[2] for r in rows), f"rows={rows} notes={out.count('corner ss moved')}")
 
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)
