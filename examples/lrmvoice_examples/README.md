@@ -10,7 +10,7 @@ number it computes.
 python3 verify_lrmvoice.py
 ```
 
-**28 checks, both solvers.** Against the previously shipped binaries the suite
+**31 checks, both solvers** (28 before E-673, which added the `$fatal`-in-a-sweep label). Against the previously shipped binaries the suite
 scores **11/28** — and the eleven passes are the seven compile checks plus the
 four deliberate controls listed below, so every substantive check
 discriminates.

@@ -115,7 +115,7 @@ def readfile(name):
 
 ARTEFACTS = ["lrmvoice_init.osdi", "lrmvoice_sev.osdi", "lrmvoice_err.osdi",
              "lrmvoice_ctx.osdi", "lrmvoice_hsp.osdi", "lrmvoice_file.osdi",
-             "lrmvoice_write.osdi",
+             "lrmvoice_write.osdi", "lrmvoice_fatal.osdi",
              "_init.sp", "_sev.sp", "_err.sp", "_ctx.sp", "_hsp.sp", "_hspn.sp",
              "_m3.sp", "_file.sp", "_write.sp",
              "lrmvoice_init.txt", "lrmvoice_ctl.txt", "lrmvoice_rw.txt",
@@ -249,6 +249,30 @@ if ok:
           len(vals) == 2 and abs(float(vals[0]) - 0.75) < 1e-9
           and abs(float(vals[1]) - 1.0) < 1e-9,
           f"{swept}")
+
+# Enhancement-673 (hunt F7 of 2026-09-19): $fatal is never deferred (9.7.3),
+# so its label read the swept value BEFORE the sweep had published the point
+# being solved -- "(at sweep value 0)" for a fatal raised at 0.5 -- and the
+# sweep then re-solved the point through CKTop's ladder, printing the line
+# twice. The sweep now publishes the point before the solve and stops at a
+# raised $fatal with its own abort line.
+ok, msg = compile_va("lrmvoice_fatal.va")
+check("lrmvoice_fatal.va compiles", ok, msg.strip().splitlines()[0] if msg.strip() else "")
+
+if ok:
+    out, err = run("_fatal.sp",
+                   "* severity context, $fatal in a dc sweep\n"
+                   ".control\npre_osdi lrmvoice_fatal.osdi\n.endc\n"
+                   ".model m lrmvoice_fatal\nn1 1 0 m\nv1 1 0 dc 0\n"
+                   ".control\ndc v1 0 1 0.5\nquit\n.endc\n.end\n")
+    both = out + err
+    fatal = [l for l in both.splitlines() if "FATAL over" in l]
+    check("a $fatal in a dc sweep names the point being solved, and prints once",
+          len(fatal) == 1 and "FATAL over 0.5" in fatal[0] and "(at sweep value 0.5)" in fatal[0],
+          f"{fatal}")
+    check("...and the sweep's abort line names the same point",
+          "raised $fatal at sweep value 0.5; aborting" in both
+          and "not a convergence failure" in both, both[-300:].replace("\n", "|"))
 
 # ------------------------------------------- 9.18 Table 9-29: the HSP rules --
 ok, msg = compile_va("lrmvoice_hsp.va")

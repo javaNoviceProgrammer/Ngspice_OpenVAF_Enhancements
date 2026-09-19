@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+// Enhancement-673 (hunt F7 of 2026-09-19). LRM 9.7.3: "$fatal terminates the
+// simulation without checking whether the iteration would be rejected" -- so
+// it is never deferred, and its "(at sweep value ...)" label used to read the
+// swept value before the sweep had published the point being solved: a
+// $fatal raised at 0.5 said "(at sweep value 0)", and the sweep then went on
+// to re-solve the point through CKTop's ladder and printed the line twice.
+// The gate keeps the message op-dependent (no constant-argument hoisting).
+module lrmvoice_fatal(p, n);
+  inout p, n;
+  electrical p, n;
+  analog begin
+    if (V(p, n) > 0.25) $fatal(1, "FATAL over %g", V(p, n));
+    I(p, n) <+ V(p, n) * 1e-3;
+  end
+endmodule

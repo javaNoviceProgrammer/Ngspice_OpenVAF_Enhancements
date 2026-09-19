@@ -14,6 +14,7 @@ Modified: 1999 Paolo Nenzi
 #include "ngspice/const.h"
 #include "ngspice/sperror.h"
 #include "ngspice/fteext.h"
+#include "ngspice/cpextern.h"   /* Enhancement-673: cp_err */
 #include "ngspice/compatmode.h"
 #include "ngspice/devdefs.h"
 #ifdef OSDI
@@ -958,6 +959,30 @@ DCTunwindLevels(CKTcircuit *ckt, TRCV *job, int from,
 }
 
 
+/* Enhancement-673 (hunt F7 of 2026-09-19): the swept value of level 0 as the
+ * "time" of the point being solved. It used to be published into CKTtime only
+ * AFTER the point converged, for the output vector; the LRM 9.7.3 label an OSDI
+ * severity task carries -- "(at sweep value %g)", osdi_severity_when -- read it
+ * during the solve, so an immediate $fatal (never deferred, 9.7.3) named the
+ * PREVIOUS point while the deferred $error/$warning/$info, flushed after the
+ * point converged, named the right one. Published before the solve as well. */
+static void
+DCTsweepTime(CKTcircuit *ckt, TRCV *job, int vcode, int icode, int rcode)
+{
+    if (job->TRCVvType[0] == vcode)
+        ckt->CKTtime = ((VSRCinstance *)(job->TRCVvElt[0]))->VSRCdcValue;
+    else if (job->TRCVvType[0] == icode)
+        ckt->CKTtime = ((ISRCinstance *)(job->TRCVvElt[0]))->ISRCdcValue;
+    else if (job->TRCVvType[0] == rcode)
+        ckt->CKTtime = ((RESinstance *)(job->TRCVvElt[0]))->RESresist;
+    else if (job->TRCVvType[0] == PARAM_CODE)
+        ckt->CKTtime = job->TRCVvNow[0];
+    else if (job->TRCVvType[0] == XPARAM_CODE)   /* Enhancement-534 */
+        ckt->CKTtime = job->TRCVvNow[0];
+    else if (job->TRCVvType[0] == TEMP_CODE)
+        ckt->CKTtime = ckt->CKTtemp - CONSTCtoK;
+}
+
 int
 DCtrCurv(CKTcircuit *ckt, int restart)
 {
@@ -1640,7 +1665,8 @@ DCtrCurv(CKTcircuit *ckt, int restart)
         for (j = ckt->CKTmaxOrder; j >= 0; j--)
             ckt->CKTstates[j + 1] = ckt->CKTstates[j];
         ckt->CKTstate0 = temp;
-
+        /* Enhancement-673: the point being solved is the one a message names */
+        DCTsweepTime(ckt, job, vcode, icode, rcode);
         /* do operation */
 #ifdef XSPICE
 /* gtri - begin - wbk - Do EVTop if event instances exist */
@@ -1669,6 +1695,20 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                 ckt->CKTdcFirstTry = firstTime;
                 converged = NIiter(ckt, ckt->CKTdcTrcvMaxIter);
                 ckt->CKTdcFirstTry = 0;
+                /* Enhancement-673 (hunt F7): a Verilog-A $fatal raised in that
+                   solve is an ABORT, not a non-convergence. CKTop's own ladder
+                   knows that (Enhancement-378); this path went on to CKTop,
+                   whose first rung evaluated every device again, so the model
+                   re-raised the same $fatal and the line printed twice. */
+                if (converged == E_PANIC && CKTvaFatalRaised) {
+                    fprintf(cp_err,
+                            "\nError: a Verilog-A device raised $fatal at sweep"
+                            " value %g; aborting.\n"
+                            "       This is not a convergence failure -- see the"
+                            " OSDI(fatal) message above for the cause.\n",
+                            ckt->CKTtime);
+                    return(converged);
+                }
                 if (converged != 0) {
                     converged = CKTop(ckt,
                         (ckt->CKTmode & MODEUIC) | MODEDCTRANCURVE | MODEINITJCT,
@@ -1735,18 +1775,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
 #endif
 
         ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODEDCTRANCURVE | MODEINITPRED;
-        if (job->TRCVvType[0] == vcode)
-            ckt->CKTtime = ((VSRCinstance *)(job->TRCVvElt[0]))->VSRCdcValue;
-        else if (job->TRCVvType[0] == icode)
-            ckt->CKTtime = ((ISRCinstance *)(job->TRCVvElt[0]))->ISRCdcValue;
-        else if (job->TRCVvType[0] == rcode)
-            ckt->CKTtime = ((RESinstance *)(job->TRCVvElt[0]))->RESresist;
-        else if (job->TRCVvType[0] == PARAM_CODE)
-            ckt->CKTtime = job->TRCVvNow[0];
-        else if (job->TRCVvType[0] == XPARAM_CODE)   /* Enhancement-534 */
-            ckt->CKTtime = job->TRCVvNow[0];
-        else if (job->TRCVvType[0] == TEMP_CODE)
-            ckt->CKTtime = ckt->CKTtemp - CONSTCtoK;
+        DCTsweepTime(ckt, job, vcode, icode, rcode);
 
 #ifdef XSPICE
         /* If first time through, call CKTdump to output Operating Point info */
