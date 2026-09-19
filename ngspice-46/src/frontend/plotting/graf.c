@@ -123,7 +123,7 @@ int gr_init(double *xlims, double *ylims, /* The size of the screen. */
         }
     }
 
-    if (!cp_getvar("ticchar", CP_STRING, graph->ticchar, 1)) {
+    if (!cp_getvar("ticchar", CP_STRING, graph->ticchar, sizeof graph->ticchar)) {   /* E-669: the buffer's size */
         strcpy(graph->ticchar, "X");
     }
 

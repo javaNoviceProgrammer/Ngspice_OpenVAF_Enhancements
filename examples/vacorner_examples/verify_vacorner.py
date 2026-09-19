@@ -71,6 +71,16 @@ Checks (per solver):
   [30] no note when the corner stays inside the range, nor when a card value
        is out of range with no corner in force
   [31] the `corners` loop: the `ss` row fails and the note is printed once
+  [32] Enhancement-669 (hunt F14): 70 declared corners -- `.option corner=c69`
+       selects (the 65th and later were "no loaded model declares"), and the
+       `corners` and `autocorner` loops run all 71 (they ran 64)
+  [33] 300 declared corners: `.option corner=c299` selects; the refused-name
+       list ends "... and N more"; the loops say the circuit declares 300 and
+       take the first 255; `corners -list c299` runs it
+  [34] a 79-character corner name selects through `.option`, `set` and the
+       loop; an 80-character one is refused at compile time
+  [35] a 300-character name in `.option corner=` is refused as longer than
+       ngspice can select, without the abort the reader's overflow caused
 """
 import os
 import re
@@ -493,6 +503,72 @@ rows = re.findall(r"^\s*(\d+)\s+(\w+)\s+(.*)$", out, re.M)
 check("[31] the `corners` loop: the tt row 1.9e-06, the ss row failed, the note printed once",
       out.count(NOTE28) == 1 and any(r[1] == "tt" and "1.9e-06" in r[2] for r in rows)
       and any(r[1] == "ss" and "the analysis failed" in r[2] for r in rows), f"rows={rows} notes={out.count('corner ss moved')}")
+
+# Enhancement-669 (hunt F14): more than 64 corners, and long names
+def mkmany(name, n):
+    entries = ", ".join(f"c{i}={100 + i}" for i in range(n))
+    return (f'`include "disciplines.vams"\nmodule {name}(p, n);\ninout p, n; electrical p, n;\n'
+            f'(* corner="{entries}" *) parameter real r = 100 from (0:inf);\nanalog I(p,n) <+ V(p,n)/r;\nendmodule\n')
+
+
+N79 = "c" + "y" * 78
+N80 = "c" + "z" * 79
+for name, src in {"c70": mkmany("c70", 70), "c300": mkmany("c300", 300),
+                  "c79": mkmany("c79", 1).replace('c0=100', f'ss=110, {N79}=120')}.items():
+    with open(os.path.join(WORK, name + ".va"), "w") as f:
+        f.write(src)
+    r = subprocess.run([VAF, name + ".va", "-o", name + ".osdi"], capture_output=True, text=True, cwd=WORK)
+    if r.returncode != 0:
+        print(r.stdout + r.stderr)
+        sys.exit(1)
+
+
+def runm(body, tag, opts="", osdi="c70"):
+    path = os.path.join(WORK, f"{tag}.cir")
+    with open(path, "w") as f:
+        f.write(f"* vacorner {tag}\n.control\npre_osdi {osdi}.osdi\n.endc\n{opts}\nv1 in 0 dc 1\nn1 in 0 rm\n.model rm {osdi}\n"
+                f".control\n{body}\n.endc\n.end\n")
+    p = subprocess.run([NGSPICE, "-b", path], capture_output=True, text=True, timeout=600, cwd=WORK)
+    return p.returncode, p.stdout + p.stderr
+
+
+rc, o1 = runm(f"op\nprint {A}rm[r]\n", "c32a", ".option corner=c69")
+rc, o2 = runm(f"corners -output r={A}rm[r]\necho n=$corners_n\n", "c32b")
+rc, o3 = runm("op\necho n=$autocorner_n\n", "c32c", ".option autocorner")
+check("[32] 70 declared corners: `.option corner=c69` selects (was 'no loaded model declares'); `corners` and `autocorner` run all 71 (ran 64)",
+      near(val(o1, A + "rm[r]"), 169.0) and "no loaded Verilog-A model declares" not in o1
+      and "corners: 71 corners (tt c0" in o2 and "n=71" in o2 and re.search(r"^\s*70\s+c69\s+169\s*$", o2, re.M)
+      and "autocorner: op at 71 corners" in o3 and "n=71" in o3,
+      f"r={val(o1, A + 'rm[r]')} " + (o2[-120:] + "|" + o3[-120:]).replace("\n", "|"))
+
+rc, o1 = runm(f"op\nprint {A}rm[r]\n", "c33a", ".option corner=c299", "c300")
+rc, o2 = runm("op\n", "c33b", ".option corner=nosuch", "c300")
+rc, o3 = runm(f"corners -output r={A}rm[r]\necho n=$corners_n\ncorners -list c299 c0 -output r={A}rm[r]\necho n2=$corners_n\n", "c33c", "", "c300")
+rc, o4 = runm("op\necho n=$autocorner_n\n", "c33d", ".option autocorner", "c300")
+check("[33] 300 declared corners: c299 selects; the refused-name list ends '... and 44 more'; the loops say the circuit declares 300 and take the first 255; `-list c299` runs",
+      near(val(o1, A + "rm[r]"), 399.0) and "c255 ... and 44 more); the run is refused" in o2
+      and "corners: the circuit declares 300 corners; this loop takes the first 255 (its limit)" in o3 and "n=256" in o3
+      and "corners: 2 corners (c299 c0)" in o3 and re.search(r"^\s*0\s+c299\s+399\s*$", o3, re.M) and o3.count("declares 300 corners") == 1
+      and "autocorner: the circuit declares 300 corners; this pass takes the first 255 (its limit)" in o4 and "n=256" in o4,
+      f"r={val(o1, A + 'rm[r]')} " + (o2[-160:] + "|" + o3[-200:] + "|" + o4[-120:]).replace("\n", "|"))
+
+rc, o1 = runm(f"op\nprint {A}rm[r]\nset corner={N79}\nop\nprint {A}rm[r]\ncorners -output r={A}rm[r]\n", "c34", f".option corner={N79}", "c79")
+with open(os.path.join(WORK, "c80.va"), "w") as f:
+    f.write(mkmany("c80", 1).replace('c0=100', f'ss=110, {N80}=120'))
+r = subprocess.run([VAF, "c80.va", "-o", "c80.osdi"], capture_output=True, text=True, cwd=WORK)
+o2 = r.stdout + r.stderr
+check("[34] a 79-character corner name selects through `.option`, `set` and the loop; an 80-character one is refused at compile time",
+      vals(o1, A + "rm[r]")[:2] == [120.0, 120.0] and re.search(r"^\s*2\s+" + N79 + r"\s+120\s*$", o1, re.M)
+      and "limited to" not in o1 and r.returncode != 0
+      and "is 80 characters long; a corner name is limited to 79 characters" in o2 and "read into a fixed buffer" in o2
+      and not os.path.exists(os.path.join(WORK, "c80.osdi")),
+      f"vals={vals(o1, A + 'rm[r]')} rc={r.returncode} " + o2[:160].replace("\n", "|"))
+
+rc, o1 = runm("op\n", "c35", ".option corner=" + "q" * 300, "c79")
+check("[35] a 300-character name is refused as longer than ngspice can select, no abort (the reader wrote one byte past its buffer)",
+      rc in (0, 1) and "Warning: string length for variable corner is limited to 255 chars" in o1
+      and "the name is longer than 255 characters, more than ngspice can select (a compiled corner name is at most 79); the run is refused" in o1,
+      f"rc={rc} " + o1[-200:].replace("\n", "|"))
 
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)

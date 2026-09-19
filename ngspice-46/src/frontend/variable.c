@@ -810,10 +810,15 @@ cp_getvar(char *name, enum cp_types type, void *retval, size_t rsize)
                 break;
             case CP_STRING: {   /* Gotta be careful to have room. */
                 char *s = cp_unquote(v->va_string);
-                if (strlen(s) > rsize) {
-                    fprintf(stderr, "Warning: string length for variable %s is limited to %zu chars\n", v->va_name, rsize);
+                /* Enhancement-669 (hunt F14): `rsize` is the caller's BUFFER
+                 * size (every caller passes sizeof buf), which holds rsize - 1
+                 * characters and the NUL. The limit kept rsize characters and
+                 * the copy wrote one byte past the buffer: a `corner` name of
+                 * 80 characters aborted ngspice with a smashed stack. */
+                if (rsize > 0 && strlen(s) >= rsize) {
+                    fprintf(stderr, "Warning: string length for variable %s is limited to %zu chars\n", v->va_name, rsize - 1);
                     /* limit the string length */
-                    s[rsize] = '\0';
+                    s[rsize - 1] = '\0';
                 }
                 strcpy((char*) retval, s);
                 tfree(s);

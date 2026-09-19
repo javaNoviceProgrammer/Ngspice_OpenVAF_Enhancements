@@ -564,6 +564,20 @@ impl ModuleInfo {
                                                 ),
                                                 Ok((written, kind, value)) => {
                                                     let folded = written.to_ascii_lowercase();
+                                                    // Enhancement-669 (hunt F14): ngspice reads
+                                                    // the selected corner from its `corner`
+                                                    // variable into a fixed buffer; a name longer
+                                                    // than CORNER_NAME_MAX could never be selected
+                                                    if written.chars().count() > CORNER_NAME_MAX {
+                                                        add_diagnostic(
+                                                            attr.clone(),
+                                                            &CornerNameTooLong {
+                                                                attr: attr.clone(),
+                                                                name: written,
+                                                            },
+                                                        );
+                                                        continue;
+                                                    }
                                                     // Enhancement-662 (hunt F3): the nominal's
                                                     // spellings can never be selected -- ngspice's
                                                     // `.option corner=tt` (nom, nominal) IS the
@@ -1486,6 +1500,43 @@ impl Diagnostic for CornerNameTwice {
                 message: "in this attribute".to_owned(),
             }])
             .with_notes(vec!["help: keep one entry per corner".to_owned()])
+    }
+}
+
+/// Enhancement-669 (hunt F14): the longest corner name ngspice can select
+/// (its `.option corner=` / `set corner=` value is read into a fixed buffer;
+/// the simulator's buffer holds 255 since E-669, this is the contract)
+pub const CORNER_NAME_MAX: usize = 79;
+
+/// Enhancement-669 (hunt F14): a corner name longer than CORNER_NAME_MAX
+struct CornerNameTooLong {
+    attr: ast::Attr,
+    name: String,
+}
+
+impl Diagnostic for CornerNameTooLong {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        let shown: String = self.name.chars().take(24).collect();
+        Report::error()
+            .with_message(format!(
+                "corner '{}...' is {} characters long; a corner name is limited to {} characters",
+                shown,
+                self.name.chars().count(),
+                CORNER_NAME_MAX
+            ))
+            .with_labels(vec![Label {
+                style: LabelStyle::Primary,
+                file_id: file,
+                range: range.into(),
+                message: "in this attribute".to_owned(),
+            }])
+            .with_notes(vec![
+                "help: ngspice selects a corner through its `corner` variable (`.option corner=ss`), read into a fixed buffer; a longer name could never be selected -- shorten it"
+                    .to_owned(),
+            ])
     }
 }
 

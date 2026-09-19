@@ -614,7 +614,10 @@ parameters as no dimension, its banner counting the free ones and naming the
 held, and its flat-metric refusal naming them too
 ([E-667](../../enhancements_doc/Enhancement-667.md)). A parameter that names other corners only sits
 at nominal; a model type without the name runs at nominal, said once; a name no
-loaded model declares refuses the run, naming the declared ones. A corner that
+loaded model declares refuses the run, naming the declared ones (any number of
+declared corners can be selected; the `corners` and `autocorner` loops take
+255 beside `tt` and say when a circuit declares more, `-list` reaching any —
+[E-669](../../enhancements_doc/Enhancement-669.md)). A corner that
 moves a parameter out of its range — its own, or the range of the paramset
 member the instance was bound to at the nominal — fails the run with a second
 line naming the corner, the nominal it moved the parameter from, the member,

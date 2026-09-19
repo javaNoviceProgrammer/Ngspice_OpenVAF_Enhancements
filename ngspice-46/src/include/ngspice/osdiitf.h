@@ -239,6 +239,8 @@ typedef void (*OSDImcSnapshotFn)(const OSDImcSnapshotItem *it, void *ctx);
 extern bool OSDImcEnabled(void);
 extern bool OSDImcCornerSelected(void);   /* Enhancement-654: `.option corner=<name>` is in force */
 extern int OSDImcCornerNames(CKTcircuit *ckt, const char **names, int cap); /* E-655: the declared names */
+extern int OSDImcCornerTotal(CKTcircuit *ckt);            /* E-669 (hunt F14): how many, whatever the cap */
+extern bool OSDImcCornerDeclared(CKTcircuit *ckt, const char *name); /* E-669: a direct lookup */
 extern const char *OSDImcCornerName(void); /* E-655: the corner in force, "" when none */
 extern bool OSDImcHasStats(CKTcircuit *ckt);
 extern void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx);

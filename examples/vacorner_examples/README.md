@@ -24,4 +24,10 @@ paramset member the instance was bound to at the nominal — fails the run
 with a second line naming the corner, the nominal it moved the parameter
 from, the member, and the sibling member that accepts the value.
 
-Run: `python3 verify_vacorner.py` (31 checks per solver, both solvers).
+Since [E-669](../../enhancements_doc/Enhancement-669.md) (hunt F14): any
+number of declared corners can be selected, the loops take up to 255 beside
+`tt` and say when a circuit declares more, a corner name is limited to 79
+characters at compile time, and a longer name from an older object is refused
+by the simulator instead of truncated (or, at 80 characters, aborting it).
+
+Run: `python3 verify_vacorner.py` (35 checks per solver, both solvers).

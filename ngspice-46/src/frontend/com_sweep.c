@@ -6272,7 +6272,9 @@ every row with its corner. The `corner` variable is put back afterwards, so
 the next run returns to the corner the deck names, or to the nominal.
 **********/
 
-#define CO_MAXCORNERS 64
+/* Enhancement-669 (hunt F14): 256, not 64 -- and a circuit declaring more is
+ * said so, the loop taking the first CO_MAXCORNERS (`-list` names any) */
+#define CO_MAXCORNERS 256
 
 /* a flag token: `-name`, not a negative number */
 static int co_is_flag(const char *w)
@@ -6334,12 +6336,12 @@ void com_corners(wordlist *wl)
     const char *declared[CO_MAXCORNERS];
     const char *set[CO_MAXCORNERS + 1];
     int ndecl = 0, nset = 0, c, k, i;
-    char prev[80];
+    char prev[256];                             /* E-669: the corner buffer's size */
     int had_prev;
     double *data = NULL;
     int failed[CO_MAXCORNERS + 1];
     int outbad[SW_MAXOUT];
-    char names[1200];
+    char names[4096];                           /* E-669: 256 names */
     int save_optimizing = ft_optimizing;
     int ncolumn;
     struct plot *pl;
@@ -6502,18 +6504,23 @@ void com_corners(wordlist *wl)
         goto cleanup;
 
     /* --- the corner set --- */
-    ndecl = OSDImcCornerNames(ft_curckt->ci_ckt, declared, CO_MAXCORNERS);
+    ndecl = OSDImcCornerNames(ft_curckt->ci_ckt, declared, CO_MAXCORNERS - 1);   /* E-669: room for tt */
     if (ndecl == 0) {
         fprintf(cp_err, "corners: no loaded Verilog-A model declares a corner -- a parameter "
                         "declares them with (* corner=\"ss=..., ff=...\" *) (Enhancement-654)\n");
         goto cleanup;
     }
+    /* Enhancement-669 (hunt F14): more than the loop's table holds */
+    {
+        int total = OSDImcCornerTotal(ft_curckt->ci_ckt);
+        if (total > ndecl && !nlisted)
+            fprintf(cp_err, "corners: the circuit declares %d corners; this loop takes the first "
+                            "%d (its limit) -- `-list` names any of them\n", total, ndecl);
+    }
     if (nlisted) {
         for (i = 0; i < nlisted; i++) {
-            int known = eq(listed[i], "tt");
-            for (k = 0; k < ndecl && !known; k++)
-                if (eq(listed[i], declared[k]))
-                    known = 1;
+            int known = eq(listed[i], "tt") ||
+                        OSDImcCornerDeclared(ft_curckt->ci_ckt, listed[i]);   /* E-669: direct */
             if (!known) {
                 fprintf(cp_err, "corners: '%s' is a corner no loaded model declares (declared:",
                         listed[i]);
@@ -6910,7 +6917,7 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
     struct plot *before[CO_MAXCORNERS + 1];
     int nnew[CO_MAXCORNERS + 1];
     int nset = 0, ndecl, c, k, j, err = 0, any_err = 0, nfam = 0;
-    char prev[80], names[1200], plots[1200];
+    char prev[256], names[4096], plots[4096];   /* E-669: 256 corners */
     int had_prev;
     char *combined = NULL;
     /* Enhancement-666 (hunt F8): `run <file>` writes the plots to a raw file
@@ -6921,10 +6928,17 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
 
     if (ac_inside)
         return run(what, wl);
-    ndecl = OSDImcCornerNames(ft_curckt->ci_ckt, declared, CO_MAXCORNERS);
+    ndecl = OSDImcCornerNames(ft_curckt->ci_ckt, declared, CO_MAXCORNERS - 1);   /* E-669: room for tt */
     set[nset++] = "tt";
     for (k = 0; k < ndecl && nset < CO_MAXCORNERS; k++)
         set[nset++] = declared[k];
+    {   /* Enhancement-669 (hunt F14): more than the pass's table holds */
+        int total = OSDImcCornerTotal(ft_curckt->ci_ckt);
+        if (total > nset - 1)
+            fprintf(cp_err, "autocorner: the circuit declares %d corners; this pass takes the "
+                            "first %d (its limit) -- the `corners -list` command names any of them\n",
+                    total, nset - 1);
+    }
     names[0] = '\0';
     for (c = 0; c < nset; c++) {
         size_t used = strlen(names);

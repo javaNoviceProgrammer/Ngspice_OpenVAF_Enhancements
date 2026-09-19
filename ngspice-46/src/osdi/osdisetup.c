@@ -2043,7 +2043,12 @@ static bool osdimc_active;          /* drawn values are currently applied */
  * model declares (else the setup refuses the run), whether a corner value is
  * currently written into some parameter, and the (model type, name) pairs
  * the "declares no corner of that name" note was printed for. */
-static char osdimc_corner[80];
+/* Enhancement-669 (hunt F14): 256, not 80 -- the compiler refuses a corner
+ * name longer than 79 characters, and an object from an older compiler with
+ * a longer one is said to be unselectable rather than truncated */
+#define OSDIMC_CORNER_NAME_MAX 256
+static char osdimc_corner[OSDIMC_CORNER_NAME_MAX];
+static bool osdimc_corner_too_long;  /* E-669: the variable overflowed the buffer */
 static bool osdimc_corner_on;
 static bool osdimc_corner_ok;
 static bool osdimc_corner_active;
@@ -2051,7 +2056,7 @@ static bool osdimc_corner_nominal_named; /* E-655: `corner=tt` (nom, nominal) wa
                                             by name -- no corner is applied, but savemc tags
                                             the row `tt` (the `corners` command's nominal) */
 #define OSDIMC_CORNER_SAID_MAX 64
-static struct { const void *descr; char name[80]; } osdimc_corner_said[OSDIMC_CORNER_SAID_MAX];
+static struct { const void *descr; char name[OSDIMC_CORNER_NAME_MAX]; } osdimc_corner_said[OSDIMC_CORNER_SAID_MAX];
 static int osdimc_corner_said_n;
 static bool osdimc_corner_selected(void) { return osdimc_corner_on; }
 static bool osdimc_corner_refused(void) { return osdimc_corner_on && !osdimc_corner_ok; }
@@ -3127,9 +3132,15 @@ static void osdimc_corner_read(void) {
   char buf[sizeof osdimc_corner];
   size_t n = 0;
   osdimc_corner_on = false;
+  osdimc_corner_too_long = false;
   osdimc_corner[0] = '\0';
   if (!cp_getvar("corner", CP_STRING, buf, sizeof buf))
     return;
+  /* E-669 (hunt F14): a name the buffer could not hold was cut by the read
+   * (cp_getvar says so); the cut name is nobody's corner -- say that, not
+   * "no loaded model declares" the remnant */
+  if (strlen(buf) >= sizeof buf - 1)
+    osdimc_corner_too_long = true;
   for (const char *p = buf; *p && n + 1 < sizeof osdimc_corner; p++) {
     if (*p == '"' || *p == ' ' || *p == '\t')
       continue;
@@ -3325,23 +3336,65 @@ static bool osdimc_corner_is_nominal_name(const char *name) {
 
 /* the distinct corner names a descriptor declares, appended to `names` --
  * the nominal's spellings left out (E-662) */
-static int osdimc_corner_collect(const OsdiRegistryEntry *entry, const char **names,
-                                 int n, int cap) {
+/* Enhancement-669 (hunt F14): the distinct names of one entry appended to
+ * `names` up to `cap`; `*total` counts every distinct name, kept or not, so a
+ * caller can say how many the list leaves out (the 64-slot lists used to
+ * drop the 65th name and on in silence: `.option corner=c69` was "no loaded
+ * model declares", and the loops ran 64 of 70) */
+static int osdimc_corner_collect_total(const OsdiRegistryEntry *entry, const char **names,
+                                       int n, int cap, int *total) {
   const OsdiCornerParam *cinfos = entry->corner_param_infos;
   for (uint32_t s = 0; cinfos && s < entry->num_corner_params; s++) {
     int k;
+    bool dup = false;
     if (osdimc_corner_is_nominal_name(cinfos[s].name))
       continue;
     for (k = 0; k < n; k++)
       if (!strcmp(names[k], cinfos[s].name))
         break;
-    if (k == n && n < cap)
+    if (k < n)
+      continue;
+    /* beyond the cap the kept list cannot tell a repeat: scan the entry's
+     * own earlier names, and the other entries' are counted once each way
+     * (a name two model types share past the cap counts twice -- the count
+     * says "about" then) */
+    for (uint32_t t = 0; t < s && !dup; t++)
+      dup = !strcmp(cinfos[t].name, cinfos[s].name);
+    if (dup)
+      continue;
+    if (total)
+      (*total)++;
+    if (n < cap)
       names[n++] = cinfos[s].name;
   }
   return n;
 }
 
-static void osdimc_corner_join(const char **names, int n, char *buf, size_t cap) {
+static int osdimc_corner_collect(const OsdiRegistryEntry *entry, const char **names,
+                                 int n, int cap) {
+  return osdimc_corner_collect_total(entry, names, n, cap, NULL);
+}
+
+/* E-669: does any loaded model of `ckt` declare corner `name`? A direct scan
+ * of every corner table -- no list, no cap. */
+static bool osdimc_corner_declared(CKTcircuit *ckt, const char *name) {
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    const OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+    const OsdiCornerParam *cinfos = entry->corner_param_infos;
+    for (uint32_t s = 0; cinfos && s < entry->num_corner_params; s++)
+      if (!strcmp(cinfos[s].name, name))
+        return true;
+  }
+  return false;
+}
+
+#define OSDIMC_CORNER_LIST_CAP 256
+
+/* the names joined with ", "; when `total` exceeds `n`, "... and N more" */
+static void osdimc_corner_join_total(const char **names, int n, int total, char *buf,
+                                     size_t cap) {
   size_t used = 0;
   buf[0] = '\0';
   for (int k = 0; k < n && used + 2 < cap; k++) {
@@ -3350,29 +3403,48 @@ static void osdimc_corner_join(const char **names, int n, char *buf, size_t cap)
       break;
     used += (size_t)w;
   }
+  if (total > n && used + 2 < cap)
+    snprintf(buf + used, cap - used, " ... and %d more", total - n);
+}
+
+static void osdimc_corner_join(const char **names, int n, char *buf, size_t cap) {
+  osdimc_corner_join_total(names, n, n, buf, cap);
 }
 
 /* Enhancement-654: does some loaded Verilog-A model of this circuit declare
  * the corner in force? Said once per run when none does; the setup then
- * refuses the run (E_PARMVAL) rather than run the nominal under the name. */
+ * refuses the run (E_PARMVAL) rather than run the nominal under the name.
+ * E-669: the name is looked up directly (any number of corners); the list in
+ * the message is capped and says how many it leaves out. */
 static bool osdimc_corner_check(CKTcircuit *ckt) {
-  const char *names[64];
-  int n = 0;
+  const char *names[OSDIMC_CORNER_LIST_CAP];
+  int n = 0, total = 0;
   bool any_model = false;
   for (int type = 0; type < DEVmaxnum; type++) {
     if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
       continue;
     any_model = true;
-    n = osdimc_corner_collect(osdi_reg_entry_model(ckt->CKThead[type]), names, n, 64);
   }
-  for (int k = 0; k < n; k++)
-    if (!strcmp(names[k], osdimc_corner))
-      return true;
   if (!any_model)
     return true;   /* no Verilog-A device at all: nothing to corner, nothing to refuse */
+  if (osdimc_corner_too_long) {
+    fprintf(stderr, "Error: .option corner=%.24s...: the name is longer than %zu characters, "
+                    "more than ngspice can select (a compiled corner name is at most 79); the "
+                    "run is refused\n",
+            osdimc_corner, sizeof osdimc_corner - 1);
+    return false;
+  }
+  if (osdimc_corner_declared(ckt, osdimc_corner))
+    return true;
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    n = osdimc_corner_collect_total(osdi_reg_entry_model(ckt->CKThead[type]), names, n,
+                                    OSDIMC_CORNER_LIST_CAP, &total);
+  }
   {
-    char list[512];
-    osdimc_corner_join(names, n, list, sizeof list);
+    char list[4096];
+    osdimc_corner_join_total(names, n, total, list, sizeof list);
     if (n)
       fprintf(stderr, "Error: .option corner=%s: no loaded Verilog-A model declares a corner "
                       "of that name (declared: %s); the run is refused\n",
@@ -3388,8 +3460,9 @@ static bool osdimc_corner_check(CKTcircuit *ckt) {
  * none of this name, so its parameters stay at nominal */
 static void osdimc_corner_say_missing(const OsdiRegistryEntry *entry) {
   const OsdiDescriptor *descr = entry->descriptor;
-  const char *names[64];
-  char list[512];
+  const char *names[OSDIMC_CORNER_LIST_CAP];
+  int total = 0, n;
+  char list[4096];
   for (int i = 0; i < osdimc_corner_said_n; i++)
     if (osdimc_corner_said[i].descr == descr &&
         !strcmp(osdimc_corner_said[i].name, osdimc_corner))
@@ -3400,7 +3473,8 @@ static void osdimc_corner_say_missing(const OsdiRegistryEntry *entry) {
              sizeof osdimc_corner_said[0].name, "%s", osdimc_corner);
     osdimc_corner_said_n++;
   }
-  osdimc_corner_join(names, osdimc_corner_collect(entry, names, 0, 64), list, sizeof list);
+  n = osdimc_corner_collect_total(entry, names, 0, OSDIMC_CORNER_LIST_CAP, &total);
+  osdimc_corner_join_total(names, n, total, list, sizeof list);   /* E-669 */
   fprintf(stderr, "Note: corner %s: model '%s' declares no corner of that name (declared: "
                   "%s); it runs at nominal\n", osdimc_corner, descr->name, list);
 }
@@ -3599,6 +3673,28 @@ int OSDImcCornerNames(CKTcircuit *ckt, const char **names, int cap) {
     n = osdimc_corner_collect(osdi_reg_entry_model(ckt->CKThead[type]), names, n, cap);
   }
   return n;
+}
+
+/* Enhancement-669 (hunt F14): how many distinct corner names the loaded
+ * models of `ckt` declare, whatever a caller's list holds; and whether one
+ * of them is `name` -- for the loops to say what a capped list leaves out,
+ * and for `corners -list` to accept a name beyond the cap */
+int OSDImcCornerTotal(CKTcircuit *ckt) {
+  const char *names[OSDIMC_CORNER_LIST_CAP];
+  int n = 0, total = 0;
+  if (!ckt)
+    return 0;
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    n = osdimc_corner_collect_total(osdi_reg_entry_model(ckt->CKThead[type]), names, n,
+                                    OSDIMC_CORNER_LIST_CAP, &total);
+  }
+  return total;
+}
+
+bool OSDImcCornerDeclared(CKTcircuit *ckt, const char *name) {
+  return ckt && name && osdimc_corner_declared(ckt, name);
 }
 
 /* Enhancement-655: the corner in force for the current run, "" when none
