@@ -276,6 +276,9 @@ extern void OSDImcHoldTrial(bool on);
  * disabled -- a plain corner loop takes priority over the automatic Monte
  * Carlo; OSDImcOptionSet says whether the option is set at all */
 extern void OSDImcCornerPriority(bool on);
+/* Enhancement-666 (hunt F8): a corner loop has ended and put the `corner`
+ * variable back -- the devices follow it now, not at the next run */
+extern void OSDImcCornerLeave(CKTcircuit *ckt);
 extern bool OSDImcOptionSet(void);
 extern void OSDImcPreserveTrial(void);
 extern void OSDImcSigmaScale(double s);

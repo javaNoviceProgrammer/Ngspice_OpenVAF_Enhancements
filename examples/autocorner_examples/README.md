@@ -11,4 +11,11 @@ the nominal's scale — the form a schematic host reads. The option is inert
 inside loop commands and without a declared corner; the `corner` variable
 is put back afterwards.
 
-Run: `python3 verify_autocorner.py` (15 checks per solver, both solvers).
+Since [E-666](../../enhancements_doc/Enhancement-666.md) (hunt F8): a
+raw-file `run <file>` puts every corner's plot in the file, each named with
+its corner; `meas` reads the combined plot as its nominal's analysis;
+`writemc` on it puts each value on every corner's row; the copies keep
+their accessor readable (`i(v1_ss)`, `@rm_ss[rsh]`); and the devices follow
+the `corner` variable when the loop ends.
+
+Run: `python3 verify_autocorner.py` (21 checks per solver, both solvers).

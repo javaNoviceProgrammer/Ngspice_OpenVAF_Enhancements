@@ -1376,6 +1376,7 @@ static void killplot(struct plot *pl)
     txfree(pl->pl_title);
     txfree(pl->pl_name);
     txfree(pl->pl_typename);
+    txfree(pl->pl_kind);                        /* Enhancement-666 */
     wl_free(pl->pl_commands);
     txfree(pl->pl_date); /* va: also tfree (memory leak) */
     if (pl->pl_ccom)  { /* va: also tfree (memory leak) */

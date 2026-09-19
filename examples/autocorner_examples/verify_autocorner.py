@@ -38,6 +38,20 @@ Checks (per solver):
        `.option osdimc`: the option is disabled for the corner pass, said once
        per circuit, and the copies are deterministic (vth 0.45 at tt on the
        second run too, where it drew before)
+  [16] Enhancement-666 (hunt F8): a raw-file `run <file>` puts every corner's
+       plot in the file, each named with its corner, and `load` reads them
+       all; no "made no plot" per corner; ascii and binary
+  [17] Enhancement-666: `meas tran` (`ac`, `dc`) reads the combined plot as
+       its nominal's analysis -- v(out_ss) at 200u equals the ss plot's own
+  [18] Enhancement-666: `writemc` on the combined plot puts each value on
+       every corner's row, evaluated on that corner's own plot; a `_ss` name
+       is refused with the hint
+  [19] Enhancement-666: the copies keep their accessor readable -- `i(v1_ss)`
+       (the banner's own example), `v1_ss#branch`, a bare `@rm_ss[rsh]` in
+       `print` and `let`
+  [20] Enhancement-666: the devices follow the `corner` variable when the
+       loop ends -- the nominal after the pass (`showmod`), the deck's corner
+       when one holds, and after the `corners` command too
 """
 import os
 import re
@@ -145,10 +159,10 @@ check("[2] the per-corner plots are kept and named with their corner; the result
       and "plot=autocorner1 plots=op1 op2 op3 names=tt ss ff n=3" in out, out[-300:].replace("\n", "|"))
 
 # [3] op: the first vector and the branch currents have copies
-rc, out = run("op\nprint in in_ss in_ff v1#branch v1#branch_ss\n", "a3")
-check("[3] an op plot's first vector and the branch currents have corner copies",
-      near(val(out, "in_ss"), 1.0) and near(val(out, "in_ff"), 1.0) and val(out, "v1#branch_ss") is not None
-      and not near(val(out, "v1#branch_ss"), val(out, "v1#branch")), out[-200:].replace("\n", "|"))
+rc, out = run("op\nprint in in_ss in_ff v1#branch v1_ss#branch\n", "a3")
+check("[3] an op plot's first vector and the branch currents have corner copies (`v1_ss#branch` since E-666)",
+      near(val(out, "in_ss"), 1.0) and near(val(out, "in_ff"), 1.0) and val(out, "v1_ss#branch") is not None
+      and not near(val(out, "v1_ss#branch"), val(out, "v1#branch")), out[-200:].replace("\n", "|"))
 
 # [4] tran: one scale, resampled; the corner's own plot agrees at the end
 rc, out = run("tran 5u 400u\nprint length(time) length(v(out)) length(out_ss) length(out_ff)\n"
@@ -192,8 +206,8 @@ check("[8] inside `corners`, `montecarlo`, `sweep` and `optimize` the option is 
 HEADF = ("* autocorner {tag}\n.control\npre_osdi cr.osdi\npre_osdi cf.osdi\n.endc\n{opts}\nv1 in 0 dc 1\nn1 in out rm\nn2 out 0 fm\n"
          "r2 out 0 1k\n.model rm cr rsh=100\n.model fm cf\n{cards}\n.control\n{body}\n.endc\n.end\n")
 rc, out = run("op\nprint v(out) v(out_ss)\nprint v(out_bad)\necho \"plots=$autocorner_plots names=$autocorner_names\"\n", "a9", head=HEADF)
-check("[9] a corner whose run fails: said, no phantom vectors, the other corners intact",
-      "autocorner: corner bad: the run made no plot" in out and val(out, "v(out_ss)") is not None and val(out, "v(out_bad)") is None
+check("[9] a corner whose run fails: said (`the run failed` since E-666), no phantom vectors, the other corners intact",
+      "autocorner: corner bad: the run failed" in out and val(out, "v(out_ss)") is not None and val(out, "v(out_bad)") is None
       and "plots=op1 op2 op3 names=tt ss ff bad" in out, out[-300:].replace("\n", "|"))
 
 # [10] no corners declared
@@ -226,12 +240,61 @@ check("[14] the combined vectors keep their type (a voltage stays a voltage)", m
 
 # Enhancement-663 (hunt F7): autocorner takes priority over the automatic Monte Carlo
 HEADQ = ("* autocorner {tag}\n.control\npre_osdi cq.osdi\n.endc\n{opts}\nv1 in 0 dc 1\nn1 in 0 qm\n.model qm cq\n{cards}\n.control\n{body}\n.endc\n.end\n")
-rc, out = run(f"save {A}qm[q] {A}qm[w]\nop\nop\nsetplot autocorner2\nprint \"{A}qm[q]\" \"{A}qm[q]_ss\" \"{A}qm[w]_ss\"\n", "a15",
+rc, out = run(f"save {A}qm[q] {A}qm[w]\nop\nop\nsetplot autocorner2\nprint {A}qm[q] {A}qm_ss[q] {A}qm_ss[w]\n", "a15",
               ".option autocorner osdimc mcseed=3", head=HEADQ)
 check("[15] `.option autocorner osdimc`: the warning once for two runs; q 10 at tt and at ss on the second pass (a draw before), w 2 at ss",
       out.count("Warning: .option autocorner takes priority over .option osdimc (automc)") == 1
-      and near(val(out, '"' + A + 'qm[q]"'), 10.0) and near(val(out, '"' + A + 'qm[q]_ss"'), 10.0) and near(val(out, '"' + A + 'qm[w]_ss"'), 2.0),
+      and near(val(out, A + 'qm[q]'), 10.0) and near(val(out, A + 'qm_ss[q]'), 10.0) and near(val(out, A + 'qm_ss[w]'), 2.0),
       f"warnings={out.count('takes priority')} " + out[-200:].replace("\n", "|"))
+
+# Enhancement-666 (hunt F8): the autocorner follow-on gaps
+# [16] a raw-file run: every corner's plot in the file, named, loadable
+for fmt, ftag in (("binary", "a16b"), ("ascii", "a16a")):
+    raw = os.path.join(WORK, ftag + ".raw")
+    rc, out = run(f"set filetype={fmt}\nrun {ftag}.raw\nload {ftag}.raw\nsetplot\nsetplot tran3\nprint v(out)[10]\n"
+                  f"setplot tran2\nprint v(out)[10]\nsetplot tran1\nprint v(out)[10]\necho n=$autocorner_n names=$autocorner_names\n",
+                  ftag, cards=".tran 5u 100u")
+    with open(raw, "rb") as f:
+        names = [l.decode(errors="replace").strip() for l in f.read().split(b"\n") if l.startswith(b"Plotname:")]
+    v = vals(out, "v(out)[10]")
+    check(f"[16] a {fmt} raw-file `run`: three plots in the file, each named with its corner, `load` reads them all; no 'made no plot'",
+          names == ["Plotname: Transient Analysis (corner tt)", "Plotname: Transient Analysis (corner ss)", "Plotname: Transient Analysis (corner ff)"]
+          and "(appended)" in out and "into '" + ftag + ".raw'" in out and "made no plot" not in out
+          and len(v) == 3 and len(set(round(x, 6) for x in v)) == 3 and "n=3 names=tt ss ff" in out,
+          f"names={names} v={v} " + out[-200:].replace("\n", "|"))
+
+# [17] meas on the combined plot
+rc, out = run("tran 5u 400u\nmeas tran a find v(out_ss) at=200u\nmeas tran b find v(out_ff) at=200u\nsetplot tran2\nmeas tran c find v(out) at=200u\n"
+              "setplot tran3\nmeas tran d find v(out) at=200u\nac dec 5 1 1meg\nmeas ac e max vdb(out_ss)\ndc v1 0 1 0.5\nmeas dc f find v(out_ff) at=1\n", "a17")
+def meas(out, name):
+    m = re.search(r"^\s*" + re.escape(name) + r"\s+=\s+([-+0-9.eE]+)", out, re.M)
+    return float(m.group(1)) if m else None
+mv = {k: meas(out, k) for k in "abcdef"}
+check("[17] `meas tran` (`ac`, `dc`) reads the combined plot as its nominal's analysis: v(out_ss) at 200u equals the ss plot's own",
+      near(mv["a"], mv["c"]) and near(mv["b"], mv["d"]) and mv["a"] is not None and not near(mv["a"], mv["b"])
+      and mv["e"] is not None and near(mv["f"], 0.86326, 1e-4) and "not a tran analysis" not in out, f"{mv}")
+
+# [18] writemc on the combined plot: each corner's row
+rc, out = run("op\nwritemc y=v(out)\nwritemc y2=v(out_ss)\n", "a18", ".option autocorner savemc=a18.csv")
+csv = open(os.path.join(WORK, "a18.csv")).read().splitlines() if os.path.exists(os.path.join(WORK, "a18.csv")) else []
+hdr = csv[0].split(",") if csv else []
+ys = [float(l.split(",")[hdr.index("y")]) for l in csv[1:] if l.strip()] if "y" in hdr else []
+check("[18] `writemc` on the combined plot puts each value on every corner's row, evaluated on that corner's own plot; a `_ss` name gets the hint",
+      "is the corner pass's combined plot" in out and len(ys) == 3 and near(ys[0], 0.833333, 1e-4) and near(ys[1], 0.798085, 1e-4)
+      and near(ys[2], 0.863260, 1e-4) and "y2" not in hdr and "plain names (v(out), not v(out_<corner>))" in out,
+      f"hdr={hdr} ys={ys} " + out[-200:].replace("\n", "|"))
+
+# [19] the copies' names keep their accessor readable
+rc, out = run(f"save all {A}rm[rsh]\nop\nprint {A}rm_ss[rsh] i(v1_ss) v1_ss#branch\nlet z={A}rm_ff[rsh]*2\nprint z\n", "a19")
+check("[19] the copies keep their accessor readable: `i(v1_ss)`, `v1_ss#branch`, a bare `@rm_ss[rsh]` in `print` and in `let`",
+      near(val(out, A + "rm_ss[rsh]"), 115.0) and near(val(out, "i(v1_ss)"), -7.98085e-4, 1e-4) and near(val(out, "v1_ss#branch"), -7.98085e-4, 1e-4)
+      and near(val(out, "z"), 176.0) and "not available" not in out and "invalid" not in out, out[-250:].replace("\n", "|"))
+
+# [20] the devices follow the corner variable when the loop ends
+rc, out = run("op\nshowmod rm\nset corner=ss\nop\nshowmod rm\nunset corner\nunset autocorner\ncorners -output r=@rm[rsh]\nshowmod rm\n", "a20")
+rsh = [float(m) for m in re.findall(r"^\s*rsh\s+([-+0-9.eE]+)", out, re.M)]
+check("[20] the devices follow the `corner` variable when the loop ends: nominal after the pass, the deck's corner when one holds, nominal after `corners`",
+      rsh == [100.0, 115.0, 100.0], f"rsh={rsh}")
 
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)

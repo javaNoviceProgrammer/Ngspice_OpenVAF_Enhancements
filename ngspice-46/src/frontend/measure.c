@@ -189,7 +189,9 @@ com_meas(wordlist *wl)
      * already says the right thing. */
     if (plot_cur && plot_cur->pl_typename && wl->wl_word) {
         const char *want = wl->wl_word;
-        const char *have = plot_cur->pl_typename;
+        /* Enhancement-666 (hunt F8): an autocorner combined plot stands for
+         * its nominal's analysis (pl_kind); its scale is the nominal's */
+        const char *have = plot_cur->pl_kind ? plot_cur->pl_kind : plot_cur->pl_typename;
 
         if ((cieq((char *) want, "tran") || cieq((char *) want, "dc") ||
              cieq((char *) want, "ac")   || cieq((char *) want, "sp")) &&

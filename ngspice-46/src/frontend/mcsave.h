@@ -60,6 +60,8 @@ extern int MCSAVEappend(const char *name, double value);
 
 /* the `writemc` command: writemc [name=]<expr> ... */
 extern void com_writemc(wordlist *wl);
+struct plot;
+extern int MCSAVEappendPlot(struct plot *pl, const char *name, double value); /* E-666 */
 
 /* the circuit is being freed / the program ends: the file is completed */
 extern void MCSAVEcircuitFreed(struct circ *ci);

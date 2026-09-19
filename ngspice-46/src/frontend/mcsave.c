@@ -42,6 +42,7 @@
 #include "ngspice/ifsim.h"
 #include "ngspice/randnumb.h"     /* Enhancement-634: mc_wcd_active */
 #include "mcsave.h"
+#include "com_sweep.h"      /* Enhancement-666: autocorner_corner_plots */
 extern char *spice_analysis_get_name(int index);
 #include <time.h>
 #include <ctype.h>
@@ -1484,18 +1485,47 @@ MCSAVEplotIsRow(char **why)
  * (a row that never gets it is empty there); for csv/txt the last line is
  * rewritten in place -- the file stays complete row by row -- and a new
  * column rewrites the file once, for its header. */
+static int mcs_append_row(int r, const char *name, double value);
+
 int
 MCSAVEappend(const char *name, double value)
 {
-    struct mcs_col *c;
-    int i, newcol = 0;
-
     if (!MCSAVEactive())
         return -2;
     if (owner && unwritable)
         return -3;
     if (!owner || nrows == 0)
         return -1;
+    return mcs_append_row(nrows - 1, name, value);
+}
+
+/* Enhancement-666 (hunt F8): the value goes onto the row of the run that
+ * made plot `pl` -- the latest such row -- for `writemc` on an autocorner
+ * combined plot, whose corners each have a row; -5 when no row is that
+ * plot's */
+int
+MCSAVEappendPlot(struct plot *pl, const char *name, double value)
+{
+    int r;
+    if (!MCSAVEactive())
+        return -2;
+    if (owner && unwritable)
+        return -3;
+    if (!owner || nrows == 0)
+        return -1;
+    for (r = nrows - 1; r >= 0; r--)
+        if (rowplot[r] == pl)
+            break;
+    if (r < 0)
+        return -5;
+    return mcs_append_row(r, name, value);
+}
+
+static int
+mcs_append_row(int r, const char *name, double value)
+{
+    struct mcs_col *c;
+    int i, newcol = 0;
     /* Enhancement-634 (hunt D3): the three fixed columns are not names a
      * value may take -- `writemc trial=9` added a second `trial` column */
     if (eq(name, "trial") || eq(name, "analysis") || eq(name, "status") ||
@@ -1510,27 +1540,27 @@ MCSAVEappend(const char *name, double value)
         /* the name of a draw: keep the draw's column, the value goes on
          * as `<name>*` beside it */
         char *alt = tprintf("%s*", name);
-        int r = MCSAVEappend(alt, value);
+        int rr = mcs_append_row(r, alt, value);
         tfree(alt);
-        return r;
+        return rr;
     }
     i = (int) (c - cols);
-    if (rowcols[nrows - 1] < ncols) {
+    if (rowcols[r] < ncols) {
         int k;
-        rows[nrows - 1] = TREALLOC(double, rows[nrows - 1], ncols);
-        for (k = rowcols[nrows - 1]; k < ncols; k++)
-            rows[nrows - 1][k] = NAN;
-        rowcols[nrows - 1] = ncols;
+        rows[r] = TREALLOC(double, rows[r], ncols);
+        for (k = rowcols[r]; k < ncols; k++)
+            rows[r][k] = NAN;
+        rowcols[r] = ncols;
     }
-    rows[nrows - 1][i] = value;
+    rows[r][i] = value;
 
     if (fmt == FMT_XLSX) {
         if (nrows % 25 == 0)
             xlsx_write();
         return 0;
     }
-    if (newcol)
-        text_rewrite();
+    if (newcol || r != nrows - 1)
+        text_rewrite();                 /* E-666: an earlier row rewrites the file */
     else
         text_rewrite_last();
     return 0;
@@ -1630,6 +1660,65 @@ com_writemc(wordlist *wl)
                             "(said once)\n");
         said_off = 1;
         return;
+    }
+    {
+        /* Enhancement-666 (hunt F8): on an autocorner combined plot -- not a
+         * run's plot, so no row is its -- each item is evaluated on every
+         * corner's own plot and put on that corner's row (the pass made one
+         * per corner), the way montecarlo's -writemc serves every sample */
+        static struct plot *said_for;
+        struct plot *cps[65];
+        int ncp = autocorner_corner_plots(plot_cur, cps, 65);
+        if (ncp > 0) {
+            struct plot *save = plot_cur;
+            int c;
+            if (said_for != plot_cur) {
+                said_for = plot_cur;
+                fprintf(cp_out, "writemc: %s is the corner pass's combined plot: each value is "
+                                "evaluated on every corner's own plot and put on that corner's "
+                                "row\n", plot_cur->pl_typename);
+            }
+            for (w = wl; w; w = w->wl_next) {
+                char *name, *expr, *tok = cp_unquote(w->wl_word);
+                mcs_split_item(tok, &name, &expr);
+                tfree(tok);
+                int nbad = 0;
+                for (c = 0; c < ncp; c++) {
+                    char *why = NULL;
+                    double v;
+                    int r;
+                    plot_cur = cps[c];
+                    if (!mcs_eval_scalar(expr, &v, &why)) {
+                        fprintf(cp_err, "writemc: %s on %s: %s\n", expr, cps[c]->pl_typename,
+                                why ? why : "?");
+                        tfree(why);
+                        if (++nbad == ncp)
+                            fprintf(cp_err, "writemc: a corner's own plot holds its vectors under "
+                                            "their plain names (v(out), not v(out_<corner>))\n");
+                        continue;
+                    }
+                    r = MCSAVEappendPlot(cps[c], name, v);
+                    if (r == -5)
+                        fprintf(cp_err, "writemc: no row is %s's run; %s is not put on one\n",
+                                cps[c]->pl_typename, name);
+                    else if (r == -4) {
+                        fprintf(cp_err, "writemc: `%s` is one of the row's fixed columns (trial, "
+                                        "analysis, status, corner); give the value another name\n",
+                                name);
+                        break;
+                    }
+                    else if (r == -3 && !said_nofile)
+                        fprintf(cp_err, "writemc: savemc could not open a file for this circuit "
+                                        "(said above), so %s is not recorded (said once)\n", name);
+                    if (r == -3)
+                        said_nofile = 1;
+                }
+                plot_cur = save;
+                tfree(name);
+                tfree(expr);
+            }
+            return;
+        }
     }
     {
         /* Enhancement-624 (hunt F8): the values are read off the current

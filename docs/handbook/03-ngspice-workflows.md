@@ -663,7 +663,7 @@ loaded models declare. The per-corner plots are kept, named with their corner
 (`Transient Analysis (corner ss)`), so batch `.print` cards print each corner;
 and a combined `autocorner<n>` plot is made current: the nominal's vectors
 under their own names and each corner's as `<name>_<corner>` — `v(out_ss)`,
-`i(v1_ff)` — resampled onto the nominal's scale, so a host that draws the
+`i(v1_ff)`, `@rm_ff[rsh]` — resampled onto the nominal's scale, so a host that draws the
 current plot's vectors against its scale shows every corner side by side.
 `$autocorner_plot`, `$autocorner_plots`, `$autocorner_names` and
 `$autocorner_n` describe the run. The option is inert inside a loop command
@@ -671,6 +671,14 @@ current plot's vectors against its scale shows every corner side by side.
 declared corner, and the `corner` variable is put back afterwards.
 `.option autocorner` takes priority over `.option osdimc` the same way, the option
 disabled for the corner pass and said once per circuit ([E-663](../../enhancements_doc/Enhancement-663.md)).
+Since [E-666](../../enhancements_doc/Enhancement-666.md): a raw-file `run n5.raw`
+puts every corner's plot in the file, each named with its corner, and `load` reads
+them all; `meas tran` (`ac`, `dc`) reads the combined plot as its nominal's analysis;
+`writemc` on the combined plot evaluates each value on every corner's own plot and
+puts it on that corner's `savemc` row; the copies keep their accessor readable —
+`i(v1_ss)`, `v1_ss#branch`, `@rm_ss[rsh]` — and when the pass or the `corners`
+command ends the devices follow the `corner` variable (the nominal when none
+holds), instead of staying at the last corner until the next run.
 
 ## 3.8 XSPICE code models
 

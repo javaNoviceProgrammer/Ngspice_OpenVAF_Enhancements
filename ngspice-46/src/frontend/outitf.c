@@ -30,6 +30,7 @@ Modified: 2000 AlansFixes, 2013/2015 patch by Krzysztof Blaszkowski
 #include "ngspice/trcvdefs.h"        /* Enhancement: TRCV (DC sweep) for the progress bar */
 #include "breakp2.h"
 #include "runcoms.h"
+#include "com_sweep.h"      /* Enhancement-666: autocorner_corner_now */
 #include "plotting/graf.h"
 #include "../misc/misc_time.h"
 
@@ -1634,7 +1635,13 @@ fileInit(runDesc *run)
     sprintf(buf, "Command: %s-%s, Build %s\n", ft_sim->simulator, ft_sim->version, Spice_Build_Date);
     n += strlen(buf);
     fputs(buf, run->fp);
-    sprintf(buf, "Plotname: %s\n", run->type);
+    /* Enhancement-666 (hunt F8): inside an autocorner pass the plot is
+     * named with its corner, as the in-memory plots are, so a file that
+     * holds every corner's plot tells them apart */
+    if (autocorner_corner_now())
+        snprintf(buf, sizeof buf, "Plotname: %s (corner %s)\n", run->type, autocorner_corner_now());
+    else
+        sprintf(buf, "Plotname: %s\n", run->type);
     n += strlen(buf);
     fputs(buf, run->fp);
     sprintf(buf, "Flags: %s\n", run->isComplex ? "complex" : "real");

@@ -3484,6 +3484,22 @@ static void osdimc_corner_run(CKTcircuit *ckt) {
 
 bool OSDImcEnabled(void) { return osdimc_enabled(); }
 
+/* Enhancement-666 (hunt F8): a corner loop (`corners`, `.option autocorner`)
+ * has ended and put the `corner` variable back. The devices used to stay at
+ * the LAST corner until the next run re-read the variable -- `showmod` after
+ * an `autocorner` pass showed `rsh 88`, the `ff` value, with no corner in
+ * force and the combined plot current. They follow the variable now: every
+ * cornered parameter back to its nominal when no corner holds, or to the
+ * deck's corner when one does -- the writes the next run would have made,
+ * made at the loop's end. Nothing to do for a circuit no run has set up. */
+void OSDImcCornerLeave(CKTcircuit *ckt) {
+  if (!ckt || ckt != osdimc_ckt)
+    return;
+  osdimc_corner_read();
+  osdimc_corner_ok = !osdimc_corner_on || osdimc_corner_check(ckt);
+  osdimc_corner_run(ckt);
+}
+
 /* Enhancement-654: a corner is in force for the current run (savemc records
  * the cornered parameters under it as it records draws under osdimc) */
 bool OSDImcCornerSelected(void) { return osdimc_corner_on || osdimc_corner_nominal_named; }

@@ -10,6 +10,14 @@ int  autocorner_wanted(const char *what);
 void sw_inner_run_begin(void);
 void sw_inner_run_end(void);
 int  autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *));
+/* Enhancement-666 (hunt F8): inside the loop, the corner of the run in
+ * progress (outitf.c names the raw-file plot with it); a raw-file run's
+ * corners after the first append to the file (runcoms.c); the per-corner
+ * plots a combined plot was built from (mcsave.c's writemc) */
+const char *autocorner_corner_now(void);
+extern int autocorner_raw_append;
+struct plot;
+int  autocorner_corner_plots(const struct plot *combined, struct plot **out, int cap);
 
 /* Enhancement-320/321/322: the `.param` fast-sweep engine, shared with the
  * optimizer (com_optimize.c). sw_fp_build captures the swept `.param` names'

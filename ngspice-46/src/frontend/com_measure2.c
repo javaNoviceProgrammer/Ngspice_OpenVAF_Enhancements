@@ -1030,7 +1030,7 @@ e467_dc_scale(struct dvec *d)
      * "measure whatever is current". Naming the wrong analysis is a mistake in
      * the deck, and the message it used to get was the useful answer. */
     if (!s && plot_cur && plot_cur->pl_typename &&
-        ciprefix("dc", plot_cur->pl_typename)) {
+        ciprefix("dc", plot_cur->pl_kind ? plot_cur->pl_kind : plot_cur->pl_typename)) {   /* E-666 */
         if (d && d->v_scale)
             s = d->v_scale;
         else
@@ -2370,13 +2370,15 @@ get_measure2(
         return MEASUREMENT_FAILURE;
     }
 
-    if (!ciprefix("tran", plot_cur->pl_typename) &&
-        !ciprefix("ac", plot_cur->pl_typename) &&
-        !ciprefix("dc", plot_cur->pl_typename) &&
-        !ciprefix("sp", plot_cur->pl_typename))
+    /* Enhancement-666 (hunt F8): an autocorner combined plot stands for its
+     * nominal's analysis (pl_kind); its scale is the nominal's */
     {
-        fprintf(cp_err, "Error: measure limited to tran, dc, sp, or ac analysis\n");
-        return MEASUREMENT_FAILURE;
+        const char *kind = plot_cur->pl_kind ? plot_cur->pl_kind : plot_cur->pl_typename;
+        if (!ciprefix("tran", kind) && !ciprefix("ac", kind) &&
+            !ciprefix("dc", kind) && !ciprefix("sp", kind)) {
+            fprintf(cp_err, "Error: measure limited to tran, dc, sp, or ac analysis\n");
+            return MEASUREMENT_FAILURE;
+        }
     }
 
     words = wl;

@@ -27,6 +27,10 @@ struct plot {
     int pl_ndims;		/* Number of dimensions */
     int pl_xdim2d;		/* 2D Cider plot x dimension */
     int pl_ydim2d;		/* 2D Cider plot y dimension */
+    char *pl_kind;		/* Enhancement-666 (hunt F8): the analysis plot a derived plot
+				   stands for (an autocorner combined plot: its nominal's
+				   typename, `tran1`), so `meas tran` reads it; NULL for a
+				   plot of its own */
 } ;
 
 

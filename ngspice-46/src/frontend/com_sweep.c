@@ -6596,6 +6596,7 @@ void com_corners(wordlist *wl)
         cp_vset("corner", CP_STRING, prev);
     else
         cp_remvar("corner");
+    OSDImcCornerLeave(ft_curckt->ci_ckt);       /* Enhancement-666 (hunt F8): the devices follow */
     if (nset == 0)
         goto cleanup;
 
@@ -6711,12 +6712,73 @@ when no loaded model declares a corner.
 
 static int ac_inside;          /* the loop's own runs must not loop again */
 
+/* Enhancement-666 (hunt F8): the corner of the run in progress inside the
+ * loop, for the raw-file writer to name the plot with (outitf.c); NULL
+ * outside the loop */
+static const char *ac_corner_now;
+const char *autocorner_corner_now(void) { return ac_inside ? ac_corner_now : NULL; }
+
+/* Enhancement-666 (hunt F8): a raw-file `run` -- the corners after the first
+ * append to the file (runcoms.c opens it so), so it holds every corner's
+ * plot, each named with its corner, instead of the last corner alone */
+int autocorner_raw_append;
+
+/* Enhancement-666 (hunt F8): the last pass's plot families, by typename (a
+ * pointer could be reused after a `destroy`): the combined plot and the
+ * per-corner plots it was built from, for `writemc` on the combined plot */
+#define AC_MAXFAM 16
+static char ac_fam_combined[AC_MAXFAM][32];
+static char ac_fam_corner[AC_MAXFAM][CO_MAXCORNERS + 1][32];
+static int ac_fam_n, ac_fam_nset;
+
 static void ac_clear_results(void)
 {
     cp_remvar("autocorner_n");
     cp_remvar("autocorner_names");
     cp_remvar("autocorner_plots");
     cp_remvar("autocorner_plot");
+    ac_fam_n = 0;
+}
+
+/* the per-corner plots a combined plot was built from, in corner order,
+ * those still on the plot list; 0 for any other plot */
+int autocorner_corner_plots(const struct plot *combined, struct plot **out, int cap)
+{
+    int k, c, n = 0;
+    if (!combined || !combined->pl_kind || !combined->pl_typename)
+        return 0;
+    for (k = 0; k < ac_fam_n; k++)
+        if (eq(ac_fam_combined[k], combined->pl_typename))
+            break;
+    if (k == ac_fam_n)
+        return 0;
+    for (c = 0; c < ac_fam_nset && n < cap; c++) {
+        struct plot *pl;
+        if (!ac_fam_corner[k][c][0])
+            continue;
+        for (pl = plot_list; pl; pl = pl->pl_next)
+            if (pl->pl_typename && eq(pl->pl_typename, ac_fam_corner[k][c]))
+                break;
+        if (pl)
+            out[n++] = pl;
+    }
+    return n;
+}
+
+/* Enhancement-666 (hunt F8): a corner copy's name keeps its accessor
+ * readable. The suffix used to go on the end of the vector's name, which
+ * only a bare node name survives: `v1#branch_ss` is not what `i(v1_ss)` --
+ * the banner's own example -- looks for (`v1_ss#branch`), and `@rm[rsh]_ss`
+ * is read by the parser as the parameter `@rm[rsh]` and a stray `_ss` (a
+ * bare `print` warned, `let` refused; only the quoted name reached it). The
+ * suffix goes on the node or device name now: `out_ss`, `v1_ss#branch`,
+ * `@rm_ss[rsh]` -- `v(out_ss)`, `i(v1_ss)`, `@rm_ss[rsh]` read them. */
+static char *ac_copy_name(const char *name, const char *corner)
+{
+    const char *cut = name[0] == '@' ? strchr(name, '[') : strchr(name, '#');
+    if (cut && cut > name)
+        return tprintf("%.*s_%s%s", (int) (cut - name), name, corner, cut);
+    return tprintf("%s_%s", name, corner);
 }
 
 int autocorner_wanted(const char *what)
@@ -6828,6 +6890,11 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
     char prev[80], names[1200], plots[1200];
     int had_prev;
     char *combined = NULL;
+    /* Enhancement-666 (hunt F8): `run <file>` writes the plots to a raw file
+     * and makes none in memory -- the loop said "the run made no plot" per
+     * corner and the file held the last corner alone. The corners append to
+     * the file now, each plot named with its corner; no combined plot */
+    const char *rawfile = eq(what, "run") && wl && wl->wl_word ? wl->wl_word : NULL;
 
     if (ac_inside)
         return run(what, wl);
@@ -6860,12 +6927,16 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
     for (c = 0; c < nset; c++) {
         before[c] = plot_list;
         cp_vset("corner", CP_STRING, set[c]);
+        ac_corner_now = set[c];                 /* Enhancement-666 */
+        autocorner_raw_append = rawfile && *rawfile && c > 0;
         err = run(what, wl);
+        autocorner_raw_append = 0;
+        ac_corner_now = NULL;
         nnew[c] = ac_count_new(before[c]);
-        if (err || nnew[c] == 0) {
+        if (err || (nnew[c] == 0 && !rawfile)) {
             any_err = 1;
             fprintf(cp_err, "autocorner: corner %s: the run %s\n", set[c],
-                    nnew[c] == 0 ? "made no plot" : "failed");
+                    err ? "failed" : "made no plot");
         }
         for (k = 0; k < nnew[c]; k++) {
             struct plot *pl = ac_new_plot(before[c], k);
@@ -6887,6 +6958,25 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
         cp_vset("corner", CP_STRING, prev);
     else
         cp_remvar("corner");
+    OSDImcCornerLeave(ft_curckt->ci_ckt);       /* Enhancement-666: the devices follow */
+
+    if (rawfile) {
+        /* Enhancement-666 (hunt F8): the plots went to the file */
+        double n = (double) nset;
+        if (*rawfile)
+            fprintf(cp_out, "autocorner: %d plot%s per analysis into '%s', each named with its "
+                            "corner (`%s (corner %s)`); `load %s` reads them all\n",
+                    nset, nset == 1 ? "" : "s", rawfile, "<analysis>", nset > 1 ? set[1] : "tt",
+                    rawfile);
+        cp_vset("autocorner_n", CP_REAL, &n);
+        cp_vset("autocorner_names", CP_STRING, names);
+        cp_remvar("autocorner_plots");
+        cp_remvar("autocorner_plot");
+        ac_fam_n = 0;
+        return any_err;
+    }
+    ac_fam_n = 0;
+    ac_fam_nset = nset;
 
     /* --- the combined plots: one per plot the nominal run made --- */
     plots[0] = '\0';
@@ -6903,8 +6993,18 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
         pw = plot_alloc("autocorner");
         pw->pl_name = tprintf("%s at corners", tt->pl_name ? tt->pl_name : what);
         pw->pl_title = tprintf("%s at corners: %s", what, names);
+        pw->pl_kind = copy(tt->pl_typename);    /* Enhancement-666: `meas tran` reads it */
         plot_new(pw);
         plot_setcur(pw->pl_typename);
+        if (nfam < AC_MAXFAM) {                 /* Enhancement-666: for writemc */
+            snprintf(ac_fam_combined[nfam], sizeof ac_fam_combined[nfam], "%s", pw->pl_typename);
+            for (c = 0; c < nset; c++) {
+                struct plot *cp = k < nnew[c] ? ac_new_plot(before[c], k) : NULL;
+                snprintf(ac_fam_corner[nfam][c], sizeof ac_fam_corner[nfam][c], "%s",
+                         cp && cp->pl_typename ? cp->pl_typename : "");
+            }
+            ac_fam_n = nfam + 1;
+        }
         scale_is_point = scale && scale->v_length == 1;
         if (scale && scale->v_length > 0) {
             /* the nominal's scale, kept as it is -- an ac plot's frequency
@@ -6959,7 +7059,7 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
                     slen = src->v_length;
                 }
                 len = dlen > 0 ? dlen : v->v_length;
-                nm = c == 0 ? copy(v->v_name) : tprintf("%s_%s", v->v_name, set[c]);
+                nm = c == 0 ? copy(v->v_name) : ac_copy_name(v->v_name, set[c]);   /* E-666 */
                 nv = dvec_alloc(nm, (int) v->v_type,
                                 (short) ((isreal(v) ? VF_REAL : VF_COMPLEX) | VF_PERMANENT),
                                 len, NULL);
@@ -6986,10 +7086,10 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
         }
         fprintf(cp_out, "autocorner: %d vector%s of %s and its %d corner plot%s into '%s'%s: "
                         "the nominal's under their names, a corner's as <name>_<corner> "
-                        "(v(out_%s), i(v1_%s)), resampled onto %s\n",
+                        "(v(out_%s), i(v1_%s), @m_%s[p]), resampled onto %s\n",
                 nvec, nvec == 1 ? "" : "s", tt->pl_typename, nset - 1, nset == 2 ? "" : "s",
                 pw->pl_typename, k == nnew[0] - 1 ? " (now current)" : "",
-                nset > 1 ? set[1] : "ss", nset > 1 ? set[1] : "ss",
+                nset > 1 ? set[1] : "ss", nset > 1 ? set[1] : "ss", nset > 1 ? set[1] : "ss",
                 xs && !scale_is_point ? xs->v_name : "the nominal's index");
     }
     if (nfam) {

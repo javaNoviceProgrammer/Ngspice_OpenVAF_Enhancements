@@ -206,6 +206,18 @@ com_sp(wordlist* wl)
 }
 #endif
 
+/* Enhancement-666 (hunt F8): the raw file of a `run <file>`, fresh, or at
+ * its end for a corner pass's later corners (see dosim) */
+static FILE *raw_open_for_run(const char *name, bool ascii)
+{
+    FILE *fp;
+    if (autocorner_raw_append && (fp = fopen(name, ascii ? "r+" : "r+b")) != NULL) {
+        fseek(fp, 0L, SEEK_END);
+        return fp;
+    }
+    return fopen(name, ascii ? "w" : "wb");
+}
+
 static int dosim(
         char *what, /* in: command
                      * (pz,op,dc,ac,tf,tran,sens,disto,noise,run) */
@@ -292,22 +304,29 @@ static int dosim(
             rawfileFp = stdout;
         }
 
-        /* ask if binary or ASCII, open file with wb or w */
+        /* ask if binary or ASCII, open file with wb or w.
+         * Enhancement-666 (hunt F8): under `.option autocorner` the corners
+         * after the first append their plots to the file (a raw file holds
+         * any number of plots; `load` reads them all). Not with "a": the
+         * writer seeks back to patch the point count, and an append-mode
+         * stream sends that write to the end too; "r+" at the end instead. */
         else if (ascii) {
-            if ((rawfileFp = fopen(wl->wl_word, "w")) == NULL) {
+            if ((rawfileFp = raw_open_for_run(wl->wl_word, TRUE)) == NULL) {
                 perror(wl->wl_word);
                 ft_setflag = FALSE;
                 return 1;
             }
-            fprintf(cp_out, "ASCII raw file \"%s\"\n", wl->wl_word);
+            fprintf(cp_out, "ASCII raw file \"%s\"%s\n", wl->wl_word,
+                    autocorner_raw_append ? " (appended)" : "");
         }
         else { /* binary */
-            if ((rawfileFp = fopen(wl->wl_word, "wb")) == NULL) {
+            if ((rawfileFp = raw_open_for_run(wl->wl_word, FALSE)) == NULL) {
                 perror(wl->wl_word);
                 ft_setflag = FALSE;
                 return 1;
             }
-            fprintf(cp_out, "binary raw file \"%s\"\n", wl->wl_word);
+            fprintf(cp_out, "binary raw file \"%s\"%s\n", wl->wl_word,
+                    autocorner_raw_append ? " (appended)" : "");
         }
         rawfileBinary = !ascii;
     }
