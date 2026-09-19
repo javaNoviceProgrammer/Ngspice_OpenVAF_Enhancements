@@ -22,3 +22,9 @@ Run it:
 ```
 python3 verify_autoopts.py
 ```
+
+Since [E-670](../../enhancements_doc/Enhancement-670.md) (hunt F17): the later
+spelling of an option pair wins — `.option autocorner noautocorner`, two cards,
+`set noautocorner` after a deck's `.option autocorner`, `noosdimc` against
+`osdimc`/`automc`, `nosavemc` against `savemc` — where the `no` spelling used
+to be accepted and ignored beside the positive.

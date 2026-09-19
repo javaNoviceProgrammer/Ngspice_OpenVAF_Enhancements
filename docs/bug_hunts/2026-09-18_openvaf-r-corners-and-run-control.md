@@ -37,7 +37,7 @@ only touched in passing.
 | [F14](#f14--more-than-64-corners-or-a-name-of-80-characters-cannot-be-selected) | *(fixed in [E-669](../../enhancements_doc/Enhancement-669.md): direct lookup, the loops take 255 and say when a circuit declares more, a 79-character limit at compile time; the 80-character name was in fact aborting ngspice through a one-byte overflow in the string reader, fixed)* more than 64 distinct corner names in a circuit: the 65th and later are refused by `.option corner=` as "no loaded model declares" and dropped by `corners`/`autocorner` without a word; a corner name of 80 characters or more can never be selected (ngspice's variable limit), and the compiler accepts any length | capacity, silent |
 | [F15](#f15--the-nesting-limit-trips-on-a-flat-sum-of-a-thousand-parameters-and-recovers-with-nonsense) | *(fixed in [E-665](../../enhancements_doc/Enhancement-665.md))* a flat sum of 999 parameters trips "expression nests too deeply" and the recovery then reports `'p997' was not found in the current scope` and `'p998' was already declared in this scope`; 600 terms compile | diagnostic |
 | [F16](#f16--a-strobe-with-solution-independent-arguments-runs-in-the-setup-pass-not-per-point) | *(fixed in [E-660](../../enhancements_doc/Enhancement-660.md): the double print and the stale pre-draw, pre-corner copy; a hoisted task keeps its once-per-setup timing by design, see the write-up)* a `$strobe` whose arguments depend on nothing the solver computes runs in the setup pass: twice per analysis (setup and temperature) and never per point — two lines for a 73-point transient, where a strobe reading `V(p,n)` prints 73; `$info`/`$warning`/`$error` with constant arguments the same | wrong output |
-| [F17](#f17--noautocorner-is-a-known-option-that-turns-nothing-off) | `noautocorner` is registered as a known option (no "unknown option" warning), but neither `.option autocorner noautocorner` nor a later `set noautocorner` turns the loop off; only `unset autocorner` does — and `noosdimc` behaves the same against `osdimc`, so this is the shared `no`-spelling contract, not E-656's alone | silent no-op |
+| [F17](#f17--noautocorner-is-a-known-option-that-turns-nothing-off) | *(fixed in [E-670](../../enhancements_doc/Enhancement-670.md): the later spelling of a registered option pair wins, on the cards and in the control block, for every pair)* `noautocorner` is registered as a known option (no "unknown option" warning), but neither `.option autocorner noautocorner` nor a later `set noautocorner` turns the loop off; only `unset autocorner` does — and `noosdimc` behaves the same against `osdimc`, so this is the shared `no`-spelling contract, not E-656's alone | silent no-op |
 | [F18](#f18--break-continue-and-disable-are-accepted-in-an-analog-block-without-a-word) | *(fixed in [E-661](../../enhancements_doc/Enhancement-661.md) for `do…while` and `disable` — L011 warnings; `break`/`continue` are VAMS-2023 5.11 jump statements and legal, the finding was wrong there; a named block inside an analog function crashed the compiler, found on the way and fixed)* `break`, `continue`, `do … while` and `disable <block>` are accepted in an analog block without a word and act with their SystemVerilog meaning (`disable` ends the block's evaluation, contributions after it included); `>>>` in the same position gets an "openvaf extension" warning, these get none | silent extension |
 
 Dropped after checking the LRM: `casex`/`casez` in an analog block (A.6.7 lists them),
@@ -405,6 +405,12 @@ per-point strobe twice against the other's 73, and one under `if (analysis("tran
 of a variable that a solution-dependent branch may assign prints per point.
 
 ## F17 — `noautocorner` is a known option that turns nothing off
+
+*Fixed in [E-670](../../enhancements_doc/Enhancement-670.md): the option reader
+lets the later spelling win — setting one spelling of a registered pair removes
+the other, on one card, across cards and from the control block — for
+`autocorner`, `osdimc`/`automc`, `saveused`, `autobus`, `autoadapt`,
+`osdicache`, `dcpath`, `savemc` and `reusesetup` alike.*
 
 E-656 added `autocorner` and `noautocorner` to the known-option list, following E-572's
 rule that the documented `no` spelling of an option is honoured. `.option noautocorner`

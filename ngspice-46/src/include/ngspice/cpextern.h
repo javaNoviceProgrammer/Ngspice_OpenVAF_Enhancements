@@ -156,6 +156,7 @@ extern bool cp_noclobber;
 extern bool cp_noglob;
 extern bool cp_nonomatch;
 extern void cp_remvar(char *varname);
+extern const char *const *cp_off_partners(const char *name); /* E-670 (hunt F17): an option pair's other side */
 void cp_vset(const char *varname, enum cp_types type, const void *value);
 /* Enhancement-553: r"..." / f"..." string prefixes (lexical.c) */
 int cp_string_prefix_len(const char *word, size_t len);

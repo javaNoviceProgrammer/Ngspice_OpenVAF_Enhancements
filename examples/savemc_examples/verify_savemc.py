@@ -34,7 +34,8 @@ Checks:
   [8] a failed run is a row, status failed
   [9] two decks within one second get distinct names; a second deck sourced
       in one session gets its own file and the first stays complete
-  [10] no "unknown option" warning for the four spellings
+  [10] no "unknown option" warning for the four spellings; `nosavemc` last
+       turns the recorder off (E-670: the later spelling wins)
   [11] (Enhancement-612) the file name keeps its case: savemc=MixedCase/Draws.csv
       writes exactly that, the note names it, and the other options on the
       same card (osdimc mcseed=5) are still folded and honoured
@@ -296,8 +297,11 @@ check("[9] a second deck sourced in one session: its own file; the first holds i
 
 # ------------------------------------------------------------ [10] ---
 clean()
-out = run(".option savemc nosavemc automc_save osdimc_save\n" + OSDI, "t10", "op")
-check("[10] no 'unknown option' warning for savemc, nosavemc, automc_save, osdimc_save; nosavemc turns it off",
+# Enhancement-670 (hunt F17): the later spelling of an option pair wins, so the
+# off word goes last here (it used to win wherever it stood, the reader testing
+# it beside the positive)
+out = run(".option savemc automc_save osdimc_save nosavemc\n" + OSDI, "t10", "op")
+check("[10] no 'unknown option' warning for savemc, automc_save, osdimc_save, nosavemc; nosavemc (last, E-670) turns it off",
       "unknown option" not in out and not files() and NOTE not in out, out[-300:])
 
 # ------------------------------------------------------------ [11] ---

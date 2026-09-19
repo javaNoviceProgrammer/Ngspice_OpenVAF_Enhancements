@@ -22,6 +22,12 @@ verify_autoopts.py -- Enhancement-572: what a dig into `.option autobus`,
   all four   the documented OFF spellings (`nosaveused`, `noautobus`,
              `noautoadapt`, `noautomc`, `noosdimc`) were honoured but reported
              as unknown options.
+  E-670      (hunt F17, 2026-09-18) the LATER spelling of an option pair wins:
+             `.option autocorner noautocorner` and `set noautocorner` after a
+             deck's `.option autocorner` left the loop on (the `no` spelling
+             was known and turned nothing off); `noosdimc` against `osdimc`
+             the same. One card, two cards, the control block, the alias pair
+             `automc`/`noosdimc`, `savemc`/`nosavemc`, and `unset` still.
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
@@ -190,7 +196,35 @@ def main():
     out = ngspice(deck("control", "v1 a 0 1\nr1 a 0 1k", "op\nprint v(a)", ".option nosuchoption572\n"))
     check("...while a genuinely unknown name is still flagged (control)", UNKNOWN in out, "")
 
-    for f in ("_o.cir", "bus1.osdi", "busdev.osdi", "adapt.osdi", "smcres.osdi"):
+    print("\n[E-670] the later spelling of an option pair wins (hunt F17)")
+    with open(os.path.join(HERE, "cornr.va"), "w") as fh:
+        fh.write('`include "disciplines.vams"\nmodule cornr(p, n);\ninout p, n; electrical p, n;\n'
+                 '(* corner="ss=115, ff=88" *) parameter real rsh = 100 from (0:inf);\n'
+                 'analog I(p,n) <+ V(p,n)/rsh;\nendmodule\n')
+    ok5, l5 = build(os.path.join(HERE, "cornr.va"), "cornr")
+    check("the corner model compiles", ok5, l5[-200:] if not ok5 else "")
+    CN = "v1 a 0 1\nn1 a 0 rm\n.model rm cornr"
+    LOOP = "autocorner: op at 3 corners"
+    out = ngspice(deck("one card", CN, "pre_osdi cornr.osdi\nop\necho set=$?autocorner noset=$?noautocorner", ".option autocorner noautocorner\n"))
+    check(".option autocorner noautocorner on one card: no loop, the positive is gone, the `no` spelling stands", LOOP not in out and "set=0 noset=1" in out, out[-120:].replace("\n", "|"))
+    out = ngspice(deck("one card rev", CN, "pre_osdi cornr.osdi\nop\necho set=$?autocorner noset=$?noautocorner", ".option noautocorner autocorner\n"))
+    check(".option noautocorner autocorner: the later spelling wins, the loop runs", LOOP in out and "set=1 noset=0" in out, out[-120:].replace("\n", "|"))
+    out = ngspice(deck("two cards", CN, "pre_osdi cornr.osdi\nop\necho set=$?autocorner", ".option autocorner\n.option noautocorner\n"))
+    out2 = ngspice(deck("two cards rev", CN, "pre_osdi cornr.osdi\nop\necho set=$?autocorner", ".option noautocorner\n.option autocorner\n"))
+    check("two cards: the later card wins either way", LOOP not in out and "set=0" in out and LOOP in out2 and "set=1" in out2, (out[-80:] + "|" + out2[-80:]).replace("\n", "|"))
+    out = ngspice(deck("set no", CN, "pre_osdi cornr.osdi\nset noautocorner\nop\necho a=$?autocorner\nset autocorner\nop\necho b=$?autocorner", ".option autocorner\n"))
+    check("`set noautocorner` after the deck's `.option autocorner` turns the loop off; `set autocorner` turns it back on", out.count(LOOP) == 1 and "a=0" in out and "b=1" in out and out.find(LOOP) > out.find("a=0"), out[-160:].replace("\n", "|"))
+    out = ngspice(deck("unset", CN, "pre_osdi cornr.osdi\nunset autocorner\nop\necho a=$?autocorner", ".option autocorner\n"))
+    check("`unset autocorner` still turns it off", LOOP not in out and "a=0" in out, out[-80:].replace("\n", "|"))
+    out = ngspice(deck("osdimc pair", MC, "pre_osdi smcres.osdi\nop\nop\nprint @rm[r]\necho o=$?osdimc a=$?automc", ".option automc noosdimc mcseed=7\n"))
+    out2 = ngspice(deck("set noosdimc", MC, "pre_osdi smcres.osdi\nset noosdimc\nop\nop\nprint @rm[r]\necho o=$?osdimc", ".option osdimc mcseed=7\n"))
+    check("`.option automc noosdimc` (the alias pair) and `set noosdimc` after `.option osdimc`: nothing varies, the positive is gone",
+          near(scalars(out).get("@rm[r]"), 1000.0, 1e-9) and "o=0 a=0" in out and near(scalars(out2).get("@rm[r]"), 1000.0, 1e-9) and "o=0" in out2,
+          (out[-80:] + "|" + out2[-80:]).replace("\n", "|"))
+    out = ngspice(deck("savemc pair", MC, "pre_osdi smcres.osdi\nop\necho s=$?savemc n=$?nosavemc", ".option osdimc savemc=_e670.csv nosavemc\n"))
+    check("`.option savemc=file nosavemc`: the file option is gone, no file", "s=0 n=1" in out and not os.path.exists(os.path.join(HERE, "_e670.csv")), out[-80:].replace("\n", "|"))
+
+    for f in ("_o.cir", "bus1.osdi", "busdev.osdi", "adapt.osdi", "smcres.osdi", "cornr.va", "cornr.osdi", "_e670.csv"):
         try:
             os.remove(os.path.join(HERE, f))
         except OSError:

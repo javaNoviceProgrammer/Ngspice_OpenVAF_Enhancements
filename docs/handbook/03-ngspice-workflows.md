@@ -682,6 +682,12 @@ current plot's vectors against its scale shows every corner side by side.
 declared corner, and the `corner` variable is put back afterwards.
 `.option autocorner` takes priority over `.option osdimc` the same way, the option
 disabled for the corner pass and said once per circuit ([E-663](../../enhancements_doc/Enhancement-663.md)).
+`.option noautocorner`, or `set noautocorner` in the control block, turns the
+option off: the later spelling of an option pair wins, on one card, across
+cards and from the control block, for every registered pair — `noosdimc` and
+`noautomc` against `osdimc`/`automc`, `nosavemc`, `nosaveused`, `noautobus`,
+`noautoadapt`, `noosdicache`, `nodcpath`, `noreusesetup`
+([E-670](../../enhancements_doc/Enhancement-670.md)).
 Since [E-666](../../enhancements_doc/Enhancement-666.md): a raw-file `run n5.raw`
 puts every corner's plot in the file, each named with its corner, and `load` reads
 them all; `meas tran` (`ac`, `dc`) reads the combined plot as its nominal's analysis;

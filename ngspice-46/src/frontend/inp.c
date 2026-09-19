@@ -808,6 +808,27 @@ e454_autobus_var(void)
  * it correctly ignored `noautobus` and `myautobus` but accepted `=` as a mere
  * terminator and NEVER LOOKED AT THE VALUE: `.option autobus=0` switched the
  * feature ON, silently. */
+
+/* Enhancement-670 (hunt F17): unlink and free every variable of `*pp`'s list
+ * whose name is one of `partners` (the earlier spellings of an option pair) */
+static void
+inp_opt_pair_prune(struct variable **pp, const char *const *partners)
+{
+    while (*pp) {
+        const char *const *o;
+        bool hit = FALSE;
+        for (o = partners; *o && !hit; o++)
+            hit = eq((*pp)->va_name, *o);
+        if (hit) {
+            struct variable *dead = *pp;
+            *pp = dead->va_next;
+            dead->va_next = NULL;
+            free_struct_variable(dead);
+        } else {
+            pp = &(*pp)->va_next;
+        }
+    }
+}
 static bool
 e454_opt_onoff(const char *line, const char *name, bool *on)
 {
@@ -2214,10 +2235,30 @@ inp_dodeck(
             cp_interactive = ii;
             if (!wl || !wl->wl_word || !*wl->wl_word)
                 continue;
-            if (eev)
-                eev->va_next = cp_setparse(wl);
-            else
-                ct->ci_vars = eev = cp_setparse(wl);
+            {
+                /* Enhancement-670 (hunt F17): the later spelling of an
+                 * option pair wins (`.option autocorner noautocorner` left
+                 * both set and the loop on). cp_setparse lists a card's
+                 * words LAST first, so for each word its partners further
+                 * down this list, and every partner an earlier card set,
+                 * are the earlier spellings: they go. */
+                struct variable *card = cp_setparse(wl);
+                struct variable *a;
+                for (a = card; a; a = a->va_next) {
+                    const char *const *other = cp_off_partners(a->va_name);
+                    if (!other)
+                        continue;
+                    inp_opt_pair_prune(&a->va_next, other);
+                    inp_opt_pair_prune(&ct->ci_vars, other);
+                }
+                eev = ct->ci_vars;              /* the pruning may have taken the tail */
+                while (eev && eev->va_next)
+                    eev = eev->va_next;
+                if (eev)
+                    eev->va_next = card;
+                else
+                    ct->ci_vars = eev = card;
+            }
             wl_free(wl);
             while (eev && (eev->va_next))
                 eev = eev->va_next;

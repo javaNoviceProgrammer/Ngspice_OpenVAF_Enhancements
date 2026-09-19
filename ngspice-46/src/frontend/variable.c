@@ -83,6 +83,49 @@ wordlist *cp_varwl(struct variable *var)
 
 
 /* Set a variable. */
+/* Enhancement-670 (hunt F17): an option's documented `no` spelling is its
+ * OFF switch, and the LATER spelling wins. `.option autocorner noautocorner`
+ * on one card, and `set noautocorner` after a deck's `.option autocorner`,
+ * both left the loop on: the hook read `autocorner` alone, so the `no`
+ * spelling was a known option (E-572 registered it) that turned nothing off
+ * -- accepted and ignored, the failure E-445's note describes; `noosdimc`
+ * against `osdimc` behaved the same. Setting one spelling of a pair now
+ * removes the other -- here for the control block, in inp.c for the option
+ * cards in card order -- so a reader of the positive sees it gone. The
+ * readers that judge the cards themselves (saveused, autobus, autoadapt:
+ * E-454's later-card-wins) agree with this rule. */
+static const struct {
+    const char *const on[4];
+    const char *const off[3];
+} cp_off_pairs[] = {
+    { { "autocorner", NULL, NULL, NULL },                { "noautocorner", NULL, NULL } },
+    { { "osdimc", "automc", NULL, NULL },                { "noosdimc", "noautomc", NULL } },
+    { { "saveused", NULL, NULL, NULL },                  { "nosaveused", NULL, NULL } },
+    { { "autobus", NULL, NULL, NULL },                   { "noautobus", NULL, NULL } },
+    { { "autoadapt", NULL, NULL, NULL },                 { "noautoadapt", NULL, NULL } },
+    { { "osdicache", NULL, NULL, NULL },                 { "noosdicache", NULL, NULL } },
+    { { "dcpath", "dcpathall", NULL, NULL },             { "nodcpath", NULL, NULL } },
+    { { "savemc", "automc_save", "osdimc_save", NULL },  { "nosavemc", NULL, NULL } },
+    { { "reusesetup", NULL, NULL, NULL },                { "noreusesetup", NULL, NULL } },
+};
+
+/* the spellings that `name` turns off -- the other side of its pair, NULL
+ * terminated -- or NULL when `name` is no option pair's member */
+const char *const *cp_off_partners(const char *name)
+{
+    size_t k;
+    int j;
+    for (k = 0; k < sizeof cp_off_pairs / sizeof cp_off_pairs[0]; k++) {
+        for (j = 0; cp_off_pairs[k].on[j]; j++)
+            if (eq(name, cp_off_pairs[k].on[j]))
+                return cp_off_pairs[k].off;
+        for (j = 0; cp_off_pairs[k].off[j]; j++)
+            if (eq(name, cp_off_pairs[k].off[j]))
+                return cp_off_pairs[k].on;
+    }
+    return NULL;
+}
+
 void cp_vset(const char *varname, enum cp_types type,
         const void *value)
 {
@@ -94,6 +137,15 @@ void cp_vset(const char *varname, enum cp_types type,
     /* varname = cp_unquote(varname);  DG: Memory leak old varname is lost*/
 
     copyvarname = cp_unquote(varname);
+
+    /* Enhancement-670 (hunt F17): the later spelling of an option pair wins
+     * -- the other side goes, wherever it was set (a deck's option card puts
+     * it in the circuit's list, which cp_remvar searches too) */
+    if (!(type == CP_BOOL && *(const bool *) value == FALSE)) {
+        const char *const *other = cp_off_partners(copyvarname);
+        for (; other && *other; other++)
+            cp_remvar((char *) *other);
+    }
 
     w = NULL;
     for (v = variables; v; v = v->va_next) {
