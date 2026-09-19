@@ -30,9 +30,9 @@ corners, the loop commands, hierarchy) were only touched in passing.
 | [F2](#f2--pow00-x-folds-to-0-for-every-exponent) | *(fixed in [E-674](../../enhancements_doc/Enhancement-674.md): the zero-base rule is removed from the simplifier; `pow(x, 0.0)` and `pow(x, 1.0)` stay)* `pow(0.0, x)` and `0.0 ** x` with a literal zero base fold to 0 for every `x`: `pow(0.0, 0.0)` written out is 1, `pow(0.0, x)` at `x = 0` is 0; a negative `x` gives 0 where the same expression with a parameter base is the run-time domain `$fatal`; the derivative folds to 0 with it | wrong result, silent |
 | [F3](#f3--l030-says-clipped-where-the-integer-default-wraps) | L030 says an integer default that overflows is "clipped to 2147483647" while the stored default wraps: `2147483647 + 1` is −2147483648, `100000 * 100000` is 1410065408, `-2147483647 - 2` is 2147483647, `2147483647 * 2` is −2; the lint evaluates the default as a real, the folder as a 32-bit integer; a real literal (`1e10`) really is clipped | wrong diagnostic |
 | [F4](#f4--simparamstr-of-an-unknown-name-hands-strobe-an-invalid-string) | `$simparam$str("instance")` (or any name the simulator does not provide, no default) hands `$strobe` an invalid string — `instance=�` on stdout — before the run aborts with the run-time `$fatal`; the compile-time L025 warning is right, the value that reaches the model is garbage | memory hygiene |
-| [F5](#f5--an-undeclared-macro-at-file-scope-still-raises-a-second-error-in-a-phantom-file) | an undeclared macro reference at file scope (outside any module) raises "has not been declared" and then a second error, "unexpected token integer; expected 'discipline', 'nature' or 'module'", at `/<file>__macro_synth.va:1:1` — a file that does not exist; E-665 removed the same knock-on in expression position only | diagnostic |
+| [F5](#f5--an-undeclared-macro-at-file-scope-still-raises-a-second-error-in-a-phantom-file) | *(fixed in [E-672](../../enhancements_doc/Enhancement-672.md): the hole's source context is marked and the parser drops a syntax error located at it; `` `__LINE__ `` in the same position is still reported)* an undeclared macro reference at file scope (outside any module) raises "has not been declared" and then a second error, "unexpected token integer; expected 'discipline', 'nature' or 'module'", at `/<file>__macro_synth.va:1:1` — a file that does not exist; E-665 removed the same knock-on in expression position only | diagnostic |
 | [F6](#f6--last_crossing-returns-0-before-any-crossing-in-ac-and-noise) | `last_crossing` returns 0 before any crossing in an `ac` and a `noise` analysis, where LRM 4.5.10 requires a negative value; the operating point and `dc` return −1 as they should, transient returns the crossing time | conformance |
-| [F7](#f7--the-fatal-label-in-a-dc-sweep-names-the-previous-sweep-point) | the `(at sweep value …)` label on a run-time `$fatal` in a `.dc` sweep names the **previous** sweep point (`over 0.5 (at sweep value 0)`), and the line is printed twice; `$error`, `$warning` and `$info` at the same point say `(at sweep value 0.5)` once; the transient and operating-point labels are right | diagnostic |
+| [F7](#f7--the-fatal-label-in-a-dc-sweep-names-the-previous-sweep-point) | *(fixed in [E-673](../../enhancements_doc/Enhancement-673.md): the sweep publishes the point before the solve and stops at a raised `$fatal` with its own abort line — the label names the point being solved, once)* the `(at sweep value …)` label on a run-time `$fatal` in a `.dc` sweep names the **previous** sweep point (`over 0.5 (at sweep value 0)`), and the line is printed twice; `$error`, `$warning` and `$info` at the same point say `(at sweep value 0.5)` once; the transient and operating-point labels are right | diagnostic |
 | [F8](#f8--a-node-joined-only-by-delayed-elements-diverges-to-1e62-in-silence) | a node whose every connection is a delayed element (two `absdelay` conductances in series) passes the operating point, then diverges once the first delayed edge arrives: −1e18, 1e27, 1e45, 5.6e62 over 73 accepted points, no warning, exit 0; the same circuit inside a child module prints six `singular matrix: check node n1#mid` and stops after the first point, also exit 0. Ill-posed for any Newton solver — the defect is the silence | silent divergence |
 | [F9](#f9--idt-with-assert-relaxes-toward-the-initial-condition-instead-of-returning-it) | `idt(1e6, 0.5, V(a,b) > 0.5)` does not return the initial condition while `assert` is nonzero: the output relaxes from 1.5 toward 0.5 with a ~10 µs time constant (1.45, 1.41, 1.36, 1.32 …), and when the assert releases the integral resumes from the relaxed value, not from 0.5; independent of the timestep and of `method=gear`; LRM 4.5.4 says the ic is *returned* whenever assert is nonzero | wrong result, silent |
 | [F10](#f10--option-interp-corrupts-integer-operating-point-variables-in-a-transient-print) | under ngspice's `.option interp`, an **integer** operating-point variable printed by `.print tran` is garbage: a constant 3 prints as 1.48e-323 (its bits read as a double) and then 1.25, and the next vector on the line shows the previous vector's values; without `interp`, and under `dc`, `op` and `ac`, the same integers print correctly; real opvars are unaffected | wrong output |
@@ -267,6 +267,12 @@ lookup is the kind of thing that turns into a crash on another allocator.
 
 ## F5 — an undeclared macro at file scope still raises a second error in a phantom file
 
+*Fixed in [E-672](../../enhancements_doc/Enhancement-672.md): the hole's source context is
+marked (`is_hole`) and `SourceFile::parse` drops any syntax error located at it; the reference
+stays the one error, at the reference. `` `__LINE__ `` alone at file scope is not a hole and is
+still refused. Pinned in `hunt17diag_examples` (three checks, two of which fail on the E-670
+binaries).*
+
 E-665 fixed "an undeclared macro reference: *has not been declared* and then
 *unexpected token ';'* about the hole it left" by leaving a synthesised `0` behind
 and reporting one error. That holds in expression position (`` `A(1) `` after
@@ -314,6 +320,14 @@ takes the wrong branch under `ac` and `noise`. The small-signal analyses evident
 initialise the crossing state differently from the operating point that precedes them.
 
 ## F7 — the `$fatal` label in a `dc` sweep names the previous sweep point
+
+*Fixed in [E-673](../../enhancements_doc/Enhancement-673.md): `dctrcurv.c` publishes the swept
+value into `CKTtime` before the solve as well as after it (`DCTsweepTime`), so the label names the
+point being solved; and a raised `$fatal` ends the sweep with its own abort line instead of
+re-solving the point through `CKTop`'s ladder, which was what printed the line a second time — not
+the abort path, as guessed below. Pinned in `lrmvoice_examples` (`lrmvoice_fatal.va`, three checks,
+two of which fail on the E-670 binaries). The setup-and-temperature-pass doubling of a hoisted
+`$fatal` (smaller notes) is E-660's rule and unchanged.*
 
 ```verilog
 if (V(a,b) > 0.25) $fatal(1, "over %g", V(a,b));   // and the same with $error, $warning, $info
