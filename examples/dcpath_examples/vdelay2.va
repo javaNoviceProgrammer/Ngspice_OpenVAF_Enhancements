@@ -1,0 +1,17 @@
+// Enhancement-679 (hunt F8 of 2026-09-19): two delayed conductances in series
+// inside one module, around an internal node the DC-path walk does not name
+// (it carries the instance's '#'): the matrix is singular there and the
+// transient's "Timestep too small" line names the node.
+`include "disciplines.vams"
+module vdl(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real td = 1u from (0:inf);
+  analog I(p, n) <+ absdelay(V(p, n), td) / 1e3;
+endmodule
+module vdelay2(a, b);
+  inout a, b;
+  electrical a, b, mid;
+  vdl #(.td(1u)) c1(a, mid);
+  vdl #(.td(0.5u)) c2(mid, b);
+endmodule

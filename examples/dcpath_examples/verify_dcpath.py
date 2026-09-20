@@ -46,7 +46,7 @@ sys.path.insert(0, os.path.dirname(HERE))          # the examples/ dir (holds _s
 from _setup import VAF as OPENVAF, NG as NGSPICE
 from _setup import check_both_solvers as _check_both_solvers; _check_both_solvers(__file__)  # verify under BOTH KLU and Sparse solvers
 
-MODELS = ("vprobe", "vddt", "vres", "vrc", "th_rth", "th_pwr", "vdiff", "zddt")
+MODELS = ("vprobe", "vddt", "vres", "vrc", "th_rth", "th_pwr", "vdiff", "zddt", "vdelay", "vdelay2")
 
 
 def compile_va(m):
@@ -305,6 +305,43 @@ def main():
     check("seven floating nodes: five named, then '... and 2 more nodes without a DC path to ground'",
           out.count("no DC path from node") == 5 and "and 2 more nodes without a DC path" in out
           and near(values(out).get("v(x6)"), 1e3), "")
+
+    # Enhancement-679 (hunt F8 of 2026-09-19): a node joined only by DELAYED
+    # elements has no path to ground in any mode -- held by the installed gmin
+    # in the transient too (E-595) -- and each element's current is the node's
+    # own past voltage over 1 kOhm: every delay multiplies it by 1/(gmin*R).
+    # It ran to 5.6e62 V over 73 accepted points, exit 0, no word. A held node
+    # past 1e15 V is a diverging transient; the run says so and stops. The
+    # hierarchical spelling (an internal node the walk does not name) was
+    # singular and stopped with "cause unrecorded"; it names the node now.
+    print("[10] Enhancement-679: a node held only by gmin that diverges in the transient")
+    chain = ("v1 a 0 dc 0 pulse(0 1 1u 1n 1n 10u 20u)\nn1 a mid dd1\nn2 mid 0 dd2\n"
+             ".model dd1 vdelay td=1u\n.model dd2 vdelay td=0.5u")
+    DIV = "the solution is diverging -- node 'mid' has reached"
+    out = ngspice(deck("delay chain", chain, ctl="tran 0.1u 5u", prints="length(time)", pre="pre_osdi vdelay.osdi\n"))
+    check("two delayed conductances in series at top level: held by gmin, and the run stops as diverging, naming the node",
+          HELD.format("mid") in out and DIV in out and "only the 1e-12 S installed for its DC path" in out
+          and "tran simulation(s) aborted" in out, out[-300:].replace("\n", "|") if DIV not in out else "")
+    n = values(out).get("length(time)")
+    check("...within one delay of the onset (fewer than 60 points, not 73 rows of 1e62)",
+          n is not None and 5 < n < 60, f"length(time)={n}")
+    # the delayed conductance against a resistor is a delayed-feedback toggle,
+    # v(mid)(t) = v(a)(t - 1u) - v(mid)(t - 1u): 0 until 2 us, then 1 and 0 by turns
+    out = ngspice(deck("delay + resistor", "v1 a 0 dc 0 pulse(0 1 1u 1n 1n 10u 20u)\nn1 a mid dd1\nr2 mid 0 1k\n.model dd1 vdelay td=1u",
+                       ctl="tran 0.1u 5u\nmeas tran v25 find v(mid) at=2.5u\nmeas tran v35 find v(mid) at=3.5u",
+                       prints="length(time)", pre="pre_osdi vdelay.osdi\n"))
+    v = values(out)
+    check("(control) a delayed conductance in series with a resistor: no message, the run completes, the delayed toggle 1 / 0 arrives",
+          "no DC path" not in out and DIV not in out and near(v.get("v25"), 1.0, 1e-3) and abs(v.get("v35", 1.0)) < 1e-3
+          and (v.get("length(time)") or 0) > 60, f"v25={v.get('v25')} v35={v.get('v35')} length={v.get('length(time)')}")
+    hier = "v1 a 0 dc 0 pulse(0 1 1u 1n 1n 10u 20u)\nn1 a 0 hh\n.model hh vdelay2"
+    out = ngspice(deck("delay chain in a child", hier, ctl="tran 0.1u 5u", prints="length(time)", pre="pre_osdi vdelay2.osdi\n"))
+    check("the same chain around a child module's internal node: singular, and the \"Timestep too small\" line names the node",
+          SING in out and 'trouble with node "n1#mid"' in out and "cause unrecorded" not in out, out[-200:].replace("\n", "|"))
+    out = ngspice(deck("delay chain gshunt", chain, ctl="tran 0.1u 5u", prints="length(time)", pre="pre_osdi vdelay.osdi\n",
+                       opts=".option gshunt=1e-9\n"))
+    check("with `.option gshunt` the walk stands down and the singular row is named the same way",
+          SING in out and 'trouble with node "mid"' in out and "cause unrecorded" not in out, out[-200:].replace("\n", "|"))
 
     print("\nALL PASSED" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)

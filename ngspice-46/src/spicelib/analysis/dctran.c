@@ -16,6 +16,13 @@ Modified: 2023 XSPICE breakpoint fix for shared ngspice by Vyacheslav Shevchuk
 
 #include "ngspice/ngspice.h"
 #include "ngspice/cktdefs.h"
+
+/* Enhancement-679: a node held only by the DC-path gmin (see the guard at the
+ * accepted point) past this magnitude is a diverging transient. No circuit
+ * puts 1e15 V on a node nothing else constrains: at the default 1e-12 S that
+ * is a kiloampere into a node with no path; a delay chain passes it within
+ * one delay of its onset. */
+#define DCPATH_DIVERGE_V 1e15
 #include "cktaccept.h"
 #include "ngspice/trandefs.h"
 #include "ngspice/sperror.h"
@@ -1210,6 +1217,42 @@ resume:
                 }
                 /* time point OK  - 630 */
                 ckt->CKTdelta = newdelta;
+
+                /* Enhancement-679 (hunt F8 of 2026-09-19): a node the DC-path
+                 * check holds in EVERY mode (Enhancement-595's always-held
+                 * list: no path to ground through any conductance or
+                 * capacitance) is constrained by nothing but the installed
+                 * gmin. Its solution is the current into it over that gmin,
+                 * and when the current depends on the node's own past -- two
+                 * absdelay conductances in series -- every delay multiplies
+                 * it by 1/(gmin*R): -1e18, 1e27, 1e45, 5.6e62 V over 73
+                 * accepted points, each one "converged", and the run ended
+                 * with exit 0 and no word. A held node past this bound is a
+                 * diverging transient, and the run says so and stops. */
+                if (ckt->CKTdcpathNodes && ckt->CKTdcpathAlways > 0 &&
+                    ckt->CKTdcpathG > 0.0) {
+                    int kdiv;
+                    for (kdiv = 0; kdiv < ckt->CKTdcpathAlways; kdiv++) {
+                        int nd = ckt->CKTdcpathNodes[kdiv];
+                        double vd = ckt->CKTrhsOld[nd];
+                        if (fabs(vd) > DCPATH_DIVERGE_V) {
+                            errMsg = tprintf(
+                                "TRAN:  time = %g: the solution is diverging -- node '%s'"
+                                " has reached %g V.\n"
+                                "    The node has no path to ground through any"
+                                " conductance or capacitance; only the %g S installed"
+                                " for its DC path\n"
+                                "    holds it (the warning at setup), so every current"
+                                " into it -- a delayed element's, a source's -- is"
+                                " divided by that\n"
+                                "    conductance. Give the node a path (a resistor,"
+                                " a capacitor), or `.option dcpath=error` to refuse"
+                                " such a node at setup.",
+                                ckt->CKTtime, CKTnodName(ckt, nd), vd, ckt->CKTdcpathG);
+                            return(E_PRIVATE);
+                        }
+                    }
+                }
 
 #ifdef NDEV
                 if (!ft_norefprint) {

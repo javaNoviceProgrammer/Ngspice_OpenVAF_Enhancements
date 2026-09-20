@@ -268,6 +268,11 @@ NIiter(CKTcircuit *ckt, int maxIter)
                             SPfrontEnd->IFerrorf(ERR_WARNING, "singular matrix:  check nodes %s and %s\n", NODENAME(ckt, i), NODENAME(ckt, j));
                         msgcount += 1;
                     }
+                    /* Enhancement-679 (hunt F8): the singular row is the cause
+                     * the transient's "Timestep too small" names -- it read
+                     * "cause unrecorded" after six "check node" warnings. */
+                    SMPgetError(ckt->CKTmatrix, &i, &j);
+                    ckt->CKTtroubleNode = i;
                     ckt->CKTstat->STATnumIter += iterno;
 #ifdef STEPDEBUG
                     printf("reorder returned error \n");
@@ -315,6 +320,9 @@ NIiter(CKTcircuit *ckt, int maxIter)
                             msgcount += 1;
                         }
 
+                        /* Enhancement-679: see the Sparse branch above */
+                        SMPgetError(ckt->CKTmatrix, &i, &j);
+                        ckt->CKTtroubleNode = i;
                         /* CKTload(ckt); */
                         /* SMPprint(ckt->CKTmatrix, stdout); */
                         /* seems to be singular - pass the bad news up */

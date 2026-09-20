@@ -1,0 +1,10 @@
+// Enhancement-679 (hunt F8 of 2026-09-19): a delayed conductance. Its present
+// current is its PAST voltage over 1 kOhm, so it stamps no conductance at
+// all: a node joined only by such elements has no path to ground in any mode.
+`include "disciplines.vams"
+module vdelay(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real td = 1u from (0:inf);
+  analog I(p, n) <+ absdelay(V(p, n), td) / 1e3;
+endmodule

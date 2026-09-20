@@ -23,6 +23,7 @@ Warning: no DC path from node 'x' to ground; gmin (1e-12 S) installed to provide
 | [8] OSDI voltage contributions | `V(out) <+ …` with nothing else on `out` is a branch to an implicit ground and a path (a port driven by a single-ended contribution and nothing else; nearly every node of a large deck was named before the rule); a chain of three is silent; `V(p,n) <+ 1` between two untouched nodes is a branch between them and both are named |
 | [7] a thermal port | an OSDI thermal port with the model's own `rth` is a path; a pure power source is not held — its pattern is the `rth` one, the run stays singular and names the node as before |
 | [6] the cap | seven floating nodes: five named, then a count |
+| [10] a held node that diverges (E-679) | two delayed conductances in series: held by gmin in every mode, each one's current is the node's own past voltage over 1 kΩ, and the run stops as diverging at −1e18 V naming the node (it ran to 5.6e62 V, exit 0); the same chain around a child's internal node is singular and the "Timestep too small" line names the node (was "cause unrecorded"); a delay in series with a resistor is silent |
 
 ## Run
 
@@ -30,7 +31,7 @@ Warning: no DC path from node 'x' to ground; gmin (1e-12 S) installed to provide
 python3 verify_dcpath.py
 ```
 
-37 checks per solver, all PASS.
+57 checks per solver, all PASS (52 before [E-679](../../enhancements_doc/Enhancement-679.md); this line had said 37 since E-575 while E-595's sections were added).
 
 ## Enhancement-595 — the hold outside DC
 
