@@ -275,7 +275,8 @@ table from the names it prints and nothing is truncated; `showwidth_examples`
 - **A conditional `idt` reset** decays toward `ic` with a 10 µs time constant instead
   of jumping; this is E-52's documented deviation (comment in `lower_integral`), noted
   here only because a reader of LRM 4.5.4 will be surprised by 0.62 V one microsecond
-  into a reset to 0.25 V.
+  into a reset to 0.25 V. *(The constant follows the transient's print step since
+  [E-678](../../enhancements_doc/Enhancement-678.md).)*
 
 **Status (2026-09-09):** resolved by Enhancement-590 -- `$param_given(arr)` answers
 for the array, lint L030 for lossy integer constants, lint ids accepted by `-A`/`-W`/`-E`

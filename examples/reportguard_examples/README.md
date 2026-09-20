@@ -92,3 +92,8 @@ this enhancement — the shipped binary behaves identically — and correcting i
 means applying parameter defaults before setup, which is a different change with
 its own evidence. `[7]` records the current behaviour so a future change to it
 is a deliberate one; `[7b]` pins that the declared default does arrive.
+
+Since [E-678](../../enhancements_doc/Enhancement-678.md) the drift check `[25]`
+ignores the simulator's `$...$` entries: that is the private namespace (E-215's
+plusargs convention) the compiler's own realisations read, never a name a model
+spells, so it is not part of the surface the compiler's L025 list describes.

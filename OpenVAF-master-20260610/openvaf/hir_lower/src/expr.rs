@@ -5183,7 +5183,34 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 // trapezoidal method is deadbeat rather than ringing); once the
                 // output has settled at `ic` the bound is released, so long
                 // holds simulate at full speed.
+                //
+                // Enhancement-678 (hunt F9 of 2026-09-19): a FIXED tau of 10us
+                // was sized for second-scale models and is a defect at the
+                // microsecond scale -- `idt(1e6, 0.5, V(a,b) > 0.5)` held for
+                // 2us read 1.32, not 0.5, and the integral resumed from 1.32.
+                // The decay is the right mechanism (a jump in the stored
+                // charge is the E-27 impulse); its time constant now follows
+                // the analysis: tau = RESET_TAU_PER_TSTEP times the
+                // transient's print step, which ngspice serves through the
+                // private simparam `$osdi$tstep` (0 outside a transient; a
+                // simulator that does not serve it gets the old constant), so
+                // a reset completes within a thousandth of a print step at
+                // whatever scale the run has.
+                //
+                // The gain is ALSO capped at 2/h, h being the step under way
+                // (`$osdi$delta`): the trapezoidal rule's response to a stiff
+                // decay flips sign past lambda*h = 2, and the step at which a
+                // reset first takes effect is chosen before the model can
+                // bound it -- with tau = 2us a 5us onset step took the E-52
+                // relaxation oscillator from 1.0 through 0.44 to -0.11, where
+                // its release event fired. At lambda*h = 2 the rule is
+                // deadbeat instead: the onset step halves the deviation, the
+                // next (bounded to 2 tau below) removes it and leaves the
+                // trapezoidal history clean, whatever the onset step was.
                 const RESET_GAIN: f64 = 1.0e5;
+                const RESET_TAU_PER_TSTEP: f64 = 1.0e-3;
+                const RESET_TSTEP_SIMPARAM: &str = "$osdi$tstep";
+                const RESET_DELTA_SIMPARAM: &str = "$osdi$delta";
                 let resist = self.lower_select_with(
                     enable_integral,
                     |mut s| {
@@ -5194,7 +5221,26 @@ impl BodyLoweringCtx<'_, '_, '_> {
                             |mut r| {
                                 let ic = r.lower_expr(args[1]);
                                 let dev = r.ctx.ins().fsub(val, ic);
-                                let gain = r.ctx.fconst(RESET_GAIN);
+                                // Enhancement-678: tau from the analysis
+                                let key = r.ctx.sconst(RESET_TSTEP_SIMPARAM);
+                                let tstep =
+                                    r.ctx.call1(CallBackKind::SimParamOpt, &[key, F_ZERO]);
+                                let served = r.ctx.ins().fgt(tstep, F_ZERO);
+                                let per = r.ctx.fconst(RESET_TAU_PER_TSTEP);
+                                let scaled = r.ctx.ins().fmul(tstep, per);
+                                let fallback = r.ctx.fconst(1.0 / RESET_GAIN);
+                                let tau = r.lower_select_with(served, |_| scaled, |_| fallback);
+                                let unit = r.ctx.fconst(1.0);
+                                let gain_tau = r.ctx.ins().fdiv(unit, tau);
+                                // ...capped at 2/h (deadbeat), see above
+                                let key_h = r.ctx.sconst(RESET_DELTA_SIMPARAM);
+                                let h = r.ctx.call1(CallBackKind::SimParamOpt, &[key_h, F_ZERO]);
+                                let two = r.ctx.fconst(2.0);
+                                let gain_h = r.ctx.ins().fdiv(two, h);
+                                let h_served = r.ctx.ins().fgt(h, F_ZERO);
+                                let capped = r.ctx.ins().flt(gain_h, gain_tau);
+                                let cap = r.lower_select_with(capped, |_| gain_h, |_| gain_tau);
+                                let gain = r.lower_select_with(h_served, |_| cap, |_| gain_tau);
                                 let resist = r.ctx.ins().fmul(gain, dev);
 
                                 // bound the step while the decay is active
@@ -5211,7 +5257,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
                                 let tol = r.ctx.fconst(1.0e-6);
                                 let thresh = r.ctx.ins().fmul(tol, scale);
                                 let active = r.ctx.ins().fgt(abs_dev, thresh);
-                                let bound = r.ctx.fconst(2.0 / RESET_GAIN);
+                                let two_ = r.ctx.fconst(2.0);
+                                let bound = r.ctx.ins().fmul(two_, tau); // 2 tau: lambda*h = 2
                                 let inf = r.ctx.fconst(f64::INFINITY);
                                 let step = r.lower_select_with(active, |_| bound, |_| inf);
                                 r.ctx.def_place(PlaceKind::BoundStep, step);

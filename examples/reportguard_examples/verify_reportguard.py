@@ -292,6 +292,10 @@ try:
     txt = open(c, encoding="utf-8", errors="replace").read()
     m = re.search(r"char\s*\*sim_params\[NUM_SIM_PARAMS\s*\+\s*1\]\s*=\s*\{(.*?)NULL\};", txt, re.S)
     c_names = re.findall(r'"([^"]+)"', m.group(1)) if m else []
+    # Enhancement-678: a `$...$` name is the private namespace (E-215's plusargs
+    # convention) -- served to the compiler's own realisations, never told to
+    # a model, so not part of the surface this drift check compares
+    c_names = [n for n in c_names if not n.startswith("$")]
 except OSError:
     pass
 

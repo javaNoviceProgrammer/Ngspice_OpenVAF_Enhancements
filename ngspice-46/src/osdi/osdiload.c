@@ -431,14 +431,23 @@ static void last_crossing_stamp(void *inst, OsdiExtraInstData *extra,
  * and the LRM's own way to ask is `$temperature`, which already works. Likewise
  * `timestep`, `maxstep` and `freq` stay out -- ngspice has values that resemble
  * them, but they are not names any simulator answers, so supplying them would
- * be inventing an interface rather than completing one. */
-#define NUM_SIM_PARAMS 15
+ * be inventing an interface rather than completing one.
+ *
+ * Enhancement-678 (hunt F9 of 2026-09-19): `$osdi$tstep` and `$osdi$delta`
+ * are NOT such names. They are private, namespaced entries (the `$...$`
+ * convention Enhancement-215 uses for plusargs) that the compiler's own
+ * realisation of `idt(x, ic, assert)` reads to size its reset dynamics to
+ * the analysis: the transient's print step, and the step being attempted
+ * (both 0 outside a transient). No model spells them; the LRM-facing surface
+ * above is unchanged. */
+#define NUM_SIM_PARAMS 17
 char *sim_params[NUM_SIM_PARAMS + 1] = {
     "iniLim", "gmin", "gdev", "tnom",
     "simulatorVersion", "sourceScaleFactor",
     "epsmin", "reltol", "vntol", "abstol", "scale",
     "iteration", "abstime", "simulatorSubversion",
     "temp",
+    "$osdi$tstep", "$osdi$delta",
     NULL};
 /* Enhancement-25: string simulator parameters returned by $simparam$str.
  * "analysis_name" mirrors the analysis() naming ("dc"/"ac"/"tran"/"noise");
@@ -619,7 +628,12 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt) {
       (ckt->CKTmode & MODETRAN) ? ckt->CKTtime : 0.0,
       0.0,
       /* Enhancement-434: temp, in Celsius like tnom above it */
-      ckt->CKTtemp - CONSTCtoK };
+      ckt->CKTtemp - CONSTCtoK,
+      /* Enhancement-678: the transient's print step and the step being
+       * attempted, for the compiler's idt reset realisation (see the
+       * declaration); 0 outside a transient */
+      (ckt->CKTmode & (MODETRAN | MODETRANOP)) ? ckt->CKTstep : 0.0,
+      (ckt->CKTmode & MODETRAN) ? ckt->CKTdelta : 0.0 };
   memcpy(&sim_param_vals, &sim_param_vals_, sizeof(double) * NUM_SIM_PARAMS);
 
   /* Enhancement-25: current analysis name for $simparam$str("analysis_name"),

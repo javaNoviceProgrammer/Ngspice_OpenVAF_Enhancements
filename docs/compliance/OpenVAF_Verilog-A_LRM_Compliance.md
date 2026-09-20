@@ -686,8 +686,10 @@ stepping mid-run: the no-`maxdelay` form answers with the frozen 1 ms delay
 (4.99 V, previously 3.99), while the `maxdelay` form tracks as the LRM asks.
 
 Two smaller honesty items from the same audit: ⚠️ the `idt` **assert/reset is
-a stiff first-order decay toward `ic`** (τ = 10 µs; ~90 % of the deviation
-remains 1 µs into a reset, gone by ~5 τ) rather than the LRM's instantaneous
+a stiff first-order decay toward `ic`** (τ = a thousandth of the transient's
+print step since [E-678](../../enhancements_doc/Enhancement-678.md), deadbeat at
+the onset; it was a fixed 10 µs, which held 1.32 instead of 0.5 through a 2 µs
+reset) rather than the LRM's instantaneous
 return — E-52's deliberate choice, because the algebraic pin made the
 transient integrator see an impulse and self-resetting integrators ring; and
 ⚠️ the **`abstol`/nature tolerance arguments** of `ddt`/`idt`/`idtmod` are

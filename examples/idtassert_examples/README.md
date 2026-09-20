@@ -27,10 +27,15 @@ speed. DC/IC-phase pinning and the E-28 charge handoff are preserved.
 python3 verify_idtassert.py
 ```
 
-Checks (ALL PASS, exact): the externally-reset integrator ramps 0.5→1.5,
+Checks (17, ALL PASS, exact; 9 before [E-678](../../enhancements_doc/Enhancement-678.md)): the externally-reset integrator ramps 0.5→1.5,
 holds at 0.5, resumes to 1.5; an op-dependent integrand with the reset active
 at the operating point (and the tol form) holds 0.25 then ramps at 2 V/s; the
 self-referential reset stays bounded at exactly the threshold (was ~400); and
 the payoff — a **relaxation oscillator** built from `idt` + hysteretic
 cross-event reset: peaks 1.0, valleys at `ic` with no undershoot, period
-exactly 1 s.
+exactly 1 s; and, since E-678, the same reset at the microsecond scale
+(`idt(1e6, 0.5, V(rst) > 0.5)` under a 2 µs pulse, `.tran 0.1u 5u`) holds
+0.5 throughout and resumes from it, under trapezoidal and Gear alike --
+the reset's time constant follows the transient's print step instead of
+a fixed 10 µs, and its gain is capped at 2/h so the onset step cannot flip
+the trapezoidal rule.

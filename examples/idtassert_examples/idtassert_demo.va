@@ -44,3 +44,14 @@ module idtosc(out);
     V(out) <+ idt(1.0, 0.0, rst);
   end
 endmodule
+
+// Enhancement-678 (hunt F9 of 2026-09-19): the reset's time constant follows
+// the analysis. A fixed tau of 10 us held this integrator at 1.32, not 0.5,
+// through a 2 us reset and resumed from 1.32; with tau sized from the
+// transient's print step (and the gain capped at 2/h so the trapezoidal rule
+// is deadbeat at the onset) it holds 0.5 and resumes from it.
+module idtfast(rst, out);
+  inout rst, out;
+  electrical rst, out;
+  analog V(out) <+ idt(1e6, 0.5, V(rst) > 0.5);
+endmodule

@@ -34,7 +34,7 @@ corners, the loop commands, hierarchy) were only touched in passing.
 | [F6](#f6--last_crossing-returns-0-before-any-crossing-in-ac-and-noise) | *(fixed in [E-677](../../enhancements_doc/Enhancement-677.md): the final-step evaluation of an `ac` and a `noise` analysis runs on the bias point captured at the small-signal initialisation, not on the last frequency's small-signal solution — `V(a,b)` in the same body read the response too)* `last_crossing` returns 0 before any crossing in an `ac` and a `noise` analysis, where LRM 4.5.10 requires a negative value; the operating point and `dc` return −1 as they should, transient returns the crossing time | conformance |
 | [F7](#f7--the-fatal-label-in-a-dc-sweep-names-the-previous-sweep-point) | *(fixed in [E-673](../../enhancements_doc/Enhancement-673.md): the sweep publishes the point before the solve and stops at a raised `$fatal` with its own abort line — the label names the point being solved, once)* the `(at sweep value …)` label on a run-time `$fatal` in a `.dc` sweep names the **previous** sweep point (`over 0.5 (at sweep value 0)`), and the line is printed twice; `$error`, `$warning` and `$info` at the same point say `(at sweep value 0.5)` once; the transient and operating-point labels are right | diagnostic |
 | [F8](#f8--a-node-joined-only-by-delayed-elements-diverges-to-1e62-in-silence) | a node whose every connection is a delayed element (two `absdelay` conductances in series) passes the operating point, then diverges once the first delayed edge arrives: −1e18, 1e27, 1e45, 5.6e62 over 73 accepted points, no warning, exit 0; the same circuit inside a child module prints six `singular matrix: check node n1#mid` and stops after the first point, also exit 0. Ill-posed for any Newton solver — the defect is the silence | silent divergence |
-| [F9](#f9--idt-with-assert-relaxes-toward-the-initial-condition-instead-of-returning-it) | `idt(1e6, 0.5, V(a,b) > 0.5)` does not return the initial condition while `assert` is nonzero: the output relaxes from 1.5 toward 0.5 with a ~10 µs time constant (1.45, 1.41, 1.36, 1.32 …), and when the assert releases the integral resumes from the relaxed value, not from 0.5; independent of the timestep and of `method=gear`; LRM 4.5.4 says the ic is *returned* whenever assert is nonzero | wrong result, silent |
+| [F9](#f9--idt-with-assert-relaxes-toward-the-initial-condition-instead-of-returning-it) | *(fixed in [E-678](../../enhancements_doc/Enhancement-678.md): the reset decay's time constant follows the transient's print step, a thousandth of it, served through a private simparam, and its gain is capped at 2/h so the onset step is deadbeat; a 2 µs hold reads 0.5 throughout and resumes from it)* `idt(1e6, 0.5, V(a,b) > 0.5)` does not return the initial condition while `assert` is nonzero: the output relaxes from 1.5 toward 0.5 with a ~10 µs time constant (1.45, 1.41, 1.36, 1.32 …), and when the assert releases the integral resumes from the relaxed value, not from 0.5; independent of the timestep and of `method=gear`; LRM 4.5.4 says the ic is *returned* whenever assert is nonzero | wrong result, silent |
 | [F10](#f10--option-interp-corrupts-integer-operating-point-variables-in-a-transient-print) | under ngspice's `.option interp`, an **integer** operating-point variable printed by `.print tran` is garbage: a constant 3 prints as 1.48e-323 (its bits read as a double) and then 1.25, and the next vector on the line shows the previous vector's values; without `interp`, and under `dc`, `op` and `ac`, the same integers print correctly; real opvars are unaffected | wrong output |
 
 Dropped after checking the LRM or the code: the `laplace_zp` DC gain (the LRM's pole
@@ -412,6 +412,21 @@ that the hierarchical spelling stops the analysis silently instead of failing it
 the same class; this is the transient face.
 
 ## F9 — `idt` with `assert` relaxes toward the initial condition instead of returning it
+
+*Fixed in [E-678](../../enhancements_doc/Enhancement-678.md). The decay is E-52's deliberate realisation (a jump
+in the stored charge is the E-27 impulse) and stays; its time constant was a fixed 10 µs and now follows the
+transient's print step (τ = tstep/1000, ngspice serves it through the private simparam `$osdi$tstep`), and
+its gain is capped at 2/h from the step under way (`$osdi$delta`), because the trapezoidal rule flips sign
+past λh = 2 and the onset step is chosen before the model can bound it — at λh = 2 it is deadbeat. The table's
+LRM row is what the run reads now, to within the release instant (the accepted point after the edge). Pinned
+in `idtassert_examples` (`idtfast`, eight checks, trapezoidal and Gear; all fail on the E-670 binaries).*
+
+*Seen on the way, a finding of its own: a `cross` event that fires on a rejected step attempt keeps its side
+effect. E-52's relaxation oscillator sets `rst = 1` in `@(cross(V(out) - 1.0, 1))`; a 2 ms attempt whose
+predictor overshot 1.0 fired it, the attempt was rejected for its truncation error, the variable stayed, and
+the reset stood at the retry, 1.4 ms before the ramp reached 1.0 (period 0.9986 s, inside the suite's
+tolerance). The old dynamics undid it by accident: at λh ≫ 2 the flipped value fired the release cross in the
+same attempt. Variable persistence across rejected attempts, not the reset.*
 
 LRM 4.5.4: "When specified with both initial conditions and assert, `idt()` returns
 the initial conditions during DC and IC analyses, and whenever assert is nonzero.

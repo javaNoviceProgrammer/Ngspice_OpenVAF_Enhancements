@@ -108,6 +108,25 @@ def main():
         period = v["t2"] - v["t1"]
     check("period = 1 s (full ramp)", period, 1.0, 2e-2)
 
+    # Enhancement-678 (hunt F9 of 2026-09-19): the same reset at the
+    # microsecond scale. tau was a fixed 10 us, so a 2 us hold read 1.32 and
+    # the integral resumed from there; it follows the print step now, and the
+    # gain is capped at 2/h so the onset step cannot flip the trapezoidal rule.
+    # The release is detected at the accepted point after the falling edge
+    # (V(rst) falls through 0.5 at 3001.5 ns), so the resumed integral is
+    # 0.5 + 1e6*(t - 3001.5 ns).
+    print("[5] microsecond-scale reset: held at ic, resumed from it (E-678)")
+    for label, opt in (("trapezoidal", ""), ("gear", ".option method=gear\n")):
+        deck = ("* e678\nVr rst 0 DC 0 PULSE(0 1 1u 1n 1n 2u 100u)\nNDUT rst out nm\nRL out 0 1G\n"
+                ".model nm idtfast\n" + opt + ".tran 0.1u 5u\n.control\npre_osdi idtassert_demo.osdi\nrun\n"
+                "meas tran h15 FIND v(out) AT=1.5u\nmeas tran h30 FIND v(out) AT=3.0u\n"
+                "meas tran r35 FIND v(out) AT=3.5u\nmeas tran r50 FIND v(out) AT=5.0u\n.endc\n.end\n")
+        v = run(deck, "h15", "h30", "r35", "r50")
+        check(f"{label}: held at ic 0.5 us into a 2 us reset (was 1.45)", v.get("h15"), 0.5, 1e-3)
+        check(f"{label}: still at ic at the end of the reset (was 1.32)", v.get("h30"), 0.5, 1e-3)
+        check(f"{label}: resumed from ic: 0.9985 at 3.5 us (was 1.82)", v.get("r35"), 0.9985, 1e-3)
+        check(f"{label}: 2.4985 at 5 us (was 3.32)", v.get("r50"), 2.4985, 1e-3)
+
     print()
     print("ALL PASS" if ok else "SOME CHECKS FAILED")
     return 0 if ok else 1
