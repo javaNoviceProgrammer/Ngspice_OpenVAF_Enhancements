@@ -2418,6 +2418,7 @@ InterpFileAdd(runDesc *run, IFvalue *refValue, IFvalue *valuePtr)
                 valueold[i] = valuePtr->v.vec.rVec [run->data[i].outIndex];
         } else {
             IFvalue val;
+            double sval;
             /* should pre-check instance */
             if (!getSpecial(&run->data[i], run, &val)) {
 
@@ -2430,15 +2431,22 @@ InterpFileAdd(runDesc *run, IFvalue *refValue, IFvalue *valuePtr)
                 fileAddRealValue(run->fp, run->binary, val.rValue);
                 continue;
             }
+            /* Enhancement-680 (hunt F10 of 2026-09-19): an INTEGER opvar or
+               instance parameter (Enhancement-32 records them as reals on the
+               other output paths) was read here through the union's double: its
+               four bytes under the previous vector's upper bytes -- a constant 3
+               printed as 1.48e-323 and then as the previous column's value with
+               a few bits changed. Read it by its type, as the other paths do. */
+            sval = (run->data[i].type == IF_INTEGER) ? (double) val.iValue : val.rValue;
             if (!interpolatenow && !nodata) {
                 /* store the first or last value */
-                valueold[i] = val.rValue;
+                valueold[i] = sval;
                 fileAddRealValue(run->fp, run->binary, valueold[i]);
             }
             else if (interpolatenow) {
             /*  Interpolate time if actual time is greater than proposed next time step  */
                 double newval;
-                valuenew[i] = val.rValue;
+                valuenew[i] = sval;
                 newval = (timestep -  run->circuit->CKTstep - timeold)/(timenew - timeold) * (valuenew[i] - valueold[i]) + valueold[i];
                 fileAddRealValue(run->fp, run->binary, newval);
                 valueold[i] = valuenew[i];
@@ -2446,7 +2454,7 @@ InterpFileAdd(runDesc *run, IFvalue *refValue, IFvalue *valuePtr)
             else if (nodata)
                 /* Just keep the transient output value corresponding to timeold, 
                     but do not store to file */
-                valueold[i] = val.rValue;
+                valueold[i] = sval;
         }
 
 #ifdef TCL_MODULE
@@ -2575,18 +2583,21 @@ InterpPlotAdd(runDesc *run, IFvalue *refValue, IFvalue *valuePtr)
                 valueold[i] = valuePtr->v.vec.rVec [run->data[i].outIndex];
         } else {
             IFvalue val;
+            double sval;
             /* should pre-check instance */
             if (!getSpecial(&run->data[i], run, &val))
                 continue;
+            /* Enhancement-680: an integer opvar by its type (see InterpFileAdd) */
+            sval = (run->data[i].type == IF_INTEGER) ? (double) val.iValue : val.rValue;
             if (!interpolatenow && !nodata) {
                 /* store the first or last value */
-                valueold[i] = val.rValue;
+                valueold[i] = sval;
                 plotAddRealValue(&run->data[i], valueold[i]);
             }
             else if (interpolatenow) {
             /*  Interpolate time if actual time is greater than proposed next time step  */
                 double newval;
-                valuenew[i] = val.rValue;
+                valuenew[i] = sval;
                 newval = (timestep -  run->circuit->CKTstep - timeold)/(timenew - timeold) * (valuenew[i] - valueold[i]) + valueold[i];
                 plotAddRealValue(&run->data[i], newval);
                 valueold[i] = valuenew[i];
@@ -2594,7 +2605,7 @@ InterpPlotAdd(runDesc *run, IFvalue *refValue, IFvalue *valuePtr)
             else if (nodata)
                 /* Just keep the transient output value corresponding to timeold, 
                     but do not store to file */
-                valueold[i] = val.rValue;
+                valueold[i] = sval;
         }
 
 #ifdef TCL_MODULE

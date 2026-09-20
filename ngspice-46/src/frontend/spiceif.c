@@ -589,6 +589,11 @@ if_is_option(const char *name)
            of its own, E-413). `seed` and `numdgt` are read out of the deck's
            own `.option` cards by eval_opt()/the frontend. */
         "savecurrents", "seed", "numdgt",
+        /* Enhancement-680 (hunt F10 of 2026-09-19): `interp` is the manual's
+           own `.option interp` -- the transient output resampled onto the
+           tstep grid, read by outitf.c through cp_getvar -- and it took effect
+           in the very run that called it unknown. */
+        "interp",
         /* Enhancement-451: three more in exactly that case, found by asking
            which flagged names DEMONSTRABLY change a run.
 

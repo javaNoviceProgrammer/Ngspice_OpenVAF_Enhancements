@@ -35,7 +35,7 @@ corners, the loop commands, hierarchy) were only touched in passing.
 | [F7](#f7--the-fatal-label-in-a-dc-sweep-names-the-previous-sweep-point) | *(fixed in [E-673](../../enhancements_doc/Enhancement-673.md): the sweep publishes the point before the solve and stops at a raised `$fatal` with its own abort line — the label names the point being solved, once)* the `(at sweep value …)` label on a run-time `$fatal` in a `.dc` sweep names the **previous** sweep point (`over 0.5 (at sweep value 0)`), and the line is printed twice; `$error`, `$warning` and `$info` at the same point say `(at sweep value 0.5)` once; the transient and operating-point labels are right | diagnostic |
 | [F8](#f8--a-node-joined-only-by-delayed-elements-diverges-to-1e62-in-silence) | *(fixed in [E-679](../../enhancements_doc/Enhancement-679.md): a node the DC-path check holds in every mode that passes 1e15 V ends the transient with a message naming it, the gmin and the remedy; the hierarchical spelling's "Timestep too small" line names the singular node instead of "cause unrecorded")* a node whose every connection is a delayed element (two `absdelay` conductances in series) passes the operating point, then diverges once the first delayed edge arrives: −1e18, 1e27, 1e45, 5.6e62 over 73 accepted points, no warning, exit 0; the same circuit inside a child module prints six `singular matrix: check node n1#mid` and stops after the first point, also exit 0. Ill-posed for any Newton solver — the defect is the silence | silent divergence |
 | [F9](#f9--idt-with-assert-relaxes-toward-the-initial-condition-instead-of-returning-it) | *(fixed in [E-678](../../enhancements_doc/Enhancement-678.md): the reset decay's time constant follows the transient's print step, a thousandth of it, served through a private simparam, and its gain is capped at 2/h so the onset step is deadbeat; a 2 µs hold reads 0.5 throughout and resumes from it)* `idt(1e6, 0.5, V(a,b) > 0.5)` does not return the initial condition while `assert` is nonzero: the output relaxes from 1.5 toward 0.5 with a ~10 µs time constant (1.45, 1.41, 1.36, 1.32 …), and when the assert releases the integral resumes from the relaxed value, not from 0.5; independent of the timestep and of `method=gear`; LRM 4.5.4 says the ic is *returned* whenever assert is nonzero | wrong result, silent |
-| [F10](#f10--option-interp-corrupts-integer-operating-point-variables-in-a-transient-print) | under ngspice's `.option interp`, an **integer** operating-point variable printed by `.print tran` is garbage: a constant 3 prints as 1.48e-323 (its bits read as a double) and then 1.25, and the next vector on the line shows the previous vector's values; without `interp`, and under `dc`, `op` and `ac`, the same integers print correctly; real opvars are unaffected | wrong output |
+| [F10](#f10--option-interp-corrupts-integer-operating-point-variables-in-a-transient-print) | *(fixed in [E-680](../../enhancements_doc/Enhancement-680.md): the two interpolation routines read a special vector by its type; an integer opvar was read through the union's double, its bytes under the previous column's)* under ngspice's `.option interp`, an **integer** operating-point variable printed by `.print tran` is garbage: a constant 3 prints as 1.48e-323 (its bits read as a double) and then 1.25, and the next vector on the line shows the previous vector's values; without `interp`, and under `dc`, `op` and `ac`, the same integers print correctly; real opvars are unaffected | wrong output |
 
 Dropped after checking the LRM or the code: the `laplace_zp` DC gain (the LRM's pole
 form is a product of (1 − s/p) factors, so unity at DC is right; all four forms, a
@@ -463,6 +463,15 @@ any test where the argument is small. A sample-and-hold or a reset integrator
 written with `assert` — the LRM's own use case — holds the wrong value.
 
 ## F10 — `.option interp` corrupts integer operating-point variables in a transient print
+
+*Fixed in [E-680](../../enhancements_doc/Enhancement-680.md). Not a resampling of the wrong vector: the two
+interpolation routines of `outitf.c` read every special vector (an opvar, asked of the device per point as an
+`IFvalue` union) through `val.rValue` whatever its type, so an integer's four bytes sat under the previous
+double's upper bytes — 1.48e-323 with nothing above them, the previous column's value with a few low bits
+changed otherwise, which is what looked like a slot shift. Both the file and the plot path; read by type now, as
+E-32 made the other paths do. Pinned in `opvar_examples` (four checks; three fail on the E-670 binaries). The
+`unknown option 'interp' ... ignored` warning the deck also drew, while the option took effect, is taken along:
+`interp` is on the deck reader's list of known option words.*
 
 ```verilog
 (*desc="k"*) integer k; (*desc="r"*) real r; (*desc="big"*) integer big;

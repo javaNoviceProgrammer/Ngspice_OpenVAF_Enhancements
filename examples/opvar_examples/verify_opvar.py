@@ -215,5 +215,63 @@ check("show displays the string value", "high" in log)
 check("vector access gives the clear string-value error (no crash)",
       "can not handle string value" in log and "modename" in log)
 
+# Enhancement-680 (hunt F10 of 2026-09-19): under `.option interp` the two
+# interpolation routines of outitf.c read every "special" vector -- an opvar,
+# an instance parameter -- through the IFvalue union's double, so an INTEGER
+# opvar's four bytes landed under the previous vector's upper bytes: a
+# constant 2 printed as 9.88e-324 and then as the previous column's value,
+# on the file path (`.print tran` in batch) and the plot path (a control-block
+# `print`) alike. They read it by its type now, as the other output paths do
+# (Enhancement-32). A pulse 0.4 -> 0.6 V at 2 us: region 1 -> 2, ids = V/1k.
+print("[7] .option interp: integer opvars on the file and the plot path (E-680)")
+
+
+def table(log, ncol):
+    """{time: [values...]} from a `.print`/`print` table with ncol data columns"""
+    rows = {}
+    for line in log.splitlines():
+        parts = line.split()
+        if len(parts) == ncol + 2 and parts[0].isdigit():
+            try:
+                rows[round(float(parts[1]) * 1e6, 3)] = [float(x) for x in parts[2:]]
+            except ValueError:
+                pass
+    return rows
+
+
+def interp_ok(rows):
+    before = all(t in rows and rows[t][0] == 1.0 and abs(rows[t][1] - 0.4e-3) < 1e-12 for t in (0.0, 0.5, 1.0, 1.5))
+    after = all(t in rows and rows[t][0] == 2.0 and abs(rows[t][1] - 0.6e-3) < 1e-12 for t in (2.5, 3.0, 3.5, 4.0))
+    return before and after
+
+
+INTERP_DECK = """* opvar interp {path}
+.control
+pre_osdi opvar_demo.osdi
+.endc
+V1 a 0 PULSE(0.4 0.6 2u 1n 1n 5u 10u)
+N1 a 0 mm
+.model mm opvdemo
+.option interp
+{cards}
+.end
+"""
+log = run_deck("_ip.cir", INTERP_DECK.format(path="file", cards=".tran 0.5u 4u\n.print tran @n1[region] @n1[ids]"))
+rows = table(log, 2)
+check("file path (.print tran in batch): region reads 1 then 2 on the grid, ids beside it is V/1k, nothing misaligned",
+      len(rows) >= 9 and interp_ok(rows), f"{[(t, rows[t]) for t in sorted(rows)][:3]}")
+check("...and `.option interp` is a known option word: no 'unknown option' warning for a setting the run honours",
+      "unknown option 'interp'" not in log and "Interpolated raw file data" in log, "")
+# the plot path records an opvar per point only when it is saved; a bare
+# `print @n1[x]` after the run is the one current value
+log = run_deck("_ipp.cir", INTERP_DECK.format(path="plot", cards=".save @n1[region] @n1[ids]\n.control\ntran 0.5u 4u\nprint @n1[region] @n1[ids]\n.endc"))
+rows = table(log, 2)
+check("plot path (a control-block print of the saved vectors): the same",
+      len(rows) >= 9 and interp_ok(rows), f"{[(t, rows[t]) for t in sorted(rows)][:3]}")
+log = run_deck("_ipn.cir", INTERP_DECK.format(path="no interp", cards=".tran 0.5u 4u\n.print tran @n1[region] @n1[ids]").replace(".option interp\n", ""))
+rows = table(log, 2)
+check("(control) without interp the accepted points read the same integers",
+      len(rows) > 9 and all(v[0] in (1.0, 2.0) for v in rows.values()), f"{len(rows)} rows")
+
 print(f"\n{'ALL PASS' if failed == 0 else 'FAILURES'}: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

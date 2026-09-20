@@ -15,9 +15,10 @@ itself (no source changes).
 | `.ac` | op-value recorded per frequency point; two instances stay distinct |
 | `.meas` | MAX/MIN/AVG on opvar vectors, and `WHEN ... RISE` verified against the analytic crossing time asin(0.5)/2π |
 | string opvars | display via `show <inst>`; the vector path is inherently numeric and fails with a clear message (pinned), not a crash |
+| `.option interp` ([E-680](../../enhancements_doc/Enhancement-680.md)) | an integer opvar on the interpolated grid reads its integers on the file path (`.print tran` in batch) and the plot path (a control-block `print`) alike, with the real opvar beside it untouched; it read as 9.88e-324 and then as the previous column's value, the union's double over the integer's bytes; and `.option interp` is a known option word, no longer warned as unknown while it takes effect |
 
 ## Run
 
 ```bash
-python3 verify_opvar.py    # 11 checks
+python3 verify_opvar.py    # 15 checks (11 before E-680)
 ```
