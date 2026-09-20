@@ -8,4 +8,6 @@ default — a literal, a string parameter or a string variable — and the run
 completes where the one-argument form is a `$fatal`. The one-argument form still
 warns L025, with the note spelling the string form of the help.
 
-Run: `python3 verify_simparamstrdef.py` (13 checks per solver, both solvers).
+Run: `python3 verify_simparamstrdef.py` (14 checks per solver, both solvers; 13 before
+[E-676](../../enhancements_doc/Enhancement-676.md), which pinned the empty string the
+one-argument form hands on after its `$fatal`).

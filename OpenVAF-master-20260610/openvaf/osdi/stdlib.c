@@ -214,7 +214,16 @@ char *simparam_str(void *params_, void *handle, uint32_t *flags, char *name) {
 
   log_unknown_simparam(handle, "unknown $simparam$str ", name);
 
-  return "�";
+  /* Enhancement-676 (hunt F4 of 2026-09-19): the evaluation runs on to its end
+   * after the fatal is raised -- the simulator abandons its RESULTS (E_PANIC,
+   * the opvars left invalid), not its code path -- so what this returns can
+   * still reach a `$strobe`, a string compare or a file write before the
+   * abort. It used to be the literal U+FFFD replacement character, which a
+   * `$strobe("instance=%s", s)` printed as garbage to a reader who had no way
+   * to tell it from a corrupt string. The empty string is well defined, prints
+   * as nothing and compares equal to nothing meaningful -- the string twin of
+   * the 0.0 the numeric `simparam` returns on the same path. */
+  return "";
 }
 
 /* Enhancement-215: a NON-FATAL string simparam lookup -- like simparam_str, but

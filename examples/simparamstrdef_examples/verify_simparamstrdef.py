@@ -14,7 +14,8 @@ Checks:
       unserved name and the two-argument form does not
   [2] run: a served name with a default returns the served value; an unserved
       name returns the default -- a literal, a string parameter, a string
-      variable; the run completes (the one-argument form is a $fatal there)
+      variable; the run completes (the one-argument form is a $fatal there;
+      the value it hands on after the fatal is the empty string, E-676)
   [3] a parameter default `parameter string q = $simparam$str("module", "d")`
       resolves to the default, `("simulator", "?")` to "ngspice"
   [4] the L025 note names the string spelling of the help
@@ -97,10 +98,18 @@ check("[2] an unserved name returns the default: a literal, a string parameter, 
       v.get(f"{N1}[ok2]") == 1.0 and v.get(f"{N1}[ok3]") == 1.0 and v.get(f"{N1}[ok4]") == 1.0, f"{v}")
 check("[2] ...and the run completes, where the one-argument form is a $fatal",
       "fatal" not in out.lower() and "aborting" not in out, out[-200:])
-rc, log = compile_va("r2", '  s = $simparam$str("instance");\n  a = (s == "x") ? 1 : 0;', '(* desc="a" *) real a;')
+rc, log = compile_va("r2", '  s = $simparam$str("instance");\n  a = (s == "x") ? 1 : 0;\n'
+                     '  @(initial_step) $strobe("instance=[%s] empty=%d", s, (s == "") ? 1 : 0);', '(* desc="a" *) real a;')
 out = run("r2", "op\nprint v(a)")
 check("[2] (control) the one-argument form on the same name is fatal at the operating point",
       'unknown $simparam$str "instance"' in out and "aborting" in out, out[-200:])
+# Enhancement-676 (hunt F4 of 2026-09-19): the evaluation runs on after the fatal
+# is raised, so the value the failed lookup hands back can reach a $strobe or a
+# compare before the abort; it was the U+FFFD replacement character, printed as
+# garbage. It is the empty string. (An initial_step strobe prints at once; an
+# unconditional one belongs to the never-accepted iteration and is dropped.)
+check("[2] ...and the value the failed lookup hands on is the empty string, not a replacement character",
+      "instance=[] empty=1" in out and "\ufffd" not in out, out[-200:])
 
 # ------------------------------------------------------------- [3] ---
 rc, log = compile_va("p1", '  a = (q == "d") ? 1 : 0;\n  b = (q2 == "ngspice") ? 1 : 0;',
