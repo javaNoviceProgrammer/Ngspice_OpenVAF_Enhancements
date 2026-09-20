@@ -173,6 +173,10 @@ pub enum BodyValidationDiagnostic {
     /// Enhancement-590: an `integer` parameter whose constant default has a
     /// fraction (`fraction`) or does not fit 32 bits (`!fraction`); `verdict`
     /// says what the compiler makes of it ("rounded to 3", "clipped to ...").
+    /// Enhancement-675 (hunt F3 of 2026-09-19): `wrapped` -- the default is an
+    /// integer expression whose 32-bit arithmetic gives a value other than the
+    /// exact one (`verdict` is then "wraps to ..."); `overflow` -- the exact
+    /// value itself lies outside 32 bits (false for an intermediate overflow).
     LossyIntegerDefault {
         param: ParamId,
         expr: ExprId,
@@ -180,6 +184,8 @@ pub enum BodyValidationDiagnostic {
         value: Box<str>,
         verdict: Box<str>,
         fraction: bool,
+        wrapped: bool,
+        overflow: bool,
     },
     /// Enhancement-640: a real parameter's constant default folds to an
     /// infinity (`1e308*10`) or to NaN -- the literal `1e400` is refused as
@@ -4392,11 +4398,103 @@ pub(crate) fn const_num_in(
                         Some(l / r)
                     }
                 }
+                // Enhancement-675 (hunt F3 of 2026-09-19): `**` on two integers
+                // is an integer expression (IEEE 1364-2005 5.1.5, `lower_int_pow`):
+                // Table 5-6 for a negative exponent, the rounded float power
+                // otherwise. `2 ** 31` was not folded at all, so the overflow
+                // it is went unreported. A real `**` stays unfolded, as before.
+                BinaryOp::Power
+                    if is_integer_typed(infer, lhs) && is_integer_typed(infer, rhs) =>
+                {
+                    Some(int_pow_exact(l, r))
+                }
                 _ => None,
             }
         }
         Expr::Path { port: false, .. } => match infer.expr_types[expr] {
             Ty::Param(_, param) => const_param_value(db, param, depth + 1),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Enhancement-675: an integer `**` in exact arithmetic, the operands given as
+/// the integers they are. IEEE 1364-2005 Table 5-6 for a negative exponent
+/// (1 for a base of 1, ±1 for a base of -1 by the exponent's parity, 0 for
+/// any other base); the float power, rounded, otherwise -- `lower_int_pow`'s
+/// two arms, before the saturating cast that stores the result.
+fn int_pow_exact(base: f64, exp: f64) -> f64 {
+    if exp < 0.0 {
+        if base == 1.0 {
+            1.0
+        } else if base == -1.0 {
+            if exp.rem_euclid(2.0) == 1.0 {
+                -1.0
+            } else {
+                1.0
+            }
+        } else {
+            0.0
+        }
+    } else {
+        base.powf(exp).round()
+    }
+}
+
+/// Enhancement-675 (hunt F3 of 2026-09-19): the 32-bit twin of [`const_num_in`]
+/// for an INTEGER-typed expression -- the value the model computes, where
+/// `const_num_in` gives the exact one a message quotes. The generated code and
+/// the MIR folder (Enhancement-286) compute an integer expression in
+/// two's-complement 32-bit arithmetic, which WRAPS: `2147483647 + 1` is
+/// -2147483648, `100000 * 100000` is 1410065408; L030 said "clipped to
+/// 2147483647" for both, a value the parameter never takes. Division and
+/// remainder truncate (LRM 4.2; a zero divisor and `i32::MIN / -1` are left to
+/// their own diagnostics), `**` follows `lower_int_pow` (Table 5-6 for a
+/// negative exponent, the rounded float power through a saturating cast
+/// otherwise), and a `localparam` chain is followed. Anything else -- a
+/// variable, a call, a shift -- is not folded, and the caller falls back to
+/// the exact value.
+pub(crate) fn const_int_wrapping(
+    db: &dyn HirTyDB,
+    body: &Body,
+    infer: &InferenceResult,
+    expr: ExprId,
+    depth: u32,
+) -> Option<i32> {
+    if depth > 512 {
+        return None;
+    }
+    match body.exprs[expr] {
+        Expr::Literal(Literal::Int(v)) => Some(v),
+        Expr::UnaryOp { expr: inner, op: UnaryOp::Neg } => {
+            const_int_wrapping(db, body, infer, inner, depth).map(i32::wrapping_neg)
+        }
+        Expr::UnaryOp { expr: inner, op: UnaryOp::Identity } => {
+            const_int_wrapping(db, body, infer, inner, depth)
+        }
+        Expr::BinaryOp { lhs, rhs, op: Some(op) } => {
+            let l = const_int_wrapping(db, body, infer, lhs, depth)?;
+            let r = const_int_wrapping(db, body, infer, rhs, depth)?;
+            match op {
+                BinaryOp::Addition => Some(l.wrapping_add(r)),
+                BinaryOp::Subtraction => Some(l.wrapping_sub(r)),
+                BinaryOp::Multiplication => Some(l.wrapping_mul(r)),
+                BinaryOp::Division if r != 0 && !(l == i32::MIN && r == -1) => Some(l / r),
+                BinaryOp::Remainder if r != 0 && !(l == i32::MIN && r == -1) => Some(l % r),
+                // the saturating `as` is the const folder's `FIcast`
+                BinaryOp::Power => Some(int_pow_exact(f64::from(l), f64::from(r)) as i32),
+                _ => None,
+            }
+        }
+        Expr::Path { port: false, .. } => match infer.expr_types[expr] {
+            Ty::Param(Type::Integer, param) if db.param_data(param).is_local => {
+                let owner = DefWithBodyId::ParamId(param);
+                let param_body = db.body(owner);
+                let param_infer = db.inference_result(owner);
+                let default = db.param_exprs(param).default;
+                const_int_wrapping(db, &param_body, &param_infer, default, depth + 1)
+            }
             _ => None,
         },
         _ => None,
@@ -4560,9 +4658,27 @@ fn check_param_default_range(
     // cannot hold -- `parameter integer half = 2.5` ran with 3, `= 3000000000`
     // with 2147483647, and nothing was said, while the same values on a model
     // card are warned (rounded) or refused (out of range).
+    // Enhancement-675 (hunt F3 of 2026-09-19): the value the parameter TAKES.
+    // `value` is the exact one, which a message quotes; an integer-typed
+    // default is computed in 32-bit two's-complement arithmetic, which wraps,
+    // so `2147483647 + 1` runs as -2147483648 and `100000 * 100000` as
+    // 1410065408 -- L030 said "clipped to 2147483647" for both, a value the
+    // parameter never holds. Only a REAL value is clipped, by the conversion
+    // that stores it. The range check below judges the stored value, as it
+    // judges the truncated quotient since Enhancement-664.
+    let mut stored = value;
     if db.param_data(param).ty == Some(Type::Integer) && value.is_finite() {
         let fraction = value.fract() != 0.0;
         let overflow = value > i32::MAX as f64 || value < i32::MIN as f64;
+        let computed = if is_integer_typed(infer, exprs.default) {
+            const_int_wrapping(db, body, infer, exprs.default, 0)
+        } else {
+            None
+        };
+        if let Some(w) = computed {
+            stored = f64::from(w);
+        }
+        let wrapped = computed.map_or(false, |w| f64::from(w) != value);
         // an overflowing LITERAL is already reported at the literal
         let literal_reported = overflow
             && db
@@ -4570,12 +4686,22 @@ fn check_param_default_range(
                 .1
                 .int_overflow_literals
                 .contains(&exprs.default);
-        if (fraction || overflow) && !literal_reported {
+        if (fraction || overflow || wrapped) && !literal_reported {
             if let Some(&stmt) = body.entry_stmts.first() {
+                let clip = if value > 0.0 { i32::MAX } else { i32::MIN };
                 let verdict = if fraction {
                     format!("rounded to {}", value.round())
+                } else if let Some(w) = computed.filter(|_| wrapped) {
+                    // `2 ** 31`: the integer power goes through the float
+                    // power and a saturating cast (`lower_int_pow`), so the
+                    // stored value IS the clipped one
+                    if overflow && w == clip {
+                        format!("clipped to {w}")
+                    } else {
+                        format!("wraps to {w}")
+                    }
                 } else {
-                    format!("clipped to {}", if value > 0.0 { i32::MAX } else { i32::MIN })
+                    format!("clipped to {clip}")
                 };
                 diagnostics.push(BodyValidationDiagnostic::LossyIntegerDefault {
                     param,
@@ -4584,10 +4710,13 @@ fn check_param_default_range(
                     value: format!("{value}").into_boxed_str(),
                     verdict: verdict.into_boxed_str(),
                     fraction,
+                    wrapped,
+                    overflow,
                 });
             }
         }
     }
+    let value = stored;
 
     let in_range = |start: f64, start_inclusive: bool, end: f64, end_inclusive: bool| {
         let lo_ok = if start_inclusive { value >= start } else { value > start };

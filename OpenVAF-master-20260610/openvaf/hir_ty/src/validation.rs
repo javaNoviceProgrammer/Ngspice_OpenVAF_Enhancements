@@ -722,7 +722,7 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     ])
             }
             BodyValidationDiagnostic::LossyIntegerDefault {
-                param, expr, ref value, ref verdict, fraction, ..
+                param, expr, ref value, ref verdict, fraction, wrapped, overflow, ..
             } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 let name = self.db.param_data(param).name.clone();
@@ -731,16 +731,40 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     "declare the parameter `real`, or give it an integer default; the \
                      same value on a model card is warned as rounded"
                         .to_owned()
+                } else if wrapped && what.starts_with("clipped") {
+                    // Enhancement-675: an integer `**` (`2 ** 31`)
+                    "an integer `**` is the float power stored through a saturating \
+                     conversion; the label is the value the parameter takes. The same \
+                     value on a model card is refused as out of range; the default \
+                     escapes that check"
+                        .to_owned()
+                } else if wrapped {
+                    // Enhancement-675 (hunt F3 of 2026-09-19)
+                    "integer arithmetic is 32-bit two's complement and wraps on overflow \
+                     (LRM 3.2 gives the range); the label is the value the parameter takes. \
+                     The same value on a model card is refused as out of range; the default \
+                     escapes that check"
+                        .to_owned()
                 } else {
                     "the same value on a model card is refused as out of range; the \
                      default escapes that check"
                         .to_owned()
                 };
-                Report::warning()
-                    .with_message(format!(
+                // Enhancement-675: an intermediate overflow can land on a value
+                // that fits -- `(2147483647 + 1) / 2` -- so the message says so
+                let message = if fraction || overflow {
+                    format!(
                         "integer parameter '{name}' has the default {value}, which an \
                          integer cannot hold"
-                    ))
+                    )
+                } else {
+                    format!(
+                        "integer parameter '{name}' has the default {value} in exact \
+                         arithmetic, which its 32-bit integer arithmetic does not reach"
+                    )
+                };
+                Report::warning()
+                    .with_message(message)
                     .with_labels(vec![Label {
                         style: LabelStyle::Primary,
                         file_id: file,

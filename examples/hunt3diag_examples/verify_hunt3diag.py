@@ -5,7 +5,8 @@
      it now answers for the whole array (true when any element was given).
   b  a constant an `integer` cannot hold was folded silently: `3000000000` became
      the real 3e9 (saturated when stored), `parameter integer half = 2.5` ran
-     with 3. Lint L030 `lossy_integer_constant` (warn) says so.
+     with 3. Lint L030 `lossy_integer_constant` (warn) says so. E-675: an
+     integer expression that overflows wraps, and the label says to what.
   c  `-A L022` was "invalid value"; the printed id is accepted by -A/-W/-E and
      `--lints` prints it beside the name.
   d  `V(p,n)` inside an analog function was "'V' was not found in the current
@@ -152,6 +153,68 @@ check("[b] ...and the range check judges the folded integer: 7/2*2 is 6 (inside 
       len(w27) == 1 and "'k'" in w27[0], "; ".join(w27) or first_line(msg))
 out = run("v1 1 0 1\nn1 1 0 mm\n.model mm li2", "op", "li2", "li2_run")
 check("[b] ...matching the model at run time: q=3 m=-3 d=6 k=3 e=4 r=3", "q=3 m=-3 d=6 k=3 e=4 r=3" in out, out[-200:].replace("\n", "|"))
+
+# Enhancement-675 (hunt F3 of 2026-09-19): L030 evaluated an integer-typed default
+# as a real and said "clipped to 2147483647" where the model's 32-bit arithmetic
+# WRAPS (`2147483647 + 1` runs as -2147483648, `100000 * 100000` as 1410065408);
+# `2 ** 31` was not folded at all; and the range check judged the exact value,
+# not the one the parameter takes.
+LOSSY3 = """module li3(p, n); inout p, n; electrical p, n;
+  parameter integer p3 = 2147483647 + 1;
+  parameter integer p4 = 100000 * 100000;
+  parameter integer p5 = -2147483647 - 2;
+  parameter integer p6 = 2147483647 * 2;
+  parameter integer p7 = 2 ** 31;
+  parameter integer p9 = (2147483647 + 1) / 2;
+  localparam integer big = 2147483647;
+  parameter integer p10 = big + 1;
+  parameter integer p11 = 2147483647 + 1 from [-2147483648:0];
+  parameter integer p12 = 7 ** 2;
+  parameter integer p13 = 2 ** -1;
+  parameter integer p14 = (-1) ** 3;
+  parameter integer p15 = 1e10;
+  analog begin
+    $strobe("p3=%d p4=%d p5=%d p6=%d p7=%d p9=%d p10=%d p11=%d p12=%d p13=%d p14=%d p15=%d",
+            p3, p4, p5, p6, p7, p9, p10, p11, p12, p13, p14, p15);
+    I(p,n) <+ V(p,n) / 1k;
+  end
+endmodule
+"""
+
+
+def l030_labels(msg):
+    """{parameter: the label under the carets} for every L030 in `msg`."""
+    out, cur = {}, None
+    for line in msg.splitlines():
+        m = re.match(r"warning\[L030\]: integer parameter '(\w+)'", line)
+        if m:
+            cur = m.group(1)
+            continue
+        m = re.search(r"\^+ (.*)$", line)
+        if m and cur:
+            out[cur] = m.group(1).strip()
+            cur = None
+    return out
+
+
+ok, msg = compile_src(LOSSY3, "li3")
+lab = l030_labels(msg)
+w27 = re.findall(r"warning\[L027\]: (.*)", msg)
+check("[b] the module compiles; L030 for the nine lossy defaults and none for 7**2, 2**-1, (-1)**3",
+      ok and sorted(lab) == ["p10", "p11", "p15", "p3", "p4", "p5", "p6", "p7", "p9"], "; ".join(sorted(lab)))
+check("[b] an integer expression that overflows WRAPS, and the label says to what: +1, *, -, *2",
+      lab.get("p3") == "wraps to -2147483648" and lab.get("p4") == "wraps to 1410065408"
+      and lab.get("p5") == "wraps to 2147483647" and lab.get("p6") == "wraps to -2", f"{lab}")
+check("[b] `2 ** 31` is folded now (the float power's saturating store: clipped); a localparam chain wraps",
+      lab.get("p7") == "clipped to 2147483647" and lab.get("p10") == "wraps to -2147483648", f"{lab}")
+check("[b] an intermediate overflow that lands on a value that fits is reported as such",
+      lab.get("p9") == "wraps to -1073741824" and "'p9' has the default 1073741824 in exact arithmetic" in msg, f"{lab}")
+check("[b] a real default is still clipped; the range check judges the stored value (no L027 for p11)",
+      lab.get("p15") == "clipped to 2147483647" and not w27, "; ".join(w27) or f"{lab}")
+out = run("v1 1 0 1\nn1 1 0 mm\n.model mm li3", "op", "li3", "li3_run")
+check("[b] ...matching the model at run time, label for label",
+      "p3=-2147483648 p4=1410065408 p5=2147483647 p6=-2 p7=2147483647 p9=-1073741824 p10=-2147483648 "
+      "p11=-2147483648 p12=49 p13=0 p14=-1 p15=2147483647" in out, out[-260:].replace("\n", "|"))
 
 # ------------------------------------------------------------- [c] ---
 L022 = """module bre(p, n); inout p, n; electrical p, n;

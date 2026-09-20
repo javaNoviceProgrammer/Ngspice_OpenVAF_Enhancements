@@ -28,7 +28,7 @@ corners, the loop commands, hierarchy) were only touched in passing.
 |---|---|---|
 | [F1](#f1--after-the-transient-op-fallback-every-delayed-output-is-lost-for-the-whole-transient) | *(fixed in [E-671](../../enhancements_doc/Enhancement-671.md): the OSDI accepted-timepoint list starts over at the transient's first Newton solve, whatever the fallback left in it)* after ngspice finds the operating point through the **"Transient op" fallback**, every `absdelay` and every `transition` with a delay in every loaded OSDI model loses its delay for the whole transient: read into a variable it is 0 at every point, contributed it passes the input through undelayed; an `idt` with an initial condition starts 1e-5 off. Gmin stepping and source stepping alone do not trigger it, `uic` avoids it | wrong result, silent |
 | [F2](#f2--pow00-x-folds-to-0-for-every-exponent) | *(fixed in [E-674](../../enhancements_doc/Enhancement-674.md): the zero-base rule is removed from the simplifier; `pow(x, 0.0)` and `pow(x, 1.0)` stay)* `pow(0.0, x)` and `0.0 ** x` with a literal zero base fold to 0 for every `x`: `pow(0.0, 0.0)` written out is 1, `pow(0.0, x)` at `x = 0` is 0; a negative `x` gives 0 where the same expression with a parameter base is the run-time domain `$fatal`; the derivative folds to 0 with it | wrong result, silent |
-| [F3](#f3--l030-says-clipped-where-the-integer-default-wraps) | L030 says an integer default that overflows is "clipped to 2147483647" while the stored default wraps: `2147483647 + 1` is −2147483648, `100000 * 100000` is 1410065408, `-2147483647 - 2` is 2147483647, `2147483647 * 2` is −2; the lint evaluates the default as a real, the folder as a 32-bit integer; a real literal (`1e10`) really is clipped | wrong diagnostic |
+| [F3](#f3--l030-says-clipped-where-the-integer-default-wraps) | *(fixed in [E-675](../../enhancements_doc/Enhancement-675.md): the lint evaluates an integer-typed default in 32-bit wrapping arithmetic and says "wraps to N"; `2 ** 31` is folded; the range check judges the stored value)* L030 says an integer default that overflows is "clipped to 2147483647" while the stored default wraps: `2147483647 + 1` is −2147483648, `100000 * 100000` is 1410065408, `-2147483647 - 2` is 2147483647, `2147483647 * 2` is −2; the lint evaluates the default as a real, the folder as a 32-bit integer; a real literal (`1e10`) really is clipped | wrong diagnostic |
 | [F4](#f4--simparamstr-of-an-unknown-name-hands-strobe-an-invalid-string) | `$simparam$str("instance")` (or any name the simulator does not provide, no default) hands `$strobe` an invalid string — `instance=�` on stdout — before the run aborts with the run-time `$fatal`; the compile-time L025 warning is right, the value that reaches the model is garbage | memory hygiene |
 | [F5](#f5--an-undeclared-macro-at-file-scope-still-raises-a-second-error-in-a-phantom-file) | *(fixed in [E-672](../../enhancements_doc/Enhancement-672.md): the hole's source context is marked and the parser drops a syntax error located at it; `` `__LINE__ `` in the same position is still reported)* an undeclared macro reference at file scope (outside any module) raises "has not been declared" and then a second error, "unexpected token integer; expected 'discipline', 'nature' or 'module'", at `/<file>__macro_synth.va:1:1` — a file that does not exist; E-665 removed the same knock-on in expression position only | diagnostic |
 | [F6](#f6--last_crossing-returns-0-before-any-crossing-in-ac-and-noise) | `last_crossing` returns 0 before any crossing in an `ac` and a `noise` analysis, where LRM 4.5.10 requires a negative value; the operating point and `dc` return −1 as they should, transient returns the crossing time | conformance |
@@ -214,6 +214,14 @@ infinite (IEEE gives NaN in both cases; `x - x` and `x / x` are not folded and k
 the NaN). That is the usual fast-math trade and is only listed under the smaller notes.
 
 ## F3 — L030 says "clipped" where the integer default wraps
+
+*Fixed in [E-675](../../enhancements_doc/Enhancement-675.md): `const_int_wrapping`, the 32-bit twin
+of `const_num_in`, computes an integer-typed default the way the model does, and the label says
+"wraps to −2147483648", "wraps to 1410065408" and so on; an intermediate overflow that lands on a
+value that fits (`(2147483647 + 1) / 2`) is reported too; `2 ** 31` is folded ("clipped", which the
+saturating power makes true); the range check judges the stored value. Pinned in `hunt3diag_examples`
+(six checks, five of which fail on the E-670 binaries). The saturating integer power itself is left as
+it is.*
 
 `hir_ty/src/validation/body.rs`, the E-590 check: the default is evaluated by
 `const_num_in` as an `f64`, and when it lies outside the 32-bit range the verdict is
