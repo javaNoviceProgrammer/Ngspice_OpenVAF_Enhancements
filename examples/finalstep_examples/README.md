@@ -29,10 +29,13 @@ point of each analysis — and **analysis-phase lists** on both step events
 python3 verify_finalstep.py
 ```
 
-Checks (23, ALL PASS): tran fires `final` exactly once at t = tstop seeing
+Checks (26, ALL PASS; 23 before [E-677](../../enhancements_doc/Enhancement-677.md)): tran fires `final` exactly once at t = tstop seeing
 the converged solution; op fires both `initial` and `final` (a single point
 is first and last); ac/noise fire `final` once after the sweep; a dc sweep's
 `final` sees the last sweep point (V = 2.0 exact); phase-qualified events
 fire only in matching analyses (incl. a multi-name list); and the LRM's
 classic use case — a peak tracked across the whole transient, reported
-exactly once at the end (vpeak = 1.5).
+exactly once at the end (vpeak = 1.5); and, since E-677, the final step of an
+`ac` and a `noise` analysis sees the bias point the analysis linearised around
+(V = 0.2 with a unit AC source on the node, `last_crossing` still −1), not the
+last frequency's small-signal solution.

@@ -40,3 +40,20 @@ module fspeak(p, n);
     I(p, n) <+ V(p, n) / 1e3;
   end
 endmodule
+
+// Enhancement-677 (hunt F6 of 2026-09-19): the final_step evaluation of an
+// AC or NOISE analysis ran on the small-signal solution at the last frequency
+// -- V(p,n) read the response (1 V for a unit AC source at a 0.2 V bias) and
+// last_crossing() read 0, a valid time, where LRM 4.5.10 requires a negative
+// value before any crossing. It runs on the bias point the analysis
+// linearised around.
+module fsop(p, n);
+  inout p, n;
+  electrical p, n;
+  real tl;
+  analog begin
+    tl = last_crossing(V(p, n) - 0.5, 0);
+    @(final_step) $strobe("FS_OP V=%g tl=%g", V(p, n), tl);
+    I(p, n) <+ V(p, n) / 1e3;
+  end
+endmodule

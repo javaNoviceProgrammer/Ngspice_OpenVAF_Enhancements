@@ -62,6 +62,9 @@ def run(deck):
         m = re.search(r"FS_PEAK vpeak=(\S+)", line)
         if m:
             events.append(("vpeak", float(m.group(1)), None))
+        m = re.search(r"FS_OP V=(\S+) tl=(\S+)", line)
+        if m:
+            events.append(("op_read", float(m.group(1)), float(m.group(2))))
     return events
 
 
@@ -155,6 +158,22 @@ def main():
     check("vpeak reported exactly once", len(pk) == 1)
     check("vpeak = 1.5 (offset + amplitude), 1% tol",
           len(pk) == 1 and abs(pk[0][1] - 1.5) < 0.015)
+
+    # Enhancement-677 (hunt F6 of 2026-09-19): after an ac or a noise sweep
+    # CKTrhsOld holds the small-signal solution at the last frequency, and the
+    # final_step evaluation ran on it: V(p,n) read 1 (the unit AC source's
+    # response) at a 0.2 V bias, and last_crossing() read 0 -- a valid time --
+    # where LRM 4.5.10 requires a negative value before any crossing. The
+    # evaluation runs on the bias point the analysis linearised around.
+    print("[7] ac/noise: the final_step evaluation runs on the operating point")
+    for name, an in (("op (control)", "op"), ("ac", "ac dec 2 1k 10k"),
+                     ("noise", "noise v(in) V1 dec 2 1k 10k")):
+        deck = (f"* fs {name}\nV1 in 0 DC 0.2 AC 1\nN1 in 0 mop\n.model mop fsop\n"
+                f".control\npre_osdi finalstep_demo.osdi\n{an}\n.endc\n.end\n")
+        ev = run(deck)
+        rd = [e for e in ev if e[0] == "op_read"]
+        check(f"{name}: final sees the bias V=0.2 and last_crossing's negative sentinel",
+              len(rd) == 1 and abs(rd[0][1] - 0.2) < 1e-9 and rd[0][2] < 0)
 
     print()
     print("ALL PASS" if ok else "SOME CHECKS FAILED")

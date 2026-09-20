@@ -1131,6 +1131,35 @@ extern void OSDIpendingFlush(CKTcircuit *ckt) {
   osdi_io_hooks_flush();
 }
 
+/* Enhancement-677 (hunt F6 of 2026-09-19): the operating-point solution an
+ * AC or NOISE analysis linearises around, kept for OSDIfinalStep. Those
+ * analyses end with CKTrhsOld holding the SMALL-SIGNAL solution at the last
+ * swept frequency (its real parts), so the one evaluation that fires
+ * @(final_step) read V(a,b) as the response (1 V for a unit AC source, where
+ * the bias was 0.2) and a last_crossing() synthetic node as 0 -- a valid
+ * time, where LRM 4.5.10 requires a negative value before any crossing --
+ * although the analog block of an AC analysis is only ever evaluated at the
+ * bias point. Enhancement-412 restores the INSTANCE after that evaluation,
+ * so the operating-point variables stayed right; the evaluation itself runs
+ * on the bias point now. Captured at the MODEINITSMSIG load, which every .ac
+ * and .noise job issues exactly once, on the converged operating point,
+ * before the first frequency. */
+static double *osdi_op_solve;
+static int osdi_op_solve_n;
+static const CKTcircuit *osdi_op_solve_ckt;
+
+static void osdi_op_solve_capture(CKTcircuit *ckt) {
+  int n = ckt->CKTmaxEqNum + 1;
+  if (ckt->CKTrhsOld == NULL || n <= 0)
+    return;
+  if (osdi_op_solve == NULL || osdi_op_solve_n < n) {
+    osdi_op_solve = TREALLOC(double, osdi_op_solve, n);
+    osdi_op_solve_n = n;
+  }
+  memcpy(osdi_op_solve, ckt->CKTrhsOld, (size_t)n * sizeof(double));
+  osdi_op_solve_ckt = ckt;
+}
+
 extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
   GENmodel *gen_model;
   GENinstance *gen_inst;
@@ -1146,6 +1175,10 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
   bool is_tran_op = ckt->CKTmode & (MODETRANOP);
   bool is_init_tran = ckt->CKTmode & MODEINITTRAN;
   bool is_init_junc = ckt->CKTmode & MODEINITJCT;
+
+  if (is_init_smsig) {
+    osdi_op_solve_capture(ckt); /* Enhancement-677: the bias point, for the final step */
+  }
 
   OsdiSimInfo sim_info = {
       .paras = get_simparams(ckt),
@@ -1505,6 +1538,14 @@ int OSDIfinalStep(CKTcircuit *ckt) {
       .next_state = ckt->CKTstates[0],
       .flags = CALC_OP | EVAL_FLAG_IS_FINAL_STEP,
   };
+
+  /* Enhancement-677 (hunt F6): in AC and NOISE, evaluate at the bias point
+   * the analysis linearised around, not at the last frequency's small-signal
+   * solution CKTrhsOld holds (see osdi_op_solve_capture). */
+  if (preserve_op && osdi_op_solve != NULL && osdi_op_solve_ckt == ckt &&
+      osdi_op_solve_n >= ckt->CKTmaxEqNum + 1) {
+    sim_info.prev_solve = osdi_op_solve;
+  }
 
   if (ckt->CKTmode & (MODEDCOP | MODEDCTRANCURVE)) {
     sim_info.flags |= ANALYSIS_DC | ANALYSIS_STATIC;
