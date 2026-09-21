@@ -12,4 +12,12 @@ retired device-local node is revived as the same struct at the next setup, and a
 `.ic`/`.nodeset` on `<instance>#<node>` is placed by `CKTsetup` once the node
 exists.
 
-Run: `python3 verify_internalnode.py` (11 checks per solver, both solvers).
+Enhancement-681 (N1 of the 2026-09-21 hunt) adds five checks: the adoption above also
+took in a *device line* that named `n1#mid` — the netlist's node and the model's
+internal node became one node in silence (a source wired to `n1#mid` drove the
+model's internal node; a BJT's `q1#base` drawn to 3 V put 1e35 A through the
+source). `CKTmkSignal` now says so once, naming the node, the internal node and the
+instance (or the source, for a `v1#branch` name); the connection itself is kept, and
+E-608's own cards stay silent.
+
+Run: `python3 verify_internalnode.py` (16 checks per solver, both solvers).

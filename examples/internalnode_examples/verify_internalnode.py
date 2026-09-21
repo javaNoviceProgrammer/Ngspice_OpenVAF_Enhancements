@@ -39,6 +39,19 @@ Checks (OSDI rc2/rr2 devices, and the built-in diode):
   [8] the diode's d1#internal in a .tf: no duplicate, the value right
   [9] sweep: 20 op runs interactively keep one node of the name (the
       retired node is revived, not duplicated)
+
+Enhancement-681 (N1 of the 2026-09-21 hunt): the adoption above also caught a
+DEVICE line that named `n1#mid` -- the netlist's node and the model's internal
+node became one node in silence (a source wired to `n1#mid` drove the model's
+internal node; a BJT's `q1#base` drawn to 3 V put 1e35 A through the source).
+CKTmkSignal now says so once, naming the node, the internal node and the
+instance (or the source, for a `v1#branch` name); the adoption itself is kept.
+  [10] a device line naming n1#mid: the warning, once, and the merged node
+       (the source wins: v(n1#mid) is the source's value)
+  [10] ...printed once across op, op, tran and sens
+  [11] a device line naming v1#branch: the branch-current wording, once
+  [12] E-608's own cards (.tf ahead of the device, .ic, the diode's .tf)
+       stay silent
 """
 import os
 import re
@@ -178,6 +191,33 @@ out = run(DIV + ".control\nlet k = 0\nrepeat 20\n  op\n  let k = k + 1\nend\npri
 check("[9] 20 op runs: the internal node is revived each time, one vector of the name, still 0.75",
       val(out, "v(n1#mid)") == [0.75] and out.count("n1#mid   ") == 1 and "Internal Error" not in out,
       out[-300:])
+
+# ------------------------------------------------------------ [10] ---
+WARN = "Warning: node 'n1#mid' is named on a device line and is also the internal node 'mid' of instance n1;"
+out = run(DIV + "vx n1#mid 0 dc 0.5\n.control\nop\nprint v(n1#mid) v(out)\n.endc", "t10")
+check("[10] a device line naming n1#mid: the collision is said once, naming node, internal node and instance",
+      out.count(WARN) == 1 and "the two are one node" in out and "Rename the netlist node" in out,
+      out[-500:])
+vm, vo = val(out, "v(n1#mid)"), val(out, "v(out)")
+check("[10] ...and the merge itself is pinned: v(n1#mid) is the source's 0.5, v(out) = 0.5*1k/(500+1k)",
+      vm and close(vm[0], 0.5) and vo and close(vo[0], 1.0 / 3.0), f"{vm} {vo}")
+out = run(DIV + "vx n1#mid 0 dc 0.5\n.control\nop\nop\ntran 1u 2u\nsens v(out)\n.endc", "t10b")
+check("[10] ...printed once across op, op, tran and sens (the re-setups find the adopted node)",
+      out.count("Warning: node '") == 1, f"{out.count(chr(87) + 'arning: node')} warnings")
+
+# ------------------------------------------------------------ [11] ---
+out = run("v1 in 0 dc 1\nr1 in out 1k\nr2 out 0 1k\nrz v1#branch 0 1k\n.control\nop\nprint v(out)\n.endc", "t11")
+check("[11] a device line naming v1#branch: the branch-current wording, once",
+      out.count("Warning: node 'v1#branch' is named on a device line and is also the branch-current unknown of source v1;") == 1
+      and "wired into that source's current" in out, out[-500:])
+
+# ------------------------------------------------------------ [12] ---
+quiet = [run(DIV + ".tf v(n1#mid) v1\n.op", "t12a"),
+         run("v1 in 0 dc 1\nn1 in 0 rcm\n.model rcm rc2 r=1k c=1n\n.ic v(n1#mid)=0.3\n.tran 1n 5n uic", "t12b"),
+         run(DIV + ".nodeset v(n1#mid)=0.7\n.op", "t12c"),
+         run(DIODE + ".tf v(d1#internal) v1\n.op", "t12d")]
+check("[12] E-608's own cards (.tf ahead of the device, .ic, .nodeset, the diode's .tf) raise no collision warning",
+      not any("Warning: node '" in q for q in quiet), "|".join(q[-120:] for q in quiet if "Warning: node '" in q))
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

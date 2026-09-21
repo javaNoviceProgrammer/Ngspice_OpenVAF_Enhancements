@@ -62,6 +62,35 @@ CKTmkSignal(CKTcircuit *ckt, CKTnode **node, IFuid basename, char *suffix,
             checknode->number <= ckt->prev_CKTlastNode->number) {
         /* the name is a parse-time node's: adopt it */
         FREE(mynode);
+        /* Enhancement-681: the adoption above is for a card that named the
+         * internal node ahead of the device (`.tf v(n1#mid) v1`, whose node
+         * inp_analysis_node() makes with devRef clear; a `.ic`/`.nodeset` is
+         * deferred to setup and makes no node at all). A DEVICE line that
+         * names `n1#mid` -- INPtermInsert marks its node devRef -- lands in
+         * the same branch, and the device's internal node and the netlist's
+         * node became one node in silence: a source wired to `n1#mid` drove
+         * the model's internal node, a BJT's `q1#base` drawn to 3 V put
+         * 1e35 A through the source, and nothing said so. Say so, once: the
+         * `adopted` mark set below keeps the next setup (which finds the
+         * same parse-time node again) quiet. */
+        if (basename && checknode->devRef && !checknode->adopted) {
+            if (type == SP_CURRENT)
+                fprintf(stderr,
+                        "Warning: node '%s#%s' is named on a device line and is "
+                        "also the branch-current unknown of source %s;\n"
+                        "         the two are one unknown -- whatever the netlist "
+                        "wires to '%s#%s' is wired into that source's current.\n"
+                        "         Rename the netlist node unless that was intended.\n",
+                        basename, suffix, basename, basename, suffix);
+            else
+                fprintf(stderr,
+                        "Warning: node '%s#%s' is named on a device line and is "
+                        "also the internal node '%s' of instance %s;\n"
+                        "         the two are one node -- whatever the netlist "
+                        "wires to '%s#%s' is wired inside that model.\n"
+                        "         Rename the netlist node unless that was intended.\n",
+                        basename, suffix, suffix, basename, basename, suffix);
+        }
         checknode->type = type;
         checknode->devRef = 1;
         checknode->adopted = 1;
