@@ -1183,6 +1183,31 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
             node_used[z] = true;
         }
       }
+      /* Enhancement-698: the transition and slew output rows are ngspice's as
+       * well (osdiload.c transition_stamp / slew_stamp) -- the same rule. */
+      if (entry->num_transitions > 0 && entry->transition_infos) {
+        const OsdiTransitionInfo *tinfo =
+            (const OsdiTransitionInfo *)entry->transition_infos;
+        for (uint32_t k = 0; k < entry->num_transitions; k++) {
+          uint32_t y = node_mapping[tinfo[k].y_node];
+          uint32_t z = node_mapping[tinfo[k].z_node];
+          if (y != UINT32_MAX && y < num_nodes)
+            node_used[y] = true;
+          if (z != UINT32_MAX && z < num_nodes)
+            node_used[z] = true;
+        }
+      }
+      if (entry->num_slews > 0 && entry->slew_infos) {
+        const OsdiSlewInfo *sinfo = (const OsdiSlewInfo *)entry->slew_infos;
+        for (uint32_t k = 0; k < entry->num_slews; k++) {
+          uint32_t y = node_mapping[sinfo[k].y_node];
+          uint32_t z = node_mapping[sinfo[k].z_node];
+          if (y != UINT32_MAX && y < num_nodes)
+            node_used[y] = true;
+          if (z != UINT32_MAX && z < num_nodes)
+            node_used[z] = true;
+        }
+      }
       /* Enhancement-351: reuse the internal nodes if this instance already has
        * them. `sens` calls DEVsetup() a second time on a circuit that is still
        * set up, purely to stamp the perturbation matrix, and requires that no
@@ -1418,39 +1443,91 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
         }
       }
 
-      /* Allocate extra matrix entries and waveform history for absdelay */
-      if (entry->num_absdelays > 0) {
-        uint32_t *node_mapping =
-            (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
-        OsdiExtraInstData *extra =
-            osdi_extra_instance_data(entry, gen_inst);
-        uint32_t n = entry->num_absdelays;
-        const OsdiAbsDelayInfo *infos = (const OsdiAbsDelayInfo *)entry->absdelay_infos;
+      /* Allocate extra matrix entries and waveform history for absdelay.
+       * Enhancement-698: the transition and slew slots need the same two
+       * entries per slot, (z_row, y_col) and (z_row, z_col), and share these
+       * arrays -- absdelay slots first, then transition, then slew -- so the
+       * KLU rebind (OSDIbindCSC) and the real/complex switch (OSDIupdateCSC)
+       * below cover all three families in one loop. */
+      {
+        uint32_t n_wire = osdi_wire_slots(entry);
+        if (n_wire > 0) {
+          uint32_t *node_mapping =
+              (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+          OsdiExtraInstData *extra =
+              osdi_extra_instance_data(entry, gen_inst);
+          uint32_t w = 0;
 
-        extra->delay_jac_y = TMALLOC(double *, n);
-        extra->delay_jac_z = TMALLOC(double *, n);
-        extra->delay_jac_y_csc = TMALLOC(double *, n);
-        extra->delay_jac_z_csc = TMALLOC(double *, n);
-        extra->delay_jac_y_cx = TMALLOC(double *, n);
-        extra->delay_jac_z_cx = TMALLOC(double *, n);
-        extra->delay_hist  = TMALLOC(double *, n);
-        extra->delay_hist_cap = 0;
+          extra->delay_jac_y = TMALLOC(double *, n_wire);
+          extra->delay_jac_z = TMALLOC(double *, n_wire);
+          extra->delay_jac_y_csc = TMALLOC(double *, n_wire);
+          extra->delay_jac_z_csc = TMALLOC(double *, n_wire);
+          extra->delay_jac_y_cx = TMALLOC(double *, n_wire);
+          extra->delay_jac_z_cx = TMALLOC(double *, n_wire);
+          for (uint32_t k = 0; k < n_wire; k++) {
+            extra->delay_jac_y[k] = NULL;
+            extra->delay_jac_z[k] = NULL;
+            extra->delay_jac_y_csc[k] = NULL;
+            extra->delay_jac_z_csc[k] = NULL;
+            extra->delay_jac_y_cx[k] = NULL;
+            extra->delay_jac_z_cx[k] = NULL;
+          }
 
-        for (uint32_t k = 0; k < n; k++) {
-          int y_spice = (int)node_mapping[infos[k].y_node];
-          int z_spice = (int)node_mapping[infos[k].z_node];
-          extra->delay_jac_y[k] = SMPmakeElt(matrix, z_spice, y_spice);
-          extra->delay_jac_z[k] = SMPmakeElt(matrix, z_spice, z_spice);
-          extra->delay_jac_y_csc[k] = NULL;
-          extra->delay_jac_z_csc[k] = NULL;
-          extra->delay_jac_y_cx[k]  = NULL;
-          extra->delay_jac_z_cx[k]  = NULL;
-          extra->delay_hist[k]  = NULL;
-          if (!extra->delay_jac_y[k] || !extra->delay_jac_z[k])
-            return E_NOMEM;
+          if (entry->num_absdelays > 0) {
+            uint32_t n = entry->num_absdelays;
+            const OsdiAbsDelayInfo *infos =
+                (const OsdiAbsDelayInfo *)entry->absdelay_infos;
+            extra->delay_hist = TMALLOC(double *, n);
+            extra->delay_hist_cap = 0;
+            for (uint32_t k = 0; k < n; k++, w++) {
+              int y_spice = (int)node_mapping[infos[k].y_node];
+              int z_spice = (int)node_mapping[infos[k].z_node];
+              extra->delay_jac_y[w] = SMPmakeElt(matrix, z_spice, y_spice);
+              extra->delay_jac_z[w] = SMPmakeElt(matrix, z_spice, z_spice);
+              extra->delay_hist[k] = NULL;
+              if (!extra->delay_jac_y[w] || !extra->delay_jac_z[w])
+                return E_NOMEM;
+            }
+          }
+
+          if (entry->num_transitions > 0) {
+            uint32_t n = entry->num_transitions;
+            const OsdiTransitionInfo *infos =
+                (const OsdiTransitionInfo *)entry->transition_infos;
+            extra->transition_jac_y = extra->delay_jac_y + w;
+            extra->transition_jac_z = extra->delay_jac_z + w;
+            extra->transition_state = TMALLOC(OsdiTransitionState, n);
+            memset(extra->transition_state, 0, n * sizeof(OsdiTransitionState));
+            for (uint32_t k = 0; k < n; k++, w++) {
+              int y_spice = (int)node_mapping[infos[k].y_node];
+              int z_spice = (int)node_mapping[infos[k].z_node];
+              extra->delay_jac_y[w] = SMPmakeElt(matrix, z_spice, y_spice);
+              extra->delay_jac_z[w] = SMPmakeElt(matrix, z_spice, z_spice);
+              if (!extra->delay_jac_y[w] || !extra->delay_jac_z[w])
+                return E_NOMEM;
+            }
+          }
+
+          if (entry->num_slews > 0) {
+            uint32_t n = entry->num_slews;
+            const OsdiSlewInfo *infos = (const OsdiSlewInfo *)entry->slew_infos;
+            extra->slew_jac_y = extra->delay_jac_y + w;
+            extra->slew_jac_z = extra->delay_jac_z + w;
+            extra->slew_state = TMALLOC(OsdiSlewState, n);
+            memset(extra->slew_state, 0, n * sizeof(OsdiSlewState));
+            for (uint32_t k = 0; k < n; k++, w++) {
+              int y_spice = (int)node_mapping[infos[k].y_node];
+              int z_spice = (int)node_mapping[infos[k].z_node];
+              extra->delay_jac_y[w] = SMPmakeElt(matrix, z_spice, y_spice);
+              extra->delay_jac_z[w] = SMPmakeElt(matrix, z_spice, z_spice);
+              if (!extra->delay_jac_y[w] || !extra->delay_jac_z[w])
+                return E_NOMEM;
+            }
+          }
         }
       }
 
+      /* Allocate extra matrix entry and waveform history for last_crossing */
       /* Allocate extra matrix entry and waveform history for last_crossing */
       if (entry->num_last_crossings > 0) {
         uint32_t *node_mapping =
@@ -1971,10 +2048,10 @@ int OSDIbindCSC(GENmodel *inModel, CKTcircuit *ckt) {
        * delay_jac_y/z pointers allocated in OSDIsetup still point into the
        * COO buffer and must be rebound here so absdelay_stamp_dc/osdiacld
        * write into the live KLU matrix. */
-      if (entry->num_absdelays > 0) {
+      if (osdi_wire_slots(entry) > 0) { /* Enhancement-698: + transition, slew */
         OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
         BindElement tmp;
-        for (uint32_t k = 0; k < entry->num_absdelays; k++) {
+        for (uint32_t k = 0; k < osdi_wire_slots(entry); k++) {
           if (extra->delay_jac_y[k]) {
             tmp.COO = extra->delay_jac_y[k];
             BindElement *m = (BindElement *)bsearch(&tmp, bindings, nz,
@@ -2074,9 +2151,9 @@ int OSDIupdateCSC(GENmodel *inModel, CKTcircuit *ckt, bool complex) {
        * complex (CSC_Complex) KLU arrays, mirroring the regular Jacobian.
        * Without this, the AC complex solve would write the delay stamps into
        * the unused real array, leaving the delay rows empty -> singular. */
-      if (entry->num_absdelays > 0) {
+      if (osdi_wire_slots(entry) > 0) { /* Enhancement-698: + transition, slew */
         OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
-        for (uint32_t k = 0; k < entry->num_absdelays; k++) {
+        for (uint32_t k = 0; k < osdi_wire_slots(entry); k++) {
           if (extra->delay_jac_y_csc[k])
             extra->delay_jac_y[k] =
                 complex ? extra->delay_jac_y_cx[k] : extra->delay_jac_y_csc[k];

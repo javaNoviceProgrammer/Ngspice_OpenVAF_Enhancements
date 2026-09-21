@@ -361,6 +361,22 @@ pub fn compile<'a>(
         let mut last_crossing_counts: Vec<u32> = Vec::new();
         let mut last_crossing_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
 
+        // Enhancement-698: the transition and slew operators are stamped by the
+        // simulator (osdi_0_4_enhancement4.h).
+        // { y_node: u32, z_node: u32, td_offset: u32, trise_offset: u32,
+        //   tfall_offset: u32, flags: u32 } -- flags reserved (0)
+        let transition_info_ty = cx.ty_struct(
+            "OsdiTransitionInfo",
+            &[cx.ty_int(), cx.ty_int(), cx.ty_int(), cx.ty_int(), cx.ty_int(), cx.ty_int()],
+        );
+        let mut transition_counts: Vec<u32> = Vec::new();
+        let mut transition_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
+        // { y_node: u32, z_node: u32, pos_offset: u32, neg_offset: u32 }
+        let slew_info_ty =
+            cx.ty_struct("OsdiSlewInfo", &[cx.ty_int(), cx.ty_int(), cx.ty_int(), cx.ty_int()]);
+        let mut slew_counts: Vec<u32> = Vec::new();
+        let mut slew_infos_ll: Vec<&llvm_sys::LLVMValue> = Vec::new();
+
         // Enhancement-401: { node_1: u32, node_2: u32, flow_node: u32 } -- a branch whose
         // 0 V source exists only because its collapse hint cannot be honoured. `node_1`
         // and `node_2` are the two terminals it shorts (`node_2` is UINT32_MAX for a short
@@ -476,6 +492,49 @@ pub fn compile<'a>(
                         ],
                     );
                     last_crossing_infos_ll.push(info);
+                }
+
+                // Enhancement-698: transition and slew slot metadata for this module
+                let find_node = |eq: ImplicitEquation| -> u32 {
+                    module
+                        .dae_system
+                        .unknowns
+                        .index(&SimUnknownKind::Implicit(eq))
+                        .map_or(u32::MAX, |u| u32::from(u))
+                };
+                transition_counts.push(module.intern.transition_equations.len() as u32);
+                for (i, &(eq_y, eq_z)) in module.intern.transition_equations.iter().enumerate() {
+                    let offs = cguint
+                        .inst_data
+                        .transition_arg_offsets(i, &td_ptr)
+                        .unwrap_or([u32::MAX; 3]);
+                    let info = cx.const_struct(
+                        transition_info_ty,
+                        &[
+                            cx.const_unsigned_int(find_node(eq_y)),
+                            cx.const_unsigned_int(find_node(eq_z)),
+                            cx.const_unsigned_int(offs[0]),
+                            cx.const_unsigned_int(offs[1]),
+                            cx.const_unsigned_int(offs[2]),
+                            cx.const_unsigned_int(0),
+                        ],
+                    );
+                    transition_infos_ll.push(info);
+                }
+                slew_counts.push(module.intern.slew_equations.len() as u32);
+                for (i, &(eq_y, eq_z)) in module.intern.slew_equations.iter().enumerate() {
+                    let offs =
+                        cguint.inst_data.slew_rate_offsets(i, &td_ptr).unwrap_or([u32::MAX; 2]);
+                    let info = cx.const_struct(
+                        slew_info_ty,
+                        &[
+                            cx.const_unsigned_int(find_node(eq_y)),
+                            cx.const_unsigned_int(find_node(eq_z)),
+                            cx.const_unsigned_int(offs[0]),
+                            cx.const_unsigned_int(offs[1]),
+                        ],
+                    );
+                    slew_infos_ll.push(info);
                 }
 
                 // Collect terminal-short metadata for this module (Enhancement-401)
@@ -696,6 +755,30 @@ pub fn compile<'a>(
                     true,
                     false,
                 );
+            }
+        }
+
+        // Enhancement-698: export the transition and slew slot tables (only if
+        // any module uses the operator)
+        if transition_counts.iter().any(|&n| n > 0) {
+            let counts_ll: Vec<_> =
+                transition_counts.iter().map(|&n| cx.const_unsigned_int(n)).collect();
+            cx.export_array("OSDI_TRANSITION_COUNTS", cx.ty_int(), &counts_ll, true, false);
+            if !transition_infos_ll.is_empty() {
+                cx.export_array(
+                    "OSDI_TRANSITION_INFOS",
+                    transition_info_ty,
+                    &transition_infos_ll,
+                    true,
+                    false,
+                );
+            }
+        }
+        if slew_counts.iter().any(|&n| n > 0) {
+            let counts_ll: Vec<_> = slew_counts.iter().map(|&n| cx.const_unsigned_int(n)).collect();
+            cx.export_array("OSDI_SLEW_COUNTS", cx.ty_int(), &counts_ll, true, false);
+            if !slew_infos_ll.is_empty() {
+                cx.export_array("OSDI_SLEW_INFOS", slew_info_ty, &slew_infos_ll, true, false);
             }
         }
 

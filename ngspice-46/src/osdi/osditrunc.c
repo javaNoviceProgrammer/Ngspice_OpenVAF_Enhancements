@@ -12,6 +12,8 @@
 #include "ngspice/cktdefs.h"
 #include "osdidefs.h"
 
+#include <math.h>
+
 /* Enhancement-504: the most steps a MODEL may force across one analysis
    window through $bound_step. Not a limit on ngspice's own stepping. */
 #define E504_MAX_MODEL_STEPS 1.0e6
@@ -118,6 +120,37 @@ int OSDItrunc(GENmodel *in_model, CKTcircuit *ckt, double *timestep) {
           if (req < *timestep) {
             *timestep = req;
           }
+        }
+      }
+
+      /* Enhancement-698: a slew() still limiting at this point reaches its
+       * input in gap/rate more; keep the NEXT step from growing past that
+       * corner. Never below the step just taken: that would reject this point
+       * for nothing -- the output is exact at any step (it lands on the input
+       * the moment the bound allows), the limit only places a timepoint near
+       * the corner. A gap within the convergence tolerance is noise. */
+      if (entry->num_slews > 0 && extra_inst_data->slew_state) {
+        const OsdiSlewInfo *sinfos = (const OsdiSlewInfo *)entry->slew_infos;
+        void *idata = osdi_instance_data(entry, inst);
+        uint32_t *node_mapping =
+            (uint32_t *)(((char *)idata) + descr->node_mapping_offset);
+        for (uint32_t k = 0; k < entry->num_slews; k++) {
+          double x = ckt->CKTrhsOld[node_mapping[sinfos[k].y_node]];
+          double y = ckt->CKTrhsOld[node_mapping[sinfos[k].z_node]];
+          double gap = x - y;
+          double mag = fabs(gap);
+          double big = fabs(x) > fabs(y) ? fabs(x) : fabs(y);
+          double tol = ckt->CKTreltol * big + ckt->CKTvoltTol;
+          double rate = gap > 0.0
+                            ? *((double *)(((char *)idata) + sinfos[k].pos_offset))
+                            : *((double *)(((char *)idata) + sinfos[k].neg_offset));
+          if (mag <= tol || !(rate > 0.0) || !isfinite(rate))
+            continue;
+          double bound = mag / rate;
+          if (bound < ckt->CKTdelta)
+            bound = ckt->CKTdelta;
+          if (bound < *timestep)
+            *timestep = bound;
         }
       }
 

@@ -608,23 +608,25 @@ V(out) <+ ac_stim("ac", 1.0, `M_PI/2);     // AC stimulus; phase in RADIANS (LRM
   that made it ignore its input was found in the audit): ✅
   Documented deviations: a `slew` rate or `transition` time the deck fixes
   outside 4.5.8/4.5.9's domain is projected (magnitude, 0, or no limit for
-  a zero rate) and named at run time (E-696); a side at or above 1e12 V/s is
-  instantaneous — the infinite-rate path's ~1 ns tail — rather than a ramp
-  the timestep control cannot resolve (E-697).
+  a zero rate) and named at run time (E-696). Since E-698 both operators
+  are realised by the simulator (like `absdelay`): `transition` is 4.5.8's
+  piecewise-linear ramp scheduled from each change of the accepted input —
+  rise_time/fall_time whatever the swing, corners as breakpoints, the
+  interrupted-transition rule of Figures 4-7 to 4-12, pending transitions
+  behind `td` — and `slew` is 4.5.9's ideal limiter on the accepted output;
+  a rate at or above 1e12 V/s is simply a rate (E-697's routing past the
+  old loop is moot). `time_tol` is accepted and unused: the corners are
+  breakpoints.
 - `laplace_nd/np/zd/zp` via exact state-space realization and
   `zi_nd/np/zd/zp` via bilinear transform, both with **complex
   pole/zero pairs** per the LRM's (re, im) vector convention and
   parameter-dependent coefficients: ✅
 
-  Three approximations in this group are deliberate and now stated
-  plainly. ⚠️ `transition`/`slew` are one **rate-limited tracking loop**
-  at the fixed rate `1/trise`: exact for the comparator-style
-  unit-amplitude input they are written for, while an amplitude-A step
-  completes in `A·trise` (the LRM's per-transition scheduling, where
-  every transition takes exactly `trise`, is not modeled) — and the
-  small-signal transfer is a first-order lowpass with corner
-  `1000/trise` rad/s rather than the LRM's approximate unity at all
-  frequencies. ⚠️ `zi_*` transient behavior is the **continuous bilinear
+  Two approximations in this group are deliberate and now stated
+  plainly (a third, `transition`/`slew` as one rate-limited tracking loop
+  at the fixed rate `1/trise`, ended with E-698: the LRM's per-transition
+  scheduling is modeled, every transition takes exactly `trise`, and the
+  small-signal transfer is unity). ⚠️ `zi_*` transient behavior is the **continuous bilinear
   image** of `H(z)`, not discrete-time sample-and-hold: a unity z-filter
   is a wire, no staircase exists, and the `tau`/`t0` arguments of the
   6-argument form are accepted but ignored (true sampling needs
@@ -1606,7 +1608,7 @@ connected port.)*
 | 3.4 Parameters (ranges, localparam, aliasparam incl. 3.4.7 error rules, arrays incl. whole-array instantiation override and paramset assignment `.c = '{...}` (E-645), paramset, block-scoped) | ✅ (default-exemption ⚠️ and frozen-type-of-untyped ⚠️ documented) | `paramrange`, `localparam`, `array`, `paramarray`, `paramset`, `paramsethsp`, `blockparam`, `alias` |
 | 3.5–3.13 Natures, disciplines, nets, buses, nodesets, 3.11.1 compatibility (signal-flow/natureless/domainless; a contribution across incompatible disciplines is named as such, [E-650](../../enhancements_doc/Enhancement-650.md)), nature-attribute validation, attribute values as constant expressions per A.1.6 ([E-649](../../enhancements_doc/Enhancement-649.md)), NIST2018 constants, **3.6.1 `abstol` honoured per node** ([E-539](../../enhancements_doc/Enhancement-539.md)) | ✅ (base-nature attr omission ⚠️, derived-access extension ⚠️ documented **and audible**, explicit-`.option`-wins ⚠️ documented; illegal discipline `units`/`access` overrides warn; vector branches ✖ rejected) | `derivednature`, `domainbind`, `bus`, `netinit`, `ground`, `signalflow` |
 | 4.1–4.4 Operators (incl. string relational, `===`/`!==` as 2-state `==`/`!=`), precedence, functions (`$clog2`, `$rtoi`/`$itor`, `ln1p`/`expm1`, domain diagnostics both routes, `%`-by-deck-zero fatal, same-node `V(a,a)`/`I(a,a)` rejected) | ✅ (`<<<`/`>>>` extension ⚠️ warned; runtime-probe domain policy ⚠️ documented) | `operator`, `precedence`, `shift`, `concat`, `stringcmp`, `clog2`, `convert`, `ceil`, `lrmfuncs`, `lrmintrin`, `domainrt` |
-| 4.5 Analog operators (all), **clause-by-clause audit 4.5.1–4.5.15** ([E-514](../../enhancements_doc/Enhancement-514.md)); frozen-`td` absdelay implemented, ddx over unnamed-branch flows, no-ic `idtmod` pins DC at 0, `default_transition` honored for explicit zeros | ✅ (`limexp` stateless ⚠️, idt-reset τ=10µs ⚠️, ddt/idt tolerances not plumbed ⚠️, transition amplitude approximation ⚠️, zi continuous-bilinear ⚠️, dynamic laplace coeffs track+warn ⚠️ — all documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
+| 4.5 Analog operators (all), **clause-by-clause audit 4.5.1–4.5.15** ([E-514](../../enhancements_doc/Enhancement-514.md)); frozen-`td` absdelay implemented, ddx over unnamed-branch flows, no-ic `idtmod` pins DC at 0, `default_transition` honored for explicit zeros | ✅ (`limexp` stateless ⚠️, idt-reset τ=10µs ⚠️, ddt/idt tolerances not plumbed ⚠️, zi continuous-bilinear ⚠️, dynamic laplace coeffs track+warn ⚠️ — all documented) | `absdelay`, `laplace`, `zi`, `slew`, `transition`, `idt*`, `ddx`, `opargs`, `discontinuity`, `last_crossing`, `defaulttransition`, `transedge`, `rtdomain`, `deckdomain` |
 | 4.6 Noise & analysis (correlation per call site with label-combined reporting 4.6.4.1/4.6.4.6; `noise_table` linear-in-f, `noise_table_log` log-log, parameter-fed tables ⚠️ refused; a deck-fixed negative/NaN power is inert **and named**, [E-651](../../enhancements_doc/Enhancement-651.md); Table 4-22 ic/static/nodeset phases exact; ac_stim matched to the running small-signal analysis) | ✅ | `noise`, `noisetable`, `noisecorr`, `noisejw` |
 | 5.2/6.2 Analog blocks (multiple); **5.2.1 `analog initial` restrictions, re-execution on a parameter sweep, and its display/file output** ([E-541](../../enhancements_doc/Enhancement-541.md)) | ✅ | `multianalog`, `lrmvoice` |
 | 5.6 Contributions, indirect assignment (placement rules and the 5.6.7.2 direct/indirect incompatibility enforced; generalized equality LHS ⚠️ extension), hierarchical-contribution branch identity (5.6.8.1), parameter vector indices (5.5.2), port flow (incl. named port branches), **5.6.1's warning on a contribution to an `input` port** (L031, [E-639](../../enhancements_doc/Enhancement-639.md)) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm`, `inputport` |

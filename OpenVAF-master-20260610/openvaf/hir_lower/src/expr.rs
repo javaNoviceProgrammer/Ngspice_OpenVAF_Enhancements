@@ -4208,16 +4208,33 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
     /// Lowers `slew(x[, max_pos_rate[, max_neg_rate]])`.
     ///
-    /// Verilog-AMS defines `slew` as an ideal rate limiter: the output tracks `x` exactly
-    /// whenever the required rate of change is within bounds, and otherwise ramps at the
-    /// bound. That ideal (non-smooth, "bang-bang") behavior is not directly expressible as a
-    /// well-posed continuous residual (the DC operating point would be left undetermined by a
-    /// pure `dy/dt = clamp(...)` formulation, since any `y` satisfies `dy/dt = 0` at DC).
-    /// Instead this uses the standard modeling trick of a saturating tracking loop:
-    /// `dy/dt = clamp(K*(x - y), -max_neg_rate, max_pos_rate)` for a large gain `K`. This is
-    /// well-posed at DC (`y = x` uniquely, since `K` is large) and reproduces the rate-limited
-    /// ramp whenever `x` moves faster than the bound allows, converging to the ideal limiter as
-    /// `K -> infinity`.
+    /// Enhancement-698 (hunt F2 of 2026-09-21): the operator is realised by the
+    /// SIMULATOR, the way `absdelay` (E-6) and `last_crossing` are, not by a
+    /// tracking loop inside the model. The compiled code emits the synthetic
+    /// input node `V(y) = x` and stores the two rate bounds (as magnitudes) in
+    /// instance data at every evaluation; ngspice stamps the output row from
+    /// the output it ACCEPTED at the previous timepoint,
+    ///
+    ///     V(z) = clamp(V(y), y_last - neg * h, y_last + pos * h),
+    ///
+    /// which is LRM 4.5.9's ideal rate limiter on the simulator's own timeline:
+    /// the output IS the input whenever the input moved no faster than the bound
+    /// (dV(z)/dV(y) = 1, exact at every accepted point) and an exact linear
+    /// ramp at the bound otherwise -- no tail, no gain, no stiffness
+    /// (osdiload.c `slew_stamp`, osdiaccept.c `slew_accept`, osditrunc.c for
+    /// the corner). In DC the simulator stamps the identity (LRM: slew passes
+    /// expr in DC); the small-signal transfer is unity (E-588).
+    ///
+    /// The loop this replaces, `dy/dt = clamp(K (x - y), -neg, +pos)` (E-6,
+    /// E-47, E-512, E-588, E-697), released its clamp at a gap of `rate/K` and
+    /// finished the swing as a first-order tail with tau = 1/K. Under the
+    /// trapezoidal rule that tail RANG whenever the input stepped inside a
+    /// timestep (a comparator in the model places no breakpoint): the first
+    /// implicit step landed past the target and the error then alternated in
+    /// sign with a decay factor of (1 - h/2tau)/(1 + h/2tau) -- -0.9996 at
+    /// h = 10 us for a 1 us edge -- so the output settled 2e-4 off its target
+    /// for the whole plateau, and `ddt` of it (a switched capacitor written the
+    /// textbook way) read up to 0.84 mA of current that was not there.
     fn lower_slew(&mut self, args: &[ExprId], signature: hir::Signature) -> Value {
         let x = self.lower_expr(args[0]);
         if signature == SLEW_NO_MAX {
@@ -4233,7 +4250,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // runaway ramp that ignored the input entirely.
         // Enhancement-696 (hunt F6 of 2026-09-21): the |.| stays, and a value the
         // DECK fixed outside the domain is named once per accepted point
-        // (Enhancement-651's rule); a zero rate, which the clamp could never
+        // (Enhancement-651's rule); a zero rate, which no limiter could ever
         // release (the output stood still for the whole run, in silence), drops
         // the limit in that direction instead. See `slew_rate_or_warn`.
         let (pos_max, neg_max) = if signature == SLEW_POS_MAX {
@@ -4260,13 +4277,23 @@ impl BodyLoweringCtx<'_, '_, '_> {
             );
             (pos, neg)
         };
-        let idx = self.ctx.intern.implicit_equations.len() as u32;
-        self.lower_rate_limited_track(x, pos_max, neg_max, ImplicitEquationKind::Slew(idx))
+        let idx = self.ctx.intern.slew_equations.len() as u32;
+        let (eq_y, y_val) = self.ctx.implicit_equation(ImplicitEquationKind::SlewInput(idx));
+        let (eq_z, z_val) = self.ctx.implicit_equation(ImplicitEquationKind::SlewOutput(idx));
+        self.ctx.intern.slew_equations.push((eq_y, eq_z));
+        // the input node, V(y) = x: a resistive residual the model stamps; the
+        // output row is the simulator's, exactly as for absdelay
+        let resist_y = self.ctx.ins().fsub(x, y_val);
+        self.ctx.def_resist_residual(resist_y, eq_y);
+        self.ctx.def_place(PlaceKind::SlewPosRate(idx), pos_max);
+        self.ctx.def_place(PlaceKind::SlewNegRate(idx), neg_max);
+        z_val
     }
 
-    /// Enhancement-696 (hunt F6 of 2026-09-21): a `slew` rate as the loop uses it
-    /// -- its MAGNITUDE (the loop clamps `dy/dt` to `[-neg, +pos]` with both given
-    /// as positive numbers) -- with a value the deck fixed outside LRM 4.5.9's
+    /// Enhancement-696 (hunt F6 of 2026-09-21): a `slew` rate as the limiter uses
+    /// it -- its MAGNITUDE (the simulator bounds the step of the output to
+    /// `[-neg * h, +pos * h]` with both given as positive numbers) -- with a value
+    /// the deck fixed outside LRM 4.5.9's
     /// domain named once per accepted point, Enhancement-651's rule.
     ///
     /// hir_ty refuses a literal it can see ("the maximum positive rate must be
@@ -4460,50 +4487,71 @@ impl BodyLoweringCtx<'_, '_, '_> {
         })
     }
 
-    /// Lowers `transition(x[, td[, trise[, tfall[, tol]]]])` as a delayed
-    /// (`` `lower_delay ``), rate-limited (`` `lower_rate_limited_track ``) tracking loop:
-    /// `slew(absdelay(x, td), 1/trise, 1/tfall)`. `trise`/`tfall` are transition *times* in the
-    /// LRM (time to ramp across a full-scale change), so they are converted to rates by
-    /// assuming a unit-amplitude transition (`rate = 1/t`) -- exact for the common case of a
-    /// comparator-style 0/1 input, an approximation for arbitrary-amplitude inputs. `tol`, when
-    /// present, is accepted for signature compatibility but has no numerical effect (same
-    /// convention as `laplace_*`'s trailing tolerance argument).
+    /// Lowers `transition(expr [, td [, rise_time [, fall_time [, time_tol]]]])`.
+    ///
+    /// Enhancement-698 (hunt F1 and F2 of 2026-09-21): the operator is realised
+    /// by the SIMULATOR, like `absdelay` and `slew`. LRM 4.5.8 defines it on
+    /// EVENTS, not as a differential equation: "A transition is created when the
+    /// input expression changes, and at this point it uses the value of td,
+    /// rise_time, fall_time and time_tol to determine the new pending
+    /// transition"; the output "describes a piecewise linear function over time"
+    /// that goes from its current value to the input's new value over rise_time
+    /// (rising) or fall_time (falling), `td` after the change; the simulator
+    /// "place[s] time points at both corners of a transition"; a change during
+    /// an active ramp READJUSTS it by the slope rule of Figures 4-7 to 4-12; and
+    /// with a delay "an arbitrary number of pending transitions" may be queued.
+    /// All of that is history of the input on the ACCEPTED timeline, which only
+    /// the simulator has. So the compiled code emits the synthetic input node
+    /// `V(y) = expr` and stores td, rise_time and fall_time in instance data at
+    /// every evaluation (the values "at this point"), and ngspice keeps the
+    /// schedule: it detects the change of the accepted input in its accept
+    /// hook, starts or queues the ramp, sets the corner breakpoints, and stamps
+    /// the output row `V(z) = ramp(t)` -- a function of time alone, a source as
+    /// far as Newton is concerned (osdiload.c `transition_stamp`, osdiaccept.c
+    /// `transition_accept`, osdi_0_4_enhancement4.h). In DC the simulator stamps
+    /// the identity (LRM: transition passes expr in DC); in ac the transfer is
+    /// unity with the delay's phase, as E-588 settled (evtedge).
+    ///
+    /// What this replaces was `slew(absdelay(expr, td), 1/rise, 1/fall)`: a
+    /// tracking loop at the fixed RATE 1/rise, exact for a 0/1 comparator and
+    /// wrong for every other swing -- a 5 V step took 5 * rise, a 1e-3 S
+    /// conductance switched in rise/1000, a 0 -> 2 ramp reversed halfway was at
+    /// 0.5 where 4.5.8 has 1.0 (hunt F1) -- and, being a stiff ODE, ringing
+    /// under the trapezoidal rule when the input stepped inside a timestep (F2,
+    /// see `lower_slew`). The delay was an absdelay history lookup; it is now
+    /// the schedule's due time, so a transition is PENDING exactly as 4.5.8
+    /// describes, and `td` may vary at run time (it is read at each change).
+    ///
+    /// The times keep their front-end rules: E-504/E-696 project a negative
+    /// delay or time the deck fixed onto 0 and say so; `` `default_transition ``
+    /// (E-47) supplies the omitted times and, per 4.5.8, an EXPLICIT zero; with
+    /// no directive a zero time is passed as 0 and the simulator ramps over its
+    /// "negligible, but non-zero" time, forcing no trailing corner (LRM). `tol`
+    /// is accepted for signature compatibility and has no effect: the corners
+    /// are breakpoints, which is as resolved as a timepoint gets.
     fn lower_transition(&mut self, args: &[ExprId], signature: hir::Signature) -> Value {
         // the input is Real-typed since Enhancement-49 (integer inputs arrive
         // through the standard implicit promotion) -- no manual cast
         let x = self.lower_expr(args[0]);
         // `` `default_transition `` (Enhancement-47): when the rise/fall
-        // arguments are omitted, ramp with the directive's time instead of
-        // switching instantaneously (0, the LRM default without a directive).
+        // arguments are omitted, ramp with the directive's time; without a
+        // directive the time is 0 and the simulator ramps over its negligible
+        // non-zero time (LRM 4.5.8, filter-operators audit: an EXPLICIT zero and
+        // the omitted argument are the same "no transition time", and neither
+        // is an exact identity).
         let t_default = self.ctx.db.default_transition();
+        let tdef = self.ctx.fconst(if t_default > 0.0 { t_default } else { 0.0 });
         if signature == TRANSITION_NO_ARGS {
-            // LRM 4.5.8 (filter-operators audit): with no directive, "forcing
-            // a zero-duration transition is undesirable ... Instead, a
-            // negligible, but non-zero, transition time is used." This used to
-            // return the bare input -- an exactly zero-duration transition --
-            // while an EXPLICIT zero rise time got the negligible-non-zero
-            // tracking loop; the two spellings of "no transition time" now
-            // share the same 1e9/s fallback path (an infinite rate trips
-            // `finite_gain` below, tau ~ 1 ns).
-            let rate = if t_default > 0.0 {
-                self.ctx.fconst(1.0 / t_default)
-            } else {
-                self.ctx.fconst(f64::INFINITY)
-            };
-            let idx = self.ctx.intern.implicit_equations.len() as u32;
-            return self.lower_rate_limited_track(
-                x,
-                rate,
-                rate,
-                ImplicitEquationKind::Transition(idx),
-            );
+            return self.lower_transition_slot(x, F_ZERO, tdef, tdef);
         }
 
         let td = self.lower_expr(args[1]);
         // Enhancement-696 (hunt F6 of 2026-09-21): LRM 4.5.8 -- the delay "shall
         // be non-negative". `absdelay` names a negative delay the deck fixed
-        // (Enhancement-665); `transition`'s went to the delay stage untouched
-        // and was used as 0 in silence. Same projection, same rule.
+        // (Enhancement-665); `transition`'s was used as 0 in silence. Same
+        // projection, same rule. The simulator reads the projected value at
+        // each change of the input: transition's delay is an ARGUMENT of the
+        // operator, never frozen (it tracks, LRM 4.5.8).
         let td = {
             let ok = self.ctx.ins().fge(td, F_ZERO); // false for negatives and NaN
             let guarded = self.is_param_derived(args[1]);
@@ -4517,51 +4565,20 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 &[td],
             )
         };
-        // transition's internal delay is an ARGUMENT of the operator, not an
-        // absdelay: its td legitimately tracks (LRM 4.5.8), so never frozen.
-        let delayed = self.lower_delay(x, td, false);
         if signature == TRANSITION_DELAY {
-            // same negligible-non-zero rule as TRANSITION_NO_ARGS above
-            let rate = if t_default > 0.0 {
-                self.ctx.fconst(1.0 / t_default)
-            } else {
-                self.ctx.fconst(f64::INFINITY)
-            };
-            let idx = self.ctx.intern.implicit_equations.len() as u32;
-            return self.lower_rate_limited_track(
-                delayed,
-                rate,
-                rate,
-                ImplicitEquationKind::Transition(idx),
-            );
+            return self.lower_transition_slot(x, td, tdef, tdef);
         }
 
         let trise = self.lower_expr(args[2]);
-        // Enhancement-504: a negative rise/fall time must not reach the reciprocal.
-        //
-        // `pos_max` is 1/trise and bounds `dy/dt` from ABOVE in the tracking loop
-        // below; with a negative trise that bound goes negative and the clamp is
-        // inverted, so the loop integrates AWAY from the input instead of towards
-        // it. A 0->1 signal then reached -24 V, and it is unbounded -- -120 V over
-        // a longer run, and larger still as |trise| shrinks, because the runaway
-        // rate is 1/|trise|.
-        //
-        // hir_ty's require_non_negative already refuses a negative it can SEE, but
-        // it only sees a literal or a localparam. The ordinary case is a model
-        // whose `parameter real tr = 0.5n` is overridden from the deck, which the
-        // compiler cannot refuse (a default is the author's business) and which
-        // nothing checked afterwards.
-        //
-        // Clamped to zero rather than to |trise|: zero is the projection onto the
-        // domain the LRM states, it is already what `transition` means with the
-        // argument omitted, and 1/0 = +inf disables the rate limit exactly as an
-        // instantaneous transition should. Guessing that a negative time "meant"
-        // its magnitude would be inventing intent. `slew` takes the magnitude of
-        // a wrong-signed rate (Enhancement-61) and drops a zero one
-        // (Enhancement-696), for its own reasons.
-        //
-        // Enhancement-696 (hunt F6 of 2026-09-21): the clamp says so when the
-        // deck fixed the value -- it was silent (`transition_time_or_warn`).
+        // Enhancement-504: a negative rise/fall time is projected onto zero --
+        // the domain the LRM states, and what `transition` means with the
+        // argument omitted (an instantaneous edge). hir_ty's require_non_negative
+        // refuses a negative it can SEE (a literal or a localparam); the ordinary
+        // case is `parameter real tr = 0.5n` overridden from the deck, which the
+        // compiler cannot refuse (a default is the author's business). Guessing
+        // that a negative time "meant" its magnitude would be inventing intent.
+        // Enhancement-696 (hunt F6 of 2026-09-21): the projection says so when
+        // the deck fixed the value -- it was silent (`transition_time_or_warn`).
         let trise = self.transition_time_or_warn("rise", args[2], trise);
         let tfall = if signature == TRANSITION_DELAY_RISET {
             trise
@@ -4573,17 +4590,15 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let tfall = self.lower_expr(args[3]);
             self.transition_time_or_warn("fall", args[3], tfall)
         };
-        let t_zero = self.ctx.fconst(0.0);
         // LRM 4.5.8 (filter-operators audit): "If neither rise_time nor
         // fall_time are specified OR ARE EQUAL TO ZERO (0.0), the rise and
         // fall time default to the value defined by `default_transition."
         // The directive was honored only when the arguments were textually
-        // absent; an explicit 0.0 clamped to zero, whose reciprocal disabled
-        // the rate limit -- an instantaneous switch where the LRM mandates
-        // the directive's ramp. Selected at RUNTIME, because the zero may
-        // arrive through a deck-overridden parameter.
+        // absent; an explicit 0.0 was an instantaneous switch where the LRM
+        // mandates the directive's ramp. Selected at RUNTIME, because the zero
+        // may arrive through a deck-overridden parameter.
         let (trise, tfall) = if t_default > 0.0 {
-            let tdef = self.ctx.fconst(t_default);
+            let t_zero = self.ctx.fconst(0.0);
             let rise_pos = self.ctx.ins().fgt(trise, t_zero);
             let trise =
                 self.ctx.make_select(rise_pos, |_, branch| if branch { trise } else { tdef });
@@ -4594,189 +4609,25 @@ impl BodyLoweringCtx<'_, '_, '_> {
         } else {
             (trise, tfall)
         };
-        let f_one = self.ctx.fconst(1.0);
-        let pos_max = self.ctx.ins().fdiv(f_one, trise);
-        let neg_max = self.ctx.ins().fdiv(f_one, tfall);
-
-        let idx = self.ctx.intern.implicit_equations.len() as u32;
-        self.lower_rate_limited_track(delayed, pos_max, neg_max, ImplicitEquationKind::Transition(idx))
+        self.lower_transition_slot(x, td, trise, tfall)
     }
 
-    /// Shared saturating tracking-loop realization for `slew`/`transition`: a single implicit
-    /// state `y` with `dy/dt = clamp(K*(x - y), -neg_max, pos_max)`. See `lower_slew` for the
-    /// numerical rationale.
-    fn lower_rate_limited_track(
-        &mut self,
-        x: Value,
-        pos_max: Value,
-        neg_max: Value,
-        kind: ImplicitEquationKind,
-    ) -> Value {
-        // Enhancement-512: the tracking gain is RELATIVE to the transition rate,
-        // not a fixed absolute constant.
-        //
-        // The loop is `dy/dt = clamp(K*(x-y), -neg_max, +pos_max)`. While the
-        // clamp is saturated this is an exact linear ramp at the LRM's rate; it
-        // releases once the remaining gap falls below `rate/K`, and the rest of
-        // the swing is a first-order tail with tau = 1/K. With K a fixed 1e9/s
-        // that gap was `1/(K*trise)` -- which depends on how fast the transition
-        // is, so the operator was effectively exact for a microsecond edge and
-        // materially wrong for a nanosecond one:
-        //
-        //     trise    linear part    value at delay+trise  (LRM: 1.0)
-        //      3 ns       66.7%            0.8774
-        //     30 ns       96.7%            0.9873
-        //      3 us      ~100%             1.000039
-        //
-        // (the shortfall is e^-1/(K*trise), measured 0.877382 against 0.877374
-        // predicted at 3 ns). `default_transition` pins the 1 us case, deep
-        // inside the correct region, which is why it never surfaced there.
-        //
-        // Setting K = TRACK_C * rate makes the released gap `1/TRACK_C` at EVERY
-        // speed, so the linear fraction is scale-invariant and the tail is a
-        // fixed fraction of the transition rather than a fixed 1 ns.
-        //
-        // TRACK_C is 1e3 by measurement, not by taste, and the trade-off is real
-        // in BOTH directions. The released gap 1/TRACK_C bounds the endpoint
-        // error, so a larger constant looks better in isolation -- but it also
-        // shortens the tail's time constant (tau = trise/TRACK_C) and a stiffer
-        // loop costs accuracy at a realistic timestep, through truncation error
-        // at the corner where the ramp meets the tail. Measured on
-        // Enhancement-47's plateau check, which samples three arities at once:
-        //
-        //     TRACK_C     plateau (want 0.875)
-        //       1e3           0.875      (passes, 1e-6 tolerance)
-        //       1e4           0.874940
-        //       1e5           0.874766
-        //
-        // So it gets WORSE above 1e3, not better. At 1e3 the endpoint error is
-        // 2e-5..4e-4 across five decades of trise (it was 12.3% at 3 ns), the
-        // settled value is exactly 1.0, and timepoint counts and runtime are
-        // unchanged. Do not raise this without re-running `defaulttransition`.
-        const TRACK_C: f64 = 1.0e3;
-        // Enhancement-504 clamps a negative rise/fall time to ZERO, whose
-        // reciprocal is +inf -- that is how an instantaneous transition disables
-        // the rate limit. `TRACK_C * inf` is inf, and `inf * 0.0` is NaN, so the
-        // gain has to stay finite for that case: it falls back to the fixed
-        // 1e9/s this loop used before, which is exactly the behaviour E-504's
-        // suite measured for an instantaneous transition. A merely FAST finite
-        // rate is far below the guard (trise = 1 ps gives 1e15) and is untouched.
-        const TRACK_GAIN_INF: f64 = 1.0e9;
-        const HUGE: f64 = 1.0e300;
-
-        let (eq, y) = self.ctx.implicit_equation(kind);
-        let c = self.ctx.fconst(TRACK_C);
-        let huge = self.ctx.fconst(HUGE);
-        let g_inf = self.ctx.fconst(TRACK_GAIN_INF);
-        let diff = self.ctx.ins().fsub(x, y);
-        let finite_gain = |s: &mut Self, k: Value| {
-            let ok = s.ctx.ins().flt(k, huge);      // false for +inf and for NaN
-            s.lower_select_with(ok, |_| k, |_| g_inf)
-        };
-        // ONE gain for both directions, taken from the FASTER rate. A gain that
-        // switched with the sign of `x - y` was tried and rejected: it makes the
-        // loop dynamics jump exactly at the crossing point, and an asymmetric
-        // `transition(x, td, 0.5n, -0.5n)` -- one edge instantaneous, the other
-        // finite -- then overshot to 1.01 and recovered on the far slower
-        // fallback gain, which is a regression against Enhancement-504's suite.
-        // Taking the faster rate makes the slower direction stiffer than it
-        // needs to be, which costs the integrator nothing measurable here and
-        // *reduces* overshoot, since the ringing amplitude is bounded by the gap
-        // at which the clamp releases (`rate/K`).
-        // Enhancement-697 (hunt F7 of 2026-09-21): a side whose rate is at or
-        // above RATE_INST is INSTANTANEOUS -- the infinite-rate path this loop
-        // already has (no clamp on that side, the fixed TRACK_GAIN_INF gain,
-        // tau ~ 1 ns), not a finite ramp. With K = TRACK_C * rate, a `slew` at
-        // 1e13 V/s had K = 1e16/s, a 0.1 fs tail that ngspice's timestep
-        // control cannot resolve at the corner where the clamp releases: the
-        // step shrank to 1e-17 s and the transient ABORTED ("Timestep too
-        // small ... n1#implicit_equation_0") at the first edge, or ground for a
-        // minute first -- at 1e13 with a 10 us step, at 1e14 and above with any
-        // step, up to 1e297, where `finite_gain`'s HUGE guard (written for an
-        // infinite rate) finally took over. 1e12 V/s ran everywhere it was tried.
-        // A ramp faster than a picosecond per unit swing is instantaneous to any
-        // transient ngspice runs, so that is what it is now, with the ten-fold
-        // margin below the first failure; a model that writes `slew(x, 1e15)` or
-        // `1e30` to mean "no limit" gets exactly that. Per side, so an
-        // asymmetric `transition(x, td, 0, 1u)` keeps its finite fall.
-        const RATE_INST: f64 = 1.0e12;
-        let r_inst = self.ctx.fconst(RATE_INST);
-        let pos_inst = self.ctx.ins().fge(pos_max, r_inst);
-        let pos_max = self.lower_select_with(pos_inst, |_| INFINITY, |_| pos_max);
-        let neg_inst = self.ctx.ins().fge(neg_max, r_inst);
-        let neg_max = self.lower_select_with(neg_inst, |_| INFINITY, |_| neg_max);
-
-        let faster = self.ctx.ins().fgt(pos_max, neg_max);
-        let rate_max = self.lower_select_with(faster, |_| pos_max, |_| neg_max);
-        let gain = self.ctx.ins().fmul(c, rate_max);
-        let gain = finite_gain(self, gain);
-        let rate = self.ctx.ins().fmul(gain, diff);
-
-        let neg_max = self.ctx.ins().fneg(neg_max);
-        let too_low = self.ctx.ins().flt(rate, neg_max);
-        let rate = self.lower_select_with(too_low, |_| neg_max, |_| rate);
-        let too_high = self.ctx.ins().fgt(rate, pos_max);
-        let rate = self.lower_select_with(too_high, |_| pos_max, |_| rate);
-
-        // In DC the filter is an identity (`y = x`, the LRM's static behavior);
-        // the rate-limited form must not be used there -- a saturated clamp has
-        // a zero derivative w.r.t. `y`, so the DC Jacobian diagonal vanished
-        // and the operating point was singular whenever the input started a
-        // full swing away from `y` (Enhancement-47).
-        let enable_integration = self.ctx.use_param(ParamKind::EnableIntegration);
-        let track = self.ctx.ins().fneg(rate);
-        let identity = self.ctx.ins().fsub(y, x);
-        let resist = self.lower_select_with(enable_integration, |_| track, |_| identity);
-        self.ctx.def_resist_residual(resist, eq);
-        // The REACT residual is `y` unconditionally -- it must NOT be gated on
-        // `enable_integration` the way the resistive one is.
-        //
-        // ngspice stores the react residual as this equation's charge state and,
-        // at MODEINITTRAN, seeds the previous state from it
-        // (`CKTstate1[state] = residual_react` in osdiload.c). Zeroing it at DC
-        // therefore left the stored charge at 0 while the operating point had
-        // solved `y = x`, so the first transient step saw `dy/dt = (y - 0)/h`,
-        // the clamp bounded it, and the output RAMPED UP FROM ZERO at exactly
-        // the slew rate -- for `slew` that lasts |V_bias|/rate (2.5 us for a
-        // 2.5 V rail at 1 V/us), which is precisely the timescale the operator
-        // exists to impose. LRM 4.5.9: "If the rate of change of expr is less
-        // than the specified maximum slew rates, slew() returns the value of
-        // expr", and a constant input has rate of change zero.
-        //
-        // The DC SOLUTION is unaffected: `CALC_REACT_JACOBIAN` is clear at the
-        // operating point, so the reactive term contributes nothing to the
-        // residual or the Jacobian there -- it is only *stored*. Enhancement-47's
-        // reason for switching the RESISTIVE residual at DC (a saturated clamp
-        // has zero derivative w.r.t. `y`, so the DC Jacobian diagonal vanished)
-        // does not apply to the reactive one, which is `y` with derivative 1.
-        // Every sibling that gets this right -- `laplace_*`'s state-space
-        // realization, and a hand-written `ddt(V(o,c))` -- defines its react
-        // residual unconditionally.
-        //
-        // Enhancement-588 (hunt F2 of 2026-09-07): unconditionally in DC and
-        // TRANSIENT. In a SMALL-SIGNAL analysis the loop's linearisation is a
-        // first-order lag with tau = 1/gain -- trise/TRACK_C, i.e. 1 ns for the
-        // default 1 us transition and 1 ns again for an instantaneous one
-        // through TRACK_GAIN_INF -- so `V(o) <+ transition(V(in))` showed
-        // -0.036 deg at 100 kHz and -3.6 deg at 10 MHz, a phantom delay the
-        // LRM does not have: the small-signal transfer of transition() and of
-        // a slew() that is not slewing is unity. The reactive residual is
-        // zeroed for the ac and noise evaluations only, which turns the
-        // equation into `gain*(y - x) = 0`, exactly `y = x`. The op preceding
-        // an ac run is a DC evaluation and keeps the stored charge as before;
-        // a transient never sees these flags.
-        let ac_name = self.ctx.sconst("ac");
-        let ac_hit = self.ctx.call1(CallBackKind::Analysis, &[ac_name]);
-        let noise_name = self.ctx.sconst("noise");
-        let noise_hit = self.ctx.call1(CallBackKind::Analysis, &[noise_name]);
-        let zero_i = self.ctx.iconst(0);
-        let is_ac = self.ctx.ins().ine(ac_hit, zero_i);
-        let is_noise = self.ctx.ins().ine(noise_hit, zero_i);
-        let small_signal = crate::stmt::bool_or(self.ctx, is_ac, is_noise);
-        let react = self.lower_select_with(small_signal, |_| F_ZERO, |_| y);
-        self.ctx.def_react_residual(react, eq);
-
-        y
+    /// Enhancement-698: one transition slot -- the synthetic input node the
+    /// model stamps (`V(y) = x`), the output node the simulator stamps, and the
+    /// three times stored in instance data for the simulator's scheduler.
+    fn lower_transition_slot(&mut self, x: Value, td: Value, trise: Value, tfall: Value) -> Value {
+        let idx = self.ctx.intern.transition_equations.len() as u32;
+        let (eq_y, y_val) =
+            self.ctx.implicit_equation(ImplicitEquationKind::TransitionInput(idx));
+        let (eq_z, z_val) =
+            self.ctx.implicit_equation(ImplicitEquationKind::TransitionOutput(idx));
+        self.ctx.intern.transition_equations.push((eq_y, eq_z));
+        let resist_y = self.ctx.ins().fsub(x, y_val);
+        self.ctx.def_resist_residual(resist_y, eq_y);
+        self.ctx.def_place(PlaceKind::TransitionDelay(idx), td);
+        self.ctx.def_place(PlaceKind::TransitionRise(idx), trise);
+        self.ctx.def_place(PlaceKind::TransitionFall(idx), tfall);
+        z_val
     }
 
     /// Lowers `laplace_nd`/`laplace_np`/`laplace_zd`/`laplace_zp(in, num_or_zero, den_or_pole

@@ -618,6 +618,16 @@ extern OsdiObjectFile load_object_file(const char *input) {
   sym = GET_SYM(handle, "OSDI_LAST_CROSSING_INFOS");
   const void *last_crossing_infos_base = sym;
 
+  /* Optional: transition() / slew() slot tables (Enhancement-698) */
+  sym = GET_SYM(handle, "OSDI_TRANSITION_COUNTS");
+  const uint32_t *transition_counts = (const uint32_t *)sym;
+  sym = GET_SYM(handle, "OSDI_TRANSITION_INFOS");
+  const void *transition_infos_base = sym;
+  sym = GET_SYM(handle, "OSDI_SLEW_COUNTS");
+  const uint32_t *slew_counts = (const uint32_t *)sym;
+  sym = GET_SYM(handle, "OSDI_SLEW_INFOS");
+  const void *slew_infos_base = sym;
+
   /* Optional: terminal-short descriptor arrays (Enhancement-401) */
   sym = GET_SYM(handle, "OSDI_TERM_SHORT_COUNTS");
   const uint32_t *term_short_counts = (const uint32_t *)sym;
@@ -713,6 +723,13 @@ extern OsdiObjectFile load_object_file(const char *input) {
    * { y_node: u32, z_node: u32, dir_offset: u32 } = 12 bytes */
   const size_t last_crossing_info_size = 12;
   uint32_t last_crossing_info_offset = 0;
+
+  /* Enhancement-698: OsdiTransitionInfo is six u32 = 24 bytes, OsdiSlewInfo
+   * four u32 = 16 bytes (osdi_0_4_enhancement4.h) */
+  const size_t transition_info_size = 24;
+  uint32_t transition_info_offset = 0;
+  const size_t slew_info_size = 16;
+  uint32_t slew_info_offset = 0;
 
   /* Size of one OsdiTermShortInfo struct as exported from OpenVAF:
    * { node_1: u32, node_2: u32, flow_node: u32 } = 12 bytes */
@@ -835,6 +852,28 @@ extern OsdiObjectFile load_object_file(const char *input) {
         crossings_ptr = (const char *)last_crossing_infos_base +
                         last_crossing_info_offset * last_crossing_info_size;
         last_crossing_info_offset += n_crossings;
+      }
+    }
+
+    /* Enhancement-698 */
+    uint32_t n_transitions = 0;
+    const void *transitions_ptr = NULL;
+    if (transition_counts) {
+      n_transitions = transition_counts[i];
+      if (n_transitions > 0 && transition_infos_base) {
+        transitions_ptr = (const char *)transition_infos_base +
+                          transition_info_offset * transition_info_size;
+        transition_info_offset += n_transitions;
+      }
+    }
+    uint32_t n_slews = 0;
+    const void *slews_ptr = NULL;
+    if (slew_counts) {
+      n_slews = slew_counts[i];
+      if (n_slews > 0 && slew_infos_base) {
+        slews_ptr = (const char *)slew_infos_base +
+                    slew_info_offset * slew_info_size;
+        slew_info_offset += n_slews;
       }
     }
 
@@ -979,6 +1018,10 @@ extern OsdiObjectFile load_object_file(const char *input) {
 
         .num_last_crossings = n_crossings,
         .last_crossing_infos = crossings_ptr,
+        .num_transitions = n_transitions,      /* Enhancement-698 */
+        .transition_infos = transitions_ptr,
+        .num_slews = n_slews,
+        .slew_infos = slews_ptr,
         .num_term_shorts = n_term_shorts,
         .term_short_infos = term_shorts_ptr,
 

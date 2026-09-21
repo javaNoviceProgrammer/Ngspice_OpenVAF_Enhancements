@@ -91,6 +91,40 @@ int OSDIpzLoad(GENmodel *inModel, CKTcircuit *ckt, SPcomplex *s) {
         }
       }
 
+      /* Enhancement-698: transition and slew rows -- the zero-delay wire, as
+       * for absdelay above; a transition WITH a delay gets the same one-time
+       * caveat, a slew (unity, E-588) none. */
+      if (entry->num_transitions > 0) {
+        OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
+        const OsdiTransitionInfo *tinfos =
+            (const OsdiTransitionInfo *)entry->transition_infos;
+        bool delayed = false;
+        for (uint32_t k = 0; extra->transition_jac_y && k < entry->num_transitions; k++) {
+          *(extra->transition_jac_y[k]) += 1.0;
+          *(extra->transition_jac_z[k]) += -1.0;
+          if (*((double *)(((char *)inst) + tinfos[k].td_offset)) > 0.0)
+            delayed = true;
+        }
+        if (delayed && !extra->pz_transition_warned) {
+          extra->pz_transition_warned = true;
+          fprintf(stderr,
+                  "Warning: %s: pole-zero analysis treats the delay of the "
+                  "transition() of model type '%s' as ZERO.\n"
+                  "         A transport delay contributes e^-s*td, which has "
+                  "infinitely many poles and zeros; the reported set is that of "
+                  "the delay-free circuit. Use ac (which stamps the delay "
+                  "exactly) if the delay matters.\n",
+                  gen_inst->GENname, descr->name);
+        }
+      }
+      if (entry->num_slews > 0) {
+        OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
+        for (uint32_t k = 0; extra->slew_jac_y && k < entry->num_slews; k++) {
+          *(extra->slew_jac_y[k]) += 1.0;
+          *(extra->slew_jac_z[k]) += -1.0;
+        }
+      }
+
       /* Enhancement-532: the synthetic 0 V collapse shorts are frequency-
        * independent linear constraints -- stamp them at every trial s. */
       {

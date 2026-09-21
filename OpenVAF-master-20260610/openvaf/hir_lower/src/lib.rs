@@ -57,12 +57,18 @@ pub enum ImplicitEquationKind {
     /// State variable `i` of a `laplace_*` transfer-function realization (controllable
     /// canonical form); its reactive/resistive residuals encode `dx_i/dt = ...`.
     LaplaceState(u32),
-    /// Output state `i` of a `slew()` call; its reactive/resistive residuals encode a
-    /// rate-limited tracking loop that follows the input while bounding `dy/dt`.
-    Slew(u32),
-    /// Output state `i` of a `transition()` call; same rate-limited tracking loop as
-    /// `Slew`, applied to the (optionally delayed) input.
-    Transition(u32),
+    /// Synthetic input node y_synth for slew slot `i`; enforces `V(y_synth) = expr`.
+    /// Enhancement-698: the operator is realised by the simulator, like absdelay.
+    SlewInput(u32),
+    /// Output node z for slew slot `i`; its equation row is stamped by the simulator
+    /// (LRM 4.5.9's ideal rate limiter on the accepted history, no tracking loop).
+    SlewOutput(u32),
+    /// Synthetic input node y_synth for transition slot `i`; enforces `V(y_synth) = expr`.
+    TransitionInput(u32),
+    /// Output node z for transition slot `i`; its equation row is stamped by the
+    /// simulator: LRM 4.5.8's piecewise-linear ramps between the accepted values of
+    /// the input, scheduled, delayed and interrupted on the simulator's timeline.
+    TransitionOutput(u32),
     /// Synthetic input node y_synth for last_crossing slot `i`; enforces
     /// `V(y_synth) = watched_expr`.
     LastCrossingInput(u32),
@@ -229,6 +235,16 @@ pub enum PlaceKind {
     AbsDelayTime(u32),
     /// Stores the current value of `dir` for last_crossing slot `i` into instance data.
     LastCrossingDirection(u32),
+    /// Enhancement-698: stores the current delay / rise time / fall time of
+    /// transition slot `i` into instance data, where the simulator's scheduler reads
+    /// them when the input changes (LRM 4.5.8: the values "at this point").
+    TransitionDelay(u32),
+    TransitionRise(u32),
+    TransitionFall(u32),
+    /// Enhancement-698: stores the current positive / negative rate bound of slew
+    /// slot `i` (both as magnitudes) into instance data for the simulator's limiter.
+    SlewPosRate(u32),
+    SlewNegRate(u32),
     /// Enhancement-8: stores the new value of `cross`/`above`/`timer` edge-detection
     /// state slot `i` (the read side is `ParamKind::EventState(i)`) at the end of `eval()`.
     EventState(u32),
@@ -246,6 +262,11 @@ impl PlaceKind {
             | PlaceKind::BoundStep
             | PlaceKind::AbsDelayTime(_)
             | PlaceKind::LastCrossingDirection(_)
+            | PlaceKind::TransitionDelay(_)
+            | PlaceKind::TransitionRise(_)
+            | PlaceKind::TransitionFall(_)
+            | PlaceKind::SlewPosRate(_)
+            | PlaceKind::SlewNegRate(_)
             | PlaceKind::EventState(_) => Type::Real,
             PlaceKind::ParamMin(param) | PlaceKind::ParamMax(param) | PlaceKind::Param(param) => {
                 param.ty(db)
@@ -301,6 +322,12 @@ pub struct HirInterner {
     pub absdelay_equations: Vec<(ImplicitEquation, ImplicitEquation, bool)>,
     /// Per last_crossing slot: (eq_y = synthetic input node, eq_z = output node).
     pub last_crossing_equations: Vec<(ImplicitEquation, ImplicitEquation)>,
+    /// Enhancement-698. Per transition slot: (eq_y = synthetic input node, eq_z =
+    /// output node); the delay and the two times travel as `PlaceKind::Transition*`.
+    pub transition_equations: Vec<(ImplicitEquation, ImplicitEquation)>,
+    /// Enhancement-698. Per slew slot: (eq_y = synthetic input node, eq_z = output
+    /// node); the two rate bounds travel as `PlaceKind::Slew*Rate`.
+    pub slew_equations: Vec<(ImplicitEquation, ImplicitEquation)>,
     /// Per indirect branch assignment slot: the free unknown's implicit equation.
     pub indirect_branch_equations: Vec<ImplicitEquation>,
     /// Enhancement-8: number of `ParamKind::EventState`/`PlaceKind::EventState` slots
@@ -328,6 +355,8 @@ impl Default for HirInterner {
             lim_state: TiMap::default(),
             absdelay_equations: Vec::default(),
             last_crossing_equations: Vec::default(),
+            transition_equations: Vec::default(),
+            slew_equations: Vec::default(),
             indirect_branch_equations: Vec::default(),
             event_state_count: 0,
         }

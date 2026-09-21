@@ -77,7 +77,17 @@ def read_wrdata(name):
 
 
 def at(rows, t):
-    return min(rows, key=lambda r: abs(r[0] - t))[2]
+    """the output at instant t, interpolated between the bracketing timepoints
+    (Enhancement-698: the corners of a transition ramp are breakpoints now, so
+    the timepoints after an edge no longer sit on the print grid, and the
+    nearest one to a mid-ramp instant can be 5 ns -- 0.0125 of a 0.4 us
+    ramp -- away; the value at the instant is what the checks pin)"""
+    before = [r for r in rows if r[0] <= t]
+    after = [r for r in rows if r[0] >= t]
+    if not before or not after:
+        return min(rows, key=lambda r: abs(r[0] - t))[2]
+    (t0, _, v0), (t1, _, v1) = before[-1], after[0]
+    return v0 if t1 == t0 else v0 + (v1 - v0) * (t - t0) / (t1 - t0)
 
 
 print("[1] slew() LRM sign convention (THE fixed defect)")

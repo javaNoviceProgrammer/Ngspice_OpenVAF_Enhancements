@@ -391,6 +391,133 @@ static void last_crossing_stamp(void *inst, OsdiExtraInstData *extra,
   }
 }
 
+/* -----------------------------------------------------------------------
+ * Enhancement-698 (hunt F1/F2 of 2026-09-21): transition() and slew()
+ * -----------------------------------------------------------------------
+ *
+ * Both operators used to be a tracking loop compiled into the model,
+ * dy/dt = clamp(K (x - y), -neg, +pos) (E-6/E-47/E-512/E-697). A loop has no
+ * memory of the swing it is asked to make, so `transition` ran at the fixed
+ * RATE 1/rise -- a 5 V step took 5 * rise -- and its stiff tail (tau = 1/K)
+ * rang under the trapezoidal rule whenever the input stepped between
+ * timepoints, so the output settled 2e-4 off its target and `ddt` of it read
+ * a current that was not there. LRM 4.5.8 defines transition on EVENTS of the
+ * input on the simulator's timeline, which only the simulator has; 4.5.9's
+ * slew is an ideal rate limiter, which needs the accepted output. So the
+ * compiled model now emits the synthetic input node V(y) = expr and stores
+ * the operator's arguments in instance data (OsdiTransitionInfo /
+ * OsdiSlewInfo, osdi_0_4_enhancement4.h), and ngspice stamps the output row:
+ *
+ *   transition:  V(z) = ramp(t), the piecewise-linear function OSDIaccept
+ *                schedules from the changes of the ACCEPTED input -- a
+ *                function of time alone, a source as far as Newton is
+ *                concerned (jac[z,z] = -1, rhs[z] = -ramp(t)); the corners
+ *                are breakpoints;
+ *   slew:        V(z) = clamp(V(y), y_last - neg h, y_last + pos h) with
+ *                y_last the output accepted at the previous point: the input
+ *                itself while it moves within the bound (jac[z,y] = 1), an
+ *                exact linear ramp at the bound otherwise (jac[z,y] = 0).
+ *
+ * In DC both are the identity V(z) = V(y) (LRM: the operators pass expr in
+ * DC), the stamp absdelay_stamp_dc uses; the MODEINITTRAN evaluation seeds
+ * the state from the converged operating point (CKTrhsOld) and stamps the
+ * identity too, exactly like absdelay's history seed.
+ */
+static void transition_stamp(CKTcircuit *ckt, void *inst,
+                             OsdiExtraInstData *extra,
+                             const OsdiRegistryEntry *entry,
+                             const OsdiDescriptor *descr, bool is_tran,
+                             bool is_init_tran) {
+  uint32_t n = entry->num_transitions;
+  if (n == 0 || !extra->transition_state)
+    return;
+  const OsdiTransitionInfo *infos =
+      (const OsdiTransitionInfo *)entry->transition_infos;
+  uint32_t *node_mapping =
+      (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+
+  for (uint32_t k = 0; k < n; k++) {
+    OsdiTransitionState *s = &extra->transition_state[k];
+    uint32_t y_mapped = node_mapping[infos[k].y_node];
+    uint32_t z_mapped = node_mapping[infos[k].z_node];
+
+    if (!is_tran || is_init_tran) {
+      if (is_init_tran) {
+        /* this transient's first evaluation, the operating point converged
+         * behind it: idle at the input's value, no ramp, nothing pending --
+         * a previous run's schedule is gone */
+        s->armed = true;
+        s->active = false;
+        s->changed_prev = false;
+        s->n_pending = 0;
+        s->x_last = ckt->CKTrhsOld ? ckt->CKTrhsOld[y_mapped] : 0.0;
+        s->v_out = s->x_last;
+      }
+      /* V(z) - V(y) = 0 */
+      *(extra->transition_jac_y[k]) += 1.0;
+      *(extra->transition_jac_z[k]) += -1.0;
+      continue;
+    }
+    /* V(z) - ramp(t) = 0  ->  jac[z,z] += -1, rhs[z] += -ramp(t) */
+    double v = transition_value_at(s, ckt->CKTtime);
+    *(extra->transition_jac_z[k]) += -1.0;
+    ckt->CKTrhs[z_mapped] += -v;
+  }
+}
+
+static void slew_stamp(CKTcircuit *ckt, void *inst, OsdiExtraInstData *extra,
+                       const OsdiRegistryEntry *entry,
+                       const OsdiDescriptor *descr, bool is_tran,
+                       bool is_init_tran) {
+  uint32_t n = entry->num_slews;
+  if (n == 0 || !extra->slew_state)
+    return;
+  const OsdiSlewInfo *infos = (const OsdiSlewInfo *)entry->slew_infos;
+  uint32_t *node_mapping =
+      (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+
+  for (uint32_t k = 0; k < n; k++) {
+    OsdiSlewState *s = &extra->slew_state[k];
+    uint32_t y_mapped = node_mapping[infos[k].y_node];
+    uint32_t z_mapped = node_mapping[infos[k].z_node];
+    double x = ckt->CKTrhsOld ? ckt->CKTrhsOld[y_mapped] : 0.0;
+    double h = is_tran ? ckt->CKTtime - s->t_last : 0.0;
+
+    if (!is_tran || is_init_tran || !(h > 0.0)) {
+      if (is_init_tran) {
+        /* seed from the operating point, at the transient's origin */
+        s->y_last = x;
+        s->t_last = ckt->CKTtime - ckt->CKTdelta;
+      }
+      /* V(z) - V(y) = 0 */
+      *(extra->slew_jac_y[k]) += 1.0;
+      *(extra->slew_jac_z[k]) += -1.0;
+      continue;
+    }
+    /* the bounds the compiled model stored at this evaluation, magnitudes (a
+     * dropped limit is +inf, E-696: inf * h = inf, no bound on that side) */
+    double pos = *((double *)(((char *)inst) + infos[k].pos_offset));
+    double neg = *((double *)(((char *)inst) + infos[k].neg_offset));
+    double up = s->y_last + pos * h;
+    double dn = s->y_last - neg * h;
+    double g, dg;
+    if (x > up) {
+      g = up;
+      dg = 0.0;
+    } else if (x < dn) {
+      g = dn;
+      dg = 0.0;
+    } else {
+      g = x;
+      dg = 1.0;
+    }
+    /* g(V(y)) - V(z) = 0, linearised at the current iterate */
+    *(extra->slew_jac_y[k]) += dg;
+    *(extra->slew_jac_z[k]) += -1.0;
+    ckt->CKTrhs[z_mapped] += dg * x - g;
+  }
+}
+
 /* Enhancement-394: `scale` joins the list. `.option scale` is applied by each
  * BUILT-IN device inside its own parameter setter (b3par.c and friends call
  * cp_getvar("scale")); nothing scales an OSDI instance parameter, because the
@@ -1728,6 +1855,10 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
       }
       last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran,
                           is_init_tran);
+      /* Enhancement-698: transition() and slew() */
+      transition_stamp(ckt, inst, extra_inst_data, entry, descr, is_tran,
+                       is_init_tran);
+      slew_stamp(ckt, inst, extra_inst_data, entry, descr, is_tran, is_init_tran);
       /* Enhancement-532: chained terminal-terminal collapse shorts */
       syn_short_stamp(extra_inst_data);
       /* Enhancement-364: inject Verilog-A noise sources into the transient
@@ -1783,6 +1914,11 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
         }
         last_crossing_stamp(inst, extra_inst_data, entry, descr, ckt, is_tran,
                           is_init_tran);
+        /* Enhancement-698: transition() and slew() */
+        transition_stamp(ckt, inst, extra_inst_data, entry, descr, is_tran,
+                         is_init_tran);
+        slew_stamp(ckt, inst, extra_inst_data, entry, descr, is_tran,
+                   is_init_tran);
         /* Enhancement-532: chained terminal-terminal collapse shorts */
         syn_short_stamp(extra_inst_data);
         /* Enhancement-364: inject Verilog-A noise sources into the transient

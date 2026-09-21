@@ -9,6 +9,13 @@ trise, tfall)` operator added in Enhancement-6, covering **DC**, **AC**, and
 
 See `../Enhancement-6.md` (§3) for the full implementation writeup.
 
+> **Since [Enhancement-698](../../enhancements_doc/Enhancement-698.md)** the
+> realization described below is history: `transition` is stamped by the
+> simulator (like `absdelay`), not by a tracking loop compiled into the
+> model -- exact LRM ramps, no tail, no small-signal corner. The decks and
+> results here still run; the loop's `K`, its lowpass corner and the
+> `rate = 1/t` amplitude approximation no longer exist.
+
 ## The model: a delayed, rate-shaped comparator
 
 `transition_demo.va` compares `V(in)` against a fixed threshold, then

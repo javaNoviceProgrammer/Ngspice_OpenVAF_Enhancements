@@ -22,7 +22,10 @@ deviation in the laplace filters. This suite pins the fixes:
   warning naming the filter, while parameter-built coefficients stay
   silent. With the coefficient held constant the filter is verified as
   the matching fixed lowpass (|H| = 0.7071 at the corner).
-- The 4-arg `transition` amplitude approximation (E-512's documented
-  contract) is re-pinned so any change to it is caught here.
+- The 4-arg `transition` ramp takes `rise_time` whatever the swing
+  (4.5.8): a 0 → 2 step is at 1.0 half way through its 1 µs and at 2.0
+  after it. Until [E-698](../../enhancements_doc/Enhancement-698.md) the
+  operator ran at the fixed rate `1/rise_time` (1.0996 at 2.1 µs), an
+  approximation this suite pinned as the shipped contract.
 
 Run `python3 verify_lrmfilters.py` — 14 checks, both solvers.

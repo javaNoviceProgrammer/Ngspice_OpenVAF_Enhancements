@@ -460,6 +460,8 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
             inst_data.store_bound_step(instance, &builder);
             inst_data.store_delay_times(instance, &builder);
             inst_data.store_last_crossing_dirs(instance, &builder);
+            inst_data.store_transition_args(instance, &builder); // Enhancement-698
+            inst_data.store_slew_rates(instance, &builder);
             inst_data.store_hidden_state(instance, &builder);
             inst_data.store_event_state(instance, &builder);
 

@@ -144,7 +144,13 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
                 PlaceKind::CollapseImplicitEquation(_) => TRUE,
                 PlaceKind::IsVoltageSrc(_) => FALSE,
                 PlaceKind::BoundStep => INFINITY,
-                PlaceKind::AbsDelayTime(_) | PlaceKind::LastCrossingDirection(_) => F_ZERO,
+                PlaceKind::AbsDelayTime(_)
+                | PlaceKind::LastCrossingDirection(_)
+                | PlaceKind::TransitionDelay(_)
+                | PlaceKind::TransitionRise(_)
+                | PlaceKind::TransitionFall(_)
+                | PlaceKind::SlewPosRate(_)
+                | PlaceKind::SlewNegRate(_) => F_ZERO,
                 PlaceKind::EventState(i) => self.use_param(ParamKind::EventState(i)),
             };
             let entry = self.func.func.layout.entry_block().unwrap();

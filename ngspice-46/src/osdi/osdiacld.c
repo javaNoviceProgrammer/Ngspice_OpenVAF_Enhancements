@@ -137,6 +137,34 @@ int OSDIacLoad(GENmodel *inModel, CKTcircuit *ckt) {
         }
       }
 
+      /* Enhancement-698: transition -- LRM 4.5.8 puts its small-signal
+       * transfer at unity "for all frequencies in all situations"; the delay
+       * keeps its phase, e^{-j*omega*td}, exactly as the absdelay stage it
+       * replaced stamped it (E-588's contract, pinned by evtedge). slew --
+       * unity (E-588: a slew that is not slewing is a wire). Same complex
+       * entry layout as the absdelay stamp above. */
+      if (entry->num_transitions > 0) {
+        const OsdiTransitionInfo *tinfos =
+            (const OsdiTransitionInfo *)entry->transition_infos;
+        OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
+        double omega = ckt->CKTomega;
+        for (uint32_t k = 0; extra->transition_jac_y && k < entry->num_transitions; k++) {
+          double td = *((double *)(((char *)inst) + tinfos[k].td_offset));
+          if (!(td > 0.0))
+            td = 0.0;
+          *(extra->transition_jac_y[k]) += cos(omega * td);
+          *(extra->transition_jac_y[k] + 1) += -sin(omega * td);
+          *(extra->transition_jac_z[k]) += -1.0;
+        }
+      }
+      if (entry->num_slews > 0) {
+        OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
+        for (uint32_t k = 0; extra->slew_jac_y && k < entry->num_slews; k++) {
+          *(extra->slew_jac_y[k]) += 1.0;
+          *(extra->slew_jac_z[k]) += -1.0;
+        }
+      }
+
       /* Enhancement-532: the synthetic 0 V collapse shorts stamp identically
        * in AC -- purely real +-1 entries (imaginary parts stay zero); the
        * active pointers already address the complex arrays under KLU. */

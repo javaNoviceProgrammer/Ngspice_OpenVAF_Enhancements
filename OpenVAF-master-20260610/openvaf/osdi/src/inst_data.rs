@@ -236,6 +236,13 @@ pub struct OsdiInstanceData<'ll> {
     pub delay_times: Vec<EvalOutputSlot>,
     /// One eval-output slot per last_crossing slot, storing the current `dir` value.
     pub last_crossing_dirs: Vec<EvalOutputSlot>,
+    /// Enhancement-698: per transition slot, the eval-output slots holding its delay,
+    /// rise time and fall time (`PlaceKind::TransitionDelay/Rise/Fall`), which the
+    /// simulator's scheduler reads through `OsdiTransitionInfo`.
+    pub transition_args: Vec<[EvalOutputSlot; 3]>,
+    /// Enhancement-698: per slew slot, the eval-output slots holding its positive and
+    /// negative rate bounds (`PlaceKind::SlewPosRate/NegRate`), read through `OsdiSlewInfo`.
+    pub slew_rates: Vec<[EvalOutputSlot; 2]>,
     /// Enhancement-7: one persistent eval-output slot per analog-block `Variable`,
     /// storing its value across evaluations. Read (via `load_eval_output_slot`) at
     /// the start of eval() to satisfy `ParamKind::HiddenState(var)`, then
@@ -331,6 +338,30 @@ impl<'ll> OsdiInstanceData<'ll> {
             })
             .collect();
 
+        // Enhancement-698: the transition and slew operators' arguments, one
+        // output slot each, in slot order
+        let mut arg_slot = |kind: PlaceKind| -> Option<EvalOutputSlot> {
+            let val = module.intern.outputs.get(&kind)?;
+            let mut val = val.expand()?;
+            val = strip_optbarrier(module.eval, val);
+            Some(eval_outputs.insert_full(val, ty_f64).0)
+        };
+        let transition_args: Vec<[EvalOutputSlot; 3]> =
+            (0..module.intern.transition_equations.len() as u32)
+                .filter_map(|i| {
+                    Some([
+                        arg_slot(PlaceKind::TransitionDelay(i))?,
+                        arg_slot(PlaceKind::TransitionRise(i))?,
+                        arg_slot(PlaceKind::TransitionFall(i))?,
+                    ])
+                })
+                .collect();
+        let slew_rates: Vec<[EvalOutputSlot; 2]> = (0..module.intern.slew_equations.len() as u32)
+            .filter_map(|i| {
+                Some([arg_slot(PlaceKind::SlewPosRate(i))?, arg_slot(PlaceKind::SlewNegRate(i))?])
+            })
+            .collect();
+
         let hidden_state: Vec<(Variable, EvalOutputSlot)> = module
             .intern
             .params
@@ -417,6 +448,8 @@ impl<'ll> OsdiInstanceData<'ll> {
             bound_step,
             delay_times,
             last_crossing_dirs,
+            transition_args,
+            slew_rates,
             hidden_state,
             event_state,
         }
@@ -454,6 +487,56 @@ impl<'ll> OsdiInstanceData<'ll> {
             LLVMOffsetOfElement(*target_data, NonNull::from(self.ty).as_ptr(), elem)
         } as u32;
         Some(off)
+    }
+
+    /// Enhancement-698: byte offset of one eval-output slot in the instance data.
+    fn slot_offset(&self, slot: EvalOutputSlot, target_data: &LLVMTargetDataRef) -> u32 {
+        let elem = self.eval_output_slot_elem(slot);
+        unsafe { LLVMOffsetOfElement(*target_data, NonNull::from(self.ty).as_ptr(), elem) as u32 }
+    }
+
+    pub unsafe fn store_transition_args(
+        &self,
+        ptr: &'ll llvm_sys::LLVMValue,
+        builder: &mir_llvm::Builder<'_, '_, 'll>,
+    ) {
+        for slots in &self.transition_args {
+            for &slot in slots {
+                self.store_eval_output_slot(slot, ptr, builder);
+            }
+        }
+    }
+
+    /// The byte offsets of transition slot `i`'s delay, rise time and fall time.
+    pub fn transition_arg_offsets(
+        &self,
+        i: usize,
+        target_data: &LLVMTargetDataRef,
+    ) -> Option<[u32; 3]> {
+        let s = self.transition_args.get(i)?;
+        Some([
+            self.slot_offset(s[0], target_data),
+            self.slot_offset(s[1], target_data),
+            self.slot_offset(s[2], target_data),
+        ])
+    }
+
+    pub unsafe fn store_slew_rates(
+        &self,
+        ptr: &'ll llvm_sys::LLVMValue,
+        builder: &mir_llvm::Builder<'_, '_, 'll>,
+    ) {
+        for slots in &self.slew_rates {
+            for &slot in slots {
+                self.store_eval_output_slot(slot, ptr, builder);
+            }
+        }
+    }
+
+    /// The byte offsets of slew slot `i`'s positive and negative rate bounds.
+    pub fn slew_rate_offsets(&self, i: usize, target_data: &LLVMTargetDataRef) -> Option<[u32; 2]> {
+        let s = self.slew_rates.get(i)?;
+        Some([self.slot_offset(s[0], target_data), self.slot_offset(s[1], target_data)])
     }
 
     pub unsafe fn store_last_crossing_dirs(

@@ -37,6 +37,13 @@ typedef struct OsdiRegistryEntry {
   uint32_t num_last_crossings;
   const void *last_crossing_infos;  /* points into the loaded .osdi's OSDI_LAST_CROSSING_INFOS */
 
+  /* Enhancement-698: transition() and slew() are stamped by the simulator, like
+   * absdelay; filled at .osdi load time from OSDI_TRANSITION_* / OSDI_SLEW_* */
+  uint32_t num_transitions;
+  const void *transition_infos;  /* points into the .osdi's OSDI_TRANSITION_INFOS */
+  uint32_t num_slews;
+  const void *slew_infos;        /* points into the .osdi's OSDI_SLEW_INFOS */
+
   /* Enhancement-401: terminal-short support, filled at .osdi load time from
    * OSDI_TERM_SHORT_* symbols. A model that shorts two of its own TERMINALS with
    * `V(a,b) <+ 0` cannot be served by node collapsing (terminals are allocated by

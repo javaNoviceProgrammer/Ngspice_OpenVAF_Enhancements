@@ -1,0 +1,28 @@
+`include "disciplines.vams"
+// Enhancement-698 (hunt F1/F2 of 2026-09-21): transition and slew are realised
+// by the simulator -- LRM 4.5.8's piecewise-linear ramps between the accepted
+// values of the input, scheduled on ngspice's own timeline -- instead of a
+// rate-limited tracking loop compiled into the model. The loop ran at the fixed
+// RATE 1/tr (a 5 V swing took 5 * tr) and its stiff tail rang under the
+// trapezoidal rule when the edge fell inside a timestep (the plateau read
+// 0.99981, and `ddt` of it a current that was not there).
+module tramp(a, o);
+  inout a, o; electrical a, o;
+  parameter real amp = 1.0;      // the swing the comparator commands
+  parameter real td = 0.0;
+  parameter real tr = 1e-6;
+  parameter real tf = 1e-6;
+  parameter real c = 1e-9;       // the switched capacitance behind `ic`
+  parameter integer sel = 0;     // 0: transition of the comparator; 1: slew of
+                                 // it at the same rate; 2: transition of V(a)
+  (*desc="y"*) real y;
+  (*desc="ic"*) real ic;
+  analog begin
+    if (sel == 0) y = transition(V(a) > 0.5 ? amp : 0.0, td, tr, tf);
+    if (sel == 1) y = slew(V(a) > 0.5 ? amp : 0.0, abs(amp) / tr, -abs(amp) / tf);
+    if (sel == 2) y = transition(V(a), td, tr, tf);
+    ic = ddt(c * y);
+    V(o) <+ y;
+    I(a) <+ V(a) * 1e-12;
+  end
+endmodule

@@ -30,8 +30,8 @@ under the Transient-op fallback) were only touched in passing.
 
 | # | finding | kind |
 |---|---|---|
-| [F1](#f1--transition-rise-and-fall-times-scale-with-the-amplitude-of-the-step) | the rise and fall times of `transition()` scale with the amplitude of the step: `transition(x, 0, 1u, 1u)` takes 1 µs from 0 to 1, **5 µs from 0 to 5, 0.2 µs from 0 to 0.2, 3 µs from 0 to −3**; under `` `default_transition 1u `` a 1 → 1.1 step takes 0.1 µs. LRM 4.5.8 says the filter "forces all positive transitions of expr to occur over rise_time" — the time, not a rate. The operator is lowered as `slew(absdelay(x, td), 1/trise, 1/tfall)`, a rate that assumes a unit swing (the lowering's own comment calls it "an approximation for arbitrary-amplitude inputs") | wrong result, silent |
-| [F2](#f2--transition-and-slew-settle-off-target-after-a-step-when-the-timestep-is-longer-than-the-ramp) | under the default trapezoidal integration, a `transition` or `slew` output that ramps faster than the timestep overshoots its target (1.00020 for a 1 µs rise at a 10 µs step, 1.00198 for a zero rise at a 1 µs step) and then **stays 2e-4 to 6e-4 off it for the rest of the plateau** (0.999811 at 0.5 ms and 0.999814 at 0.9 ms after a delayed edge; 1.00057 and 1.00056 after an undelayed one; 1.82e-4 instead of 0 after the fall); `slew` of the same comparator shows the same 1.00057, `absdelay` alone is exact, `method=gear` settles exactly (overshoot 8e-5 remains); a ramp at or above the step is exact. **Through `ddt` the error is no longer small:** a switched capacitor `ddt(1n * transition(cmp, 0, 1u, 1u))` into 1 kΩ puts the right 1 V pulse on the load for 1 µs and then 0.57–0.84 V for the whole plateau where it should be 0 (gear: 0). The tracking loop's time constant is trise/1000 = 1 ns, and the trapezoidal rule neither damps its corner error nor decays it: the factor per 10 µs step is (1 − h/2τ)/(1 + h/2τ) ≈ −0.9996 | wrong result, silent |
+| [F1](#f1--transition-rise-and-fall-times-scale-with-the-amplitude-of-the-step) | *(fixed in [E-698](../../enhancements_doc/Enhancement-698.md): `transition` and `slew` are realised by the simulator -- LRM 4.5.8's ramps scheduled from the accepted changes of the input, corners as breakpoints, the interruption rule; `slew` the ideal limiter on the accepted output -- no tracking loop, no fixed rate, no tail)* the rise and fall times of `transition()` scale with the amplitude of the step: `transition(x, 0, 1u, 1u)` takes 1 µs from 0 to 1, **5 µs from 0 to 5, 0.2 µs from 0 to 0.2, 3 µs from 0 to −3**; under `` `default_transition 1u `` a 1 → 1.1 step takes 0.1 µs. LRM 4.5.8 says the filter "forces all positive transitions of expr to occur over rise_time" — the time, not a rate. The operator is lowered as `slew(absdelay(x, td), 1/trise, 1/tfall)`, a rate that assumes a unit swing (the lowering's own comment calls it "an approximation for arbitrary-amplitude inputs") | wrong result, silent |
+| [F2](#f2--transition-and-slew-settle-off-target-after-a-step-when-the-timestep-is-longer-than-the-ramp) | *(fixed in [E-698](../../enhancements_doc/Enhancement-698.md): `transition` and `slew` are realised by the simulator -- LRM 4.5.8's ramps scheduled from the accepted changes of the input, corners as breakpoints, the interruption rule; `slew` the ideal limiter on the accepted output -- no tracking loop, no fixed rate, no tail)* under the default trapezoidal integration, a `transition` or `slew` output that ramps faster than the timestep overshoots its target (1.00020 for a 1 µs rise at a 10 µs step, 1.00198 for a zero rise at a 1 µs step) and then **stays 2e-4 to 6e-4 off it for the rest of the plateau** (0.999811 at 0.5 ms and 0.999814 at 0.9 ms after a delayed edge; 1.00057 and 1.00056 after an undelayed one; 1.82e-4 instead of 0 after the fall); `slew` of the same comparator shows the same 1.00057, `absdelay` alone is exact, `method=gear` settles exactly (overshoot 8e-5 remains); a ramp at or above the step is exact. **Through `ddt` the error is no longer small:** a switched capacitor `ddt(1n * transition(cmp, 0, 1u, 1u))` into 1 kΩ puts the right 1 V pulse on the load for 1 µs and then 0.57–0.84 V for the whole plateau where it should be 0 (gear: 0). The tracking loop's time constant is trise/1000 = 1 ns, and the trapezoidal rule neither damps its corner error nor decays it: the factor per 10 µs step is (1 − h/2τ)/(1 + h/2τ) ≈ −0.9996 | wrong result, silent |
 | [F3](#f3--integer--saturates-where-every-other-integer-operator-wraps) | *(fixed in [E-693](../../enhancements_doc/Enhancement-693.md): the integer power is exponentiation by squaring in wrapping i32 -- `x ** 2` is literally `x * x` -- and the lint's twin follows)* integer `**` saturates at ±2147483647 where `+`, `−`, `*` and `<<` wrap: at run time `(2*k)**31` is 2147483647 while `2*2*…*2` (31 times) is −2147483648, `(46341*k)**2` is 2147483647 while `(46341*k)*(46341*k)` is −2147479015, so `x**2 ≠ x*x` past 46340; the folded defaults agree with the run time, and L030 says "clipped to 2147483647" for `2**31` and "wraps to −2147483648" for the same value written as a product. The integer power is lowered through `llvm.pow.f64` and a saturating real-to-integer cast | wrong result, silent, edge |
 | [F4](#f4----dump-json-writes-invalid-json-for-any-module-with-a-fatal-error-warning-or-info) | *(fixed in [E-694](../../enhancements_doc/Enhancement-694.md): every string the dump writes is escaped per RFC 8259)* `--dump-json` writes a file no JSON parser accepts whenever the module contains a `$fatal`, `$error`, `$warning` or `$info` (with or without a message): the lowering appends a real newline to the message (`hir_lower/src/ctx.rs:254`) and the serializer writes string constants raw, without escaping (`mir/src/serialize.rs:170`), so the `"sconst"` value spans two lines. `$strobe`, `$display`, `$finish`, noise names and source-escaped literals survive only because their escapes are still the two source characters | tool output |
 | [F5](#f5--an-unknown---target_cpu-prints-llvms-warning-33-times-garbled-and-compiles-anyway) | *(fixed in [E-695](../../enhancements_doc/Enhancement-695.md): the E-453 probe target machine is created with stderr captured and LLVM's complaint becomes one error with a help line; exit 65, no output)* `--target_cpu bogus` compiles with exit 0 and prints LLVM's "'bogus' is not a recognized processor for this target (ignoring processor)" 33 times, interleaved from the parallel codegen threads into lines such as `''bogus_cpubogus_cpu' is not a recognized processor…` — the option is validated nowhere, the message is not the compiler's, and the code is generated for LLVM's generic CPU, not the one asked for | diagnostic |
@@ -210,6 +210,17 @@ overridden times and rates" did not vary the swing, which is why it passed.
 **Kind.** Wrong result, silent; every `transition` with a non-unit swing. Not
 platform-specific.
 
+*Fixed in [E-698](../../enhancements_doc/Enhancement-698.md).* The operator is no
+longer a tracking loop compiled into the model: the compiled code emits the
+synthetic input node and stores td, rise and fall in instance data, and ngspice
+schedules the ramp from the change of the *accepted* input -- from the current
+output to the new value over rise_time or fall_time, so a 5 V swing takes 1 µs
+for `tr = 1u`, as does a 0.2 V or a −3 V one -- with breakpoints at both
+corners and 4.5.8's readjustment rule for an interrupted ramp (the 0 → 2 ramp
+reversed after 50 µs is at 1.0, and falls to 0 in 50 µs more from the
+original destination's slope). `` `default_transition `` and the delay-only
+form ramp over the directive's time at any swing.
+
 ## F2 — `transition` and `slew` settle off target after a step when the timestep is longer than the ramp
 
 **Observed.** The same module with `amp = 1`, the pulse rising at 1 ms and falling at 3 ms,
@@ -281,6 +292,17 @@ then **0.57 V at 2.5 ms and up to 0.84 V across the plateau** where it should re
 **Kind.** Wrong result, silent; default integration method; the magnitude is 2e-4 to
 2e-3 of the swing on the operator's output, and of the order of the edge current on
 its `ddt`.
+
+*Fixed in [E-698](../../enhancements_doc/Enhancement-698.md).* There is no tail to
+ring: `transition`'s output is a piecewise-linear function of time the
+simulator stamps as a source (`V(z) = ramp(t)`), and `slew`'s is the ideal
+limiter on the output accepted at the previous point,
+`clamp(V(y), y_last − neg·h, y_last + pos·h)`, exact while tracking and an
+exact ramp while limiting. Every row of both tables reads 1.000000 and 0
+under trap at a 10 µs step; the switched capacitor's `ddt` reads 1 mA on the
+edge (the leading corner enters the breakpoint table, so the integrator
+restarts at order one there instead of ringing 2, 0, 2, 0 down the ramp) and
+exactly 0 across the plateau.
 
 ## F3 — integer `**` saturates where every other integer operator wraps
 

@@ -212,5 +212,100 @@ for tr, sel, what in (("1e-13", 1, "slew at 1e13 V/s"), ("1e-30", 1, "slew at 1e
     check(f"{what} runs the transient and settles at 1.0 (it aborted at the first edge)",
           pts and got is not None and abs(got - 1.0) < 1e-6, f"{len(pts)} points, y(0.5u)={got}")
 
+# ---------------------------------------------------------------------------
+# 5. Enhancement-698 (hunt F1 and F2 of 2026-09-21): transition and slew are the
+#    simulator's. The tracking loop compiled into the model ran at the fixed
+#    RATE 1/tr, so a 5 V swing took 5 * tr and a 0.2 V swing 0.2 * tr (LRM
+#    4.5.8: every transition takes rise_time); and, a stiff ODE, it rang under
+#    the trapezoidal rule when the edge fell inside a timestep -- the plateau
+#    read 0.99981 for the rest of the run and `ddt` of it a spurious current of
+#    up to 0.84 mA where the true current is 0. Now the simulator schedules
+#    the ramp from the accepted change of the input, with the corners as
+#    breakpoints: exact amplitude, exact plateau at any step, a clean `ddt`,
+#    the LRM's interrupted-transition rule, and a continuous input that no
+#    longer breeds breakpoints.
+# ---------------------------------------------------------------------------
+print("\n  Enhancement-698: the ramp takes rise_time whatever the swing, at any step")
+
+TRAMP = os.path.join(HERE, "_te_tramp.osdi")
+r = subprocess.run([OPENVAF, os.path.join(HERE, "tramp.va"), "-o", TRAMP],
+                   capture_output=True, text=True, timeout=300, cwd=HERE)
+check("tramp.va compiles", os.path.exists(TRAMP), (r.stdout + r.stderr).strip()[-160:])
+
+AT = "@"
+
+
+def meas(card, src, tstop, step, tag, lines, opts=""):
+    """run the comparator model on `src`, return {name: value} of the meas lines"""
+    p = os.path.join(HERE, f"_te_{tag}.cir")
+    with open(p, "w") as f:
+        f.write(f"transedge 698\n{src}\nN1 a o mm\n.model mm tramp {card}\nRo o 0 1e12\n"
+                f"{opts}\n.control\npre_osdi {os.path.basename(TRAMP)}\noption noacct\n"
+                f"save all {AT}n1[ic]\ntran {step} {tstop}\n{lines}\n.endc\n.end\n")
+    try:
+        rr = subprocess.run([NGSPICE, "-b", os.path.basename(p)], cwd=HERE,
+                            capture_output=True, text=True, timeout=300, errors="replace")
+    except subprocess.TimeoutExpired:
+        return {}
+    vals = {}
+    for ln in (rr.stdout + rr.stderr).splitlines():
+        m = re.match(r"^(\w+)\s*=\s*([-\d.eE+]+)", ln.strip())
+        if m:
+            try:
+                vals[m.group(1)] = float(m.group(2))
+            except ValueError:
+                pass
+    return vals
+
+
+PULSE = "V1 a 0 PULSE(0 1 1m 1n 1n 2m 10m)"
+for amp in (1.0, 5.0, 0.2, -3.0):
+    v = meas(f"amp={amp} tr=1u tf=1u", PULSE, "6m", "10u", f"amp{amp}",
+             "meas tran vmid FIND v(o) AT=1.0005m\nmeas tran vtop FIND v(o) AT=1.0011m\n"
+             "meas tran vfmid FIND v(o) AT=3.0005m\nmeas tran vlow FIND v(o) AT=3.0011m\n"
+             "meas tran vpl FIND v(o) AT=2.5m\nmeas tran vpl0 FIND v(o) AT=5.5m")
+    ok = (abs(v.get("vmid", 9) - amp / 2) < 0.02 * abs(amp) and abs(v.get("vtop", 9) - amp) < 1e-9
+          and abs(v.get("vfmid", 9) - amp / 2) < 0.02 * abs(amp) and abs(v.get("vlow", 9)) < 1e-9
+          and abs(v.get("vpl", 9) - amp) < 1e-9 and abs(v.get("vpl0", 9)) < 1e-9)
+    check(f"a swing of {amp}: half way at 0.5 us, done at 1 us, both edges; plateaus exactly "
+          f"{amp} and 0 at a 10 us step under trap (was {amp} * 1 us, and 0.99981)", ok,
+          " ".join(f"{k}={v[k]:.6g}" for k in ("vmid", "vtop", "vfmid", "vlow", "vpl", "vpl0") if k in v))
+
+v = meas("amp=1 tr=1u tf=1u c=1n", PULSE, "4m", "0.1u", "ddt",
+         f"let aic = abs({AT}n1[ic])\nmeas tran peak MAX aic from=0 to=4m\n"
+         f"meas tran tail MAX aic from=1.2m to=2.9m\nmeas tran ic25 FIND {AT}n1[ic] AT=2.5m")
+check("ddt(1n * transition) at a 0.1 us step: the edge current is 1 mA and the plateau "
+      "current is 0 (was 2e-4 V ringing: up to 0.84 mA across the plateau)",
+      abs(v.get("peak", 9) - 1e-3) < 1e-8 and abs(v.get("tail", 9)) < 1e-15
+      and abs(v.get("ic25", 9)) < 1e-15,
+      " ".join(f"{k}={v[k]:.6g}" for k in ("peak", "tail", "ic25") if k in v))
+
+v = meas("amp=1 tr=1u tf=1u sel=1", PULSE, "6m", "10u", "slew",
+         "meas tran vpl FIND v(o) AT=2.5m\nmeas tran vpl0 FIND v(o) AT=5.5m\n"
+         "meas tran vmax MAX v(o) from=0 to=6m\nmeas tran vmin MIN v(o) from=0 to=6m")
+check("slew of the comparator at 1 V/us, 10 us step: plateaus exactly 1 and 0, never outside "
+      "[0, 1] (was 0.99981 / 1.82e-4 with an overshoot to 1.00020)",
+      abs(v.get("vpl", 9) - 1) < 1e-9 and abs(v.get("vpl0", 9)) < 1e-9
+      and v.get("vmax", 9) <= 1 + 1e-9 and v.get("vmin", -9) >= -1e-9,
+      " ".join(f"{k}={v[k]:.6g}" for k in ("vpl", "vpl0", "vmax", "vmin") if k in v))
+
+# LRM 4.5.8, Figure 4-7: a 0 -> 2 ramp over 100 us reversed after 50 us is at
+# 1.0 when interrupted; the readjusted fall takes its slope from the original
+# DESTINATION, (0 - 2)/100u, so it reaches 0 at 1.05 ms + 50 us.
+v = meas("amp=2 tr=100u tf=100u", "V1 a 0 PULSE(0 1 1m 1n 1n 50u 10m)", "1.3m", "1u", "intr",
+         "meas tran vi FIND v(o) AT=1.05m\nmeas tran vh FIND v(o) AT=1.075m\n"
+         "meas tran vz FIND v(o) AT=1.101m\nmeas tran tz WHEN v(o)=0.01 FALL=1")
+check("interrupted ramp (4.5.8 Figure 4-7): 1.0 at the reversal (was 0.5), 0.5 half way "
+      "down, back at 0 by 1.101 ms, y = 0.01 at 1.0995 ms",
+      abs(v.get("vi", 9) - 1.0) < 1e-3 and abs(v.get("vh", 9) - 0.5) < 1e-3
+      and abs(v.get("vz", 9)) < 1e-9 and abs(v.get("tz", 9) - 1.0995e-3) < 1e-6,
+      " ".join(f"{k}={v[k]:.6g}" for k in ("vi", "vh", "vz", "tz") if k in v))
+
+v = meas("tr=1u tf=1u sel=2", "V1 a 0 SIN(0.5 1 1k)", "2.5m", "1u", "sine",
+         "meas tran vend FIND v(o) AT=2.5m\nmeas tran n FIND time AT=2.5m")
+check("a sine through transition (a continuous input, LRM: 'may run slowly') completes and "
+      "follows: 0.5 +- 0.1 at 2.5 ms (it bred a breakpoint per timepoint and never finished)",
+      "vend" in v and abs(v["vend"] - 0.5) < 0.1, f"vend={v.get('vend')}")
+
 print(f"\n  {passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

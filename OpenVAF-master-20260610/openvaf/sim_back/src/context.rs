@@ -48,6 +48,11 @@ impl<'a> Context<'a> {
             | PlaceKind::BoundStep
             | PlaceKind::AbsDelayTime(_)
             | PlaceKind::LastCrossingDirection(_)
+            | PlaceKind::TransitionDelay(_)
+            | PlaceKind::TransitionRise(_)
+            | PlaceKind::TransitionFall(_)
+            | PlaceKind::SlewPosRate(_)
+            | PlaceKind::SlewNegRate(_)
             | PlaceKind::EventState(_) => true,
             PlaceKind::Var(var) => module.op_vars.contains_key(&var),
             _ => false,
@@ -192,6 +197,11 @@ impl<'a> Context<'a> {
                             | PlaceKind::BoundStep
                             | PlaceKind::AbsDelayTime(_)
                             | PlaceKind::LastCrossingDirection(_)
+                            | PlaceKind::TransitionDelay(_)
+                            | PlaceKind::TransitionRise(_)
+                            | PlaceKind::TransitionFall(_)
+                            | PlaceKind::SlewPosRate(_)
+                            | PlaceKind::SlewNegRate(_)
                             | PlaceKind::EventState(_)
                     )
                 {

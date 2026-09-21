@@ -82,6 +82,75 @@ typedef struct OsdiLastCrossingInfo {
     uint32_t dir_offset;  /* byte offset into OSDI instance data for dir value */
 } OsdiLastCrossingInfo;
 
+/* Enhancement-698 (hunt F1/F2 of 2026-09-21): transition() and slew() are
+ * stamped by the simulator, like absdelay(). One record per slot, read from
+ * the .osdi's OSDI_TRANSITION_INFOS / OSDI_SLEW_INFOS at load time; the ABI is
+ * written up in openvaf/osdi/header/osdi_0_4_enhancement4.h. */
+typedef struct OsdiTransitionInfo {
+    uint32_t y_node;        /* OSDI node index of the synthetic input node V(y) = expr */
+    uint32_t z_node;        /* OSDI node index of the output node                      */
+    uint32_t td_offset;     /* byte offsets, in the instance data, of the delay, the   */
+    uint32_t trise_offset;  /* rise time and the fall time the compiled model writes   */
+    uint32_t tfall_offset;  /* at every evaluation (LRM 4.5.8: read "at this point")   */
+    uint32_t flags;         /* reserved, 0                                             */
+} OsdiTransitionInfo;
+
+typedef struct OsdiSlewInfo {
+    uint32_t y_node;        /* as above                                                */
+    uint32_t z_node;
+    uint32_t pos_offset;    /* byte offsets of the positive and negative rate bounds,  */
+    uint32_t neg_offset;    /* both MAGNITUDES (the compiler took |.|, E-61/E-696)     */
+} OsdiSlewInfo;
+
+/* Enhancement-698: a transition the input's change scheduled but that has not
+ * started -- LRM 4.5.8's "pending transition" (the delayed case). */
+typedef struct OsdiTransitionPending {
+    double t_due;     /* the accepted time of the change + td */
+    double target;    /* the input's new value */
+    double trise;     /* the times the operator held at the change */
+    double tfall;
+} OsdiTransitionPending;
+
+/* Enhancement-698: the state of one transition slot on the ACCEPTED timeline.
+ * Written in OSDIaccept only (seeded by the MODEINITTRAN evaluation), read by
+ * the stamp through transition_value_at(). */
+typedef struct OsdiTransitionState {
+    bool armed;        /* seeded by this transient's MODEINITTRAN evaluation */
+    bool active;       /* a ramp is in progress */
+    bool changed_prev; /* the input changed at the previous accepted point too:
+                        * it is not piecewise constant, no breakpoints for it */
+    double x_last;     /* the input at the last accepted point (change detection) */
+    double v_out;      /* the output at the last accepted point */
+    double t_from;     /* the ramp is followed from (t_from, v_from) on ...         */
+    double v_from;
+    double t_orig;     /* ... along the line through its origin (t1, v1) -- after a */
+    double v_orig;     /* readjustment the virtual (t4, v4) of LRM 4.5.8's figures  */
+    double t_dest;     /* and its destination (t2, v2); the output holds v_dest     */
+    double v_dest;     /* from t_dest on                                            */
+    double slope;
+    OsdiTransitionPending *pending;  /* scheduled transitions, ascending t_due */
+    uint32_t n_pending;
+    uint32_t cap_pending;
+} OsdiTransitionState;
+
+typedef struct OsdiSlewState {
+    double y_last;     /* the output at the last accepted point */
+    double t_last;     /* and its time */
+} OsdiSlewState;
+
+/* The transition slot's output at time t, from its accepted state: its last
+ * accepted value while idle, the ramp's line between the point it is followed
+ * from and its destination, the destination after that. */
+static inline double transition_value_at(const OsdiTransitionState *s, double t) {
+  if (!s->active)
+    return s->v_out;
+  if (t >= s->t_dest)
+    return s->v_dest;
+  if (t <= s->t_from)
+    return s->v_from;
+  return s->v_orig + s->slope * (t - s->t_orig);
+}
+
 struct trnoise_state;
 
 typedef struct OsdiExtraInstData {
@@ -148,6 +217,19 @@ typedef struct OsdiExtraInstData {
    * cx's pattern. NULL under SPARSE. */
   double **crossing_jac_z_csc;
   double **crossing_jac_z_cx;
+
+  /* Enhancement-698: transition()/slew() slots. Each needs the same two matrix
+   * entries as an absdelay slot, (z_row, y_col) and (z_row, z_col), so they
+   * live in the delay_jac_* arrays above -- absdelay slots first, then
+   * transition, then slew; osdi_wire_slots() is the total -- and are rebound
+   * and switched with them (osdisetup.c). These alias into those arrays. */
+  double **transition_jac_y;   /* = delay_jac_y + num_absdelays */
+  double **transition_jac_z;
+  double **slew_jac_y;         /* = delay_jac_y + num_absdelays + num_transitions */
+  double **slew_jac_z;
+  OsdiTransitionState *transition_state;   /* [num_transitions] */
+  OsdiSlewState *slew_state;               /* [num_slews] */
+  bool pz_transition_warned;               /* pz_delay_warned's twin, for a delayed transition */
 
   /* Enhancement-364: one time-domain noise generator per Verilog-A noise
    * source (perfectly correlated same-named sources share one, so `noise_owned`
@@ -256,6 +338,13 @@ typedef struct OsdiExtraInstData {
   double lim_old[3];
   bool lim_has_old;
 } OSDI_ALIGN(MAX_ALIGN) OsdiExtraInstData;
+
+/* Enhancement-698: the number of simulator-stamped "wire" slots -- absdelay,
+ * transition, slew -- whose (z,y) and (z,z) matrix entries share the
+ * delay_jac_* arrays, in that order. */
+static inline uint32_t osdi_wire_slots(const OsdiRegistryEntry *entry) {
+  return entry->num_absdelays + entry->num_transitions + entry->num_slews;
+}
 
 /* Enhancement-7: extra bit in the eval() `flags` input (see
  * OsdiSimInfo.flags / eval_flags convention in osdi_0_4.h), set by

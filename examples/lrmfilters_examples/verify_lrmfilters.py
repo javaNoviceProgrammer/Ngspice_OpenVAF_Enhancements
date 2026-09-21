@@ -22,10 +22,12 @@ What this suite pins, each against the quoted clause:
     AUDIBLE: a coefficient reading the solution draws a warning naming
     the filter; parameter-built coefficients stay silent.
 
-Documented approximations re-pinned as the shipped contract: the 4-arg
-transition ramp reaches its final value amplitude-independently (E-512)
--- the audit's amplitude-approximation values are pinned so any change
-to that contract is caught here.
+  * 4.5.8 -- "transition() forces all positive transitions of expr to
+    occur over rise_time": since Enhancement-698 the ramp takes rise_time
+    whatever the swing (a 0 -> 2 step is at 1.0 half way through its 1 us
+    and at 2.0 after it). Until then the operator was a rate-limited loop
+    at the fixed rate 1/rise_time, an approximation this suite pinned as
+    the shipped contract (1.0996 at 2.1u); it now pins the LRM value.
 """
 
 import atexit
@@ -166,20 +168,23 @@ rc, out, _ = compile_src(
 check("a parameter-built coefficient stays silent", rc == 0 and "TRACK" not in out,
       "")
 
-# ---- [4] the documented amplitude approximation stays pinned (E-512) -------
-print("\n4-arg transition amplitude contract (documented approximation):")
+# ---- [4] the ramp takes rise_time whatever the swing (4.5.8, E-698) --------
+print("\n4-arg transition amplitude (LRM 4.5.8, Enhancement-698):")
 rc, out, osdi = compile_file("trans_amp.va")
 check("trans_amp.va compiles", rc == 0)
 if rc == 0:
     sim = run("Ndut in out 0 m1\nVin in 0 dc 0 pulse(0 1 1u 1n 1n 40u 80u)\n"
               ".model m1 trans_amp",
-              "tran 5n 6u\nmeas tran vend FIND v(out) AT=2.1u\n"
+              "tran 5n 6u\nmeas tran vmid FIND v(out) AT=1.5u\n"
+              "meas tran vend FIND v(out) AT=2.1u\n"
               "meas tran vend3 FIND v(out) AT=5.9u", "ta", osdi)
-    check("the 0->2 ramp with trise=1u reads ~1.0996 at 2.1u -- the shipped "
-          "amplitude approximation, pinned so a contract change is caught",
-          close(num(sim, "vend"), 1.0996, 0.005), f"{num(sim, 'vend')}")
-    check("...and does reach 2.0 well before the next edge",
-          close(num(sim, "vend3"), 2.0, 0.01), f"{num(sim, 'vend3')}")
+    check("the 0->2 ramp with trise=1u is half way (1.0) at 1.5u and complete (2.0) at 2.1u "
+          "-- it used to run at the fixed rate 1/trise and read 1.0996 at 2.1u, the "
+          "approximation E-512 documented",
+          close(num(sim, "vmid"), 1.0, 0.02) and close(num(sim, "vend"), 2.0, 1e-6),
+          f"vmid={num(sim, 'vmid')} vend={num(sim, 'vend')}")
+    check("...and holds 2.0 to the next edge",
+          close(num(sim, "vend3"), 2.0, 1e-9), f"{num(sim, 'vend3')}")
 
 print(f"\n{'ALL PASS' if checks == passed else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if checks == passed else 1)
