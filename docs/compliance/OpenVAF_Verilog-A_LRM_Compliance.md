@@ -1204,6 +1204,12 @@ defparam u1.r = 2e3;               // hierarchical override
 defparam u1.u2.r = 4e3;            // two levels down; wins over #(...)
 ```
 
+**The 6.3.6 double-scaling warning** (E-686): a flow contribution whose value
+depends on `$mfactor` — the LRM's `badres`, which "the simulator shall issue a
+warning" for — is lint L037 `mfactor_double_scaling` (warn); `parares`, whose
+`$mfactor` sits in a condition, stays silent, as do potential contributions,
+displays and operating-point variables.
+
 **Hierarchical system parameters on child instances** (LRM 6.3.6):
 `leaf #(.$mfactor(4)) u1 (p, n);` applies the full multiplicity
 transform to the inlined child — reads of `$mfactor` compose

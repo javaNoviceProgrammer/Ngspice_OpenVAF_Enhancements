@@ -267,5 +267,12 @@ pub mod builtin {
         // variable, so the name can be set on a card and never read back; an
         // operating-point variable with a `$` is not exported at all.
         pub const dollar_in_exported_name = LintData{default_lvl: Warn, documentation_id: 36};
+        // Enhancement-686 (hunt F4 of 2026-09-21): a contribution to a branch FLOW
+        // whose value depends on $mfactor. LRM 6.3.6: the simulator multiplies
+        // every flow contribution by $mfactor itself, so the value is scaled
+        // twice -- the LRM's `badres`, for which "the simulator will generate an
+        // error". Warn, as the sentence before it has it ("shall issue a
+        // warning"); -E raises it.
+        pub const mfactor_double_scaling = LintData{default_lvl: Warn, documentation_id: 37};
     }
 }

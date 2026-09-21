@@ -1,6 +1,6 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
 use basedb::lints::builtin::{
-    dead_range_member, const_simparam, contribution_to_input_port, lossy_integer_constant, param_default_out_of_range, rng_in_loop, runtime_format_string, trivial_probe, unknown_analysis_name, unknown_limit_function, unknown_simparam, variant_const_simparam, non_standard_code,
+    dead_range_member, const_simparam, contribution_to_input_port, mfactor_double_scaling, lossy_integer_constant, param_default_out_of_range, rng_in_loop, runtime_format_string, trivial_probe, unknown_analysis_name, unknown_limit_function, unknown_simparam, variant_const_simparam, non_standard_code,
 };
 use basedb::lints::{self, Lint, LintSrc};
 use basedb::{AstIdMap, BaseDB, FileId};
@@ -158,6 +158,11 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             BodyValidationDiagnostic::ContributeToInputPort { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, contribution_to_input_port);
                 Some((contribution_to_input_port, src))
+            }
+            // Enhancement-686 (hunt F4 of 2026-09-21)
+            BodyValidationDiagnostic::MfactorScalesFlowContribution { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, mfactor_double_scaling);
+                Some((mfactor_double_scaling, src))
             }
             BodyValidationDiagnostic::RngInLoop { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, rng_in_loop);
@@ -1844,6 +1849,29 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                              and silence this with (* openvaf_allow=\"contribution_to_input_port\" *) on the \
                              statement"
                         ),
+                    ])
+            }
+            BodyValidationDiagnostic::MfactorScalesFlowContribution { expr, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::warning()
+                    .with_message("`$mfactor` scales this flow contribution a second time")
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "the contribution's value depends on $mfactor".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "LRM 6.3.6: the simulator multiplies every contribution to a branch flow \
+                         by $mfactor itself (and divides a flow probe by it), so a value that \
+                         already carries $mfactor is scaled twice -- the LRM's `badres`, for which \
+                         'the simulator will generate an error'"
+                            .to_owned(),
+                        "help: use $mfactor only where nothing is scaled for you -- in a condition \
+                         (`if (r / $mfactor < 1e-3) V(a,b) <+ 0;`, the LRM's `parares`), a display, \
+                         an operating-point variable -- or silence this with \
+                         (* openvaf_allow=\"mfactor_double_scaling\" *) on the statement"
+                            .to_owned(),
                     ])
             }
             BodyValidationDiagnostic::TrivialBranchAccess { branch, expr, .. } => {

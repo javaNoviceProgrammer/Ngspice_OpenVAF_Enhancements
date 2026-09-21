@@ -9,7 +9,7 @@ use hir_def::{
 use hir_def::expr::{CaseCond, Event};
 use stdx::impl_display;
 use syntax::ast::{AssignOp, BinaryOp, UnaryOp};
-use syntax::name::{AsIdent, Name};
+use syntax::name::{sysfun, AsIdent, Name};
 
 use crate::builtin::{
     ABSDELAY_MAX, DDT_TOL, IDT_IC_ASSERT_TOL, NATURE_ACCESS_BRANCH, NATURE_ACCESS_NODES,
@@ -227,6 +227,11 @@ pub enum BodyValidationDiagnostic {
         stmt: StmtId,
         is_pot: bool,
     },
+    /// Enhancement-686 (hunt F4 of 2026-09-21): a contribution to a branch flow
+    /// whose value depends on `$mfactor` -- LRM 6.3.6's `badres`. `expr` is the
+    /// `$mfactor` read, or the read of a variable assigned from one, inside the
+    /// contribution's value.
+    MfactorScalesFlowContribution { stmt: StmtId, expr: ExprId },
     TrivialBranchAccess {
         branch: BranchWrite,
         expr: ExprId,
@@ -666,6 +671,10 @@ impl BodyValidationDiagnostic {
             validator.validate_stmt(*stmt)
         }
         validator.in_paramset = false;
+
+        // Enhancement-686 (hunt F4 of 2026-09-21): a flow contribution whose value
+        // depends on `$mfactor` is scaled twice (LRM 6.3.6).
+        lint_mfactor_double_scaling(&body, &infere, &mut validator.diagnostics);
 
         // Enhancement-532 (bug-hunt H3): judge a parameter's default against the
         // parameter's own range, where both fold to compile-time constants.
@@ -4552,6 +4561,102 @@ pub(crate) fn const_param_value(db: &dyn HirTyDB, param: ParamId, depth: u32) ->
     let infer = db.inference_result(owner);
     let default = db.param_exprs(param).default;
     const_num_in(db, &body, &infer, default, depth)
+}
+
+/// Enhancement-686 (hunt F4 of 2026-09-21): LRM 6.3.6 has the simulator multiply
+/// every contribution to a branch flow by `$mfactor` (and divide a flow probe by
+/// it), and says "the simulator shall issue a warning if it detects a misuse of
+/// the $mfactor in a manner that would result in double-scaling" -- its `badres`,
+/// `I(a,b) <+ V(a,b) / r * $mfactor`, "will generate an error". Nothing was said.
+///
+/// The value of a flow contribution that reads `$mfactor`, directly or through a
+/// variable assigned (transitively) from it, is reported. A `?:` condition is not
+/// a value -- the LRM's `parares` keeps `$mfactor` in its condition and is legal
+/// -- nor is a potential contribution, a display, or an operating-point
+/// variable. Taint is by variable name, whole body, without flow sensitivity: an
+/// assignment anywhere taints the name everywhere, which errs on the side of the
+/// warning; `(* openvaf_allow="mfactor_double_scaling" *)` on the statement
+/// silences a deliberate case.
+fn lint_mfactor_double_scaling(
+    body: &Body,
+    infere: &InferenceResult,
+    diagnostics: &mut Vec<BodyValidationDiagnostic>,
+) {
+    fn root_name(body: &Body, expr: ExprId) -> Option<Name> {
+        match body.exprs[expr] {
+            Expr::Path { ref path, .. } => path.segments.last().cloned(),
+            Expr::BitSelect { ref base, .. } => base.segments.last().cloned(),
+            _ => None,
+        }
+    }
+    fn tainted_read(body: &Body, expr: ExprId, tainted: &HashSet<Name>) -> Option<ExprId> {
+        match body.exprs[expr] {
+            Expr::Path { ref path, .. } => {
+                let name = path.segments.last()?;
+                (*name == sysfun::mfactor || tainted.contains(name)).then_some(expr)
+            }
+            Expr::BitSelect { ref base, ref indices } => {
+                if base.segments.last().map_or(false, |n| tainted.contains(n)) {
+                    return Some(expr);
+                }
+                indices.iter().find_map(|&i| tainted_read(body, i, tainted))
+            }
+            Expr::Select { then_val, else_val, .. } => tainted_read(body, then_val, tainted)
+                .or_else(|| tainted_read(body, else_val, tainted)),
+            // a bare `$mfactor` is lowered as a zero-argument call of the system
+            // function, not as a path (hir_def/src/body/lower.rs)
+            Expr::Call { fun: Some(ref path), ref args } => {
+                if path.segments.last() == Some(&sysfun::mfactor) {
+                    return Some(expr);
+                }
+                args.iter().find_map(|&a| tainted_read(body, a, tainted))
+            }
+            ref e => {
+                let mut found = None;
+                e.walk_child_exprs(|child| {
+                    if found.is_none() {
+                        found = tainted_read(body, child, tainted);
+                    }
+                });
+                found
+            }
+        }
+    }
+
+    let mut tainted: HashSet<Name> = HashSet::default();
+    loop {
+        let mut changed = false;
+        for (stmt, s) in body.stmts.iter_enumerated() {
+            let Stmt::Assignment { dst, val, assignment_kind: AssignOp::Assign } = *s else {
+                continue;
+            };
+            if !matches!(infere.assignment_destination.get(&stmt), Some(AssignDst::Var(_))) {
+                continue;
+            }
+            let Some(name) = root_name(body, dst) else { continue };
+            if tainted.contains(&name) {
+                continue;
+            }
+            if tainted_read(body, val, &tainted).is_some() {
+                tainted.insert(name);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    for (stmt, s) in body.stmts.iter_enumerated() {
+        let Stmt::Assignment { val, assignment_kind: AssignOp::Contribute, .. } = *s else {
+            continue;
+        };
+        if !matches!(infere.assignment_destination.get(&stmt), Some(AssignDst::Flow(_))) {
+            continue;
+        }
+        if let Some(expr) = tainted_read(body, val, &tainted) {
+            diagnostics.push(BodyValidationDiagnostic::MfactorScalesFlowContribution { stmt, expr });
+        }
+    }
 }
 
 /// Enhancement-532 (bug-hunt H3): does this parameter's constant default violate

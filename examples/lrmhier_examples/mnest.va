@@ -6,7 +6,9 @@ endmodule
 module midz(a, b);
     inout a, b; electrical a, b;
     leafz2 #(.$mfactor(2)) u (a, b);
-    analog I(a,b) <+ $mfactor*1e-6*V(a,b); // mid's own read: outer only
+    // E-686: the read composes with the automatic scaling on purpose here (the
+    // point of the fixture); lint L037 would call it double scaling, rightly.
+    analog (* openvaf_allow="mfactor_double_scaling" *) I(a,b) <+ $mfactor*1e-6*V(a,b); // mid's own read: outer only
 endmodule
 module mnest(p, n);
     inout p, n; electrical p, n;

@@ -1,3 +1,13 @@
+warning[L037]: `$mfactor` scales this flow contribution a second time
+   --> /const_sysfun.va:28:21
+   |
+28 |         I(p, n) <+ (t + m) * 0.0 + V(p, n) * 1e-3;
+   |                     ^ the contribution's value depends on $mfactor
+   |
+   = LRM 6.3.6: the simulator multiplies every contribution to a branch flow by $mfactor itself (and divides a flow probe by it), so a value that already carries $mfactor is scaled twice -- the LRM's `badres`, for which 'the simulator will generate an error'
+   = help: use $mfactor only where nothing is scaled for you -- in a condition (`if (r / $mfactor < 1e-3) V(a,b) <+ 0;`, the LRM's `parares`), a display, an operating-point variable -- or silence this with (* openvaf_allow="mfactor_double_scaling" *) on the statement
+   = mfactor_double_scaling is set to warn by default
+
 error: system function '$temperature' is not allowed in constants
    --> /const_sysfun.va:12:25
    |

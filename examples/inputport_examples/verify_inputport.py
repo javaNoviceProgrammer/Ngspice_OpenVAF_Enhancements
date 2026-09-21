@@ -16,6 +16,18 @@ Checks:
   [4]  (* openvaf_allow="contribution_to_input_port" *) on the statement, and -A, silence it; -E makes it an error
   [5]  --lints lists contribution_to_input_port as L031 among the warnings
   [6]  a branch whose other end is an internal node still names the input port; a second contribution on a clean branch adds no warning
+
+Enhancement-686 (F4 of the 2026-09-21 hunt): LRM 6.3.6 has the simulator scale
+every flow contribution by $mfactor and says it "shall issue a warning" on a
+misuse that double-scales -- its `badres`, `I(a,b) <+ V(a,b)/r * $mfactor`,
+"will generate an error". Nothing was said. Lint L037 `mfactor_double_scaling`
+(warn) reports a flow contribution whose value depends on $mfactor, directly or
+through a variable assigned from it; a `?:` condition, an `if` condition (the
+LRM's `parares`), a potential contribution, a display and an opvar are not
+values of a flow contribution and stay silent.
+  [7]  badres, the variable route, a noise contribution: each warned once at the read; parares, a ?: condition,
+       a potential contribution, a display: silent
+  [8]  the allow attribute and -A silence it, -E makes it an error, --lints lists it as L037
 """
 import os
 import re
@@ -104,6 +116,44 @@ check("[5] --lints lists contribution_to_input_port as L031 under WARNINGS",
 ok, msg = compile_src("module m(p,n,x); input p; inout n; output x; electrical p,n,x; analog begin I(x,n) <+ V(p,n)/1k; I(p,x) <+ 1e-9*V(p,x); end endmodule\n", "c6")
 check("[6] a branch (p,x) to an internal/output node still names the input port p, and the clean branch (x,n) adds no warning",
       ok and l031(msg) == [("warning", "p")], f"{l031(msg)}")
+
+
+def l037(msg):
+    return re.findall(r"^(warning|error)\[L037\]: `\$mfactor` scales this flow contribution a second time", msg, re.M)
+
+
+print("\nEnhancement-686: `$mfactor` in a flow contribution is scaled twice (LRM 6.3.6)")
+B = "module b(a,b); inout a,b; electrical a,b; parameter real r = 1.0 from (0:inf);\n"
+warned = {
+    "badres": B + "analog I(a,b) <+ V(a,b) / r * $mfactor; endmodule\n",
+    "via a variable": B + "real mf, g; analog begin mf = $mfactor; g = mf / r; I(a,b) <+ g * V(a,b); end endmodule\n",
+    "noise": B + "analog I(a,b) <+ V(a,b)/r + white_noise(1e-20 * $mfactor, \"th\"); endmodule\n",
+}
+silent = {
+    "parares": B + "analog if (r / $mfactor < 1.0e-3) V(a,b) <+ 0.0; else I(a,b) <+ V(a,b) / r; endmodule\n",
+    "?: condition": B + "real reff; analog begin reff = r / $mfactor; I(a,b) <+ (reff < 1e-3) ? 0.0 : V(a,b) / r; end endmodule\n",
+    "potential": B + "analog V(a,b) <+ I(a,b) * r * $mfactor * 0.0; endmodule\n",
+    "display and opvar": B + "(* desc=\"m\" *) real mf; analog begin mf = $mfactor; $strobe(\"%g\", $mfactor); I(a,b) <+ V(a,b) / r; end endmodule\n",
+}
+rw, rs = {}, {}
+for i, (k, src) in enumerate(warned.items()):
+    ok, msg = compile_src(src, f"c7w_{i}")
+    rw[k] = ok and len(l037(msg)) == 1 and "LRM 6.3.6" in msg and "badres" in msg
+for i, (k, src) in enumerate(silent.items()):
+    ok, msg = compile_src(src, f"c7s_{i}")
+    rs[k] = ok and not l037(msg)
+check("[7] badres, the variable route and a noise contribution are each warned once (L037, LRM 6.3.6); "
+      "parares, a ?: condition, a potential contribution, a display and an opvar are silent",
+      all(rw.values()) and all(rs.values()),
+      " ".join(f"{k}:{'ok' if v else 'BAD'}" for k, v in {**rw, **rs}.items()))
+ok1, m1 = compile_src(B + "analog begin (* openvaf_allow=\"mfactor_double_scaling\" *) I(a,b) <+ V(a,b) / r * $mfactor; end endmodule\n", "c8a")
+ok2, m2 = compile_src(warned["badres"], "c8b", ("-A", "mfactor_double_scaling"))
+ok3, m3 = compile_src(warned["badres"], "c8c", ("-E", "mfactor_double_scaling"))
+lst = subprocess.run([VAF, "--lints"], capture_output=True, text=True).stdout
+check("[8] the allow attribute and -A silence it, -E makes it an error that stops the build, --lints lists L037",
+      ok1 and not l037(m1) and ok2 and not l037(m2) and not ok3 and l037(m3) == ["error"]
+      and re.search(r"mfactor_double_scaling\s+L037", lst) is not None,
+      (m1 + m2 + m3)[-200:])
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)
