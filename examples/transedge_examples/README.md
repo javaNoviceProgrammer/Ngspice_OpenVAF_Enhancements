@@ -4,7 +4,7 @@
 python3 verify_transedge.py
 ```
 
-14 checks, both linear solvers, spanning five decades of rise time.
+17 checks, both linear solvers, spanning five decades of rise time.
 
 ## What was wrong
 
@@ -50,3 +50,9 @@ was already right — the same blind spot as
 | file | what it holds |
 |---|---|
 | `tedge.va` | `transition` and `slew` with the rise time as a parameter |
+
+Since E-697 (hunt F7 of 2026-09-21) a side whose rate is at or above 1e12 V/s
+takes the infinite-rate path (no clamp, the fixed 1e9/s gain) instead of a ramp
+the timestep control cannot resolve: a `slew` at 1e13 V/s aborted the transient
+at its first edge ("Timestep too small"), as did every rate up to 1e297; three
+checks pin 1e13, 1e30 and a 0.1 ps `transition` rise.

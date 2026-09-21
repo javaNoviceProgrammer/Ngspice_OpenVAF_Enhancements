@@ -196,5 +196,21 @@ check("trise=0 still tracks with the old fixed gain, no NaN",
       fast and all(v == v for _, v in fast) and max(v for _, v in fast) <= 1.001,
       f"max={max(v for _, v in fast):.6f}" if fast else "no data")
 
+# ---------------------------------------------------------------------------
+# 4. Enhancement-697 (hunt F7 of 2026-09-21): a rate at or above 1e12 V/s is
+#    instantaneous. With K = 1e3 * rate a slew at 1e13 V/s had a 0.1 fs tail that
+#    ngspice could not resolve at the corner where the clamp releases: the step
+#    shrank to 1e-17 s and the transient ABORTED at the first edge ("Timestep too
+#    small ... implicit_equation"), from 1e13 up to 1e297 where the infinite-rate
+#    guard finally took over. Such a side takes the infinite-rate path now (no
+#    clamp, the fixed 1e9/s gain); 1e12 V/s and below are the exact ramp as before.
+# ---------------------------------------------------------------------------
+print("\n  a rate at or above 1e12 V/s is instantaneous, not an abort")
+for tr, sel, what in (("1e-13", 1, "slew at 1e13 V/s"), ("1e-30", 1, "slew at 1e30 V/s"), ("1e-13", 0, "transition with a 0.1 ps rise")):
+    pts = wave(f"tr={tr}", "1u", "10n", f"inst_{sel}_{tr}", sel=sel)
+    got = at(pts, 0.5e-6)
+    check(f"{what} runs the transient and settles at 1.0 (it aborted at the first edge)",
+          pts and got is not None and abs(got - 1.0) < 1e-6, f"{len(pts)} points, y(0.5u)={got}")
+
 print(f"\n  {passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

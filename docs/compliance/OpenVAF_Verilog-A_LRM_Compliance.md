@@ -608,7 +608,9 @@ V(out) <+ ac_stim("ac", 1.0, `M_PI/2);     // AC stimulus; phase in RADIANS (LRM
   that made it ignore its input was found in the audit): ✅
   Documented deviations: a `slew` rate or `transition` time the deck fixes
   outside 4.5.8/4.5.9's domain is projected (magnitude, 0, or no limit for
-  a zero rate) and named at run time (E-696).
+  a zero rate) and named at run time (E-696); a side at or above 1e12 V/s is
+  instantaneous — the infinite-rate path's ~1 ns tail — rather than a ramp
+  the timestep control cannot resolve (E-697).
 - `laplace_nd/np/zd/zp` via exact state-space realization and
   `zi_nd/np/zd/zp` via bilinear transform, both with **complex
   pole/zero pairs** per the LRM's (re, im) vector convention and

@@ -4683,6 +4683,29 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // needs to be, which costs the integrator nothing measurable here and
         // *reduces* overshoot, since the ringing amplitude is bounded by the gap
         // at which the clamp releases (`rate/K`).
+        // Enhancement-697 (hunt F7 of 2026-09-21): a side whose rate is at or
+        // above RATE_INST is INSTANTANEOUS -- the infinite-rate path this loop
+        // already has (no clamp on that side, the fixed TRACK_GAIN_INF gain,
+        // tau ~ 1 ns), not a finite ramp. With K = TRACK_C * rate, a `slew` at
+        // 1e13 V/s had K = 1e16/s, a 0.1 fs tail that ngspice's timestep
+        // control cannot resolve at the corner where the clamp releases: the
+        // step shrank to 1e-17 s and the transient ABORTED ("Timestep too
+        // small ... n1#implicit_equation_0") at the first edge, or ground for a
+        // minute first -- at 1e13 with a 10 us step, at 1e14 and above with any
+        // step, up to 1e297, where `finite_gain`'s HUGE guard (written for an
+        // infinite rate) finally took over. 1e12 V/s ran everywhere it was tried.
+        // A ramp faster than a picosecond per unit swing is instantaneous to any
+        // transient ngspice runs, so that is what it is now, with the ten-fold
+        // margin below the first failure; a model that writes `slew(x, 1e15)` or
+        // `1e30` to mean "no limit" gets exactly that. Per side, so an
+        // asymmetric `transition(x, td, 0, 1u)` keeps its finite fall.
+        const RATE_INST: f64 = 1.0e12;
+        let r_inst = self.ctx.fconst(RATE_INST);
+        let pos_inst = self.ctx.ins().fge(pos_max, r_inst);
+        let pos_max = self.lower_select_with(pos_inst, |_| INFINITY, |_| pos_max);
+        let neg_inst = self.ctx.ins().fge(neg_max, r_inst);
+        let neg_max = self.lower_select_with(neg_inst, |_| INFINITY, |_| neg_max);
+
         let faster = self.ctx.ins().fgt(pos_max, neg_max);
         let rate_max = self.lower_select_with(faster, |_| pos_max, |_| neg_max);
         let gain = self.ctx.ins().fmul(c, rate_max);
