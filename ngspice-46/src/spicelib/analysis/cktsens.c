@@ -229,6 +229,13 @@ int sens_sens(CKTcircuit* ckt, int restart)
     IFcomplex* output_cvalues;
     double delta_var;
     struct sens_modsave *saved_models = NULL;   /* Enhancement-440 */
+    /* Enhancement-683 (hunt F2 of 2026-09-21): the base operating point, kept
+     * for the @(final_step) evaluation at the end. An AC sweep re-runs
+     * CKTsetup per frequency (CKTrhsOld is reallocated) and NIacIter then
+     * solves the small-signal system into CKTrhsOld, so at the end nothing
+     * else holds the bias point this analysis linearised around. */
+    double *sens_base_op = NULL;
+    int sens_base_n = 0;
     void *mod_buf = NULL;                       /* per-parameter model snapshot */
     size_t mod_cap = 0, mod_size = 0;
     int    (*fn) (SMPmatrix*, GENmodel*, CKTcircuit*, int*);
@@ -296,6 +303,11 @@ int sens_sens(CKTcircuit* ckt, int restart)
 #endif
         if (error)
             return error;
+        if (ckt->CKTrhsOld && ckt->CKTmaxEqNum > 0) {   /* Enhancement-683 */
+            sens_base_n = ckt->CKTmaxEqNum;
+            sens_base_op = TMALLOC(double, sens_base_n);
+            memcpy(sens_base_op, ckt->CKTrhsOld, (size_t) sens_base_n * sizeof(double));
+        }
 
         size = SMPmatSize(ckt->CKTmatrix);
 
@@ -437,6 +449,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
             FREE(vec_names);
         if (error) {
         err:
+            FREE(sens_base_op);      /* Enhancement-683 */
             /* Enhancement-440: the error paths leave through here too, and a
              * half-finished perturbation loop is exactly when the models are
              * most likely to be left altered. */
@@ -1088,6 +1101,18 @@ int sens_sens(CKTcircuit* ckt, int restart)
 
     ckt->CKTbypass = bypass;
     FREE(mod_buf);
+
+#ifdef OSDI
+    /* Enhancement-683 (hunt F2 of 2026-09-21): the analysis is over and the
+     * models are back as the netlist described them (E-440). Put the base
+     * operating point back into CKTrhsOld -- the AC sweep left the last
+     * frequency's small-signal solution there -- and fire @(final_step) once,
+     * at that point, as the other analyses do (LRM 5.10.2). */
+    if (sens_base_op && ckt->CKTrhsOld && ckt->CKTmaxEqNum == sens_base_n)
+        memcpy(ckt->CKTrhsOld, sens_base_op, (size_t) sens_base_n * sizeof(double));
+    OSDIfinalStep(ckt);
+#endif
+    FREE(sens_base_op);
 
 #ifdef notdef
     for (j = 0; j <= ckt->CKTmaxOrder + 1; j++) {

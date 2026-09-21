@@ -26,6 +26,9 @@
 #include "vsrc/vsrcdefs.h"
 #include "../maths/dense/dense.h"
 #include "../maths/dense/denseinlines.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-683: OSDIfinalStep */
+#endif
 
 int CKTspnoise(CKTcircuit* ckt, int mode, int operation, Ndata* data, NOISEAN* noisean);
 int NInspIter(CKTcircuit* ckt, VSRCinstance* port);
@@ -1001,6 +1004,12 @@ SPan(CKTcircuit* ckt, int restart)
         }
     }
 endsweep:
+#ifdef OSDI
+    /* Enhancement-683 (hunt F2 of 2026-09-21): fire @(final_step) once the
+     * S-parameter sweep completes, at the operating point it linearised
+     * around (the capture of the MODEINITSMSIG load), as acan.c does. */
+    OSDIfinalStep(ckt);
+#endif
     SPfrontEnd->OUTendPlot(spPlot);
     spPlot = NULL;
     UPDATE_STATS(0);

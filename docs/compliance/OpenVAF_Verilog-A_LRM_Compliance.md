@@ -1063,7 +1063,9 @@ separator the LRM makes interchangeable with `or` (5.10.1):
 ```
 
 An operating point fires both step events (a single point is first and
-last); a failed analysis never fires `final_step`.
+last); a failed analysis never fires `final_step`. Every analysis that succeeds
+does — `op`, `dc`, `tran`, `ac`, `noise`, `pz`, `tf`, `sens`, `disto` and `sp`
+(E-683) — at its bias point, and the block's assignments stay in the instance.
 
 **Null arguments** to `cross`/`above`/`timer` work as of the round-4
 audit (2026-09-03): every optional position is an

@@ -34,6 +34,13 @@ Checks (parsing the tagged $strobe lines from ngspice stdout):
   6. peak tracking (the LRM's classic use case): a variable accumulated
      across the whole tran is reported once at final_step: vpeak = 1.5
      (offset 1 V + amplitude 0.5 V), tol 1%%
+  7. (E-677) ac/noise: the final_step evaluation runs on the bias point
+  8. (E-683, hunt F2 of 2026-09-21) final_step fires once at the end of pz,
+     tf, sens (dc and ac), disto and sp, at the bias point; a counter
+     assigned in the block reads 1 afterwards under ac and noise too (the
+     E-412 snapshot is kept only for an evaluation with no bias point); an op
+     after an ac, at a new bias, sees the new bias (the capture does not go
+     stale)
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
@@ -174,6 +181,48 @@ def main():
         rd = [e for e in ev if e[0] == "op_read"]
         check(f"{name}: final sees the bias V=0.2 and last_crossing's negative sentinel",
               len(rd) == 1 and abs(rd[0][1] - 0.2) < 1e-9 and rd[0][2] < 0)
+
+    # Enhancement-683 (hunt F2 of 2026-09-21): pz, tf, sens, disto and sp did
+    # not call the OSDI final step at all, and under ac/noise the E-412
+    # snapshot discarded what the @(final_step) body assigned. Every analysis
+    # fires it once, at the bias point, and the assignments stay.
+    print("[8] final_step at the end of every analysis, its writes kept")
+    OPV = "@" + "n1[cf]"
+    FSCNT = ("* fs cnt {name}\nV1 in 0 DC 0.2 AC 1 {vsrc}\nN1 in 0 mcnt\n.model mcnt fscnt\n"
+             "R1 in a 1k\nR2 a 0 1k\nC1 a 0 1n\n{extra}"
+             ".control\npre_osdi finalstep_demo.osdi\n{an}\nprint " + OPV + "\n.endc\n.end\n")
+
+    def run_cnt(name, an, vsrc="", extra=""):
+        with open(os.path.join(HERE, "_fs.cir"), "w") as fh:
+            fh.write(FSCNT.format(name=name, an=an, vsrc=vsrc, extra=extra))
+        out = subprocess.run([NGSPICE, "-b", "_fs.cir"], cwd=HERE,
+                             capture_output=True, text=True, timeout=120).stdout
+        fired = re.findall(r"FS_CNT cf=(\d+) V=(\S+)", out)
+        m = re.search(re.escape(OPV) + r"\s*=\s*(\S+)", out)
+        return fired, (float(m.group(1)) if m else None)
+
+    # The sp deck's ports carry their z0 = 50 ohm: in series with the 0.2 V
+    # port, as a shunt at the second port on node a. The bias at `in` is then
+    # 0.2 * RL / (RL + 50) with RL = 1k || (1k + 1k || 50) = 511.6 ohm.
+    rl = 1.0 / (1.0 / 1e3 + 1.0 / (1e3 + 1.0 / (1.0 / 1e3 + 1.0 / 50.0)))
+    v_sp = 0.2 * rl / (rl + 50.0)
+    for name, an, vsrc, extra, vbias in (
+            ("pz", "pz in 0 a 0 vol pz", "", "", 0.2),
+            ("tf", "tf v(a) V1", "", "", 0.2),
+            ("sens (dc)", "sens v(a)", "", "", 0.2),
+            ("sens (ac)", "sens v(a) ac lin 2 1k 2k", "", "", 0.2),
+            ("disto", "disto lin 1 1k 1k", "distof1 0.01", "", 0.2),
+            ("sp", "sp lin 2 1k 2k", "portnum 1 z0 50", "V2 a 0 DC 0 portnum 2 z0 50\n", v_sp)):
+        fired, cf = run_cnt(name, an, vsrc, extra)
+        check(f"{name}: final fires exactly once, at the bias V={vbias:.4g}, and the counter reads 1 afterwards",
+              len(fired) == 1 and fired[0][0] == "1" and abs(float(fired[0][1]) - vbias) < 1e-6 and cf == 1)
+    for name, an in (("ac", "ac dec 2 1k 10k"), ("noise", "noise v(a) V1 dec 2 1k 10k")):
+        fired, cf = run_cnt(name, an)
+        check(f"{name}: the counter assigned in final_step reads 1 afterwards (was 0: the snapshot discarded it)",
+              len(fired) == 1 and abs(float(fired[0][1]) - 0.2) < 1e-9 and cf == 1)
+    fired, cf = run_cnt("op after ac", "ac dec 2 1k 10k\nalter V1 dc=0.4\nop")
+    check("an op after an ac, at a new bias: final sees the new bias V=0.4 (the capture does not go stale)",
+          len(fired) == 2 and abs(float(fired[0][1]) - 0.2) < 1e-9 and abs(float(fired[1][1]) - 0.4) < 1e-9 and cf == 1)
 
     print()
     print("ALL PASS" if ok else "SOME CHECKS FAILED")

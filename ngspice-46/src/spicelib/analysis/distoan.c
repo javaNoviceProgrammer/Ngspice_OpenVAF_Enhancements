@@ -8,6 +8,9 @@ Author: 1988 Jaijeet S Roychowdhury
 #include "ngspice/distodef.h"
 #include "ngspice/devdefs.h"   /* Enhancement-115: DEVices/DEVbindCSCComplex for KLU */
 #include "ngspice/sperror.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-683: OSDIfinalStep */
+#endif
 
 
 static void
@@ -731,6 +734,13 @@ time1 = SPfrontEnd->IFseconds();
 	acPlot = NULL;
 
     }
+#ifdef OSDI
+    /* Enhancement-683 (hunt F2 of 2026-09-21): the distortion plots are out;
+     * fire @(final_step) at the operating point it linearised around (the
+     * capture of the MODEINITSMSIG load -- CKTrhsOld points into this job's
+     * own storage here). */
+    OSDIfinalStep(ckt);
+#endif
 FREE(job->r1H1ptr);
 FREE(job->i1H1ptr);
 FREE(job->r2H11ptr);

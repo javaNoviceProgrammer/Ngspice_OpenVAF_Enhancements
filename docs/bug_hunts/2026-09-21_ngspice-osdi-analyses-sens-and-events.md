@@ -23,7 +23,7 @@ nodes in `.ic`/`.nodeset`/`.save`/raw files/subcircuits, repeated analyses in on
 | # | finding | kind |
 |---|---|---|
 | [F1](#f1--a-sens-writes-every-parameter-it-perturbed-back-as-given-the-temperature-dependence-the-temperature-and-the-resistors-ac-value-are-frozen-afterwards) | after any `sens`, every instance parameter the sweep perturbed is written back **given**: a built-in resistor gets `tce=0` given and loses its `tc1`/`tc2` temperature dependence for the rest of the session (1.0 V at 60 °C where a fresh deck gives 1.33 V, even after `alter r2 temp=60`), an OSDI instance gets `temp` given and is pinned to the temperature of the moment (`set temp=80`, `.option temp`, `dc temp` no longer reach it; `alter n1 dtemp=10` is refused with "Instance temperature specified, dtemp ignored"); after an AC `sens` the resistor's `ac` alias is given and `alter r1 r=2k` followed by `ac` still reports the 1 kΩ response (0.4995 where 0.3327 is right, `op` is right); a second AC `sens` reports every resistor's sensitivity as −0; and an OSDI module's `$param_given(w)` turns true for a `w` the netlist never set, so a "derive from geometry if given" rule fires and a 1 kΩ device reads 2 kΩ; `reset` clears it all | wrong result, silent |
-| [F2](#f2--final_step-never-fires-under-pz-tf-sens-disto-and-sp) | `@(final_step)` never fires in a `pz`, `tf`, `sens`, `disto` or `sp` analysis (the five analyses that do not call the OSDI final step); under `ac` and `noise` it fires but its variable assignments are discarded by design (E-412's snapshot), so a counter written there reads 0 afterwards | conformance |
+| [F2](#f2--final_step-never-fires-under-pz-tf-sens-disto-and-sp) | *(fixed in [E-683](../../enhancements_doc/Enhancement-683.md): the five analyses call the final step, a `sens` at its base operating point put back; the bias-point capture is used whenever valid and the E-412 snapshot only when there is none, so the writes stay under `ac`/`noise` too)* `@(final_step)` never fires in a `pz`, `tf`, `sens`, `disto` or `sp` analysis (the five analyses that do not call the OSDI final step); under `ac` and `noise` it fires but its variable assignments are discarded by design (E-412's snapshot), so a counter written there reads 0 afterwards | conformance |
 | [F3](#f3--analysisac-is-0-at-the-operating-point-of-sp-pz-disto-tf-and-an-ac-sens) | at the operating point of an `sp`, `pz`, `disto`, `tf` or AC `sens` analysis the model reads `analysis("ac")` = 0 and `analysis("dc")` = 1, while the operating point of a plain `ac` reads `analysis("ac")` = 1 (E-53's owning-analysis rule); `@(initial_step("ac"))` does not fire under `sp` | conformance |
 | [F4](#f4--the-lrms-badres-double-scaling-of-mfactor-compiles-with-no-diagnostic) | the LRM's own `badres` (`I(a,b) <+ V(a,b)/r * $mfactor`, LRM 6.3.6: "the simulator shall issue a warning … will generate an error") compiles silently; under `m=2` the current is scaled four times, under `m=3` nine | compiler diagnostic gap |
 | [F5](#f5--the-simulator-owned-instance-parameters-on-a-model-card) | on a `.model` card `m=2` is refused with a warning that points to `_mfactor`, while `_mfactor=2`, `temp=60`, `dtemp=10` and `dt=10` are all honoured silently as instance defaults; `showmod` lists `_mfactor` but not `temp`/`dtemp`; `altermod mres m=3` is accepted and applied | inconsistency |
@@ -226,6 +226,14 @@ model that counts or files something in `final_step` sees 0 where the strobe sai
 `sens` row also shows `initial_step` firing once per perturbation, with the instance
 re-set-up each time (the counter restarts at 1): a model with a side effect in
 `initial_step` (a file header, a `$fopen`) performs it nine times per two-terminal device.
+
+*Fixed in [E-683](../../enhancements_doc/Enhancement-683.md).* `tf`, `pz`, `sp` and
+`disto` call the final step once their result is out; a `sens` keeps its base operating
+point and calls it there, once. The E-412 snapshot was written for an evaluation at a
+small-signal solution; since E-677 the evaluation runs at the captured bias point, so the
+snapshot now applies only when no valid capture exists, and a counter written in
+`final_step` reads 1 after an `ac` or a `noise` as after an `op`. The per-perturbation
+`initial_step` under `sens` is left as it is.
 
 ## F3 — `analysis("ac")` is 0 at the operating point of `sp`, `pz`, `disto`, `tf` and an AC `sens`
 

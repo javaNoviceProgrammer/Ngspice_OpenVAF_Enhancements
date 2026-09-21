@@ -226,6 +226,10 @@ done:
     SPfrontEnd->OUTpData (plotptr, &refval, &outdata);
     SPfrontEnd->OUTendPlot (plotptr);
 #ifdef OSDI
+    /* Enhancement-683 (hunt F2 of 2026-09-21): the analysis is over -- fire
+     * @(final_step) at the operating point it linearised around, as acan.c
+     * and dcop.c do (LRM 5.10.2: the last step of any analysis). */
+    OSDIfinalStep(ckt);
     /* Enhancement-434: `.tf` computes an operating point and reports a result,
      * so it owes the user the same notice the operating point itself gives.
      * Enhancement-426 added that notice to dcop.c, and dctrcurv/acan/noisean/

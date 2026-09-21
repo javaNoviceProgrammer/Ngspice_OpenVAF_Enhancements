@@ -9,6 +9,9 @@ Copyright 1990 Regents of the University of California.  All rights reserved.
 #include "ngspice/pzdefs.h"
 #include "ngspice/trandefs.h"   /* only to get the 'mode' definitions */
 #include "ngspice/sperror.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-683: OSDIfinalStep */
+#endif
 
 
 #define DEBUG	if (0)
@@ -94,6 +97,11 @@ PZan(CKTcircuit *ckt, int reset)
 	    return(error);
     }
 
+#ifdef OSDI
+    /* Enhancement-683 (hunt F2 of 2026-09-21): the poles and zeros are found;
+     * fire @(final_step) at the operating point, as the other analyses do. */
+    OSDIfinalStep(ckt);
+#endif
     return PZpost(ckt);
 }
 

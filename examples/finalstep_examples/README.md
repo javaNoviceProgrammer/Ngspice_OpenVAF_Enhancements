@@ -29,7 +29,7 @@ point of each analysis — and **analysis-phase lists** on both step events
 python3 verify_finalstep.py
 ```
 
-Checks (26, ALL PASS; 23 before [E-677](../../enhancements_doc/Enhancement-677.md)): tran fires `final` exactly once at t = tstop seeing
+Checks (35, ALL PASS; 27 before [E-683](../../enhancements_doc/Enhancement-683.md), 23 before [E-677](../../enhancements_doc/Enhancement-677.md)): tran fires `final` exactly once at t = tstop seeing
 the converged solution; op fires both `initial` and `final` (a single point
 is first and last); ac/noise fire `final` once after the sweep; a dc sweep's
 `final` sees the last sweep point (V = 2.0 exact); phase-qualified events
@@ -39,3 +39,10 @@ exactly once at the end (vpeak = 1.5); and, since E-677, the final step of an
 `ac` and a `noise` analysis sees the bias point the analysis linearised around
 (V = 0.2 with a unit AC source on the node, `last_crossing` still −1), not the
 last frequency's small-signal solution.
+
+Enhancement-683 (hunt F2 of 2026-09-21) adds a counter module (`fscnt`) and nine checks:
+`final_step` fires once at the end of `pz`, `tf`, `sens` (DC and AC), `disto` and `sp`,
+at the bias point (0.2 V; 0.1822 V for the `sp` deck, whose ports carry their 50 Ω);
+a counter assigned in the block reads 1 afterwards under `ac` and `noise` too (the
+E-412 snapshot is kept only for an evaluation with no bias point); and an `op` after an
+`ac`, at a new bias, sees the new bias.

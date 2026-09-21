@@ -57,3 +57,25 @@ module fsop(p, n);
     I(p, n) <+ V(p, n) / 1e3;
   end
 endmodule
+
+// Enhancement-683 (hunt F2 of 2026-09-21): @(final_step) never fired under
+// pz, tf, sens, disto and sp (those analyses did not call the OSDI final
+// step), and under ac and noise it fired but the instance was restored
+// afterwards (E-412's snapshot, written for an evaluation at a small-signal
+// solution), so a counter assigned in the block read 0 afterwards. It fires
+// once at the end of every analysis, at the bias point, and its assignments
+// stay -- as after an op or a transient.
+module fscnt(p, n);
+  inout p, n;
+  electrical p, n;
+  (* desc="final_step count" *) integer cf;
+  (* desc="V at final_step" *) real vf;
+  analog begin
+    @(final_step) begin
+      cf = cf + 1;
+      vf = V(p, n);
+      $strobe("FS_CNT cf=%d V=%g", cf, V(p, n));
+    end
+    I(p, n) <+ V(p, n) / 1e3;
+  end
+endmodule

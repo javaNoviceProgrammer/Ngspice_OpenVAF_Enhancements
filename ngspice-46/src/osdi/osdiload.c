@@ -1161,6 +1161,15 @@ extern void OSDIpendingFlush(CKTcircuit *ckt) {
 static double *osdi_op_solve;
 static int osdi_op_solve_n;
 static const CKTcircuit *osdi_op_solve_ckt;
+/* Enhancement-683 (hunt F2 of 2026-09-21): is the capture the operating
+ * point the CURRENT analysis linearised around? Set at the MODEINITSMSIG
+ * load, cleared by any DC or transient evaluation (an `op`, a `dc` point, a
+ * transient step -- each moves the operating point and leaves the right one
+ * in CKTrhsOld). OSDIfinalStep evaluates at the capture whenever it is
+ * valid, whatever CKTmode says at the end: .tf and .pz end in MODEDCOP, .sp
+ * in MODESP, .disto in MODEAC with CKTrhsOld pointed into its own storage,
+ * and none of them says "small signal" the way MODEAC did. */
+static bool osdi_op_solve_valid;
 
 static void osdi_op_solve_capture(CKTcircuit *ckt) {
   int n = ckt->CKTmaxEqNum + 1;
@@ -1172,6 +1181,25 @@ static void osdi_op_solve_capture(CKTcircuit *ckt) {
   }
   memcpy(osdi_op_solve, ckt->CKTrhsOld, (size_t)n * sizeof(double));
   osdi_op_solve_ckt = ckt;
+  osdi_op_solve_valid = true;
+}
+
+/* Enhancement-683: the analysis-name bit an operating-point evaluation of
+ * the running job carries (Enhancement-53's consultation: the op phase of an
+ * AC or NOISE job belongs to that analysis), shared by OSDIload and
+ * OSDIfinalStep so the two can never disagree about a job's name. 0 for
+ * every other job (op, dc, tran, and the small-signal jobs tf, pz, sp,
+ * disto, sens, whose operating points report "dc" -- hunt F3 of 2026-09-21
+ * is where that list is decided, in one place). */
+static uint32_t osdi_job_name_flags(const CKTcircuit *ckt) {
+  if (ckt->CKTcurJob && ft_sim->analyses[ckt->CKTcurJob->JOBtype]) {
+    const char *job_name = ft_sim->analyses[ckt->CKTcurJob->JOBtype]->name;
+    if (strcmp(job_name, "AC") == 0)
+      return ANALYSIS_AC;
+    if (strcmp(job_name, "NOISE") == 0)
+      return ANALYSIS_NOISE;
+  }
+  return 0;
 }
 
 extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
@@ -1192,6 +1220,8 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
 
   if (is_init_smsig) {
     osdi_op_solve_capture(ckt); /* Enhancement-677: the bias point, for the final step */
+  } else if (is_dc || is_tran || is_tran_op) {
+    osdi_op_solve_valid = false; /* Enhancement-683: this evaluation moves the operating point */
   }
 
   OsdiSimInfo sim_info = {
@@ -1286,13 +1316,8 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
    * would wrongly enable ddt/integration during the op. This makes
    * `@(initial_step("ac"))` (whose one-shot fires at the op's first eval)
    * and `analysis("ac")` behave per the LRM in AC/noise runs. */
-  if (is_dc && ckt->CKTcurJob && ft_sim->analyses[ckt->CKTcurJob->JOBtype]) {
-    const char *job_name = ft_sim->analyses[ckt->CKTcurJob->JOBtype]->name;
-    if (strcmp(job_name, "AC") == 0) {
-      sim_info.flags |= ANALYSIS_AC;
-    } else if (strcmp(job_name, "NOISE") == 0) {
-      sim_info.flags |= ANALYSIS_NOISE;
-    }
+  if (is_dc) {
+    sim_info.flags |= osdi_job_name_flags(ckt);  /* Enhancement-683: one helper, shared with OSDIfinalStep */
     /* LRM audit (events): the op phase of an AC/NOISE job BELONGS to that
      * analysis and is not a DC analysis. LRM Table 4-22's "dc" row is 0 in
      * the AC-OP and NOISE-OP columns (only "static" stays 1 there), and
@@ -1539,10 +1564,6 @@ int OSDIfinalStep(CKTcircuit *ckt) {
    * final_step evaluations produce their own (immediate-tagged) output. */
   OSDIpendingFlush(ckt);
   bool is_tran = ckt->CKTmode & MODETRAN;
-  /* Enhancement-412: see the snapshot below. AC and NOISE end on a
-   * small-signal solution, so this evaluation must not be allowed to leave its
-   * results in the instance. */
-  bool preserve_op = (ckt->CKTmode & (MODEAC | MODEACNOISE)) != 0;
 
   OsdiSimInfo sim_info = {
       .paras = get_simparams(ckt),
@@ -1553,29 +1574,48 @@ int OSDIfinalStep(CKTcircuit *ckt) {
       .flags = CALC_OP | EVAL_FLAG_IS_FINAL_STEP,
   };
 
-  /* Enhancement-677 (hunt F6): in AC and NOISE, evaluate at the bias point
-   * the analysis linearised around, not at the last frequency's small-signal
-   * solution CKTrhsOld holds (see osdi_op_solve_capture). */
-  if (preserve_op && osdi_op_solve != NULL && osdi_op_solve_ckt == ckt &&
-      osdi_op_solve_n >= ckt->CKTmaxEqNum + 1) {
+  /* Enhancement-677 (hunt F6): a small-signal analysis ends with CKTrhsOld
+   * holding a small-signal solution, not the bias point; evaluate at the
+   * bias point the analysis linearised around (see osdi_op_solve_capture).
+   * Enhancement-683: the capture is taken whenever it is VALID -- i.e. no DC
+   * or transient evaluation has moved the operating point since the
+   * MODEINITSMSIG load -- rather than when CKTmode says AC or NOISE: .tf,
+   * .pz, .sp and .disto now call this routine too (hunt F2 of 2026-09-21),
+   * and none of them ends in a mode that says "small signal". A `sens` has no
+   * MODEINITSMSIG load; cktsens.c puts the base operating point back into
+   * CKTrhsOld before calling here. */
+  bool at_bias = osdi_op_solve_valid && osdi_op_solve != NULL &&
+                 osdi_op_solve_ckt == ckt &&
+                 osdi_op_solve_n >= ckt->CKTmaxEqNum + 1;
+  if (at_bias) {
     sim_info.prev_solve = osdi_op_solve;
   }
+  /* Enhancement-412: see the snapshot below. Kept only for the case it was
+   * written for -- a small-signal analysis whose bias point is NOT available,
+   * so that this evaluation would run on a small-signal solution and must not
+   * leave its results in the instance. At the bias point the results are the
+   * operating point's own, plus whatever the @(final_step) body assigned,
+   * and they stay -- as they do after an op or a transient (Enhancement-683:
+   * a counter written in @(final_step) read 0 after an .ac, 1 after an .op). */
+  bool small_signal =
+      (ckt->CKTmode & (MODEAC | MODEACNOISE | MODEINITSMSIG | MODESP)) != 0;
+  bool preserve_op = small_signal && !at_bias;
 
-  if (ckt->CKTmode & (MODEDCOP | MODEDCTRANCURVE)) {
-    sim_info.flags |= ANALYSIS_DC | ANALYSIS_STATIC;
-  }
+  /* The analysis-name bits: a transient and a dc sweep are what CKTmode says;
+   * everything else ends on an operating point, plain or a small-signal
+   * job's, and carries the name that job's operating-point evaluation
+   * carried (Enhancement-683: osdi_job_name_flags, shared with OSDIload --
+   * "ac" for an AC job, "noise" for a NOISE job, "dc" otherwise). A noise job
+   * ends with MODEAC|MODEACNOISE both set, and the bare MODEAC test once
+   * made @(final_step("ac")) fire at the end of a .noise analysis -- LRM
+   * Table 5-1 gives it 0 there; the job's name settles it. */
   if (is_tran) {
     sim_info.flags |= ANALYSIS_TRAN;
-  }
-  /* LRM audit (events): a noise job ends with MODEAC|MODEACNOISE both set,
-   * and the bare MODEAC test made @(final_step("ac")) fire at the end of a
-   * .noise analysis -- LRM Table 5-1 gives it 0 there (the run's own name is
-   * "noise", exactly as Table 4-22's analysis() rows separate the two). */
-  if ((ckt->CKTmode & MODEAC) && !(ckt->CKTmode & MODEACNOISE)) {
-    sim_info.flags |= ANALYSIS_AC;
-  }
-  if (ckt->CKTmode & MODEACNOISE) {
-    sim_info.flags |= ANALYSIS_NOISE;
+  } else if (ckt->CKTmode & MODEDCTRANCURVE) {
+    sim_info.flags |= ANALYSIS_DC | ANALYSIS_STATIC;
+  } else {
+    uint32_t name = osdi_job_name_flags(ckt);
+    sim_info.flags |= ANALYSIS_STATIC | (name ? name : (uint32_t)ANALYSIS_DC);
   }
 
   for (int type = 0; type < ft_sim->numDevices; type++) {
