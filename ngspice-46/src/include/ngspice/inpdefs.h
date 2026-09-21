@@ -193,6 +193,7 @@ int INPbusTokenIndexed(const char *name, size_t len, int kicad);
 extern int INPanalysisCardFromCommand;
 /* Enhancement-429: a node an analysis card invented and nothing else uses. */
 int CKTnodePhantom(CKTnode *node);
+int INPinternalNodeName(CKTcircuit *ckt, const char *nodename);  /* Enhancement-690 */
 /* Enhancement-492: a node named only in a device's CONTROL position is a typo.
    Noted during pass 2, reported in pass 3 -- only then is "did anything
    connect to this?" answerable. */

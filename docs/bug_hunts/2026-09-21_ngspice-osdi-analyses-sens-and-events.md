@@ -28,8 +28,8 @@ nodes in `.ic`/`.nodeset`/`.save`/raw files/subcircuits, repeated analyses in on
 | [F4](#f4--the-lrms-badres-double-scaling-of-mfactor-compiles-with-no-diagnostic) | *(fixed in [E-686](../../enhancements_doc/Enhancement-686.md): lint L037 `mfactor_double_scaling` warns on a flow contribution whose value depends on `$mfactor`, directly or through a variable; conditions, potentials, displays and opvars stay silent)* the LRM's own `badres` (`I(a,b) <+ V(a,b)/r * $mfactor`, LRM 6.3.6: "the simulator shall issue a warning … will generate an error") compiles silently; under `m=2` the current is scaled four times, under `m=3` nine | compiler diagnostic gap |
 | [F5](#f5--the-simulator-owned-instance-parameters-on-a-model-card) | *(fixed in [E-687](../../enhancements_doc/Enhancement-687.md): `showmod` lists every card of a group — the "hidden" `temp`/`dtemp` were the second and third cards of a three-card `showmod`, whose listing printed the first card only — and `altermod <model> m=` is refused as the card refuses it)* on a `.model` card `m=2` is refused with a warning that points to `_mfactor`, while `_mfactor=2`, `temp=60`, `dtemp=10` and `dt=10` are all honoured silently as instance defaults; `showmod` lists `_mfactor` but not `temp`/`dtemp`; `altermod mres m=3` is accepted and applied | inconsistency |
 | [F6](#f6--a-nodeset-on-a-collapsed-internal-node-says-the-module-has-no-such-node) | *(fixed in [E-688](../../enhancements_doc/Enhancement-688.md): the entry is applied to the node the model collapsed `ai` into, with a Note; a `.save` of the name says which node carries it)* `.nodeset v(n1#ai)=0.5` on an internal node the model collapsed (`rs=0`) is dropped with "n1 has no internal node 'ai'" — the node exists, it is collapsed; `.save v(n1#ai)` says "nothing of that name", and a save list that empties this way stops the analysis ("no data saved … analysis not run") | diagnostic |
-| [F7](#f7--under-tran-uic-the-models-analysisic-branch-runs-once-and-its-contribution-is-never-solved) | under `tran … uic` an OSDI model that applies its initial condition the LRM way — `if (analysis("ic")) V(p,n) <+ ic;` — runs that branch exactly once at t = 0 (the strobe fires, `V(p,n)` reads 0) but the contribution is never solved: the node starts at 0 V and charges from there (3e-5 at the first point) where the built-in capacitor's `ic=0.5` starts at 0.5; without `uic` the same model starts at 0.5; a `.ic v(a)=0.5` on the node is the only way in | conformance gap |
-| [F8](#f8--an-internal-node-cannot-be-the-output-of-sens-pz-tf-or-noise) | `sens v(n1#mid)`, `pz in 0 n1#mid 0 vol pz`, `tf v(n1#mid) vin` and `noise v(n1#mid) vin …` are all refused with "no such node: n1#mid" and the analysis is aborted, while `print v(n1#mid)`, `.save`, `.ic`, `.nodeset`, `meas` and the raw file all accept the node; the analysis cards resolve their node arguments before the device setup that creates the internal nodes | gap |
+| [F7](#f7--under-tran-uic-the-models-analysisic-branch-runs-once-and-its-contribution-is-never-solved) | *(fixed in [E-689](../../enhancements_doc/Enhancement-689.md): the one unsolved evaluation `uic` makes now seeds the transient's start vector from the ic-branch potential contributions — the rows specific to `analysis("ic")`, met by the minimum-norm change of the free node voltages, as a `.ic` on the nodes would; the built-in capacitor's `CAPgetic` re-run; a row whose nodes are all fixed is reported)* under `tran … uic` an OSDI model that applies its initial condition the LRM way — `if (analysis("ic")) V(p,n) <+ ic;` — runs that branch exactly once at t = 0 (the strobe fires, `V(p,n)` reads 0) but the contribution is never solved: the node starts at 0 V and charges from there (3e-5 at the first point) where the built-in capacitor's `ic=0.5` starts at 0.5; without `uic` the same model starts at 0.5; a `.ic v(a)=0.5` on the node is the only way in | conformance gap |
+| [F8](#f8--an-internal-node-cannot-be-the-output-of-sens-pz-tf-or-noise) | *(fixed in [E-690](../../enhancements_doc/Enhancement-690.md): a declared OSDI internal node typed before the first setup is entered as a parse-time node the device adopts; a collapsed one is bound to the node it collapsed into, or resolved to it after a setup; `sens` and `pz` refuse a phantom output as `tf`/`noise` do; a built-in device's node keeps the limit, with a hint)* `sens v(n1#mid)`, `pz in 0 n1#mid 0 vol pz`, `tf v(n1#mid) vin` and `noise v(n1#mid) vin …` are all refused with "no such node: n1#mid" and the analysis is aborted, while `print v(n1#mid)`, `.save`, `.ic`, `.nodeset`, `meas` and the raw file all accept the node; the analysis cards resolve their node arguments before the device setup that creates the internal nodes | gap |
 | [F9](#f9--probe-in3-on-a-four-terminal-osdi-device-saves-every-terminal-current-under-one-name) | `.probe i(n3)` on a four-terminal OSDI device inserts four zero-volt sources (`vcurr_n3:nn:1_0` … `:4_0`) and saves their currents as four vectors that all carry the name `n3:nn#branch` (1e-3, −1e-3, 0, 0), so a script reads only the first; a two-terminal device gets one `n1#branch` and a built-in resistor `r1#branch` | wrong output naming |
 | [N1](#n1-not-osdi--a-netlist-node-spelled-instnode-merges-silently-with-the-devices-internal-node) | *(fixed in [E-681](../../enhancements_doc/Enhancement-681.md): the adoption says so once, naming the node, the internal node and the instance, or the source for a `#branch` name; the merge itself is kept)* a netlist node spelled `n1#mid` merges silently with instance `n1`'s internal node `mid` (5 V forced onto it, 11.5 mA drawn); the built-in BJT's `q1#base` merges the same way (`vx#branch` = −1.2e35 A), no warning either way | ngspice namespace, silent |
 | [N2](#n2-not-osdi--sens-over-a-current-source-prints-get-error-lines) | *(fixed in [E-682](../../enhancements_doc/Enhancement-682.md): the current source's `r` and `td` are declared settable-only, as the voltage source's are, so the walk no longer asks them)* a `sens` in a deck with current sources prints `GET ERROR: Isource:I:i1 -> param r (27)` and `… td (28)` twice per source per sweep — the sweep asks the source for parameters it cannot return | diagnostic noise |
@@ -382,6 +382,16 @@ ic-phase contributions are solved once, `uic` or not; the fix belongs in the tra
 uic path (one Newton solve of the ic-phase system before the first step, or a documented
 rule that OSDI initial conditions need `.ic`).
 
+*Fixed in [E-689](../../enhancements_doc/Enhancement-689.md).* `OSDIuicSeed`, run from
+`NIiter` right after the one load `uic` makes, evaluates every OSDI instance with and
+without `analysis("ic")`; a potential row whose residual differs is an initial condition
+and is met by the minimum-norm change of the free node voltages it involves (ground and
+the deck's `.ic` nodes fixed), swept to convergence and reloaded; `CAPgetic` is re-run so
+a built-in capacitor on a seeded node follows. The table's first row now reads 0.500015,
+… as the built-in's; the third is unchanged; a `.ic` that disagrees wins and the model's
+value is reported as not applied. An unconditional `V(p,n) <+ vdc` is identical with and
+without the flag and is left to the first step, as the built-in source is.
+
 ## F8 — an internal node cannot be the output of `sens`, `pz`, `tf` or `noise`
 
 ```
@@ -399,6 +409,15 @@ have the same limit (`sens v(q1#base)` on a BJT with `rb`, p85). An OSDI compact
 interesting nodes are often internal (the intrinsic drain of a MOSFET, the junction
 temperature of an electrothermal device), so a `noise` or `tf` referred to one has to go
 through an external copy of the node.
+
+*Fixed in [E-690](../../enhancements_doc/Enhancement-690.md).* The limit was the first
+analysis of a session only (after an `op` the device's node is in the parser's table):
+`inp_analysis_node` now enters a `<instance>#<node>` whose module declares the node as a
+parse-time node E-608's adoption makes the device's own; an undeclared suffix is refused
+with nothing created; a built-in device's node (declared nowhere the parser can see) keeps
+the refusal, with a hint. A collapsed internal node named this way is shorted to the node
+it collapsed into at setup, or resolved to it after one; `sens` and `pz` got E-429's
+phantom check (a mistyped `.sens` card printed a table of −0.0).
 
 ## F9 — `.probe i(n3)` on a four-terminal OSDI device saves every terminal current under one name
 

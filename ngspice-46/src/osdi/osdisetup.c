@@ -401,6 +401,44 @@ static void write_node_mapping(const OsdiDescriptor *descr, void *inst,
  * node it was collapsed into (0 = ground), 0 when the name is not such a node
  * (no such instance, not an OSDI instance, no internal node of that name).
  * Valid once setup has run, which is when both callers ask. */
+/* Enhancement-690 (hunt F8): is `name` (`<instance>#<node>`) an internal
+ * node an OSDI instance of this circuit DECLARES -- one its module will build
+ * at setup (unless it collapses it)? Answered from the descriptor alone, so
+ * it can be asked before the first setup, which is when an analysis command
+ * naming such a node has nothing else to go on. Branch-current unknowns
+ * (`flow(p,n)`) are not potentials and are not offered. 1 when declared, -1
+ * when the instance is an OSDI device that declares no such node, 0 when the
+ * name is no OSDI instance's. */
+int OSDIdeclaredInternalNode(CKTcircuit *ckt, const char *name) {
+  const char *hash = name ? strchr(name, '#') : NULL;
+  if (!hash || hash == name || !hash[1])
+    return 0;
+  size_t ilen = (size_t)(hash - name);
+  const char *suffix = hash + 1;
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    for (GENmodel *m = ckt->CKThead[type]; m; m = m->GENnextModel) {
+      for (GENinstance *inst = m->GENinstances; inst; inst = inst->GENnextInstance) {
+        if (!inst->GENname || strlen(inst->GENname) != ilen ||
+            strncmp(inst->GENname, name, ilen) != 0)
+          continue;
+        OsdiRegistryEntry *entry = osdi_reg_entry_inst(inst);
+        if (!entry)
+          return 0;
+        const OsdiDescriptor *descr = entry->descriptor;
+        for (uint32_t i = descr->num_terminals; i < descr->num_nodes; i++) {
+          if (descr->nodes[i].name && !descr->nodes[i].is_flow &&
+              strcmp(descr->nodes[i].name, suffix) == 0)
+            return 1;
+        }
+        return -1;
+      }
+    }
+  }
+  return 0;
+}
+
 int OSDIcollapsedNode(CKTcircuit *ckt, const char *name, int *into) {
   const char *hash = name ? strchr(name, '#') : NULL;
   if (!hash || hash == name || !hash[1])
@@ -873,7 +911,8 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
    * synthetic 0 V source (terminal-terminal shorts reached through a chain
    * of collapses); bounded by the number of collapsible pairs */
   uint32_t *syn_pairs =
-      TMALLOC(uint32_t, 2 * (size_t)descr->num_collapsible + 2);
+      TMALLOC(uint32_t, 2 * (size_t)descr->num_collapsible + 2 +
+                            2 * (size_t)(descr->num_nodes - descr->num_terminals)); /* E-690: + one per internal node */
 
   /* determine the number of states required by each instance */
   int num_states = (int)descr->num_states;
@@ -1219,6 +1258,61 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
           syn_pairs[2 * nshort] = g1;
           syn_pairs[2 * nshort + 1] = g2;
           nshort++;
+        }
+
+        /* Enhancement-690 (hunt F8): a deck node named `<inst>#<internal>`
+         * that an analysis card or command invented -- nothing else refers
+         * to it, devRef 0 -- while the model COLLAPSED that internal node
+         * into another. No device would ever stamp the deck's node and it
+         * would float in every analysis of the session (singular-matrix
+         * warnings, an output "no device connects to"). It is shorted to
+         * the node the model chose, exactly as a collapse merge is: v(n1#ai)
+         * reads the merged node and an analysis output bound to it measures
+         * there. A node a device line named (devRef 1) is the deck's own and
+         * is left alone. The `adopted` mark, which a parse-time node otherwise
+         * never carries, says it was bound here: said once, and found again
+         * at every later setup. */
+        const uint32_t *glob_map =
+            (const uint32_t *)(((const char *)inst) + descr->node_mapping_offset);
+        for (uint32_t i = descr->num_terminals; i < descr->num_nodes; i++) {
+          const char *nm = descr->nodes[i].name;
+          CKTnode *target, *pn = NULL, *scan;
+          char *full;
+          if (!nm || descr->nodes[i].is_flow)
+            continue;
+          target = CKTnum2nod(ckt, (int)glob_map[i]);
+          if (!target || !target->name)
+            continue;
+          full = tprintf("%s#%s", gen_inst->GENname, nm);
+          if (strcmp(target->name, full) == 0) {
+            tfree(full);
+            continue;                       /* built, not collapsed */
+          }
+          for (scan = ckt->CKTnodes; scan; scan = scan->next)
+            if (scan->name && strcmp(scan->name, full) == 0) {
+              pn = scan;
+              break;
+            }
+          /* a fresh phantom (devRef 0), or one bound here at an earlier
+           * setup (devRef 1 and the adopted mark); a device line's node
+           * (devRef 1, never adopted) is the deck's own */
+          if (!pn || pn->number == 0 || pn->number == (int)glob_map[i] ||
+              (pn->devRef && !pn->adopted)) {
+            tfree(full);
+            continue;
+          }
+          syn_pairs[2 * nshort] = (uint32_t)pn->number;
+          syn_pairs[2 * nshort + 1] = glob_map[i];
+          nshort++;
+          pn->devRef = 1;                   /* connected now: no phantom */
+          if (!pn->adopted) {
+            pn->adopted = 1;
+            fprintf(stdout,
+                    "Note: %s names %s's internal node '%s', which the model "
+                    "collapses into '%s'; the two are one node.\n",
+                    full, gen_inst->GENname, nm, target->name);
+          }
+          tfree(full);
         }
 
         /* `sens` runs DEVsetup() a second time on a still-set-up circuit and

@@ -9,6 +9,9 @@ Modified: 2000 AlansFixes
 #include "ngspice/ifsim.h"
 #include "ngspice/iferrmsg.h"
 #include "ngspice/inpdefs.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-690: OSDIdeclaredInternalNode */
+#endif
 #include "ngspice/inpmacs.h"
 #include "ngspice/fteext.h"
 #include "inpxx.h"
@@ -45,18 +48,76 @@ Modified: 2000 AlansFixes
  * A card synthesised by if_run() is by construction NOT deck parsing, whatever
  * CKTsetup() has or has not done, so that path now says so explicitly. */
 int INPanalysisCardFromCommand = 0;
+static const char *inp_node_hint;     /* Enhancement-690: appended to "no such node" */
 
 static int
 inp_analysis_node(void *ckt, char **token, INPtables *tab, CKTnode **node)
 {
     CKTcircuit *c = (CKTcircuit *) ckt;
 
+    inp_node_hint = NULL;
     if (INPtermSearch(c, token, tab, node) == E_EXISTS)
         return OK;                        /* the ordinary case: a real node */
-    if (INPanalysisCardFromCommand)
-        return E_NOTFOUND;                /* typed at a command -- a typo */
-    if (c && c->CKTisSetup)
-        return E_NOTFOUND;                /* deck parsing is over -- a typo */
+    if (INPanalysisCardFromCommand || (c && c->CKTisSetup)) {
+        /* Enhancement-690 (hunt F8 of 2026-09-21): a device's INTERNAL node
+         * -- `n1#mid` for a Verilog-A `electrical mid`, `q1#base` for a BJT
+         * with rb -- is built by CKTsetup, and IFnewUid enters it in this
+         * table then. Typed at a command AFTER a setup it is found above;
+         * typed as the FIRST analysis of a session (nothing set up yet) it
+         * was refused as a typo, so `sens v(n1#mid)`, `pz ... n1#mid ...`,
+         * `tf v(n1#mid) vin` and `noise v(n1#mid) ...` all aborted with "no
+         * such node" while the same commands after an `op` ran. A name whose
+         * part before the '#' is an instance of the deck (INPpas3's rule for
+         * a deferred `.ic`, Enhancement-608) is the node that device will
+         * build: it is entered here as a parse-time node, which CKTsetup's
+         * adoption makes the device's own (E-608). A suffix the device does
+         * not build stays a node nothing connects to, and the analysis
+         * refuses it as a phantom (E-429's check, now in sens and pz too). */
+#ifdef OSDI
+        if (c && c->CKTisSetup) {
+            /* set up, and the name is not a node: a declared internal node
+             * the model COLLAPSED into another is never built. As E-688 does
+             * for a `.ic`, the output is taken at the node it collapsed into. */
+            int into;
+            if (OSDIcollapsedNode(c, *token, &into)) {
+                CKTnode *tn = CKTnum2nod(c, into);
+                const char *hash = strchr(*token, '#');
+                if (tn && hash) {
+                    fprintf(stdout, "Note: %s: the model collapses %.*s's internal "
+                            "node '%s' into '%s', so the analysis output is taken "
+                            "there.\n", *token, (int) (hash - *token), *token,
+                            hash + 1, tn->name ? tn->name : "0");
+                    if (node)
+                        *node = tn;
+                    return OK;
+                }
+            }
+        }
+#endif
+        if (c && !c->CKTisSetup && INPinternalNodeName(c, *token)) {
+#ifdef OSDI
+            /* Only a node the module DECLARES: a phantom left behind by a
+             * mistyped suffix would float in every later analysis of the
+             * session (a parse-time node is never removed), so the name is
+             * checked against the descriptor before anything is created. */
+            int decl = OSDIdeclaredInternalNode(c, *token);
+            if (decl > 0) {
+                INPtermInsert(c, token, tab, node);
+                if (node && *node)
+                    (*node)->devRef = 0;
+                return OK;
+            }
+            if (decl < 0)
+                return E_NOTFOUND;    /* an OSDI instance's, but its module declares no such node */
+#endif
+            /* a built-in device declares its internal nodes nowhere the
+             * parser can see; the message says what makes them visible */
+            inp_node_hint = " (a device's internal node exists once the circuit "
+                            "is set up: run an op or any analysis first, or put "
+                            "the card in the deck)";
+        }
+        return E_NOTFOUND;                /* typed at a command, or deck parsing is over -- a typo */
+    }
     INPtermInsert(c, token, tab, node);   /* card ahead of its own devices */
     /* Enhancement-429: this node was INVENTED by an analysis card. That is
      * legitimate while the deck is still being read -- a `.tf` card may sit
@@ -187,7 +248,8 @@ inp_value_present(const char *s)
 #define ANALYSIS_NODE(nm, nd)                                           \
     do {                                                                \
         if (inp_analysis_node(ckt, &(nm), tab, &(nd)) != OK) {          \
-            char *emsg_ = tprintf("no such node: %s\n", (nm));          \
+            char *emsg_ = tprintf("no such node: %s%s\n", (nm),         \
+                                  inp_node_hint ? inp_node_hint : "");  \
             LITERR(emsg_);                                              \
             tfree(emsg_);                                               \
             tfree(nm);                                                  \

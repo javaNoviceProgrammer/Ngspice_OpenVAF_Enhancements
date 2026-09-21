@@ -202,6 +202,8 @@ extern int OSDIterminalNames(CKTcircuit *ckt, const char *name, char ***names,
  * src/osdi/osdiparam.c. */
 extern int OSDIcollapseChanged(GENinstance *instPtr);
 extern int OSDIcollapsedNode(CKTcircuit *ckt, const char *name, int *into);   /* Enhancement-688 */
+extern int OSDIdeclaredInternalNode(CKTcircuit *ckt, const char *name);   /* Enhancement-690 */
+extern int OSDIuicSeed(CKTcircuit *ckt);   /* Enhancement-689: analysis("ic") initial conditions under uic */
 extern int OSDIanyCollapseChanged(CKTcircuit *ckt);   /* Enhancement-471 */
 /* Enhancement-575: call join(arg, a, b) for every pair of global node numbers
    an OSDI instance of `type` joins through a RESISTIVE Jacobian entry -- the

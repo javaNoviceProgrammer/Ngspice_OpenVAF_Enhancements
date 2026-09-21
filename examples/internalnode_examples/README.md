@@ -20,10 +20,22 @@ source). `CKTmkSignal` now says so once, naming the node, the internal node and 
 instance (or the source, for a `v1#branch` name); the connection itself is kept, and
 E-608's own cards stay silent.
 
-Run: `python3 verify_internalnode.py` (19 checks per solver, both solvers).
+Run: `python3 verify_internalnode.py` (26 checks per solver, both solvers).
 
 Enhancement-688 (F6 of the 2026-09-21 hunt) adds three checks: a `.nodeset` or `.ic` on an
 internal node the model collapsed (`V(a, ai) <+ 0`) is applied to the node it collapsed into,
 with a Note naming it (it was refused as "has no internal node"); a `.save` of the name says
 which node carries it ("save v(a) instead"); a name that is no internal node keeps the old
 refusal.
+
+Enhancement-690 (F8 of the 2026-09-21 hunt) adds seven checks: `sens v(n1#mid)`, `pz … n1#mid …`,
+`tf v(n1#mid) vin` and `noise v(n1#mid) …` typed as the *first* analysis of a session were refused
+with "no such node" (nothing is set up yet, so the node is not in the parser's table, and the
+command rule of E-426 read it as a typo) while the same commands after an `op` ran. A name
+whose instance is an OSDI device and whose suffix the module declares is entered as a
+parse-time node the device adopts; a suffix it does not declare is refused with nothing left
+behind; a built-in device's node keeps the limit and the message says to run an analysis
+first. A collapsed internal node named this way is bound to the node it collapsed into (a
+synthetic short, as a collapse merge is) or, after a setup, resolved to it with a Note. `sens`
+and `pz` refuse a phantom output node as `tf` and `noise` have since E-429 (a mistyped
+`.sens` card printed a table of −0.0).

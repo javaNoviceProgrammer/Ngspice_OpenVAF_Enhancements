@@ -63,6 +63,29 @@ save warning names that node.
        converges to the same point; .ic v(n1#ai) under uic starts v(a) at it
   [14] .save v(n1#ai): the warning names 'a' and suggests v(a); a name that is
        no internal node keeps the old refusal
+
+Enhancement-690 (F8 of the 2026-09-21 hunt): an internal node could not be the
+output of `sens`, `pz`, `tf` or `noise` typed as the FIRST analysis of a
+session -- nothing is set up yet, so the node is not in the parser's table,
+and E-426's rule for a command refused it as a typo ("no such node: n1#mid")
+while the same commands after an `op` ran. A name whose part before the '#'
+is an OSDI instance and whose suffix that module DECLARES is entered as a
+parse-time node the device adopts (E-608); a suffix it does not declare is
+refused as before, with nothing left behind; a built-in device's node (no
+declaration to check) keeps the limit and the message says what to do. A
+collapsed internal node is bound to the node it collapsed into (a synthetic
+short, as a collapse merge is) or, after a setup, resolved to it. `sens` and
+`pz` refuse a phantom output as `tf` and `noise` have since E-429.
+  [15] sens/pz/tf/noise v(n1#mid) as the first commands: the same numbers as
+       after an op
+  [16] a mistyped suffix as the first command: refused, and the next command
+       on the real node still runs (no phantom left); the BJT's q1#base keeps
+       the refusal, with the hint, and runs after an op
+  [17] a collapsed n1#ai: tf on it as the first command measures at 'a' with
+       the Note and no floating-node warning; typed after an op it is
+       resolved to 'a'; v(n1#ai) reads v(a)
+  [18] a mistyped suffix in a .sens/.pz CARD: refused as a phantom (the sens
+       used to print a table of -0.0)
 """
 import os
 import re
@@ -253,6 +276,57 @@ check("[14] .save v(n1#ai): the warning names 'a' and suggests v(a); n1#zz keeps
       and "save v(a) instead" in out
       and "Warning: save 'n1#zz': nothing of that name is in this analysis" in out
       and val(out, "v(a)") == [1.0], out[-500:])
+
+# ------------------------------------------------------------ [15] ---
+FIRST = ("sens v(n1#mid)\nprint r2\npz in 0 n1#mid 0 vol pz\nprint pole(1)\ntf v(n1#mid) v1\n"
+         "print transfer_function output_impedance_at_v(n1#mid)\nnoise v(n1#mid) v1 lin 2 1k 2k\nprint onoise_total\n")
+ref = run(DIV + "c3 out 0 1n\n.control\nop\n" + FIRST + ".endc", "t15ref")
+out = run(DIV + "c3 out 0 1n\n.control\n" + FIRST + ".endc", "t15a")
+def _vals(o):
+    return [val(o, k)[:1] for k in ("r2", "transfer_function", "output_impedance_at_v(n1#mid)", "onoise_total")]
+check("[15] sens, pz, tf and noise on n1#mid as the FIRST commands of the session: the same numbers as after an op "
+      "(were 'no such node: n1#mid', every one aborted)",
+      _vals(out) == _vals(ref) and all(_vals(ref)) and "pole(1)" in out and "no such node" not in out
+      and "aborted" not in out, f"{_vals(out)} vs {_vals(ref)} {out[-300:]}")
+out = run(DIV + "c3 out 0 1n\n.control\nnoise v(n1#mid) v1 lin 2 1k 2k\nprint onoise_total\n.endc", "t15b")
+check("[15] ...noise first, alone", val(out, "onoise_total")[:1] == _vals(ref)[3] and "no such node" not in out, out[-300:])
+
+# ------------------------------------------------------------ [16] ---
+out = run(DIV + ".control\nsens v(n1#mdi)\nprint n1_r\ntf v(n1#mid) v1\nprint transfer_function\nop\nprint v(n1#mid)\n.endc", "t16a")
+check("[16] a mistyped suffix as the first command: 'no such node: n1#mdi', nothing left behind -- the tf on the real "
+      "node right after it gives 0.75 and the op has no floating-node warning",
+      "no such node: n1#mdi" in out and "sens simulation(s) aborted" in out
+      and val(out, "transfer_function") == [0.75] and val(out, "v(n1#mid)") == [0.75]
+      and "held only by gmin" not in out and "singular" not in out, out[-500:])
+BJT = "vcc c 0 dc 5 ac 1\nrc c col 1k\nvb bb 0 dc 0.7\nq1 col bb 0 qq\n.model qq npn(is=1e-15 bf=100 rb=100)\n"
+out = run(BJT + ".control\nsens v(q1#base)\nprint rc\nop\nsens v(q1#base)\nprint rc\n.endc", "t16b")
+rcs = val(out, "rc")
+check("[16] ...the BJT's q1#base (no declaration to check) keeps the refusal as the first command, now with the hint, "
+      "and runs after an op",
+      "no such node: q1#base (a device's internal node exists once the circuit is set up" in out
+      and len(rcs) == 1 and rcs[0] != 0.0, out[-500:])
+
+# ------------------------------------------------------------ [17] ---
+out = run(COL + ".control\npre_osdi col.osdi\ntf v(n1#ai) i1\nprint transfer_function\nop\nprint v(n1#ai) v(a)\n.endc", "t17a")
+check("[17] a collapsed n1#ai as the FIRST command's output: tf = 1000 (dv(a)/di1), the 'two are one node' Note, no "
+      "floating-node or singular warning; v(n1#ai) after the op reads v(a) = 1",
+      val(out, "transfer_function") == [1000.0]
+      and "Note: n1#ai names n1's internal node 'ai', which the model collapses into 'a'; the two are one node." in out
+      and "held only by gmin" not in out and "singular" not in out
+      and val(out, "v(n1#ai)") == [1.0] and val(out, "v(a)") == [1.0], out[-500:])
+out = run(COL + ".control\npre_osdi col.osdi\nop\ntf v(n1#ai) i1\nprint transfer_function\n.endc", "t17b")
+check("[17] ...typed after an op: resolved to 'a' with the Note, tf = 1000 (was 'no such node')",
+      val(out, "transfer_function") == [1000.0]
+      and "Note: n1#ai: the model collapses n1's internal node 'ai' into 'a', so the analysis output is taken there." in out
+      and "no such node" not in out, out[-400:])
+
+# ------------------------------------------------------------ [18] ---
+out = run(DIV + ".sens v(n1#mdi)\n.pz in 0 n1#mdi 0 vol pz\n.print sens n1_r\n.control\nrun\n.endc", "t18")
+check("[18] a mistyped suffix in a .sens and a .pz CARD: both refused as a node no device connects to (the sens used "
+      "to print a table of -0.0)",
+      "Sensitivity output node V(n1#mdi) does not exist (no device connects to it)" in out
+      and "Pole-zero output node n1#mdi does not exist (no device connects to it)" in out
+      and not re.search(r"^0\s+-0\.0", out, re.M), out[-500:])
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

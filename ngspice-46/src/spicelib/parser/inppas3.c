@@ -18,9 +18,10 @@ Modified: AlansFixes
  * names an instance of the deck, the entry is kept by name (CKTpendNodPm)
  * and CKTsetup() places it once the device has built the node. A name that
  * is no instance's stays the refusal it was; a suffix the device does not
- * build is reported at setup. */
-static int
-inp_internal_node_name(CKTcircuit *ckt, const char *nodename)
+ * build is reported at setup. Enhancement-690: inp2dot.c asks the same
+ * question of an analysis command typed before the first setup. */
+int
+INPinternalNodeName(CKTcircuit *ckt, const char *nodename)
 {
     const char *sharp = strchr(nodename, '#');
     char *inst;
@@ -132,7 +133,7 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                     /* If node is not found, issue a warning, ignore the defective token */
                     deferred = NULL;
                     found = INPtermSearch(ckt, &nodename, tab, &node1) == E_EXISTS;
-                    if (!found && inp_internal_node_name(ckt, nodename)) {
+                    if (!found && INPinternalNodeName(ckt, nodename)) {
                         deferred = nodename;    /* Enhancement-608: placed at setup */
                         node1 = NULL;
                     } else if (!found) {
@@ -212,7 +213,7 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                     /* If node is not found, issue a warning, ignore the defective token */
                     deferred = NULL;
                     found = INPtermSearch(ckt, &nodename, tab, &node1) == E_EXISTS;
-                    if (!found && inp_internal_node_name(ckt, nodename)) {
+                    if (!found && INPinternalNodeName(ckt, nodename)) {
                         deferred = nodename;    /* Enhancement-608: placed at setup */
                         node1 = NULL;
                     } else if (!found) {

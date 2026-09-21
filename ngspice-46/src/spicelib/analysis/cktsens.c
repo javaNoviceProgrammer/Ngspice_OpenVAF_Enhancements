@@ -11,6 +11,7 @@ Modified: 2000 AlanFixes
 #include "ngspice/gendefs.h"
 #include "ngspice/devdefs.h"
 #include "ngspice/cktdefs.h"
+#include "ngspice/inpdefs.h"      /* Enhancement-690: CKTnodePhantom */
 #include "ngspice/smpdefs.h"
 #include "ngspice/sensdefs.h"
 #include "ngspice/sensgen.h"
@@ -290,6 +291,19 @@ int sens_sens(CKTcircuit* ckt, int restart)
     DEBUG(1)
         printf(">>> restart : %d\n", restart);
 #endif
+
+    /* Enhancement-690 (hunt F8): as tfanal.c and noisean.c have had since
+     * Enhancement-429 -- a `.sens` CARD, or a `sens` command typed before the
+     * first setup naming a device's internal node, invents its output node
+     * before CKTsetup; devRef says whether any device ever adopted it. A
+     * phantom used to yield a table of -0.0 sensitivities. */
+    if (job->output_volt
+        && (CKTnodePhantom(job->output_pos) || CKTnodePhantom(job->output_neg))) {
+        SPfrontEnd->IFerrorf(ERR_WARNING,
+                             "Sensitivity output node %s does not exist "
+                             "(no device connects to it)", job->output_name);
+        return E_NOTFOUND;
+    }
 
     /* get to work */
 

@@ -5,6 +5,7 @@ Copyright 1990 Regents of the University of California.  All rights reserved.
 #include "ngspice/ngspice.h"
 #include "ngspice/complex.h"
 #include "ngspice/cktdefs.h"
+#include "ngspice/inpdefs.h"      /* Enhancement-690: CKTnodePhantom */
 #include "ngspice/smpdefs.h"
 #include "ngspice/pzdefs.h"
 #include "ngspice/trandefs.h"   /* only to get the 'mode' definitions */
@@ -39,6 +40,27 @@ PZan(CKTcircuit *ckt, int reset)
 
     error = PZinit(ckt);
     if (error != OK) return error;
+
+    /* Enhancement-690 (hunt F8): a `.pz` card, or a `pz` command typed before
+     * the first setup naming a device's internal node, invents that node
+     * before CKTsetup; a name no device adopted is a phantom (E-429's rule,
+     * as tfanal.c and noisean.c apply it) and the run is refused rather than
+     * computed against a node nothing connects to. */
+    {
+        static const char *const which[4] = { "input", "input", "output", "output" };
+        const int nums[4] = { job->PZin_pos, job->PZin_neg, job->PZout_pos, job->PZout_neg };
+        int k;
+        for (k = 0; k < 4; k++) {
+            CKTnode *nd = CKTnum2nod(ckt, nums[k]);
+            if (CKTnodePhantom(nd)) {
+                SPfrontEnd->IFerrorf(ERR_WARNING,
+                                     "Pole-zero %s node %s does not exist "
+                                     "(no device connects to it)", which[k],
+                                     nd->name ? nd->name : "?");
+                return E_NOTFOUND;
+            }
+        }
+    }
 
     /* Calculate small signal parameters at the operating point */
     error = CKTop(ckt, (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITJCT,
