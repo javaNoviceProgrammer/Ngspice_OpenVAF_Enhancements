@@ -392,6 +392,49 @@ static void write_node_mapping(const OsdiDescriptor *descr, void *inst,
   }
 }
 
+/* Enhancement-688 (hunt F6 of 2026-09-21): `<instance>#<node>` names an OSDI
+ * instance's INTERNAL node that setup did not build as a node of its own --
+ * the model collapsed it (`V(a, ai) <+ 0` with rs = 0) into another node, or
+ * never connected it (decoupled -> ground). A `.ic`/`.nodeset` on the name was
+ * refused with "has no internal node", which is the wrong reason, and a `.save`
+ * said "nothing of that name". Returns 1 with *into = the global number of the
+ * node it was collapsed into (0 = ground), 0 when the name is not such a node
+ * (no such instance, not an OSDI instance, no internal node of that name).
+ * Valid once setup has run, which is when both callers ask. */
+int OSDIcollapsedNode(CKTcircuit *ckt, const char *name, int *into) {
+  const char *hash = name ? strchr(name, '#') : NULL;
+  if (!hash || hash == name || !hash[1])
+    return 0;
+  size_t ilen = (size_t)(hash - name);
+  const char *suffix = hash + 1;
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    for (GENmodel *m = ckt->CKThead[type]; m; m = m->GENnextModel) {
+      for (GENinstance *inst = m->GENinstances; inst; inst = inst->GENnextInstance) {
+        if (!inst->GENname || strlen(inst->GENname) != ilen ||
+            strncmp(inst->GENname, name, ilen) != 0)
+          continue;
+        OsdiRegistryEntry *entry = osdi_reg_entry_inst(inst);
+        if (!entry)
+          return 0;
+        const OsdiDescriptor *descr = entry->descriptor;
+        void *data = osdi_instance_data(entry, inst);
+        const uint32_t *node_mapping =
+            (const uint32_t *)(((const char *)data) + descr->node_mapping_offset);
+        for (uint32_t i = descr->num_terminals; i < descr->num_nodes; i++) {
+          if (descr->nodes[i].name && strcmp(descr->nodes[i].name, suffix) == 0) {
+            *into = (int)node_mapping[i];
+            return 1;
+          }
+        }
+        return 0;
+      }
+    }
+  }
+  return 0;
+}
+
 /* LRM 3.6.1: stamp each of this instance's nodes with the abstol its nature
  * declares, so the convergence test judges it by the tolerance the model asked
  * for rather than the circuit-wide default. Nodes shared with other devices

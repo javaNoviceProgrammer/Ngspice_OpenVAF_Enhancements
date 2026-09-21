@@ -201,6 +201,7 @@ extern int OSDIterminalNames(CKTcircuit *ckt, const char *name, char ***names,
  * every non-OSDI instance). Reading it clears it. Defined in
  * src/osdi/osdiparam.c. */
 extern int OSDIcollapseChanged(GENinstance *instPtr);
+extern int OSDIcollapsedNode(CKTcircuit *ckt, const char *name, int *into);   /* Enhancement-688 */
 extern int OSDIanyCollapseChanged(CKTcircuit *ckt);   /* Enhancement-471 */
 /* Enhancement-575: call join(arg, a, b) for every pair of global node numbers
    an OSDI instance of `type` joins through a RESISTIVE Jacobian entry -- the

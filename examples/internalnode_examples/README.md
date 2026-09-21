@@ -20,4 +20,10 @@ source). `CKTmkSignal` now says so once, naming the node, the internal node and 
 instance (or the source, for a `v1#branch` name); the connection itself is kept, and
 E-608's own cards stay silent.
 
-Run: `python3 verify_internalnode.py` (16 checks per solver, both solvers).
+Run: `python3 verify_internalnode.py` (19 checks per solver, both solvers).
+
+Enhancement-688 (F6 of the 2026-09-21 hunt) adds three checks: a `.nodeset` or `.ic` on an
+internal node the model collapsed (`V(a, ai) <+ 0`) is applied to the node it collapsed into,
+with a Note naming it (it was refused as "has no internal node"); a `.save` of the name says
+which node carries it ("save v(a) instead"); a name that is no internal node keeps the old
+refusal.

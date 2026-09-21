@@ -12,6 +12,9 @@ Modified: 2000 AlansFixes, 2013/2015 patch by Krzysztof Blaszkowski
  */
 
 #include "ngspice/ngspice.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-688: OSDIcollapsedNode */
+#endif
 #include "ngspice/cpdefs.h"
 #include "ngspice/ftedefs.h"
 #include "ngspice/dvec.h"
@@ -74,6 +77,9 @@ static inline int vlength2delta(int len);
 /*Output data to spice module*/
 #ifdef TCL_MODULE
 #include "ngspice/tclspice.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-688: OSDIcollapsedNode */
+#endif
 #elif defined SHARED_MODULE
 extern int sh_ExecutePerLoop(void);
 extern int sh_vecinit(runDesc *run);
@@ -589,8 +595,35 @@ wl_intersect(wordlist *a, wordlist *b)
 }
 
 static void
-unmatched_warning(const char *name)
+unmatched_warning(CKTcircuit *ckt, const char *name)
 {
+#ifdef OSDI
+    /* Enhancement-688 (hunt F6 of 2026-09-21): `n1#ai` names an internal node
+     * the model collapsed into another node -- there is no vector of that
+     * name because there is no node of that name; say which node carries it. */
+    int into = -1;
+    if (ckt && OSDIcollapsedNode(ckt, name, &into)) {
+        const char *inst_end = strchr(name, '#');
+        CKTnode *tgt = into > 0 ? CKTnum2nod(ckt, into) : NULL;
+        if (tgt && tgt->name)
+            fprintf(cp_err,
+                    "Warning: save '%s': the model collapses %.*s's internal node '%s' "
+                    "into '%s',\n         so no such vector is produced; save v(%s) "
+                    "instead.\n",
+                    name, inst_end ? (int) (inst_end - name) : 0, name,
+                    inst_end ? inst_end + 1 : "", (char *) tgt->name, (char *) tgt->name);
+        else
+            fprintf(cp_err,
+                    "Warning: save '%s': the model collapses %.*s's internal node '%s' "
+                    "into ground (or leaves it unconnected),\n         so no such vector "
+                    "is produced.\n",
+                    name, inst_end ? (int) (inst_end - name) : 0, name,
+                    inst_end ? inst_end + 1 : "");
+        return;
+    }
+#else
+    NG_IGNORE(ckt);
+#endif
     fprintf(cp_err,
             "Warning: save '%s': nothing of that name is in this "
             "analysis,\n         so no such vector is produced.\n", name);
@@ -1120,7 +1153,7 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                             now_unmatched = wl_cons(copy(saves[i].name),
                                                     now_unmatched);
                         else
-                            unmatched_warning(saves[i].name);
+                            unmatched_warning(circuitPtr, saves[i].name);
                     }
                 }
             }
@@ -1139,7 +1172,7 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                     wl_intersect(seq_unmatched, now_unmatched);
                 seq_unmatched = NULL;
                 for (w = missing; w; w = w->wl_next)
-                    unmatched_warning(w->wl_word);
+                    unmatched_warning(circuitPtr, w->wl_word);
                 wl_free(missing);
                 seq_reset();
             }

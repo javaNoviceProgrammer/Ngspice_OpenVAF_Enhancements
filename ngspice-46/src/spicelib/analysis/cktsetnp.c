@@ -13,6 +13,9 @@ Author: 1985 Thomas L. Quarles
 #include "ngspice/ifsim.h"
 #include "ngspice/iferrmsg.h"
 #include "ngspice/cktdefs.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-688: OSDIcollapsedNode */
+#endif
 
 
 
@@ -83,14 +86,50 @@ CKTapplyPendingNodPm(CKTcircuit *ckt)
             IFvalue v;
             v.rValue = p->value;
             CKTsetNodPm(ckt, n, p->parm, &v, NULL);
-        } else if (!p->reported) {
+            continue;
+        }
+        {
             const char *inst_end = strchr(p->name, '#');
-            fprintf(stderr,
-                    "Warning : %s on non-existent node - %s, ignored\n"
-                    "   (%.*s has no internal node '%s')\n",
-                    p->parm == PARM_IC ? "IC" : "Nodeset", p->name,
-                    inst_end ? (int) (inst_end - p->name) : 0, p->name,
-                    inst_end ? inst_end + 1 : "");
+            int into = -1, collapsed = 0;
+#ifdef OSDI
+            /* Enhancement-688 (hunt F6 of 2026-09-21): the node exists in the
+             * module and the model collapsed it into another node (or into
+             * ground). The two are one node, so the entry belongs on the node
+             * it was collapsed into; say so once. Only a name that is no
+             * internal node of the instance gets the old refusal. */
+            collapsed = OSDIcollapsedNode(ckt, p->name, &into);
+#endif
+            if (collapsed && into > 0) {
+                CKTnode *tgt = CKTnum2nod(ckt, into);
+                if (tgt) {
+                    IFvalue v;
+                    v.rValue = p->value;
+                    CKTsetNodPm(ckt, tgt, p->parm, &v, NULL);
+                }
+                if (!p->reported)
+                    fprintf(stderr,
+                            "Note: %s on %s: the model collapses %.*s's internal node "
+                            "'%s' into '%s', so it is applied to '%s'.\n",
+                            p->parm == PARM_IC ? "IC" : "Nodeset", p->name,
+                            inst_end ? (int) (inst_end - p->name) : 0, p->name,
+                            inst_end ? inst_end + 1 : "",
+                            tgt ? (char *) tgt->name : "?", tgt ? (char *) tgt->name : "?");
+            } else if (collapsed) {
+                if (!p->reported)
+                    fprintf(stderr,
+                            "Warning : %s on %s, ignored: the model collapses %.*s's "
+                            "internal node '%s' into ground (or leaves it unconnected).\n",
+                            p->parm == PARM_IC ? "IC" : "Nodeset", p->name,
+                            inst_end ? (int) (inst_end - p->name) : 0, p->name,
+                            inst_end ? inst_end + 1 : "");
+            } else if (!p->reported) {
+                fprintf(stderr,
+                        "Warning : %s on non-existent node - %s, ignored\n"
+                        "   (%.*s has no internal node '%s')\n",
+                        p->parm == PARM_IC ? "IC" : "Nodeset", p->name,
+                        inst_end ? (int) (inst_end - p->name) : 0, p->name,
+                        inst_end ? inst_end + 1 : "");
+            }
             p->reported = 1;
         }
     }

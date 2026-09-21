@@ -52,6 +52,17 @@ instance (or the source, for a `v1#branch` name); the adoption itself is kept.
   [11] a device line naming v1#branch: the branch-current wording, once
   [12] E-608's own cards (.tf ahead of the device, .ic, the diode's .tf)
        stay silent
+
+Enhancement-688 (F6 of the 2026-09-21 hunt): an internal node the model
+COLLAPSED (`V(a, ai) <+ 0` with rs = 0) has no node of its own, and a
+`.nodeset`/`.ic` on it was refused with "n1 has no internal node 'ai'" -- the
+wrong reason -- while a `.save` said "nothing of that name". The two are one
+node: the entry is applied to the node it collapsed into, with a Note, and the
+save warning names that node.
+  [13] .nodeset v(n1#ai) on a collapsed node: the Note names 'a', the op
+       converges to the same point; .ic v(n1#ai) under uic starts v(a) at it
+  [14] .save v(n1#ai): the warning names 'a' and suggests v(a); a name that is
+       no internal node keeps the old refusal
 """
 import os
 import re
@@ -218,6 +229,30 @@ quiet = [run(DIV + ".tf v(n1#mid) v1\n.op", "t12a"),
          run(DIODE + ".tf v(d1#internal) v1\n.op", "t12d")]
 check("[12] E-608's own cards (.tf ahead of the device, .ic, .nodeset, the diode's .tf) raise no collision warning",
       not any("Warning: node '" in q for q in quiet), "|".join(q[-120:] for q in quiet if "Warning: node '" in q))
+
+# ------------------------------------------------------------ [13] ---
+compile_va("col", '`include "disciplines.vams"\nmodule col(a, c);\ninout a, c; electrical a, c, ai;\n'
+                  'parameter real rs = 0 from [0:inf);\nparameter real r = 1k from (0:inf);\n'
+                  'analog begin\n  if (rs > 0) I(a, ai) <+ V(a, ai) / rs; else V(a, ai) <+ 0;\n'
+                  '  I(ai, c) <+ V(ai, c) / r;\nend\nendmodule\n')
+COL = "i1 0 a dc 1m\nn1 a 0 mcol\n.model mcol col\n"
+out = run(COL + ".nodeset v(n1#ai)=0.5\n.control\npre_osdi col.osdi\nop\nprint v(a)\n.endc", "t13")
+check("[13] .nodeset on a collapsed internal node: applied to 'a' with a Note, no 'non-existent', the op at 1.0",
+      "Note: Nodeset on n1#ai: the model collapses n1's internal node 'ai' into 'a', so it is applied to 'a'." in out
+      and "non-existent" not in out and val(out, "v(a)") == [1.0], out[-400:])
+out = run("v1 in 0 dc 1\nr1 in a 1k\nn1 a 0 mcol\nc1 a 0 1n\n.model mcol col\n.ic v(n1#ai)=0.3\n"
+          ".control\npre_osdi col.osdi\ntran 1n 20n uic\nprint v(a)[0]\n.endc", "t13b")
+first = val(out, "v(a)[0]")
+check("[13] ...and .ic v(n1#ai)=0.3 under tran uic starts v(a) at 0.3 (was ignored: 'has no internal node')",
+      "Note: IC on n1#ai:" in out and first and close(first[0], 0.3, 1e-2), out[-300:])
+
+# ------------------------------------------------------------ [14] ---
+out = run(COL + ".save v(a) v(n1#ai) v(n1#zz)\n.control\npre_osdi col.osdi\nop\nprint v(a)\n.endc", "t14")
+check("[14] .save v(n1#ai): the warning names 'a' and suggests v(a); n1#zz keeps 'nothing of that name'; the op runs",
+      "Warning: save 'n1#ai': the model collapses n1's internal node 'ai' into 'a'," in out
+      and "save v(a) instead" in out
+      and "Warning: save 'n1#zz': nothing of that name is in this analysis" in out
+      and val(out, "v(a)") == [1.0], out[-500:])
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)
