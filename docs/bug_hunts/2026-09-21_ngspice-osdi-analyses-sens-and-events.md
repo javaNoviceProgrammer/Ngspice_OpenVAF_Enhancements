@@ -32,7 +32,7 @@ nodes in `.ic`/`.nodeset`/`.save`/raw files/subcircuits, repeated analyses in on
 | [F8](#f8--an-internal-node-cannot-be-the-output-of-sens-pz-tf-or-noise) | `sens v(n1#mid)`, `pz in 0 n1#mid 0 vol pz`, `tf v(n1#mid) vin` and `noise v(n1#mid) vin …` are all refused with "no such node: n1#mid" and the analysis is aborted, while `print v(n1#mid)`, `.save`, `.ic`, `.nodeset`, `meas` and the raw file all accept the node; the analysis cards resolve their node arguments before the device setup that creates the internal nodes | gap |
 | [F9](#f9--probe-in3-on-a-four-terminal-osdi-device-saves-every-terminal-current-under-one-name) | `.probe i(n3)` on a four-terminal OSDI device inserts four zero-volt sources (`vcurr_n3:nn:1_0` … `:4_0`) and saves their currents as four vectors that all carry the name `n3:nn#branch` (1e-3, −1e-3, 0, 0), so a script reads only the first; a two-terminal device gets one `n1#branch` and a built-in resistor `r1#branch` | wrong output naming |
 | [N1](#n1-not-osdi--a-netlist-node-spelled-instnode-merges-silently-with-the-devices-internal-node) | *(fixed in [E-681](../../enhancements_doc/Enhancement-681.md): the adoption says so once, naming the node, the internal node and the instance, or the source for a `#branch` name; the merge itself is kept)* a netlist node spelled `n1#mid` merges silently with instance `n1`'s internal node `mid` (5 V forced onto it, 11.5 mA drawn); the built-in BJT's `q1#base` merges the same way (`vx#branch` = −1.2e35 A), no warning either way | ngspice namespace, silent |
-| [N2](#n2-not-osdi--sens-over-a-current-source-prints-get-error-lines) | a `sens` in a deck with current sources prints `GET ERROR: Isource:I:i1 -> param r (27)` and `… td (28)` twice per source per sweep — the sweep asks the source for parameters it cannot return | diagnostic noise |
+| [N2](#n2-not-osdi--sens-over-a-current-source-prints-get-error-lines) | *(fixed in [E-682](../../enhancements_doc/Enhancement-682.md): the current source's `r` and `td` are declared settable-only, as the voltage source's are, so the walk no longer asks them)* a `sens` in a deck with current sources prints `GET ERROR: Isource:I:i1 -> param r (27)` and `… td (28)` twice per source per sweep — the sweep asks the source for parameters it cannot return | diagnostic noise |
 
 Dropped after checking: the double scaling itself in F4 (LRM 6.3.6 says the automatic
 scaling cannot be disabled, so `badres` *is* scaled twice by the letter of the standard —
@@ -425,6 +425,12 @@ twice per current source per `sens` (24 lines for two sources and two sweeps). T
 sensitivity walk asks every instance parameter through `DEVask`; the current source's `r`
 and `td` (the PWL repeat and delay) are write-only there and the ask reports an error the
 sweep prints and ignores. Harmless, but it fills the log of any `sens` run.
+
+*Fixed in [E-682](../../enhancements_doc/Enhancement-682.md).* E-447 had declared the
+two voltage-source-only options `IOP` on the current source so the card could refuse
+them by name, with no ask case behind them; they are `IP` now, as the voltage source
+declares its own, so the walk (which admits `IF_SET | IF_ASK | IF_REAL`) skips them.
+A sweep over seventeen device types prints nothing else.
 
 ## What held
 

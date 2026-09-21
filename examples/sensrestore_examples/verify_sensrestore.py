@@ -33,6 +33,17 @@ rebuilt from the restored models.
 This suite pins the split closed and -- just as importantly -- pins that `sens`
 still WORKS, since a fix that quietly disabled the analysis would also pass a
 before/after comparison.
+
+Enhancement-682 (N2 of the 2026-09-21 hunt): `sens` over a deck with current
+sources printed "GET ERROR: Isource:I:i1 -> param r (27)" and "... td (28)"
+twice per source per sweep. E-447 had declared the voltage-source-only pwl
+options `r` and `td` on the current source so the card could refuse them by
+name, but declared them IOP -- askable -- with no ask case behind them, and the
+sweep asks every settable, askable real parameter. They are IP now (settable,
+not askable), as the voltage source declares its own. Five checks at the end:
+no ask error over two current sources, the source's own sensitivities still
+reported, `show` without the two rows, the card refusal kept, and a sweep over
+seventeen device types with no ask or set error at all.
 """
 import os
 import re
@@ -196,6 +207,31 @@ for res, want in (("r1", -2.5e-4), ("r2", +2.5e-4)):
           f"(analytic {want:+.1e} V/ohm)",
           bool(m) and abs(float(m.group(1)) - want) < 1e-8,
           f"{res} = {m.group(1) if m else 'not found'}")
+
+print("\nEnhancement-682: the sweep over a current source is quiet, and still measures it")
+ISRC = "I1 0 nb dc 1m\nI2 0 nb dc 0.5m\nR1 nb 0 1k"
+out = run(ISRC, "sens v(nb)\nprint all\nshow i1\nalter i1 r=1\nalter i1 td=2", "isrc")
+check("[E-682] no 'GET ERROR' over two current sources (was four lines per sweep)",
+      "GET ERROR" not in out and "SET ERROR" not in out, out[-300:])
+m = re.search(r"^\s*i1\s*=\s*([-\d.eE+]+)\s*$", out, re.M | re.I)
+check("[E-682] the source's own sensitivity is still reported: dv(nb)/dI1 = R1 = 1000",
+      bool(m) and abs(float(m.group(1)) - 1000.0) < 1e-3, f"i1 = {m.group(1) if m else 'not found'}")
+shown = out.split("Isource: Independent current source", 1)[-1] if "Isource:" in out else ""
+check("[E-682] show i1 lists neither r nor td (they cannot be asked: nothing is stored)",
+      "Isource:" in out and not re.search(r"^\s+(r|td)\s", shown, re.M), shown[:400])
+check("[E-682] the card refusal of E-447 stands: alter i1 r= and td= name the reason",
+      out.count("is not supported for current sources") == 2, out[-400:])
+SWEEP = ("vin in 0 dc 1 ac 1\niin 0 a dc 1m\nr1 in a 1k\nc1 a 0 1n\nl1 a b 1u\nr2 b 0 1k\nd1 b 0 dd\n"
+         ".model dd d(is=1e-14)\nq1 c bb 0 qq\n.model qq npn(is=1e-15 bf=100)\nrc in c 1k\nvb bb 0 dc 0.7\n"
+         "m1 dr g 0 0 mm l=1u w=10u\n.model mm nmos(level=1 vto=0.5 kp=1e-4)\nvg g 0 dc 1\nrd in dr 1k\n"
+         "j1 jd jg 0 jj\n.model jj njf(vto=-1 beta=1e-4)\nrj in jd 1k\nvjg jg 0 dc -0.5\n"
+         "e1 e 0 a 0 2\nre e 0 1k\ng1 0 gg a 0 1m\nrg gg 0 1k\nf1 0 ff vin 1\nrf ff 0 1k\nh1 h 0 vin 100\nrh h 0 1k\n"
+         "b1 bb2 0 v=v(a)*2\nrb bb2 0 1k\ns1 sa 0 a 0 sw\n.model sw sw(vt=0.5 ron=1 roff=1meg)\nrs in sa 1k\n"
+         "k1 l1 l2 0.5\nl2 kk 0 1u\nrk kk 0 1k")
+out = run(SWEEP, "sens v(a)\nsens v(a) ac lin 1 1k 1k\nprint r1 iin", "sweep")
+check("[E-682] a DC and an AC sens over seventeen device types: no ask or set error, r1 and iin reported",
+      "GET ERROR" not in out and "SET ERROR" not in out
+      and re.search(r"^\s*r1\s*=", out, re.M) and re.search(r"^\s*iin\s*=", out, re.M), out[-400:])
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

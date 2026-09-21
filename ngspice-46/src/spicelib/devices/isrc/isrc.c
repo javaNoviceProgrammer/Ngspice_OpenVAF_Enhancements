@@ -28,9 +28,15 @@ IFparm ISRCpTable[] = { /* parameters */
  /* Enhancement-447: `r` and `td` are voltage-source-only pwl options. They were
     not declared here at all, so `I1 0 a pwl(... r=0)` failed with the generic
     "unknown parameter (r)" -- which reads like a typo rather than a feature that
-    exists for V and not for I. Declared so the parse can say exactly that. */
- IOP ("r",       ISRC_R,         IF_REAL,   "pwl repeat (voltage sources only)"),
- IOP ("td",      ISRC_TD,        IF_REAL,   "pwl delay (voltage sources only)"),
+    exists for V and not for I. Declared so the parse can say exactly that.
+    Enhancement-682: declared IP (settable, not askable), as the voltage source
+    declares its own `r` and `td`. As IOP they were askable, ISRCask had no case
+    for them, and `.sens` -- which walks every IF_SET|IF_ASK|IF_REAL parameter --
+    printed "GET ERROR: Isource:I:i1 -> param r (27)" and "... td (28)" twice
+    per current source per sweep. There is nothing to ask: the card refuses
+    them, so no value is ever stored. */
+ IP  ("r",       ISRC_R,         IF_REAL,   "pwl repeat (voltage sources only)"),
+ IP  ("td",      ISRC_TD,        IF_REAL,   "pwl delay (voltage sources only)"),
 #ifdef SHARED_MODULE
  IOP ("external", ISRC_EXTERNAL, IF_STRING,"external source description"),
 #endif
