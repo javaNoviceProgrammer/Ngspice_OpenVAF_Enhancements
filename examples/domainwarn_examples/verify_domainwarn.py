@@ -165,5 +165,59 @@ n = sum(1 for l in o.splitlines() if "outside the domain" in l)
 check("[20] the warning is deferred and repeat-suppressed: a 5-point transient prints it a handful of times, not per iteration",
       ok and 1 <= n <= 8, f"{n} lines")
 
+# ---------------------------------------------------------------- slew / transition (E-696)
+# Enhancement-696 (hunt F6 of 2026-09-21): a `slew` rate or a `transition` time
+# the deck fixed outside its domain was projected in silence -- a wrong sign to
+# its magnitude, a negative time to 0 -- and a ZERO rate was a zero clamp: the
+# output could not move, so `rate=0` on a card froze a slew output at its initial
+# value for the whole run without a line in the log. The projections say so now
+# (E-651's rule, once per accepted point), and a zero rate drops the limit in
+# that direction. A run-time quantity is projected in silence, as before.
+A = "@"
+SL2 = ("parameter real pos = 1e5, neg = -1e5;\n(*desc=\"y\"*) real y;\n"
+       "analog begin y = slew(V(p,n) > 0.5 ? 1.0 : 0.0, pos, neg); I(p,n) <+ V(p,n)/1k; end")
+SL1 = ("parameter real rate = 1e5;\n(*desc=\"y\"*) real y;\n"
+       "analog begin y = slew(V(p,n) > 0.5 ? 1.0 : 0.0, rate); I(p,n) <+ V(p,n)/1k; end")
+TR = ("parameter real td = 0, tr = 10u;\n(*desc=\"y\"*) real y;\n"
+      "analog begin y = transition(V(p,n) > 0.5 ? 1.0 : 0.0, td, tr, tr); I(p,n) <+ V(p,n)/1k; end")
+RT = ("(*desc=\"y\"*) real y;\n"
+      "analog begin y = slew(V(p,n) > 0.5 ? 1.0 : 0.0, 1e5 * (V(p,n) - 2.0)); I(p,n) <+ V(p,n)/1k; end")
+PULSE = "v1 1 0 pulse(0 1 1m 1n 1n 2m 10m) dc 0\nna1 1 0 m\n"
+SLCTL = f"save all {A}na1[y]\ntran 10u 4m\nmeas tran y25 FIND {A}na1[y] AT=2.5m\nmeas tran y35 FIND {A}na1[y] AT=3.5m"
+
+
+def slew_case(label, body, tag, card, want25, want35, *needles):
+    ok, out = compile_src(MOD(body), tag)
+    o = run(tag, PULSE + ".model m m " + card, SLCTL) if ok else ""
+    got = {}
+    for k in ("y25", "y35"):
+        m = re.search(k + r"\s*=\s*([-+0-9.eE]+)", o)
+        got[k] = float(m.group(1)) if m else None
+    lines = [l for l in o.splitlines() if "OSDI(warn)" in l]
+    w = bool(lines) and all(any(nd in l for l in lines) for nd in needles) if needles else not lines
+    vals_ok = all(got[k] is not None and abs(got[k] - want) < 1e-3 for k, want in (("y25", want25), ("y35", want35)))
+    return check(label, ok and vals_ok and w,
+                 (out.strip().splitlines() or [""])[0][:70] if not ok else f"y25={got['y25']} y35={got['y35']} {(lines or [''])[0][-90:]}")
+
+
+slew_case("[21] slew(x, pos, neg) with a deck pos = 0: the output follows the input (1 at 2.5 ms, 0 at 3.5 ms; it stood at 0 for the whole run) and says the positive limit is dropped",
+          SL2, "s21", "pos=0", 1.0, 0.0, "slew: the maximum positive rate is 0", "requires it positive", "no positive slew limit")
+slew_case("[22] a deck pos = -1e5: the magnitude is used, and named",
+          SL2, "s22", "pos=-1e5", 1.0, 0.0, "the maximum positive rate is -100000", "its magnitude is used")
+slew_case("[23] a deck neg = +1e5 (LRM 4.5.9 wants it negative): the magnitude is the negative limit, and named",
+          SL2, "s23", "neg=1e5", 1.0, 0.0, "the maximum negative rate is 100000", "requires it negative", "its magnitude is used as the negative limit")
+slew_case("[24] a deck neg = 0: the fall happens (the output was held at 1) and the negative limit is dropped, named",
+          SL2, "s24", "neg=0", 1.0, 0.0, "the maximum negative rate is 0", "no negative slew limit")
+slew_case("[25] the one-rate form with a deck rate = 0: 'the rate is 0', no slew limit, one line",
+          SL1, "s25", "rate=0", 1.0, 0.0, "slew: the rate is 0", "there is no slew limit")
+slew_case("[26] transition with a deck tr = -1u and td = -1m: instantaneous from 1 ms, both named with LRM 4.5.8 and '0 is used'",
+          TR, "s26", "tr=-1u td=-1m", 1.0, 0.0, "transition: the rise time is -1e-06, negative", "the fall time is -1e-06", "the delay is -0.001, negative", "LRM 4.5.8", "0 is used")
+slew_case("[27] usable rates and times, and a RUN-TIME rate that goes negative, pass without a word",
+          RT, "s27", "", 1.0, 0.0)
+ok, out = compile_src(MOD(SL2), "s28")
+o = run("s28", PULSE + ".model m m", SLCTL) if ok else ""
+check("[28] the defaults (1e5, -1e5) ramp in 10 us and print nothing",
+      ok and not any("OSDI(warn)" in l for l in o.splitlines()) and "y25" in o, "")
+
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

@@ -1,6 +1,6 @@
 # domainwarn_examples — a deck-fixed argument that is projected onto its domain is named (Enhancement-651)
 
-Twenty checks per solver, run under both KLU and Sparse by `_setup.check_both_solvers`.
+Twenty-eight checks per solver, run under both KLU and Sparse by `_setup.check_both_solvers`.
 
 E-504/505/506 project an unusable argument onto its domain at run time: a negative or NaN
 noise power becomes 0 (the source contributes nothing), a negative standard deviation
@@ -25,3 +25,9 @@ warning a handful of times, not per iteration.
 ```bash
 python3 examples/domainwarn_examples/verify_domainwarn.py
 ```
+
+Since E-696 (hunt F6 of 2026-09-21) the `slew` rates and the `transition` times
+follow the same rule (checks [21]-[28]): a deck-fixed wrong sign is named and its
+magnitude used, a deck-fixed negative time is named and 0 used, and a zero rate --
+which used to freeze the output for the whole run in silence -- drops the limit in
+that direction and says so.

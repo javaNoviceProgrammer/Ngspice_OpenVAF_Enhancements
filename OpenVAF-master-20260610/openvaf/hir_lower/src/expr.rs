@@ -4231,17 +4231,102 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // LRM-conformant negative third argument was negated into a POSITIVE
         // lower clamp bound, turning the tracking loop into a `+max_neg_rate`
         // runaway ramp that ignored the input entirely.
+        // Enhancement-696 (hunt F6 of 2026-09-21): the |.| stays, and a value the
+        // DECK fixed outside the domain is named once per accepted point
+        // (Enhancement-651's rule); a zero rate, which the clamp could never
+        // release (the output stood still for the whole run, in silence), drops
+        // the limit in that direction instead. See `slew_rate_or_warn`.
         let (pos_max, neg_max) = if signature == SLEW_POS_MAX {
             let rate = self.lower_expr(args[1]);
-            (rate, rate)
+            let mag = self.slew_rate_or_warn("the rate", false, "there is no slew limit", args[1], rate);
+            (mag, mag)
         } else {
             debug_assert_eq!(signature, SLEW_NEG_MAX);
-            (self.lower_expr(args[1]), self.lower_expr(args[2]))
+            let pos = self.lower_expr(args[1]);
+            let neg = self.lower_expr(args[2]);
+            let pos = self.slew_rate_or_warn(
+                "the maximum positive rate",
+                false,
+                "there is no positive slew limit",
+                args[1],
+                pos,
+            );
+            let neg = self.slew_rate_or_warn(
+                "the maximum negative rate",
+                true,
+                "there is no negative slew limit",
+                args[2],
+                neg,
+            );
+            (pos, neg)
         };
-        let pos_max = self.lower_fabs(pos_max);
-        let neg_max = self.lower_fabs(neg_max);
         let idx = self.ctx.intern.implicit_equations.len() as u32;
         self.lower_rate_limited_track(x, pos_max, neg_max, ImplicitEquationKind::Slew(idx))
+    }
+
+    /// Enhancement-696 (hunt F6 of 2026-09-21): a `slew` rate as the loop uses it
+    /// -- its MAGNITUDE (the loop clamps `dy/dt` to `[-neg, +pos]` with both given
+    /// as positive numbers) -- with a value the deck fixed outside LRM 4.5.9's
+    /// domain named once per accepted point, Enhancement-651's rule.
+    ///
+    /// hir_ty refuses a literal it can see ("the maximum positive rate must be
+    /// greater than zero, but is 0"); the same value arriving through a
+    /// `parameter` the card overrode was projected in silence: a wrong sign
+    /// became its magnitude (Enhancement-61's tolerance of the positive-magnitude
+    /// spelling, kept), and a ZERO rate was a zero clamp -- the output could not
+    /// move at all, so `rate=0` on a card froze a `slew` output at its initial
+    /// value for the whole transient without a line in the log. A zero (or NaN)
+    /// rate now drops the limit in that direction: the projection onto the domain
+    /// with the LRM's own reading of "no rate limit", which is what `transition`
+    /// already means by a zero time. Two projections, two messages, never both:
+    /// the sign test is false for 0 and NaN, the zero test sees the magnitude.
+    /// A run-time quantity is projected the same way, in silence.
+    fn slew_rate_or_warn(
+        &mut self,
+        what: &str,
+        want_negative: bool,
+        dropped: &str,
+        arg: ExprId,
+        rate: Value,
+    ) -> Value {
+        let guarded = self.is_param_derived(arg);
+        let mag = self.lower_fabs(rate);
+        // the wrong sign: a finite nonzero value on the wrong side of 0 (false
+        // for 0 and for NaN, which the zero test below handles)
+        let wrong = if want_negative {
+            self.ctx.ins().fgt(rate, F_ZERO)
+        } else {
+            self.ctx.ins().flt(rate, F_ZERO)
+        };
+        let sign_ok = self.lower_select_with(wrong, |_| FALSE, |_| TRUE);
+        let (required, used) = if want_negative {
+            ("negative", "its magnitude is used as the negative limit")
+        } else {
+            ("positive", "its magnitude is used")
+        };
+        let fmt = format!("slew: {what} is %g; LRM 4.5.9 requires it {required} -- {used}");
+        let mag = self.project_or_warn(guarded, sign_ok, mag, mag, &fmt, &[rate]);
+        // zero or NaN: no limit in that direction
+        let nonzero = self.ctx.ins().fgt(mag, F_ZERO); // false for 0 and for NaN
+        let fmt = format!("slew: {what} is %g; LRM 4.5.9 requires it {required} -- {dropped}");
+        self.project_or_warn(guarded, nonzero, mag, INFINITY, &fmt, &[rate])
+    }
+
+    /// Enhancement-696 (hunt F6 of 2026-09-21): a `transition` time (rise or
+    /// fall) with a value the deck fixed negative named once per accepted point,
+    /// Enhancement-651's rule. The projection is Enhancement-504's: zero, which is
+    /// what `transition` means with the argument omitted (the directive's time,
+    /// or an instantaneous transition); it used to be applied in silence. Zero
+    /// itself is legal (LRM 4.5.8) and passes without a word. A run-time quantity
+    /// is projected in silence, as before.
+    fn transition_time_or_warn(&mut self, which: &str, arg: ExprId, t: Value) -> Value {
+        let guarded = self.is_param_derived(arg);
+        let ok = self.ctx.ins().fge(t, F_ZERO); // false for negatives and for NaN
+        let fmt = format!(
+            "transition: the {which} time is %g, negative (LRM 4.5.8 requires a non-negative \
+             time); 0 is used"
+        );
+        self.project_or_warn(guarded, ok, t, F_ZERO, &fmt, &[t])
     }
 
     /// |x| via neg/lt/select (MIR has no fabs instruction).
@@ -4415,6 +4500,23 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
 
         let td = self.lower_expr(args[1]);
+        // Enhancement-696 (hunt F6 of 2026-09-21): LRM 4.5.8 -- the delay "shall
+        // be non-negative". `absdelay` names a negative delay the deck fixed
+        // (Enhancement-665); `transition`'s went to the delay stage untouched
+        // and was used as 0 in silence. Same projection, same rule.
+        let td = {
+            let ok = self.ctx.ins().fge(td, F_ZERO); // false for negatives and NaN
+            let guarded = self.is_param_derived(args[1]);
+            self.project_or_warn(
+                guarded,
+                ok,
+                td,
+                F_ZERO,
+                "transition: the delay is %g, negative (LRM 4.5.8 requires a non-negative \
+                 delay); 0 is used",
+                &[td],
+            )
+        };
         // transition's internal delay is an ARGUMENT of the operator, not an
         // absdelay: its td legitimately tracks (LRM 4.5.8), so never frozen.
         let delayed = self.lower_delay(x, td, false);
@@ -4435,15 +4537,6 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
 
         let trise = self.lower_expr(args[2]);
-        let tfall = if signature == TRANSITION_DELAY_RISET {
-            trise
-        } else {
-            debug_assert!(
-                signature == TRANSITION_DELAY_RISET_FALLT
-                    || signature == TRANSITION_DELAY_RISET_FALLT_TOL
-            );
-            self.lower_expr(args[3])
-        };
         // Enhancement-504: a negative rise/fall time must not reach the reciprocal.
         //
         // `pos_max` is 1/trise and bounds `dy/dt` from ABOVE in the tracking loop
@@ -4463,17 +4556,24 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // domain the LRM states, it is already what `transition` means with the
         // argument omitted, and 1/0 = +inf disables the rate limit exactly as an
         // instantaneous transition should. Guessing that a negative time "meant"
-        // its magnitude would be inventing intent. `slew` needs no such clamp --
-        // it applies lower_fabs to both rates just above, for its own reasons.
+        // its magnitude would be inventing intent. `slew` takes the magnitude of
+        // a wrong-signed rate (Enhancement-61) and drops a zero one
+        // (Enhancement-696), for its own reasons.
+        //
+        // Enhancement-696 (hunt F6 of 2026-09-21): the clamp says so when the
+        // deck fixed the value -- it was silent (`transition_time_or_warn`).
+        let trise = self.transition_time_or_warn("rise", args[2], trise);
+        let tfall = if signature == TRANSITION_DELAY_RISET {
+            trise
+        } else {
+            debug_assert!(
+                signature == TRANSITION_DELAY_RISET_FALLT
+                    || signature == TRANSITION_DELAY_RISET_FALLT_TOL
+            );
+            let tfall = self.lower_expr(args[3]);
+            self.transition_time_or_warn("fall", args[3], tfall)
+        };
         let t_zero = self.ctx.fconst(0.0);
-        let trise = {
-            let pos = self.ctx.ins().fgt(trise, t_zero);   // false for 0 and for NaN
-            self.ctx.make_select(pos, |_, branch| if branch { trise } else { t_zero })
-        };
-        let tfall = {
-            let pos = self.ctx.ins().fgt(tfall, t_zero);
-            self.ctx.make_select(pos, |_, branch| if branch { tfall } else { t_zero })
-        };
         // LRM 4.5.8 (filter-operators audit): "If neither rise_time nor
         // fall_time are specified OR ARE EQUAL TO ZERO (0.0), the rise and
         // fall time default to the value defined by `default_transition."
