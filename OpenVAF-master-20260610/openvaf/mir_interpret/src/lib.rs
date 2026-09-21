@@ -178,9 +178,12 @@ impl<'a> Interpreter<'a> {
             mir::Opcode::Asinh => f64::asinh(args(0).f64()).into(),
             mir::Opcode::Acosh => f64::acosh(args(0).f64()).into(),
             mir::Opcode::Atanh => f64::atanh(args(0).f64()).into(),
-            mir::Opcode::Iadd => (args(0).i32() + args(1).i32()).into(),
-            mir::Opcode::Isub => (args(0).i32() - args(1).i32()).into(),
-            mir::Opcode::Imul => (args(0).i32() * args(1).i32()).into(),
+            // Enhancement-693: wrapping, as the generated code (plain LLVM add/sub/mul)
+            // and the folder (Enhancement-286) compute them; the checked operators
+            // panicked on an overflow in a debug build where the model wraps.
+            mir::Opcode::Iadd => args(0).i32().wrapping_add(args(1).i32()).into(),
+            mir::Opcode::Isub => args(0).i32().wrapping_sub(args(1).i32()).into(),
+            mir::Opcode::Imul => args(0).i32().wrapping_mul(args(1).i32()).into(),
             mir::Opcode::Idiv => (args(0).i32() / args(1).i32()).into(),
             mir::Opcode::Irem => (args(0).i32() % args(1).i32()).into(),
             mir::Opcode::Ishl => (args(0).i32() << args(1).i32()).into(),

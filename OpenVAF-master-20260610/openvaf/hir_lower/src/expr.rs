@@ -17,7 +17,7 @@ use hir::signatures::{
 };
 use hir::{Body, BodyRef, BuiltIn, CompilationDB, Expr, ExprId, Literal, /*ParamSysFun,*/ Ref, ResolvedFun, Type};
 use mir::builder::InstBuilder;
-use mir::{InstructionData, Opcode, Value, FALSE, F_ONE, F_ZERO, GRAVESTONE, INFINITY, TRUE, ZERO};
+use mir::{Const, InstructionData, Opcode, Value, ValueDef, FALSE, F_ONE, F_ZERO, GRAVESTONE, INFINITY, TRUE, ZERO};
 use stdx::iter::zip;
 use syntax::ast::{BinaryOp, UnaryOp};
 
@@ -1005,13 +1005,27 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// there, which is 0 in an integer context -- the same answer the `otherwise`
     /// arm already gives.
     ///
+    /// Enhancement-693 (hunt F3 of 2026-09-21): the non-negative arm is integer
+    /// arithmetic now. It was the float power through `ficast`, whose saturating
+    /// conversion made `**` the one integer operator that CLIPS: `(2*k) ** 31` was
+    /// 2147483647 while `2*2*...*2` (31 times) is -2147483648, and
+    /// `(46341*k) ** 2` was 2147483647 while `(46341*k) * (46341*k)` is
+    /// -2147479015 -- `x ** 2` and `x * x` disagreed past 46340, from source that
+    /// compiled clean. IEEE 1364-2005 5.4.1 gives `**` the width of its operands
+    /// (32 bits for `integer`) and 4.2.1 makes that arithmetic two's complement,
+    /// so an overflowing power wraps like an overflowing product. The power is
+    /// exponentiation by squaring in wrapping `Imul` (plain `mul` in LLVM, the
+    /// wrapping fold of Enhancement-286): for a CONSTANT exponent the minimal
+    /// square-and-multiply chain, so `x ** 2` is literally `x * x` and `x ** 3`
+    /// is two multiplies; for a run-time exponent the 31-bit chain, unrolled and
+    /// branchless (bit i of the exponent selects the factor `p^(2^i)` or 1).
+    /// The lint's twin is `hir_ty`'s `int_pow_wrapping`.
+    ///
     /// Written branchless on purpose. A phi would be correct too, but every
     /// operand here is a comparison or a multiply by 0/1, so the constant folder
     /// collapses the whole thing when the operands are literals -- and, more
-    /// importantly, the float `pow` never sees the negative exponent at all. That
-    /// matters: `0 ** -1` is infinity in floating point, and `llvm.lround` of an
-    /// infinity is undefined. Clamping the exponent the float path sees keeps the
-    /// dead branch harmless rather than merely unused.
+    /// importantly, the negative-exponent arm never feeds the chain: the exponent
+    /// it sees is forced to 0 when negative, and `base ** 0` is 1.
     fn lower_int_pow(&mut self, base: Value, exp: Value) -> Value {
         let zero = self.ctx.iconst(0);
         let one = self.ctx.iconst(1);
@@ -1023,14 +1037,16 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let neg = self.ctx.ins().bicast(is_neg);
         let not_neg = self.ctx.ins().binary1(Opcode::Isub, one, neg);
 
-        // non-negative exponent: the float path, unchanged in value. The exponent
-        // is forced to 0 when it is negative so `pow` cannot produce an infinity
-        // that `ficast` would then have to round.
-        let safe_exp = self.ctx.ins().binary1(Opcode::Imul, exp, not_neg);
-        let fbase = self.ctx.ins().ifcast(base);
-        let fexp = self.ctx.ins().ifcast(safe_exp);
-        let fpow = self.ctx.ins().binary1(Opcode::Pow, fbase, fexp);
-        let pos_res = self.ctx.ins().ficast(fpow);
+        // non-negative exponent: exponentiation by squaring in wrapping i32.
+        // The exponent is forced to 0 when it is negative so the chain yields 1
+        // there, which the `not_neg` factor below discards anyway.
+        let pos_res = match self.ctx.dfg().value_def(exp) {
+            ValueDef::Const(Const::Int(n)) => self.lower_int_pow_const(base, n.max(0) as u32),
+            _ => {
+                let safe_exp = self.ctx.ins().binary1(Opcode::Imul, exp, not_neg);
+                self.lower_int_pow_unrolled(base, safe_exp)
+            }
+        };
 
         // negative exponent: Table 5-6. The two base tests are mutually exclusive,
         // so summing the two contributions is a select.
@@ -1049,6 +1065,52 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let lo = self.ctx.ins().binary1(Opcode::Imul, neg, neg_res);
         let hi = self.ctx.ins().binary1(Opcode::Imul, not_neg, pos_res);
         self.ctx.ins().binary1(Opcode::Iadd, lo, hi)
+    }
+
+    /// Enhancement-693: `base ** n` for a constant `n >= 0` as the minimal
+    /// square-and-multiply chain of wrapping `Imul` -- one multiply for `n = 2`
+    /// (exactly `x * x`), two for `n = 3`, at most 2·log2(n). `n = 0` is 1.
+    fn lower_int_pow_const(&mut self, base: Value, mut n: u32) -> Value {
+        let mut result: Option<Value> = None;
+        let mut p = base;
+        while n > 0 {
+            if n & 1 == 1 {
+                result = Some(match result {
+                    None => p,
+                    Some(r) => self.ctx.ins().binary1(Opcode::Imul, r, p),
+                });
+            }
+            n >>= 1;
+            if n > 0 {
+                p = self.ctx.ins().binary1(Opcode::Imul, p, p);
+            }
+        }
+        result.unwrap_or_else(|| self.ctx.iconst(1))
+    }
+
+    /// Enhancement-693: `base ** exp` for a run-time `exp >= 0` as the 31-bit
+    /// square-and-multiply chain, unrolled and branchless: bit i of the exponent
+    /// (a logical shift and a mask, 0 or 1) selects the factor `1 + bit·(p - 1)`
+    /// -- `p` when set, 1 when clear -- and `p` is squared between bits. Every
+    /// multiply wraps, so an overflowing power wraps like an overflowing product.
+    /// Bit 31 is the sign, 0 for the non-negative exponent this arm receives.
+    fn lower_int_pow_unrolled(&mut self, base: Value, exp: Value) -> Value {
+        let one = self.ctx.iconst(1);
+        let mut result = one;
+        let mut p = base;
+        for i in 0..31u32 {
+            let shift = self.ctx.iconst(i as i32);
+            let shifted = self.ctx.ins().binary1(Opcode::Ishr, exp, shift);
+            let bit = self.ctx.ins().binary1(Opcode::Iand, shifted, one);
+            let p_minus_one = self.ctx.ins().binary1(Opcode::Isub, p, one);
+            let scaled = self.ctx.ins().binary1(Opcode::Imul, bit, p_minus_one);
+            let factor = self.ctx.ins().binary1(Opcode::Iadd, one, scaled);
+            result = self.ctx.ins().binary1(Opcode::Imul, result, factor);
+            if i < 30 {
+                p = self.ctx.ins().binary1(Opcode::Imul, p, p);
+            }
+        }
+        result
     }
 
     fn lower_user_fun(&mut self, fun: hir::Function, lim: bool, args: &[ExprId]) -> Value {

@@ -7,6 +7,7 @@
      the real 3e9 (saturated when stored), `parameter integer half = 2.5` ran
      with 3. Lint L030 `lossy_integer_constant` (warn) says so. E-675: an
      integer expression that overflows wraps, and the label says to what.
+     E-693: an integer `**` wraps too (it was the one operator that clipped).
   c  `-A L022` was "invalid value"; the printed id is accepted by -A/-W/-E and
      `--lints` prints it beside the name.
   d  `V(p,n)` inside an analog function was "'V' was not found in the current
@@ -205,16 +206,65 @@ check("[b] the module compiles; L030 for the nine lossy defaults and none for 7*
 check("[b] an integer expression that overflows WRAPS, and the label says to what: +1, *, -, *2",
       lab.get("p3") == "wraps to -2147483648" and lab.get("p4") == "wraps to 1410065408"
       and lab.get("p5") == "wraps to 2147483647" and lab.get("p6") == "wraps to -2", f"{lab}")
-check("[b] `2 ** 31` is folded now (the float power's saturating store: clipped); a localparam chain wraps",
-      lab.get("p7") == "clipped to 2147483647" and lab.get("p10") == "wraps to -2147483648", f"{lab}")
+check("[b] `2 ** 31` is folded and WRAPS like every other integer operator (E-693; it said clipped); a localparam chain wraps",
+      lab.get("p7") == "wraps to -2147483648" and lab.get("p10") == "wraps to -2147483648", f"{lab}")
 check("[b] an intermediate overflow that lands on a value that fits is reported as such",
       lab.get("p9") == "wraps to -1073741824" and "'p9' has the default 1073741824 in exact arithmetic" in msg, f"{lab}")
 check("[b] a real default is still clipped; the range check judges the stored value (no L027 for p11)",
       lab.get("p15") == "clipped to 2147483647" and not w27, "; ".join(w27) or f"{lab}")
 out = run("v1 1 0 1\nn1 1 0 mm\n.model mm li3", "op", "li3", "li3_run")
 check("[b] ...matching the model at run time, label for label",
-      "p3=-2147483648 p4=1410065408 p5=2147483647 p6=-2 p7=2147483647 p9=-1073741824 p10=-2147483648 "
+      "p3=-2147483648 p4=1410065408 p5=2147483647 p6=-2 p7=-2147483648 p9=-1073741824 p10=-2147483648 "
       "p11=-2147483648 p12=49 p13=0 p14=-1 p15=2147483647" in out, out[-260:].replace("\n", "|"))
+
+# Enhancement-693 (hunt F3 of 2026-09-21): the integer power went through the
+# float power and a SATURATING cast, so `**` was the one integer operator that
+# clipped: `(2*k) ** 31` was 2147483647 where `2*2*...*2` is -2147483648, and
+# `(46341*k) ** 2` was 2147483647 where `(46341*k) * (46341*k)` is -2147479015 --
+# `x ** 2` and `x * x` disagreed past 46340 (IEEE 1364-2005 5.4.1: `**` has the
+# width of its operands; 4.2.1: two's complement). The power is exponentiation
+# by squaring in wrapping i32 now, at run time (a constant exponent gets the
+# minimal multiply chain, a run-time one the unrolled 31-bit chain), in the
+# folded default, and in L030's label; Table 5-6 for a negative exponent stays.
+POW4 = """module li4(p, n); inout p, n; electrical p, n;
+  parameter integer k = 1;
+  parameter integer q1 = 2 ** 31;
+  parameter integer q2 = 46341 ** 2;
+  parameter integer q3 = 3 ** 20;
+  integer r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12;
+  analog begin
+    r1 = (2*k) ** 31;
+    r2 = (46341*k) ** 2;
+    r3 = (46341*k) * (46341*k);
+    r4 = (2*k) ** (31*k);
+    r5 = (3*k) ** (20*k);
+    r6 = (2*k) ** 40;
+    r7 = (-2*k) ** (31*k);
+    r8 = (7*k) ** 11;
+    r9 = (2*k) ** (-1*k);
+    r10 = (-1*k) ** (3*k);
+    r11 = (0*k) ** (0*k);
+    r12 = (46341*k) ** (2*k);
+    $strobe("q1=%d q2=%d q3=%d r1=%d r2=%d r3=%d r4=%d r5=%d r6=%d r7=%d r8=%d r9=%d r10=%d r11=%d r12=%d",
+            q1, q2, q3, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12);
+    I(p,n) <+ V(p,n) / 1k;
+  end
+endmodule
+"""
+POW4_EXPECT = ("q1=-2147483648 q2=-2147479015 q3=-808182895 r1=-2147483648 r2=-2147479015 r3=-2147479015 "
+               "r4=-2147483648 r5=-808182895 r6=0 r7=-2147483648 r8=1977326743 r9=0 r10=-1 r11=1 r12=-2147479015")
+ok, msg = compile_src(POW4, "li4")
+lab = l030_labels(msg)
+check("[b] E-693: a folded integer power that overflows wraps, and L030 says to what (2**31, 46341**2, 3**20)",
+      ok and lab.get("q1") == "wraps to -2147483648" and lab.get("q2") == "wraps to -2147479015"
+      and lab.get("q3") == "wraps to -808182895" and sorted(lab) == ["q1", "q2", "q3"], f"{lab}" if ok else first_line(msg))
+out = run("v1 1 0 1\nn1 1 0 mm\n.model mm li4", "op", "li4", "li4_run")
+check("[b] E-693: at run time `**` wraps for a constant and a run-time exponent, x**2 == x*x, 7**11 exact, Table 5-6 rows unchanged",
+      POW4_EXPECT in out, out[-320:].replace("\n", "|"))
+ok0, msg0 = compile_src(POW4, "li4o0", "-O", "0")
+out0 = run("v1 1 0 1\nn1 1 0 mm\n.model mm li4", "op", "li4o0", "li4o0_run") if ok0 else ""
+check("[b] E-693: the same fourteen values at -O 0 (the chain, not an optimizer's reading of it)",
+      ok0 and POW4_EXPECT in out0, out0[-320:].replace("\n", "|") if ok0 else first_line(msg0))
 
 # ------------------------------------------------------------- [c] ---
 L022 = """module bre(p, n); inout p, n; electrical p, n;

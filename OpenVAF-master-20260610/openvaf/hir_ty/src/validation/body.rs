@@ -4451,6 +4451,25 @@ fn int_pow_exact(base: f64, exp: f64) -> f64 {
     }
 }
 
+/// Enhancement-693 (hunt F3 of 2026-09-21): an integer `**` as the model
+/// computes it -- Table 5-6 for a negative exponent, exponentiation by
+/// squaring in wrapping 32-bit arithmetic otherwise, the twin of
+/// `lower_int_pow`. `2 ** 31` is -2147483648 and `46341 ** 2` is
+/// `46341 * 46341` (-2147479015), where [`int_pow_exact`] gives the exact
+/// values a message quotes.
+fn int_pow_wrapping(base: i32, exp: i32) -> i32 {
+    if exp < 0 {
+        match base {
+            1 => 1,
+            -1 if exp.rem_euclid(2) == 1 => -1,
+            -1 => 1,
+            _ => 0,
+        }
+    } else {
+        base.wrapping_pow(exp as u32)
+    }
+}
+
 /// Enhancement-675 (hunt F3 of 2026-09-19): the 32-bit twin of [`const_num_in`]
 /// for an INTEGER-typed expression -- the value the model computes, where
 /// `const_num_in` gives the exact one a message quotes. The generated code and
@@ -4460,8 +4479,9 @@ fn int_pow_exact(base: f64, exp: f64) -> f64 {
 /// 2147483647" for both, a value the parameter never takes. Division and
 /// remainder truncate (LRM 4.2; a zero divisor and `i32::MIN / -1` are left to
 /// their own diagnostics), `**` follows `lower_int_pow` (Table 5-6 for a
-/// negative exponent, the rounded float power through a saturating cast
-/// otherwise), and a `localparam` chain is followed. Anything else -- a
+/// negative exponent, the wrapping integer power otherwise -- Enhancement-693;
+/// it was the rounded float power through a saturating cast), and a
+/// `localparam` chain is followed. Anything else -- a
 /// variable, a call, a shift -- is not folded, and the caller falls back to
 /// the exact value.
 pub(crate) fn const_int_wrapping(
@@ -4491,8 +4511,9 @@ pub(crate) fn const_int_wrapping(
                 BinaryOp::Multiplication => Some(l.wrapping_mul(r)),
                 BinaryOp::Division if r != 0 && !(l == i32::MIN && r == -1) => Some(l / r),
                 BinaryOp::Remainder if r != 0 && !(l == i32::MIN && r == -1) => Some(l % r),
-                // the saturating `as` is the const folder's `FIcast`
-                BinaryOp::Power => Some(int_pow_exact(f64::from(l), f64::from(r)) as i32),
+                // Enhancement-693 (hunt F3 of 2026-09-21): wrapping, like the
+                // generated code (`lower_int_pow`); it was the saturating `as`
+                BinaryOp::Power => Some(int_pow_wrapping(l, r)),
                 _ => None,
             }
         }
@@ -4797,14 +4818,11 @@ fn check_param_default_range(
                 let verdict = if fraction {
                     format!("rounded to {}", value.round())
                 } else if let Some(w) = computed.filter(|_| wrapped) {
-                    // `2 ** 31`: the integer power goes through the float
-                    // power and a saturating cast (`lower_int_pow`), so the
-                    // stored value IS the clipped one
-                    if overflow && w == clip {
-                        format!("clipped to {w}")
-                    } else {
-                        format!("wraps to {w}")
-                    }
+                    // Enhancement-693: `2 ** 31` wraps too, now that the
+                    // integer power is integer arithmetic (`lower_int_pow`);
+                    // it used to be the one operator whose stored value was
+                    // the clipped one
+                    format!("wraps to {w}")
                 } else {
                     format!("clipped to {clip}")
                 };
