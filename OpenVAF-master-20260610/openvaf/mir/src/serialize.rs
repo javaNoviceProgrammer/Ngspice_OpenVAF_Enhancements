@@ -160,14 +160,21 @@ impl Serializer<'_> {
                 }
                 ValueDef::Param(param) => {
                     let (kind, name) = param_name(param);
-                    wln!(sel, "\"{kind}\": \"{name}\",")
+                    wln!(sel, "\"{kind}\": \"{}\",", json_escaped(&name))
                 }
                 ValueDef::Const(Const::Float(val)) => {
                     wln!(sel, "\"fconst\": {},", f64::from(val))
                 }
                 ValueDef::Const(Const::Int(val)) => wln!(sel, "\"iconst\": {val},"),
                 ValueDef::Const(Const::Str(val)) => {
-                    wln!(sel, "\"sconst\": \"{}\",", &sel.intern[val])
+                    // Enhancement-694 (hunt F4 of 2026-09-21): escaped. A string
+                    // constant was written raw, and the message of a `$fatal`,
+                    // `$error`, `$warning` or `$info` ends in a real newline
+                    // (`runtime_fatal` appends it for the run-time printf), so
+                    // every module with one of those dumped a file no JSON
+                    // parser accepts. Source literals only survived because the
+                    // lexer keeps their escapes as the two characters `\\` `n`.
+                    wln!(sel, "\"sconst\": \"{}\",", json_escaped(&sel.intern[val]))
                 }
                 ValueDef::Const(Const::Bool(val)) => wln!(sel, "\"bconst\": {val},"),
                 ValueDef::Invalid => unreachable!(),
@@ -295,8 +302,32 @@ impl Serializer<'_> {
     }
 
     fn serialize_key(&mut self, key: impl Display) {
-        w!(self, "\"{key}\": ");
+        w!(self, "\"{}\": ", json_escaped(&key.to_string()));
     }
+}
+
+/// Enhancement-694: `s` as the body of a JSON string literal -- `"` and `\\`
+/// backslash-escaped, the control characters as `\\n`, `\\t`, `\\r`, `\\b`,
+/// `\\f` or `\\u00XX` (RFC 8259 §7). Applied to every string the dump writes:
+/// the string constants, the input names and the keys.
+fn json_escaped(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 impl<'a> Write for Serializer<'a> {

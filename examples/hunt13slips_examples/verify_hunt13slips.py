@@ -4,6 +4,8 @@
 Seven small things the compiler said wrongly, or did not say:
   [1]  two messages carried runs of spaces (a flattened line continuation)
   [2]  --dump-json was in --help and answered "currently unimplemented"
+  [8]  E-694: --dump-json wrote string constants raw; a $fatal's message ends in a
+       real newline, so any module with a message task dumped invalid JSON
   [3]  $fatal / $error / $warning / $info with no message printed no line, so
        ngspice's "see the OSDI(fatal) message above" pointed at nothing
   [4]  'std' beside 'std_rel' was an error whose text said which one "is used";
@@ -151,6 +153,40 @@ ok, msg = compile_src("module ch(a,b); inout a,b; electrical a,b; parameter real
 r["declarations and instances"] = ok
 check("[7] a statement at module scope is one error naming it (contribution, assignment, system task, begin..end); widths, branches and instances still parse",
       all(r.values()), " ".join(f"{k}:{'ok' if v else 'BAD'}" for k, v in r.items()))
+
+# ---------------------------------------------------------------- 8 ---
+# Enhancement-694 (hunt F4 of 2026-09-21): the dump wrote string constants raw.
+# The message of a $fatal/$error/$warning/$info ends in a real newline (the
+# lowering appends it for the run-time printf), so every module with one of
+# those produced a file no JSON parser accepts; source literals survived only
+# because the lexer keeps their escapes as two characters. Every string the
+# dump writes -- constants, input names, keys -- is escaped now (RFC 8259 7).
+src = (M + 'real x; string s;\nanalog begin x = V(p,n); s = "in\\"side\\tq"; $strobe("q\\"q\\n");\n'
+       '  if (x > 100) $fatal(1, "too much: %g", x); if (x > 90) $error("e %g", x);\n'
+       '  if (x > 80) $warning("w"); if (x > 70) $info("i"); if (x > 60) $fatal(0);\n'
+       '  I(p,n) <+ x/1k; end endmodule\n')
+ok, msg = compile_src(src, "c8", flags=["--dump-json", "--dry-run"])
+jpath = os.path.join(WORK, "c8_m.json")
+def _sconsts(node, acc):
+    if isinstance(node, dict):
+        if "sconst" in node:
+            acc.append(node["sconst"])
+        for v in node.values():
+            _sconsts(v, acc)
+    elif isinstance(node, list):
+        for v in node:
+            _sconsts(v, acc)
+    return acc
+try:
+    j = json.load(open(jpath)) if os.path.exists(jpath) else None
+    err = ""
+except ValueError as e:
+    j, err = None, str(e)
+sc = _sconsts(j, []) if j is not None else []
+check("[8] --dump-json is valid JSON with $fatal/$error/$warning/$info in the module, and the messages round-trip with their newline",
+      ok and j is not None and "too much: %g\n" in sc and "e %g\n" in sc and "w\n" in sc and "i\n" in sc
+      and any(v.startswith("$fatal") for v in sc),
+      err or (f"{len(sc)} string constants: {sc[:8]}" if j is not None else first_line(msg)))
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)
