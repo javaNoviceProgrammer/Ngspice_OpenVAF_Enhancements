@@ -28,9 +28,18 @@ What this suite pins, each against the quoted clause:
     and at 2.0 after it). Until then the operator was a rate-limited loop
     at the fixed rate 1/rise_time, an approximation this suite pinned as
     the shipped contract (1.0996 at 2.1u); it now pins the LRM value.
+  * 4.5.12 -- "If a root (a pole or zero) is zero, then the term associated
+    with it is implemented as z, rather than (1 - z^-1 r)": since
+    Enhancement-699 a zi_zp/zi_zd/zi_np root at the origin is the one-period
+    delay (a pole) or advance (a zero) the clause makes it. The root
+    expansion built the term 1, so zi_zp(x, , '{0, 0}, T) was a wire while
+    zi_nd(x, '{0, 1}, '{1}, T), the same delay as coefficients, was right;
+    on the unit circle only the PHASE shows the missing factor.
 """
 
 import atexit
+import cmath
+import math
 import os
 import re
 import subprocess
@@ -185,6 +194,68 @@ if rc == 0:
           f"vmid={num(sim, 'vmid')} vend={num(sim, 'vend')}")
     check("...and holds 2.0 to the next edge",
           close(num(sim, "vend3"), 2.0, 1e-9), f"{num(sim, 'vend3')}")
+
+# ---- [5] z-filter roots at the origin are the factor z (4.5.12, E-699) ---
+print("\nz-filter roots at the origin (LRM 4.5.12, Enhancement-699):")
+rc, out, osdi = compile_src(
+    '`include "disciplines.vams"\n'
+    "module zorig(i, o1, o2, o3, o4, o5, o6);\n"
+    "  inout i, o1, o2, o3, o4, o5, o6; electrical i, o1, o2, o3, o4, o5, o6;\n"
+    "  localparam real zr = 0.0;\n"
+    "  analog begin\n"
+    "    V(o1) <+ zi_zp(V(i), , '{0.0, 0.0}, 1u);              // a pole at the origin: 1/z\n"
+    "    V(o2) <+ zi_np(V(i), '{1.0}, '{zr, 0.0}, 1u);         // the same, np spelling, a localparam zero\n"
+    "    V(o3) <+ zi_zd(V(i), '{0.0, 0.0}, '{1.0}, 1u);        // a zero at the origin: z\n"
+    "    V(o4) <+ zi_zp(V(i), '{0.0, 0.0}, '{0.5, 0.0}, 1u);   // z/(1 - 0.5 z^-1)\n"
+    "    V(o5) <+ zi_nd(V(i), '{0.0, 1.0}, '{1.0}, 1u);        // z^-1 as coefficients (the reference)\n"
+    "    V(o6) <+ zi_zp(V(i), , '{0.0, 0.0, 0.0, 0.0, 0.5, 0.0}, 1u); // two origin poles and one at 0.5\n"
+    "  end\nendmodule\n", "zorig")
+check("zorig (six z filters with roots at the origin) compiles", rc == 0,
+      out.strip().splitlines()[-1][:80] if rc else "")
+if rc == 0:
+    # wT = 0.5 at f = 0.5/(2 pi T); the AC of the z filters is the bilinear image
+    # z = (1 + sT/2)/(1 - sT/2) (documented), and ngspice's ph() is in radians,
+    # printed to six significant digits (hence 1e-5)
+    T = 1e-6
+    f = 0.5 / (2 * math.pi * T)
+    s = 2j * math.pi * f
+    z = (1 + s * T / 2) / (1 - s * T / 2)
+    exp = {1: cmath.phase(1 / z), 2: cmath.phase(1 / z), 3: cmath.phase(z),
+           4: cmath.phase(z / (1 - 0.5 / z)), 5: cmath.phase(1 / z),
+           6: cmath.phase(1 / (z * z * (1 - 0.5 / z)))}
+    body = "V1 i 0 DC 1 AC 1\nNd i o1 o2 o3 o4 o5 o6 dm\n.model dm zorig"
+    ctl = (f"ac lin 1 {f:.9g} {f:.9g}\n"
+           + "\n".join(f"print ph(v(o{k}))" for k in range(1, 7))
+           + "\nop\nprint v(o4) v(o6)")
+    sim = run(body, ctl, "zo", osdi)
+
+    def ph(k):
+        return num(sim, f"ph(v(o{k}))")
+
+    check("a pole at the origin (zp) is the one-period delay z^-1: phase -0.4900 rad at "
+          "wT = 0.5, exactly the nd spelling's -- it read 0 (the term was 1, a wire)",
+          close(ph(1), exp[1], 1e-5) and close(ph(5), exp[5], 1e-5),
+          f"zp={ph(1)} nd={ph(5)} exp={exp[1]:.6f}")
+    check("...and in the np spelling with a localparam zero", close(ph(2), exp[2], 1e-5),
+          f"{ph(2)}")
+    check("a zero at the origin (zd) is the one-period advance z: +0.4900 rad",
+          close(ph(3), exp[3], 1e-5), f"{ph(3)}")
+    check("z/(1 - 0.5 z^-1): +0.0914 rad (it read -0.3985, the phase of 1/(1 - 0.5 z^-1))",
+          close(ph(4), exp[4], 1e-5), f"{ph(4)} exp={exp[4]:.6f}")
+    check("two origin poles beside a real one: 1/(z^2 (1 - 0.5 z^-1)), -1.3784 rad",
+          close(ph(6), exp[6], 1e-5), f"{ph(6)} exp={exp[6]:.6f}")
+    check("the DC gains are those at z = 1: 2 for both o4 and o6",
+          close(num(sim, "v(o4)"), 2.0, 1e-9) and close(num(sim, "v(o6)"), 2.0, 1e-9),
+          f"{num(sim, 'v(o4)')} {num(sim, 'v(o6)')}")
+    sim = run(body.replace("DC 1 AC 1", "DC 0 PULSE(0 1 1u 1n 1n 1 2)"),
+              "tran 10n 3u\nmeas tran a1 FIND v(o1) AT=1.05u\nmeas tran b1 FIND v(o5) AT=1.05u\n"
+              "meas tran a2 FIND v(o1) AT=2.5u\nmeas tran b2 FIND v(o5) AT=2.5u", "zot", osdi)
+    check("transient: the zp delay and the nd delay trace the same step response "
+          "(the zp one read 1.0 at 1.05u, a wire, against the all-pass's -0.81)",
+          num(sim, "a1") is not None and num(sim, "a1") < 0
+          and close(num(sim, "a1"), num(sim, "b1"), 1e-6)
+          and close(num(sim, "a2"), num(sim, "b2"), 1e-6),
+          f"zp={num(sim, 'a1')},{num(sim, 'a2')} nd={num(sim, 'b1')},{num(sim, 'b2')}")
 
 print(f"\n{'ALL PASS' if checks == passed else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if checks == passed else 1)

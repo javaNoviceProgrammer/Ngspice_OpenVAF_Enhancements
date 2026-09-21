@@ -4915,9 +4915,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// unpaired element is a purely real root. Only the real parts of the product are returned;
     /// for a physical filter the roots come in conjugate pairs and the imaginary parts cancel.
     ///
-    /// There is deliberately no zero-root special case. The LRM's `(1 - s/r)` exception exists
-    /// because that form divides by the root; `(1 - rho*w)` does not, and at `rho = 0` it is
-    /// simply `1`.
+    /// There is no zero-root special case HERE: `(1 - rho*w)` does not divide by the root, so
+    /// the product is total. The LRM's rule for a root at the origin (4.5.12: "implemented as
+    /// z") is nonetheless a real one -- the term is a pure advance or delay, not `1` -- and
+    /// Enhancement-699 applies it in `lower_zi`, which splits the origin roots off before
+    /// calling this (`zi_split_origin_roots`) and shifts the finished polynomials by the
+    /// surplus power of z (`zi_apply_origin_roots`). This function's earlier claim that "at
+    /// `rho = 0` it is simply `1`" was the bug the hunt found: it read the exception as a
+    /// division guard, where the clause states it for the z forms too.
     fn zi_roots_to_poly(&mut self, roots: &[Value]) -> Vec<Value> {
         // coefficients as (real, imaginary), ascending powers of w; start at `1 + 0j`
         let mut re = vec![F_ONE];
@@ -4953,6 +4958,88 @@ impl BodyLoweringCtx<'_, '_, '_> {
             im = nim;
         }
         re
+    }
+
+    /// Enhancement-699: the compile-time value of every element of a root or
+    /// coefficient vector -- a literal array (each element through the constant
+    /// folder, so `-0.0`, `0*k` and a `localparam` fold), a `localparam` array, or
+    /// an array variable assigned constants once -- and `None` for an element the
+    /// deck can change (an overridable `parameter` anywhere in it). The list is
+    /// element-aligned with `lower_coeff_elems`; anything else yields an empty
+    /// list, which the caller treats as "no constant is known".
+    fn const_array_elems(&self, expr: ExprId) -> Vec<Option<f64>> {
+        if let Some(params) = self.body.array_param_ref(expr) {
+            return match hir::table_param_const_values(self.ctx.db, &params) {
+                Ok(vals) => vals.into_iter().map(Some).collect(),
+                Err(_) => vec![None; params.len()],
+            };
+        }
+        if let Some(vars) = self.body.array_var_ref(expr) {
+            return match hir::table_array_const_values(self.ctx.db, &vars) {
+                Ok(vals) => vals.into_iter().map(Some).collect(),
+                Err(_) => vec![None; vars.len()],
+            };
+        }
+        match self.body.get_expr(expr) {
+            Expr::Array(elems) => elems.iter().map(|&e| self.eval_const_real(e)).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Enhancement-699 (LRM 4.5.12): removes the roots at the origin from a z-filter
+    /// root vector (`(re, im)` pairs, a trailing unpaired element a real root, as
+    /// `zi_roots_to_poly` reads it) and returns the remaining roots with the count
+    /// removed. A root is at the origin when both its parts are compile-time zeros
+    /// (`const_array_elems`); a root the deck can set never is.
+    fn zi_split_origin_roots(&self, expr: ExprId, roots: Vec<Value>) -> (Vec<Value>, usize) {
+        let consts = self.const_array_elems(expr);
+        if consts.len() != roots.len() {
+            return (roots, 0);
+        }
+        let is_zero = |k: usize| consts[k] == Some(0.0);
+        let mut kept = Vec::with_capacity(roots.len());
+        let mut origin = 0;
+        let mut k = 0;
+        while k < roots.len() {
+            let has_im = k + 1 < roots.len();
+            if is_zero(k) && (!has_im || is_zero(k + 1)) {
+                origin += 1;
+            } else {
+                kept.push(roots[k]);
+                if has_im {
+                    kept.push(roots[k + 1]);
+                }
+            }
+            k += 2;
+        }
+        (kept, origin)
+    }
+
+    /// Enhancement-699 (LRM 4.5.12): applies the origin roots split off by
+    /// `zi_split_origin_roots` to the expanded polynomials in `w = z^-1`. With `a`
+    /// origin zeros and `b` origin poles the filter is `z^(a-b) * N'(w)/D'(w)`, so the
+    /// surplus of origin poles multiplies the numerator by `w^(b-a)` and the surplus
+    /// of origin zeros the denominator by `w^(a-b)`: a shift of the ascending
+    /// coefficient vector by that many leading zeros. Equal counts cancel, as `z/z`
+    /// does. The polynomials keep exact degrees, and neither shift touches the
+    /// bilinear realization's leading denominator coefficient (`D(w = -1)`, which a
+    /// leading zero in `w` does not change).
+    fn zi_apply_origin_roots(
+        mut num: Vec<Value>,
+        mut den: Vec<Value>,
+        origin_zeros: usize,
+        origin_poles: usize,
+    ) -> (Vec<Value>, Vec<Value>) {
+        if origin_poles > origin_zeros {
+            let mut shifted = vec![F_ZERO; origin_poles - origin_zeros];
+            shifted.append(&mut num);
+            num = shifted;
+        } else if origin_zeros > origin_poles {
+            let mut shifted = vec![F_ZERO; origin_zeros - origin_poles];
+            shifted.append(&mut den);
+            den = shifted;
+        }
+        (num, den)
     }
 
     /// Builds a controllable-canonical-form state-space realization of `H(s) = num(s)/den(s)`
@@ -5093,8 +5180,36 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let num = self.lower_coeff_elems(args[1]);
         let den = self.lower_coeff_elems(args[2]);
 
+        // Enhancement-699 (hunt F1 of 2026-09-21, filters/tables/noise): LRM 4.5.12
+        // -- "If a root (a pole or zero) is zero, then the term associated with it
+        // is implemented as z, rather than (1 - z^-1 r)". A root at the origin of
+        // the z-plane is not a degenerate term but a pure one-period advance (a
+        // zero) or delay (a pole) -- the natural way to write a delay in root form,
+        // and the reason the clause states the rule although `1 - z^-1 * 0` would
+        // not divide by anything. The product below built exactly that `1`, so
+        // `zi_zp(x, , '{0, 0}, T)` was a wire (phase 0 at every frequency, 1.0 all
+        // through a step) where `zi_nd(x, '{0, 1}, '{1}, T)` -- the same delay as
+        // coefficients -- was right. The origin roots are split off here, counted,
+        // and applied as the power of z they are: with a origin zeros and b origin
+        // poles, H = z^(a-b) * N'(w)/D'(w), w = z^-1, so a surplus of origin poles
+        // multiplies the numerator by w^(b-a) and a surplus of origin zeros the
+        // denominator by w^(a-b) -- a shift of the coefficient vector, which keeps
+        // every degree exact (no padded state for the common all-constant filter).
+        // The test is a compile-time one: Table 4-20 makes the root vectors
+        // constant-class and the filter's ORDER is fixed when the model is
+        // compiled, so a root the deck can set (an overridable `parameter`) is
+        // never an origin root -- it stays the term `1 - z^-1 r`, whatever value
+        // the card gives it. A literal, an expression of literals, or a
+        // `localparam` that is zero is the origin.
+        let (num, origin_zeros) =
+            if num_is_roots { self.zi_split_origin_roots(args[1], num) } else { (num, 0) };
+        let (den, origin_poles) =
+            if den_is_roots { self.zi_split_origin_roots(args[2], den) } else { (den, 0) };
+
         let num = if num_is_roots { self.zi_roots_to_poly(&num) } else { num };
         let den = if den_is_roots { self.zi_roots_to_poly(&den) } else { den };
+
+        let (num, den) = Self::zi_apply_origin_roots(num, den, origin_zeros, origin_poles);
 
         // Enhancement-506: the sampling period decides the whole bilinear map, and
         // nothing checked it once it came from the deck.

@@ -28,4 +28,14 @@ deviation in the laplace filters. This suite pins the fixes:
   operator ran at the fixed rate `1/rise_time` (1.0996 at 2.1 µs), an
   approximation this suite pinned as the shipped contract.
 
-Run `python3 verify_lrmfilters.py` — 14 checks, both solvers.
+- **A z-filter root at the origin is the factor `z`** (4.5.12): "if a
+  root (a pole or zero) is zero, then the term associated with it is
+  implemented as z, rather than (1 − z⁻¹ r)". Since
+  [E-699](../../enhancements_doc/Enhancement-699.md) a `zi_zp`/`zi_zd`/`zi_np`
+  pole at the origin is the one-period delay and a zero the one-period
+  advance the clause makes them (phase −0.49 / +0.49 rad at ωT = 0.5,
+  the `zi_nd` spelling's values); the root expansion used to build the
+  term 1, so `zi_zp(x, , '{0, 0}, T)` was a wire. On the unit circle only
+  the phase shows the missing factor, which is what the checks read.
+
+Run `python3 verify_lrmfilters.py` — 22 checks, both solvers.
