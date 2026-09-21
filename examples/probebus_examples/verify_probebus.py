@@ -31,6 +31,18 @@ Checks:
   [4] a scalar OSDI device and a two-formal plain subcircuit keep n5#branch /
       x3#branch; a written-out OSDI line gets the model's terminal names
   [5] without .probe alli nothing changes (the reference values)
+
+Enhancement-691 (F9 of the 2026-09-21 hunt): the EXPLICIT probes `i(<inst>)`,
+`i(<inst>,<k>)` and `i(<inst>,<terminal>)` on an OSDI instance ran in the deck
+read, before the module was registered, so every terminal was named "nn": a
+four-terminal device got four vectors that all read `n3:nn#branch`, `i(n3,2)`
+gave one more of them, and `i(n3,p)` was refused ("Node p is not available").
+They go through the second pass now and carry the model's terminal names.
+  [6] i(n3) on a four-terminal device: n3:p/n/cp/cn#branch, no nn; i(n3,2)
+      is n3:n#branch; i(n3,p) and i(n3,cp) by name; a two-terminal device
+      keeps n5#branch
+  [7] i(n2) on a bus line in autobus shorthand: written out, n2:n_k_#branch
+      = -(k+1) mA; i(n2,6) is the sixth terminal, n2:n_1_#branch
 """
 import os
 import re
@@ -58,7 +70,9 @@ def check(label, ok, detail=""):
 
 for name, src in (("va_res", open(os.path.join(HERE, "va_res.va")).read()),
                   ("rr", '`include "disciplines.vams"\nmodule rr(p, n);\ninout p, n; electrical p, n;\n'
-                         'parameter real r = 1k from (0:inf);\nanalog I(p,n) <+ V(p,n)/r;\nendmodule\n')):
+                         'parameter real r = 1k from (0:inf);\nanalog I(p,n) <+ V(p,n)/r;\nendmodule\n'),
+                  ("vc", '`include "disciplines.vams"\nmodule vc(p, n, cp, cn);\ninout p, n, cp, cn; electrical p, n, cp, cn;\n'
+                         '(* type="instance" *) parameter real gm = 1m;\nanalog I(p,n) <+ gm*V(cp,cn);\nendmodule\n')):
     with open(os.path.join(WORK, name + ".va"), "w") as f:
         f.write(src)
     r = subprocess.run([VAF, os.path.join(WORK, name + ".va"), "-o", os.path.join(WORK, name + ".osdi")],
@@ -71,7 +85,7 @@ for name, src in (("va_res", open(os.path.join(HERE, "va_res.va")).read()),
 def run(body, tag, ctl="op\nprint alli"):
     path = os.path.join(WORK, f"{tag}.cir")
     with open(path, "w") as f:
-        f.write(f"* probebus {tag}\n{body}\n.control\npre_osdi va_res.osdi\npre_osdi rr.osdi\n{ctl}\n.endc\n.end\n")
+        f.write(f"* probebus {tag}\n{body}\n.control\npre_osdi va_res.osdi\npre_osdi rr.osdi\npre_osdi vc.osdi\n{ctl}\n.endc\n.end\n")
     p = subprocess.run([NGSPICE, "-b", path], capture_output=True, text=True, timeout=120,
                        cwd=WORK, stdin=subprocess.DEVNULL)
     return p.stdout + p.stderr
@@ -146,6 +160,46 @@ out = run(KIC.replace(".probe alli\n", "") + "N1 /in /mid vares\nN2 /mid /out va
 v = vals(out)
 check("[5] without .probe alli the same deck reads the same outputs (the reference)",
       close(v.get("v(/out_0_)"), 1.0) and close(v.get("v(/out_3_)"), 4.0), f"{v}")
+
+# ------------------------------------------------------------- [6] ---
+FOUR = ".model mvc vc\n.model rm rr r=1k\nVd d 0 DC 1\nVg a 0 DC 0.5\nR1 d o 1k\nN3 o d a 0 mvc gm=2m\nN5 o 0 rm\n"
+out = run(FOUR + ".probe i(n3) i(n5)", "t6a", "op\nprint alli")
+v = vals(out)
+check("[6] i(n3) on a four-terminal device: n3:p#branch = 1 mA, n3:n#branch = -1 mA, n3:cp/cn = 0, no n3:nn; "
+      "a two-terminal device keeps n5#branch",
+      close(v.get("n3:p#branch"), 1e-3) and close(v.get("n3:n#branch"), -1e-3)
+      and close(v.get("n3:cp#branch"), 0.0) and close(v.get("n3:cn#branch"), 0.0)
+      and "n3:nn#branch" not in out and "n5#branch" in v and "nn#branch" not in out,
+      f"{ {k: v[k] for k in v if k.startswith(('n3', 'n5'))} } {out[-200:]}")
+out = run(FOUR + ".probe i(n3,2)", "t6b", "op\nprint alli")
+v = vals(out)
+check("[6] ...i(n3,2) is the second terminal alone: n3:n#branch = -1 mA and nothing else of n3",
+      close(v.get("n3:n#branch"), -1e-3) and not any(k.startswith("n3:") and k != "n3:n#branch" for k in v)
+      and "nn#branch" not in out, f"{ {k: v[k] for k in v if k.startswith('n3')} }")
+out = run(FOUR + ".probe i(n3,p) i(n3,cp)", "t6c", "op\nprint alli")
+v = vals(out)
+check("[6] ...i(n3,p) and i(n3,cp) by the model's terminal names (were 'Node p is not available')",
+      close(v.get("n3:p#branch"), 1e-3) and close(v.get("n3:cp#branch"), 0.0)
+      and "is not available" not in out and "n3:n#branch" not in v,
+      f"{ {k: v[k] for k in v if k.startswith('n3')} } {out[-200:]}")
+
+# ------------------------------------------------------------- [7] ---
+out = run(KIC.replace(".probe alli\n", ".probe i(n2)\n") + "N1 /in /mid vares\nN2 /mid /out vares", "t7a",
+          "op\nprint v(/out_3_)\nprint alli")
+v = vals(out)
+check("[7] i(n2) on a bus line in autobus shorthand: written out against the model's ports, n2:n_k_#branch = -(k+1) mA, "
+      "the outputs intact, no n1 probe",
+      close(v.get("v(/out_3_)"), 4.0) and all(close(v.get(f"n2:n_{k}_#branch"), -(k + 1) * 1e-3) for k in range(4))
+      and all(close(v.get(f"n2:p_{k}_#branch"), 0.0) for k in range(4))
+      and not any(k.startswith("n1:") for k in v) and "Warning: instance" not in out,
+      f"{ {k: v[k] for k in v if k.startswith(('n2', 'v('))} } {out[-200:]}")
+out = run(KIC.replace(".probe alli\n", ".probe i(n2,6)\n") + "N1 /in /mid vares\nN2 /mid /out vares", "t7b",
+          "op\nprint v(/out_3_)\nprint alli")
+v = vals(out)
+check("[7] ...i(n2,6): the sixth terminal of the written-out line, n2:n_1_#branch = -2 mA, alone",
+      close(v.get("v(/out_3_)"), 4.0) and close(v.get("n2:n_1_#branch"), -2e-3)
+      and not any(k.startswith("n2:") and k != "n2:n_1_#branch" for k in v),
+      f"{ {k: v[k] for k in v if k.startswith(('n2', 'v('))} } {out[-200:]}")
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

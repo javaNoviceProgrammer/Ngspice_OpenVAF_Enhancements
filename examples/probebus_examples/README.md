@@ -18,4 +18,12 @@ or a two-formal plain subcircuit keeps `<inst>#branch`.
 
 `va_res.va` is the example5 model (two `[0:3]` bus ports).
 
-Run: `python3 verify_probebus.py` (6 checks per solver, both solvers).
+Run: `python3 verify_probebus.py` (11 checks per solver, both solvers).
+
+Enhancement-691 (F9 of the 2026-09-21 hunt) adds five checks: the explicit `i(<inst>)`,
+`i(<inst>,<k>)` and `i(<inst>,<terminal>)` probes on an OSDI instance ran during the deck
+read, before the module was registered, so every terminal was labelled `nn` -- a
+four-terminal device got four vectors that all read `n3:nn#branch`, and `i(n3,p)` was refused
+as "Node p is not available". They now go through the same second pass as `alli` and carry
+the model's terminal names (`n3:p#branch`, `n3:cp#branch`, `n2:n_1_#branch` on a written-out
+bus line); a two-terminal device keeps `<inst>#branch`.

@@ -94,6 +94,16 @@ static int check_for_nodes(char* instance, int numnodes);
  * `<inst>#branch`. */
 #define PROBE_MAXPORT 256
 static bool probe_osdi_pending;     /* `alli` met an OSDI line during the deck read */
+/* Enhancement-691 (hunt F9 of 2026-09-21): the explicit `i(<inst>)`,
+ * `i(<inst>,<k>)` and `i(<inst>,<terminal>)` probes on an OSDI instance are
+ * kept by their text and spliced in that same second pass. During the deck
+ * read the module is not registered yet, so get_terminal_name() had nothing
+ * to say about an 'n' line and named every terminal "nn": a four-terminal
+ * device got four sources `vcurr_n3:nn:1_0` .. `:4_0` and four vectors that
+ * all read `n3:nn#branch`, and `i(n3,p)` was refused ("Node p is not
+ * available"). The model's own terminal names -- the ones `alli` has used
+ * since Enhancement-628 -- name them now. */
+static wordlist *probe_osdi_explicit;
 
 /* the model's terminal name as a vector name can carry it: `p[0]` -> `p_0_` */
 static char *probe_term_name(const char *tn)
@@ -542,22 +552,205 @@ static struct card *probe_splice_x(struct card *deck, struct card *card, char *i
     return card;
 }
 
+/* Enhancement-628 (hunt F11): the model's terminal names of an OSDI line,
+ * with the line written out against its ports when it is in autobus
+ * shorthand (`thisline` then points at the written-out node tokens, owned by
+ * `*expanded`). NULL when the model does not resolve or the line's node
+ * tokens do not go one per terminal -- the generic names then. */
+static char **probe_osdi_line_terms(struct card *deck, struct card *card, char **thisline,
+                                    int *numnodes, char **expanded, bool kicad, bool autobus)
+{
+    int pstart[PROBE_MAXPORT], pcnt[PROBE_MAXPORT];
+    IFdevice *dev = NULL;
+    int np = probe_osdi_ports(deck, card->line, pstart, pcnt, &dev);
+
+    *expanded = NULL;
+    if (np > 0 && dev && dev->terms) {
+        int terms = *dev->terms;
+        if (*numnodes == np && np < terms && autobus) {
+            *expanded = probe_expand_bus_line(*thisline, np, pstart, pcnt, dev, kicad);
+            if (*expanded) {
+                *thisline = *expanded;
+                *numnodes = terms;
+            }
+        }
+        if (*numnodes == terms)
+            return dev->termNames;
+    }
+    return NULL;
+}
+
+/* Enhancement-691 (hunt F9): one terminal of an OSDI line -- `i(n3,2)`,
+ * `i(n3,p)`. The k-th node token gets the measuring source and the vector is
+ * `<inst>:<terminal>#branch`, the explicit-probe form of what probe_splice
+ * does for every terminal. `thisline` is the line after the instance name
+ * (the written-out one under autobus); the card's line is rebuilt from it. */
+static struct card *probe_splice_term(struct card *card, const char *instname, char *thisline,
+                                      int k, const char *nodename)
+{
+    DS_CREATE(dnewline, 200);
+    char *scan = thisline, *tok, *newnode, *vline, *save;
+    int i;
+
+    sadd(&dnewline, instname);
+    cadd(&dnewline, ' ');
+    for (i = 1; i < k; i++) {
+        tok = gettok(&scan);
+        if (!tok || !*tok) {
+            tfree(tok);
+            break;
+        }
+        sadd(&dnewline, tok);
+        cadd(&dnewline, ' ');
+        tfree(tok);
+    }
+    tok = (i == k) ? gettok(&scan) : NULL;
+    if (!tok || !*tok) {
+        fprintf(stderr, "Warning: node number %d not available for instance %s!\n", k, instname);
+        tfree(tok);
+        ds_free(&dnewline);
+        return card;
+    }
+    newnode = tprintf("probe_int_%s_%s_%d", tok, instname, k);
+    vline = tprintf("vcurr_%s:%s:%d_%s %s %s 0", instname, nodename, k, tok, tok, newnode);
+    sadd(&dnewline, newnode);
+    cadd(&dnewline, ' ');
+    sadd(&dnewline, scan);              /* the other nodes, the model, the parameters */
+    tfree(card->line);
+    card->line = copy(ds_get_buf(&dnewline));
+    ds_free(&dnewline);
+    card = insert_new_line(card, vline, 0, card->linenum_orig, card->linesource);
+    save = tprintf(".save %s:%s#branch", instname, nodename);
+    card = insert_new_line(card, save, 0, card->linenum_orig, card->linesource);
+    tfree(tok);
+    tfree(newnode);
+    return card;
+}
+
+/* Enhancement-691 (hunt F9): the explicit probes on OSDI instances that the
+ * deck read kept (probe_osdi_explicit), spliced now that the modules are
+ * registered: `i(n3)` measures every terminal under the model's terminal
+ * names (n3:p#branch, n3:n#branch, ...), `i(n3,2)` and `i(n3,p)` one of
+ * them, a two-terminal device keeps `n3#branch`. A model that does not
+ * resolve gets the generic "nn", as before. */
+static void probe_osdi_explicit_pass(struct card *deck, bool kicad, bool autobus)
+{
+    wordlist *w;
+
+    for (w = probe_osdi_explicit; w; w = w->wl_next) {
+        char *spec = w->wl_word, *p = spec + 2, *instname, *node1, *thisline, *expanded = NULL;
+        char **osdi_terms;
+        struct card *card = NULL, *c;
+        int skip_control = 0, skip_subckt = 0, numnodes, k = 0;
+
+        instname = gettok_noparens(&p);
+        if (*p == ',')
+            p++;
+        node1 = gettok_noparens(&p);
+        if (node1 && !*node1) {
+            tfree(node1);
+            node1 = NULL;
+        }
+        /* the instance line, outside .control and .subckt bodies as the deck
+         * read's instance table has it */
+        for (c = deck; c; c = c->nextcard) {
+            char *line = c->line, *tok;
+            bool hit;
+            if (ciprefix(".control", line)) { skip_control++; continue; }
+            if (ciprefix(".endc", line)) { skip_control--; continue; }
+            if (skip_control > 0) continue;
+            if (ciprefix(".subckt", line)) { skip_subckt++; continue; }
+            if (ciprefix(".ends", line)) { skip_subckt--; continue; }
+            if (skip_subckt > 0) continue;
+            if (*line != 'n')
+                continue;
+            tok = gettok_instance(&line);
+            hit = tok && cieq(tok, instname);
+            tfree(tok);
+            if (hit) {
+                card = c;
+                break;
+            }
+        }
+        if (!card) {
+            fprintf(stderr, "Warning: Could not find the instance line for %s,\n   .probe %s will be ignored\n", instname, spec);
+            tfree(instname);
+            tfree(node1);
+            continue;
+        }
+        numnodes = get_number_terminals(card->line);
+        if (check_for_nodes(card->line, numnodes)) {
+            fprintf(stderr, "Error: Not enough tokens in line %d\n%s\n", card->linenum_orig, card->line);
+            fprintf(stderr, "    Please correct your input file\n");
+            controlled_exit(EXIT_BAD);
+        }
+        thisline = card->line;
+        {
+            char *tok = gettok_instance(&thisline);     /* past the instance name */
+            tfree(tok);
+        }
+        osdi_terms = probe_osdi_line_terms(deck, card, &thisline, &numnodes, &expanded, kicad, autobus);
+
+        if (!node1) {
+            probe_splice(card, instname, thisline, thisline, numnodes, osdi_terms, NULL);
+        } else {
+            char *ptr;
+            int i;
+            k = (int) strtol(node1, &ptr, 10);
+            if (*ptr != '\0' || k < 1) {
+                /* by the model's terminal name */
+                k = 0;
+                for (i = 0; osdi_terms && i < numnodes; i++)
+                    if (osdi_terms[i] && cieq(osdi_terms[i], node1)) {
+                        k = i + 1;
+                        break;
+                    }
+                if (k == 0) {
+                    fprintf(stderr, "Warning: Node %s is not available for device %s,\n   .probe %s will be ignored\n", node1, instname, spec);
+                    goto next;
+                }
+            } else if (k > numnodes) {
+                fprintf(stderr, "Warning: There are only %d nodes available for %s,\n   .probe %s will be ignored\n", numnodes, instname, spec);
+                goto next;
+            }
+            {
+                char *nodename = probe_term_name(osdi_terms ? osdi_terms[k - 1] : NULL);
+                probe_splice_term(card, instname, thisline, k, nodename);
+                tfree(nodename);
+            }
+        }
+    next:
+        tfree(expanded);
+        tfree(instname);
+        tfree(node1);
+    }
+    wl_free(probe_osdi_explicit);
+    probe_osdi_explicit = NULL;
+}
+
 /* Enhancement-628 (hunt F11): the `.probe alli` pass over the deck's OSDI
  * lines, run from inp_spsource once the pre_ commands have loaded the .osdi
  * objects and the autobus option has been resolved -- so a shorthand line
  * can be written out against its model's ports and every terminal current
  * measured under the model's own terminal name. A line whose model does not
- * resolve is spliced as the generic pass would have. */
+ * resolve is spliced as the generic pass would have. Enhancement-691: the
+ * explicit probes on OSDI instances go through here too. */
 void inp_probe_osdi(struct card *deck)
 {
     struct card *card;
     int skip_control = 0, skip_subckt = 0;
     bool kicad = FALSE, autobus;
 
+    if (!probe_osdi_pending && !probe_osdi_explicit)
+        return;
+    autobus = inp_get_autobus(&kicad);
+
+    if (probe_osdi_explicit)
+        probe_osdi_explicit_pass(deck, kicad, autobus);
+
     if (!probe_osdi_pending)
         return;
     probe_osdi_pending = FALSE;
-    autobus = inp_get_autobus(&kicad);
 
     for (card = deck; card; card = card->nextcard) {
         char *curr_line = card->line, *instname, *thisline, *expanded = NULL;
@@ -591,23 +784,7 @@ void inp_probe_osdi(struct card *deck)
             tfree(instname);
             continue;
         }
-        {
-            int pstart[PROBE_MAXPORT], pcnt[PROBE_MAXPORT];
-            IFdevice *dev = NULL;
-            int np = probe_osdi_ports(deck, card->line, pstart, pcnt, &dev);
-            if (np > 0 && dev && dev->terms) {
-                int terms = *dev->terms;
-                if (numnodes == np && np < terms && autobus) {
-                    expanded = probe_expand_bus_line(thisline, np, pstart, pcnt, dev, kicad);
-                    if (expanded) {
-                        thisline = expanded;
-                        numnodes = terms;
-                    }
-                }
-                if (numnodes == terms)
-                    osdi_terms = dev->termNames;
-            }
-        }
+        osdi_terms = probe_osdi_line_terms(deck, card, &thisline, &numnodes, &expanded, kicad, autobus);
         card = probe_splice(card, instname, thisline, curr_line, numnodes, osdi_terms, NULL);
         tfree(expanded);
         tfree(instname);
@@ -623,6 +800,9 @@ void inp_probe(struct card* deck)
     bool haveall = FALSE, havedifferential = FALSE, t = TRUE, havesave = FALSE;
     NGHASHPTR instances;   /* instance hash table */
     int ee = 0; /* serial number for sources */
+
+    wl_free(probe_osdi_explicit);      /* Enhancement-691: per deck */
+    probe_osdi_explicit = NULL;
 
     for (card = deck; card; card = card->nextcard) {
         /* get the .probe netlist lines, comment them out */
@@ -1261,6 +1441,17 @@ void inp_probe(struct card* deck)
                     continue;
                 }
                 char* thisline = tmpcard->line;
+
+#ifdef OSDI
+                /* Enhancement-691 (hunt F9): an OSDI instance is probed in
+                 * inp_probe_osdi(), once its module is registered and the
+                 * terminals have names -- see probe_osdi_explicit. */
+                if (*instname == 'n') {
+                    probe_osdi_explicit = wl_cons(copy(wltmp->wl_word), probe_osdi_explicit);
+                    tfree(instname);
+                    continue;
+                }
+#endif
 
                 /* special treatment for controlled current sources and switches:
                    We have three or four tokens until model name, but only the first 2 are relevant nodes. */
