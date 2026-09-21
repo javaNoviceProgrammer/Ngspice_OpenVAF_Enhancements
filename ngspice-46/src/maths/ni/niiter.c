@@ -19,6 +19,9 @@ Modified: 2001 AlansFixes
 #include "ngspice/smpdefs.h"
 #include "ngspice/sperror.h"
 #include "ngspice/fteext.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-689: OSDIuicSeed */
+#endif
 
 /* Limit the number of 'singular matrix' warnings */
 static int msgcount = 0;
@@ -70,6 +73,15 @@ NIiter(CKTcircuit *ckt, int maxIter)
         error = CKTload(ckt);
         if (error)
             return(error);
+#ifdef OSDI
+        /* Enhancement-689 (hunt F7 of 2026-09-21): the initial conditions a
+         * Verilog-A model's analysis("ic") branch places as potential
+         * contributions seed the start vector -- this one load is all the
+         * "ic analysis" `uic` has, and nothing solved what it stamped. */
+        error = OSDIuicSeed(ckt);
+        if (error)
+            return(error);
+#endif
         return(OK);
     }
 

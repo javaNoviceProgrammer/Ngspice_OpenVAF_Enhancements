@@ -72,10 +72,19 @@ model-kind only (set it on the `.model` card / `altermod`).
    warns loudly, naming each affected device type.
 
 Everything else in the table above already worked and is pinned by
-`verify_analyses.py` (29 checks per solver, both solvers).
+`verify_analyses.py` (36 checks per solver, both solvers).
 
 Enhancement-684 (hunt F3 of 2026-09-21) adds a module (`aname`) and nine checks, one per
 analysis: the operating points of `.sp`, `.pz`, `.disto` and an AC `.sens` answer
 `analysis("ac")` = 1 and `analysis("dc")` = 0, carry `$simparam$str("analysis_name")`
 "ac", and fire `@(initial_step("ac"))` and `@(final_step("ac"))` (they answered "dc");
 `.tf` and a DC `.sens` stay "dc"; `op`, `ac` and `noise` are the controls.
+
+Enhancement-689 (hunt F7 of 2026-09-21) adds two modules (`uicic`, the LRM 4.6.1 idiom
+`if (analysis("ic")) V(p,n) <+ ic; else I(p,n) <+ ddt(c*V(p,n));`, and `vpot`, an unconditional
+potential source) and seven checks: under `tran … uic` the model's initial condition now seeds
+the start vector -- the node of a branch to ground starts at `ic` exactly as the built-in
+capacitor's `ic=` does, a floating branch splits the difference, a `.ic` on the node holds it
+and the model's value is reported as not applied, an unconditional potential contribution is
+not seeded, a built-in capacitor without `ic=` on the seeded node takes the seeded value, and
+without `uic` nothing changes.

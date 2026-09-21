@@ -49,3 +49,28 @@ module aname(a,c); inout a,c; electrical a,c;
     I(a,c) <+ V(a,c) / r;
   end
 endmodule
+
+// Enhancement-689 (hunt F7 of 2026-09-21): LRM 4.6.1's initial-condition idiom
+// -- the capacitor's initial voltage applied as a potential contribution in the
+// analysis("ic") branch. Under `tran ... uic` that branch used to run once in
+// the unsolved evaluation `uic` makes and `ic` was dead; the loader now seeds
+// the start vector from it, as a `.ic` on the nodes would.
+module uicic(p, n); inout p, n; electrical p, n;
+  (* type="instance" *) parameter real c = 1n from (0:inf);
+  (* type="instance" *) parameter real ic = 0.5;
+  (* desc="ic evaluations" *) integer nic;
+  analog begin
+    if (analysis("ic")) begin
+      nic = nic + 1;
+      V(p, n) <+ ic;
+    end else begin
+      I(p, n) <+ ddt(c * V(p, n));
+    end
+  end
+endmodule
+// an unconditional potential contribution: the device's own equation (a
+// source), not an initial condition -- never seeded
+module vpot(p, n); inout p, n; electrical p, n;
+  (* type="instance" *) parameter real vdc = 1.0;
+  analog V(p, n) <+ vdc;
+endmodule

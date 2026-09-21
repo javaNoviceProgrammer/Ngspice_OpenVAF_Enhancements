@@ -391,5 +391,66 @@ print {' '.join(NAMES)}
           f"initial_step/final_step qualified by that name", ok,
           f"(got {vals}, names {sorted(names)}, events {ev})")
 
+print("[8] Enhancement-689: a model's analysis(\"ic\") initial condition under tran ... uic")
+NOTE = "Note: uic: a Verilog-A analysis(\"ic\") initial condition seeds "
+
+
+def uic_run(tag, body, prints, uic="uic"):
+    log = run_deck("_uic.cir", f"""* uic ic {tag}
+.control
+pre_osdi analyses_blocks.osdi
+.endc
+.model mc uicic
+.model mv vpot
+Vin in 0 dc 1
+{body}
+.control
+tran 0.1u 0.3u {uic}
+print {prints}
+.endc
+.end
+""")
+    vals = {}
+    for m in re.finditer(r"^(\S+) = (-?[\d.]+e[-+]\d+)", log, re.M):
+        vals[m.group(1)] = float(m.group(2))
+    return log, vals
+
+
+def near(a, b, tol=1e-3):
+    return a is not None and abs(a - b) <= tol
+
+
+log, v = uic_run("ground", "R1 in a 1k\nN1 a 0 mc c=1n ic=0.5", "v(a)[0] v(a)[1] " + A + "n1[nic]")
+check("a branch to ground: v(a) starts at 0.5 under uic (was 3e-5, the parameter dead), the Note names v(a) = 0.5",
+      near(v.get("v(a)[0]"), 0.5) and near(v.get("v(a)[1]"), 0.5) and (NOTE + "v(a) = 0.5") in log
+      and (v.get(A + "n1[nic]") or 0) >= 1, f"{v} {log[-200:]}")
+log, v = uic_run("builtin", "R1 in a 1k\nN1 a 0 mc c=1n ic=0.5\nR2 in b 1k\nC2 b 0 1n ic=0.5",
+                 "v(a)[0] v(b)[0] v(a)[2] v(b)[2]")
+check("beside the built-in capacitor's ic=0.5: the two trajectories agree to 1e-6 at the first and third points",
+      all(v.get(k) is not None for k in ("v(a)[0]", "v(b)[0]", "v(a)[2]", "v(b)[2]"))
+      and abs(v["v(a)[0]"] - v["v(b)[0]"]) < 1e-6 and abs(v["v(a)[2]"] - v["v(b)[2]"]) < 1e-6
+      and near(v["v(b)[0]"], 0.5), f"{v}")
+log, v = uic_run("icwins", "R1 in a 1k\nN1 a 0 mc c=1n ic=0.5\n.ic v(a)=0.3", "v(a)[0]")
+check("a .ic on the node holds it: v(a) starts at 0.3, the model's 0.5 is reported as not applied (its node is held)",
+      near(v.get("v(a)[0]"), 0.3) and NOTE not in log
+      and "Warning: uic: the analysis(\"ic\") initial condition n1 places on V(p,n) is not applied: every node it "
+          "constrains is ground or held by a .ic" in log, f"{v} {log[-300:]}")
+log, v = uic_run("floating", "R1 in x 1k\nN1 x y mc c=1n ic=0.5\nRy y 0 1k", "v(x)[0] v(y)[0]")
+check("a floating branch: the difference is split (v(x) = 0.25, v(y) = -0.25 in the Note) and the first point "
+      "holds v(x)-v(y) = 0.5",
+      (NOTE + "v(x) = 0.25, v(y) = -0.25") in log and v.get("v(x)[0]") is not None and v.get("v(y)[0]") is not None
+      and near(v["v(x)[0]"] - v["v(y)[0]"], 0.5), f"{v} {log[-300:]}")
+log, v = uic_run("source", "N2 s 0 mv vdc=1\nR1 s a 1k\nC1 a 0 1n", "v(s)[0] v(a)[0]")
+check("an unconditional V(p,n) <+ vdc is the device's equation, not an initial condition: not seeded (no Note), "
+      "the source's node is at 1 V from the first step as a built-in source is",
+      NOTE not in log and near(v.get("v(s)[0]"), 1.0) and "Warning: uic" not in log, f"{v} {log[-200:]}")
+log, v = uic_run("capgetic", "R1 in a 1k\nN1 a 0 mc c=1n ic=0.5\nC3 a 0 1n", "v(a)[0]")
+check("a built-in capacitor without ic= on the seeded node takes its initial voltage from the seeded value (CAPgetic "
+      "re-run): v(a) starts at 0.5, not pulled back to 0",
+      near(v.get("v(a)[0]"), 0.5) and (NOTE + "v(a) = 0.5") in log, f"{v} {log[-200:]}")
+log, v = uic_run("nouic", "R1 in a 1k\nN1 a 0 mc c=1n ic=0.5", "v(a)[0] v(a)[1]", uic="")
+check("without uic nothing changes: the transient operating point applies the ic branch, v(a) = 0.5 at t = 0, no Note",
+      near(v.get("v(a)[0]"), 0.5) and NOTE not in log, f"{v}")
+
 print(f"\n{'ALL PASS' if failed == 0 else 'FAILURES'}: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

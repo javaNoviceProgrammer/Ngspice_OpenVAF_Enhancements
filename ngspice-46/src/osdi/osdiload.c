@@ -30,6 +30,8 @@ int CKTvaInitErrRaised = 0;
 #include "ngspice/cpextern.h"
 #include "ngspice/const.h"
 #include "ngspice/devdefs.h"
+#include "ngspice/smpdefs.h"   /* Enhancement-689: SMPmatSize */
+#include "ngspice/dstring.h"   /* Enhancement-689: the seeding Note */
 
 #include <math.h>
 #include <stdint.h>
@@ -1211,6 +1213,8 @@ static const CKTcircuit *osdi_op_solve_ckt;
  * in MODESP, .disto in MODEAC with CKTrhsOld pointed into its own storage,
  * and none of them says "small signal" the way MODEAC did. */
 static bool osdi_op_solve_valid;
+static OsdiSimInfo osdi_uic_siminfo;      /* Enhancement-689: the uic evaluation's flags */
+static bool osdi_uic_siminfo_valid;
 
 static void osdi_op_solve_capture(CKTcircuit *ckt) {
   int n = ckt->CKTmaxEqNum + 1;
@@ -1225,6 +1229,295 @@ static void osdi_op_solve_capture(CKTcircuit *ckt) {
   osdi_op_solve_valid = true;
 }
 
+
+/* ------------------------------------------------------------------------
+ * Enhancement-689 (hunt F7 of 2026-09-21): a model's initial condition under
+ * `tran ... uic`.
+ *
+ * LRM 4.6.1's idiom applies an initial condition in the initial-condition
+ * analysis that precedes a transient:
+ *     if (analysis("ic")) V(p, n) <+ ic; else I(p, n) <+ ddt(c * V(p, n));
+ * Without `uic` that analysis is the transient operating point, the potential
+ * contribution is solved there (the analysis-noise audit gave the phase its
+ * "ic" flag) and the transient starts from `ic`. With `uic` ngspice skips
+ * the operating point: NIiter loads every device ONCE at the start vector
+ * (the deck's .ic values, 0 elsewhere) so the built-in capacitor and
+ * inductor can seed their own state from their `ic=`, and integrates. The
+ * loader reported that evaluation as the ic analysis, the model took its ic
+ * branch, and the branch equation it stamped -- V(p,n) - ic = 0 -- went into
+ * a matrix nothing solved: the parameter was dead, the capacitor started
+ * from 0 V, and only a `.ic` on the node worked.
+ *
+ * A Verilog-A device cannot write the state vector as the built-ins do, but
+ * its ic-branch potential contributions are exactly what a `.ic` on its nodes
+ * says. So after that one load the start vector is SEEDED with them: for
+ * every branch-current unknown ("flow node") of every instance whose
+ * potential row is specific to the ic branch -- its residual differs between
+ * an evaluation with analysis("ic") and one without; an unconditional
+ * `V(p,n) <+ vdc` (a source) or `V(p,n) <+ r*I(p,n)` (a resistor written with
+ * its branch current) is the device's own equation and is left to the first
+ * timestep, as the built-in source is -- the row V(p,n) - ic = 0 is met by
+ * moving the node voltages it involves: the minimum-norm change over the
+ * nodes that are free (Kaczmarz projections, one row at a time, swept to
+ * convergence), ground and the deck's `.ic` nodes fixed, so a branch to
+ * ground sets its node to `ic` and a floating branch splits the difference.
+ * The circuit is then reloaded at the seeded vector and the rows checked
+ * again (a linear row is met in one round). Devices with a DEVsetic hook
+ * (the capacitor's CAPgetic: `ic` from the node voltages when none is given)
+ * are re-run so they see the seeded values. A row whose nodes are all fixed
+ * cannot be met and is said so. Unchanged for a deck without such branches:
+ * no row is active and nothing moves.
+ * ------------------------------------------------------------------------ */
+typedef struct {
+  const GENinstance *inst;
+  const OsdiDescriptor *descr;
+  uint32_t local;   /* index of the flow node in descr->nodes */
+  int row;          /* its global number */
+  double r0;        /* the row's residual at the vector it was collected on */
+  int ncol;
+  int *col;         /* the free voltage columns of the row */
+  double *a;        /* their coefficients */
+} OsdiUicRow;
+
+static const char *osdi_uic_branch_name(const char *flow_name, char *buf, size_t n) {
+  /* "flow(p,n)" -> "V(p,n)" */
+  if (flow_name && strncmp(flow_name, "flow(", 5) == 0) {
+    snprintf(buf, n, "V(%s", flow_name + 5);
+    return buf;
+  }
+  return flow_name ? flow_name : "?";
+}
+
+int OSDIuicSeed(CKTcircuit *ckt) {
+  int size, round, i, error = OK;
+  double *res_ic, *res_no, *v0;
+  bool *moved, moved_any = false, progress;
+  OsdiUicRow *rows = NULL;
+  int nrows = 0, cap = 0, nunmet_total = 0;
+  const double tol = ckt->CKTvoltTol > 0 ? ckt->CKTvoltTol : 1e-6;
+
+  if (!osdi_uic_siminfo_valid)
+    return OK;                       /* no OSDI instance was evaluated */
+  osdi_uic_siminfo_valid = false;
+  if (!ckt->CKTmatrix || !ckt->CKTrhsOld)
+    return OK;
+  size = SMPmatSize(ckt->CKTmatrix);
+  res_ic = TMALLOC(double, size + 1);
+  res_no = TMALLOC(double, size + 1);
+  v0 = TMALLOC(double, size + 1);
+  moved = TMALLOC(bool, size + 1);
+  memset(moved, 0, (size_t)(size + 1) * sizeof(bool));
+
+  for (round = 0; round < 6; round++) {
+    int type, k, sweep, nunmet = 0;
+    /* collect the active rows at the current start vector */
+    for (k = 0; k < nrows; k++) {
+      tfree(rows[k].col);
+      tfree(rows[k].a);
+    }
+    nrows = 0;
+    memcpy(v0, ckt->CKTrhsOld, (size_t)(size + 1) * sizeof(double));
+    for (type = 0; type < DEVmaxnum; type++) {
+      GENmodel *gm;
+      if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+        continue;
+      for (gm = ckt->CKThead[type]; gm; gm = gm->GENnextModel) {
+        OsdiRegistryEntry *entry = osdi_reg_entry_model(gm);
+        const OsdiDescriptor *descr = entry->descriptor;
+        void *model = osdi_model_data(gm);
+        GENinstance *gi;
+        bool any_flow = false;
+        uint32_t li;
+        for (li = 0; li < descr->num_nodes; li++)
+          if (descr->nodes[li].is_flow)
+            any_flow = true;
+        if (!any_flow)
+          continue;
+        for (gi = gm->GENinstances; gi; gi = gi->GENnextInstance) {
+          void *inst = osdi_instance_data(entry, gi);
+          const uint32_t *node_mapping =
+              (const uint32_t *)(((const char *)inst) + descr->node_mapping_offset);
+          double **jac = (double **)(((char *)inst) + descr->jacobian_ptr_resist_offset);
+          OsdiSimInfo si = osdi_uic_siminfo;
+          OsdiNgspiceHandle handle = (OsdiNgspiceHandle){.kind = 3, .name = gi->GENname};
+          si.prev_solve = ckt->CKTrhsOld;
+          si.flags &= ~(uint32_t)ANALYSIS_IC;
+          memset(res_no, 0, (size_t)(size + 1) * sizeof(double));
+          (void)descr->eval(&handle, inst, model, &si);
+          descr->load_residual_resist(inst, model, res_no);
+          si.flags |= ANALYSIS_IC;      /* the ic branch again, last: as the load left it */
+          memset(res_ic, 0, (size_t)(size + 1) * sizeof(double));
+          (void)descr->eval(&handle, inst, model, &si);
+          descr->load_residual_resist(inst, model, res_ic);
+          for (li = 0; li < descr->num_nodes; li++) {
+            int f;
+            double diff;
+            OsdiUicRow *row;
+            uint32_t e;
+            if (!descr->nodes[li].is_flow)
+              continue;
+            f = (int)node_mapping[li];
+            if (f <= 0 || f > size)
+              continue;
+            diff = res_ic[f] - res_no[f];
+            if (fabs(diff) <= 1e-12 + 1e-9 * fmax(fabs(res_ic[f]), fabs(res_no[f])))
+              continue;                 /* the same row with or without "ic": not an initial condition */
+            if (nrows == cap) {
+              cap = cap ? 2 * cap : 8;
+              rows = TREALLOC(OsdiUicRow, rows, cap);
+            }
+            row = &rows[nrows++];
+            row->inst = gi;
+            row->descr = descr;
+            row->local = li;
+            row->row = f;
+            row->r0 = res_ic[f];
+            row->ncol = 0;
+            row->col = TMALLOC(int, descr->num_jacobian_entries + 1);
+            row->a = TMALLOC(double, descr->num_jacobian_entries + 1);
+            for (e = 0; e < descr->num_jacobian_entries; e++) {
+              uint32_t n1 = descr->jacobian_entries[e].nodes.node_1;
+              uint32_t n2 = descr->jacobian_entries[e].nodes.node_2;
+              int c;
+              CKTnode *cn;
+              if (n1 != li || descr->nodes[n2].is_flow)
+                continue;
+              c = (int)node_mapping[n2];
+              if (c <= 0 || c > size)
+                continue;               /* ground */
+              cn = CKTnum2nod(ckt, c);
+              if (!cn || cn->icGiven || cn->type != SP_VOLTAGE)
+                continue;               /* the deck's .ic holds it */
+              if (!jac[e] || *jac[e] == 0.0)
+                continue;
+              row->col[row->ncol] = c;
+              row->a[row->ncol] = *jac[e];   /* this instance's stamp: the load's ic evaluation */
+              row->ncol++;
+            }
+          }
+        }
+      }
+    }
+    if (nrows == 0)
+      break;
+
+    /* meet the rows: Kaczmarz sweeps on the start vector */
+    progress = false;
+    for (sweep = 0; sweep < 200; sweep++) {
+      double maxr = 0.0;
+      for (k = 0; k < nrows; k++) {
+        OsdiUicRow *row = &rows[k];
+        double r = row->r0, nn = 0.0, step;
+        int j;
+        for (j = 0; j < row->ncol; j++) {
+          r += row->a[j] * (ckt->CKTrhsOld[row->col[j]] - v0[row->col[j]]);
+          nn += row->a[j] * row->a[j];
+        }
+        if (nn == 0.0)
+          continue;                     /* every node of the row is fixed */
+        step = -r / nn;
+        for (j = 0; j < row->ncol; j++) {
+          ckt->CKTrhsOld[row->col[j]] += step * row->a[j];
+          if (step != 0.0) {
+            moved[row->col[j]] = true;
+            moved_any = true;
+            progress = true;
+          }
+        }
+        if (fabs(r) > maxr)
+          maxr = fabs(r);
+      }
+      if (maxr <= tol)
+        break;
+    }
+    for (k = 0; k < nrows; k++) {
+      OsdiUicRow *row = &rows[k];
+      double r = row->r0;
+      int j;
+      for (j = 0; j < row->ncol; j++)
+        r += row->a[j] * (ckt->CKTrhsOld[row->col[j]] - v0[row->col[j]]);
+      if (row->ncol == 0 || fabs(r) > tol)
+        nunmet++;
+    }
+    nunmet_total = nunmet;
+    if (!progress)
+      break;                            /* nothing could move: no reload changes that */
+
+    /* the circuit at the seeded vector (a linear row is met now; a
+     * nonlinear one gets another round) */
+    error = CKTload(ckt);
+    if (error)
+      goto done;
+    osdi_uic_siminfo_valid = false;     /* consumed here, not left for a later call */
+  }
+
+  if (moved_any) {
+    int nmoved = 0, shown = 0, t;
+    DS_CREATE(msg, 200);
+    for (i = 1; i <= size; i++)
+      if (moved[i])
+        nmoved++;
+    for (i = 1; i <= size && shown < 6; i++) {
+      CKTnode *nd;
+      if (!moved[i])
+        continue;
+      nd = CKTnum2nod(ckt, i);
+      if (!nd || !nd->name)
+        continue;
+      if (shown)
+        ds_cat_str(&msg, ", ");
+      ds_cat_printf(&msg, "v(%s) = %g", nd->name, ckt->CKTrhsOld[i]);
+      shown++;
+    }
+    fprintf(stdout, "Note: uic: a Verilog-A analysis(\"ic\") initial condition seeds %s%s\n",
+            ds_get_buf(&msg), nmoved > shown ? " ..." : "");
+    ds_free(&msg);
+    /* the built-ins that take their initial condition from the node
+     * voltages (CAPgetic reads CKTrhs): let them see the seeded vector */
+    SWAP(double *, ckt->CKTrhs, ckt->CKTrhsOld);
+    for (t = 0; t < DEVmaxnum; t++) {
+      if (DEVices[t] && DEVices[t]->DEVsetic && ckt->CKThead[t]) {
+        error = DEVices[t]->DEVsetic(ckt->CKThead[t], ckt);
+        if (error)
+          break;
+      }
+    }
+    SWAP(double *, ckt->CKTrhs, ckt->CKTrhsOld);
+    if (error)
+      goto done;
+  }
+  if (nunmet_total > 0) {
+    int k;
+    for (k = 0; k < nrows; k++) {
+      OsdiUicRow *row = &rows[k];
+      char bn[128];
+      double r = row->r0;
+      int j;
+      for (j = 0; j < row->ncol; j++)
+        r += row->a[j] * (ckt->CKTrhsOld[row->col[j]] - v0[row->col[j]]);
+      if (row->ncol != 0 && fabs(r) <= tol)
+        continue;
+      fprintf(stderr, "Warning: uic: the analysis(\"ic\") initial condition %s places on %s "
+              "is not applied: %s (residual %g)\n", row->inst->GENname,
+              osdi_uic_branch_name(row->descr->nodes[row->local].name, bn, sizeof bn),
+              row->ncol == 0 ? "every node it constrains is ground or held by a .ic"
+                             : "the rows could not all be met together",
+              r);
+    }
+  }
+
+done:
+  for (i = 0; i < nrows; i++) {
+    tfree(rows[i].col);
+    tfree(rows[i].a);
+  }
+  tfree(rows);
+  tfree(res_ic);
+  tfree(res_no);
+  tfree(v0);
+  tfree(moved);
+  return error;
+}
 
 extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
   GENmodel *gen_model;
@@ -1359,6 +1652,13 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
   OsdiRegistryEntry *entry = osdi_reg_entry_model(inModel);
   const OsdiDescriptor *descr = entry->descriptor;
   uint32_t eval_flags = 0;
+
+  if ((ckt->CKTmode & MODEUIC) && is_tran_op) {
+    /* Enhancement-689 (hunt F7): the one unsolved evaluation `uic` makes;
+     * OSDIuicSeed re-evaluates the instances with these flags */
+    osdi_uic_siminfo = sim_info;
+    osdi_uic_siminfo_valid = true;
+  }
 
 #ifdef USE_OMP
   int ret = OK;

@@ -757,7 +757,9 @@ per-operator override, not nature tolerances in general.
   instead, so the 4.6.1 `if (analysis("ic"))` initial-condition idiom
   fired mid-transient), and `analysis("nodeset")` is 1 during the
   iterations in which the deck's `.nodeset` values are enforced (the flag
-  existed and was never set). `ac_stim` activates against the RUNNING
+  existed and was never set). Under `tran … uic`, where no operating point
+  is solved, the ic-branch potential contributions seed the transient's start
+  vector as a `.ic` on the nodes would (E-689). `ac_stim` activates against the RUNNING
   small-signal analysis: an `"ac"` stimulus no longer injects into a
   `.noise` gain solve (it poisoned the input-referred noise by exactly
   the injected stimulus), and `ac_stim("noise")` participates there, as
