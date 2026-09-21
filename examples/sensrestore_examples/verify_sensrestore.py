@@ -44,6 +44,19 @@ not askable), as the voltage source declares its own. Five checks at the end:
 no ask error over two current sources, the source's own sensitivities still
 reported, `show` without the two rows, the card refusal kept, and a sweep over
 seventeen device types with no ask or set error at all.
+
+Enhancement-685 (F1 of the 2026-09-21 hunt): the INSTANCE-side twin of E-440.
+Writing the original value back through the device's setter left every
+perturbed instance parameter GIVEN: a built-in resistor got tce=0 given and
+lost its tc1 temperature dependence for the session (1.0 V at 60 degC where a
+fresh deck gives 1.33), an OSDI instance got temp given and was pinned to the
+temperature of the moment (`set temp`, `.option temp`, `dc temp`, `alter dtemp`
+no longer reached it) and its $param_given() rules flipped (a "derive from
+geometry if given" resistor doubled), and an AC sweep left the resistor's `ac`
+alias given, so `alter r=` then `ac` reported the old resistance and a second
+AC sens reported every resistor as insensitive. The instance struct is
+snapshotted around each perturbation and put back byte for byte, as E-440
+does for the model. Eight checks at the end.
 """
 import os
 import re
@@ -52,7 +65,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from _setup import NG as NGSPICE  # noqa: E402
+from _setup import NG as NGSPICE, VAF as OPENVAF  # noqa: E402
 from _setup import check_both_solvers as _check_both_solvers  # noqa: E402
 
 _check_both_solvers(__file__)
@@ -232,6 +245,70 @@ out = run(SWEEP, "sens v(a)\nsens v(a) ac lin 1 1k 1k\nprint r1 iin", "sweep")
 check("[E-682] a DC and an AC sens over seventeen device types: no ask or set error, r1 and iin reported",
       "GET ERROR" not in out and "SET ERROR" not in out
       and re.search(r"^\s*r1\s*=", out, re.M) and re.search(r"^\s*iin\s*=", out, re.M), out[-400:])
+
+print("\nEnhancement-685: the instance side -- given flags return to what the netlist set")
+GIVEN_VA = '''`include "disciplines.vams"
+module srtres(p, n);
+  inout p, n; electrical p, n;
+  (* type="instance" *) parameter real r = 1k from (0:inf);
+  (* type="instance" *) parameter real tc1 = 0.01;
+  analog I(p, n) <+ V(p, n) / (r * (1 + tc1 * ($temperature - 300.15)));
+endmodule
+module srgeo(p, n);
+  inout p, n; electrical p, n;
+  (* type="instance" *) parameter real w = 1u from (0:inf);
+  (* type="instance" *) parameter real rsh = 1k from (0:inf);
+  (* type="instance" *) parameter real r = 1k from (0:inf);
+  (* desc="w given" *) integer wg;
+  analog begin
+    wg = $param_given(w) ? 1 : 0;
+    I(p, n) <+ V(p, n) / ($param_given(w) ? rsh * (w / 1u) * 2.0 : r);
+  end
+endmodule
+'''
+with open(os.path.join(HERE, "_sr_given.va"), "w") as f:
+    f.write(GIVEN_VA)
+subprocess.run([OPENVAF, "_sr_given.va", "-o", "_sr_given.osdi"], cwd=HERE,
+               capture_output=True, text=True, timeout=300)
+PRE = ".control\npre_osdi _sr_given.osdi\n.endc\n.model mt srtres\n.model mg srgeo\n"
+A = "@"
+TWO = ".option temp=60\nI1 0 nb dc 1m\nN1 nb 0 mt r=1k tc1=0.01\nI2 0 nc dc 1m\nR2 nc 0 1k tc1=0.01"
+out = run(PRE + TWO, "op\nprint v(nb) v(nc)\nsens v(nc)\nsens v(nb)\nop\nprint v(nb) v(nc)\nset temp=80\nop\nprint v(nb) v(nc)", "given_t")
+vb, vc = probes(out, "nb"), probes(out, "nc")
+check("[E-685] a built-in resistor keeps its tc1 across sens: 1.33 V at 60 degC before AND after (was 1.0 after)",
+      len(vc) >= 2 and abs(float(vc[0]) - 1.33) < 1e-6 and abs(float(vc[1]) - 1.33) < 1e-6, f"{vc}")
+check("[E-685] an OSDI resistor keeps its temperature after sens, and follows `set temp=80` (1.53; was pinned at 60)",
+      len(vb) >= 3 and abs(float(vb[1]) - 1.33) < 1e-6 and abs(float(vb[2]) - 1.53) < 1e-6
+      and len(vc) >= 3 and abs(float(vc[2]) - 1.53) < 1e-6, f"{vb} {vc}")
+check("[E-685] no 'Instance temperature specified, dtemp ignored' during or after the sweep",
+      "Instance temperature specified" not in out)
+out = run(PRE + "I1 0 nb dc 1m\nN1 nb 0 mt r=1k tc1=0.01 dtemp=20",
+          "op\nprint v(nb)\nsens v(nb)\nalter n1 dtemp=40\nop\nprint v(nb)", "given_dt")
+v = probes(out, "nb")
+check("[E-685] an OSDI dtemp survives sens and a later `alter dtemp` is honoured (1.2 then 1.4; was 1.0 and refused)",
+      len(v) >= 2 and abs(float(v[0]) - 1.2) < 1e-4 and abs(float(v[1]) - 1.4) < 1e-4
+      and "Instance temperature specified" not in out, f"{v}")
+out = run(PRE + "I1 0 nb dc 1m\nN1 nb 0 mg r=1k",
+          "op\nprint v(nb) " + A + "n1[wg]\nsens v(nb)\nop\nprint v(nb) " + A + "n1[wg]", "given_pg")
+v = probes(out, "nb")
+wg = re.findall(re.escape(A + "n1[wg]") + r"\s*=\s*(\S+)", out)
+check("[E-685] $param_given(w) stays 0 for a w the netlist never set, and the geometry rule stays off (1.0; was 2.0)",
+      len(v) >= 2 and v[0] == v[1] and abs(float(v[0]) - 1.0) < 1e-9 and len(wg) >= 2
+      and float(wg[0]) == 0.0 and float(wg[1]) == 0.0, f"{v} {wg}")
+ACD = "V1 in 0 dc 1 ac 1\nR1 in nb 1k\nC1 nb 0 1p\nR2 nb 0 1k"
+out = run(ACD, "ac lin 1 10meg 10meg\nprint v(nb)\nsens v(nb) ac lin 1 10meg 10meg\nprint r1\nsens v(nb) ac lin 1 10meg 10meg\nprint r1\n"
+               "alter r1 r=2k\nac lin 1 10meg 10meg\nprint v(nb)\nreset\nalter r1 r=2k\nac lin 1 10meg 10meg\nprint v(nb)", "given_ac")
+vv = re.findall(r"v\(nb\)\s*=\s*(\S+)", out)
+rr = re.findall(r"^\s*r1\s*=\s*(\S+)", out, re.M)
+check("[E-685] after an AC sens, `alter r1 r=2k` then `ac` gives the fresh deck's response (the `ac` alias is not left given)",
+      len(vv) >= 3 and vv[1] == vv[2], f"{vv}")
+check("[E-685] a second AC sens reports the same resistor sensitivity as the first (was -0)",
+      len(rr) >= 2 and rr[0] == rr[1] and not rr[1].startswith("-0.000000e+00") and not rr[1].startswith("0.000000e+00"), f"{rr}")
+out = run("V1 in 0 dc 0 ac 1\nRS in nb 1k\nR2 nb 0 1k tc1=0.01\n.option temp=60",
+          "noise v(nb) V1 lin 2 1k 2k\nprint onoise_total\nsens v(nb)\nnoise v(nb) V1 lin 2 1k 2k\nprint onoise_total", "given_nz")
+nz = re.findall(r"onoise_total\s*=\s*(\S+)", out)
+check("[E-685] the noise analysis after a sens equals the one before it (was 9.59e-8 vs 1.02e-7)",
+      len(nz) >= 2 and nz[0] == nz[1], f"{nz}")
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

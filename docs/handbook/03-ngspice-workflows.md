@@ -218,7 +218,7 @@ of everything beyond op/dc/ac/tran:
 | `.noise` | Fully supported — all four noise-source types, correlated sources, op-dependent and frequency-shaped factors ([§2.11](02-verilog-a-language.md#modeling-functions)) |
 | `.tf` | Exact (transfer function, input/output impedance) |
 | `.pz` | Exact for linear devices, bit-identical to built-in twins; nonlinear `.pz` failures are a stock ngspice quirk affecting built-ins identically |
-| `.sens` (DC and AC) | Exact against analytic derivatives |
+| `.sens` (DC and AC) | Exact against analytic derivatives; leaves the circuit as it found it — models restored byte for byte ([E-440](../../enhancements_doc/Enhancement-440.md)), instances likewise ([E-685](../../enhancements_doc/Enhancement-685.md): a `sens` used to leave every perturbed parameter *given*, which froze a resistor's temperature dependence, pinned an OSDI instance's temperature and flipped its `$param_given` rules) |
 | `.disto` | Supported (E-352's `OSDIdisto`): a Verilog-A diode's 2nd/3rd-harmonic distortion matches an analytic ground truth (pointwise periodic solve + FFT) to <1 %, and agrees with the built-in diode twin — re-verified in the bug-hunt round |
 | `.sp` (S-parameters) | Fully supported, **any port count** (1-port reflection through N-port); `donoise` (NF, noise parameters) is inherently 2-port |
 | Transient noise (`TRNOISE` sources) | Propagates through OSDI devices correctly; device-*internal* noise does not enter `.tran` (same as built-ins) |

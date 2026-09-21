@@ -238,6 +238,21 @@ int sens_sens(CKTcircuit* ckt, int restart)
     int sens_base_n = 0;
     void *mod_buf = NULL;                       /* per-parameter model snapshot */
     size_t mod_cap = 0, mod_size = 0;
+    /* Enhancement-685 (hunt F1 of 2026-09-21): the same snapshot for the
+     * INSTANCE being perturbed. Writing the original value back through the
+     * device's setter leaves the parameter GIVEN, and for an instance that
+     * changes the circuit for the rest of the session: a built-in resistor
+     * gets tce=0 given and loses its tc1/tc2 temperature dependence (its
+     * temperature formula keys off the flag), an OSDI instance gets temp
+     * given and is pinned to the temperature of the moment (`set temp`,
+     * `.option temp`, `dc temp`, `alter dtemp` no longer reach it) and its
+     * $param_given() rules flip, and an AC sweep leaves the resistor's `ac`
+     * alias given, so `alter r=` followed by `ac` reports the old resistance
+     * and a second AC sens reports every resistor as insensitive. E-440
+     * restores the model structs byte for byte; the instance struct -- the
+     * OSDI instance data and its given flags included -- gets the same. */
+    void *inst_buf = NULL;
+    size_t inst_cap = 0, inst_size = 0;
     int    (*fn) (SMPmatrix*, GENmodel*, CKTcircuit*, int*);
     static int	is_dc;
     int k, j, n;
@@ -456,6 +471,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
             sens_restore_models(ckt, saved_models);
             saved_models = NULL;
             FREE(mod_buf);
+            FREE(inst_buf);         /* Enhancement-685 */
             FREE(output_names);
             return error;
         }
@@ -792,6 +808,16 @@ int sens_sens(CKTcircuit* ckt, int restart)
                 memcpy(mod_buf, sg->model, mod_need);
                 mod_size = mod_need;
             }
+            inst_size = 0;                      /* Enhancement-685 */
+            if (sg->is_instparam && DEVices[sg->dev]->DEVinstSize) {
+                size_t inst_need = (size_t) *DEVices[sg->dev]->DEVinstSize;
+                if (inst_need > inst_cap) {
+                    inst_buf = TREALLOC(char, inst_buf, inst_need);
+                    inst_cap = inst_need;
+                }
+                memcpy(inst_buf, sg->instance, inst_need);
+                inst_size = inst_need;
+            }
 
             sens_setp(sg, ckt, &nvalue);
             if (error && error != E_BADPARM)
@@ -847,6 +873,10 @@ int sens_sens(CKTcircuit* ckt, int restart)
                     memcpy(sg->model, mod_buf, mod_size);
                     mod_size = 0;
                 }
+                if (inst_size) {                /* Enhancement-685: and the instance's */
+                    memcpy(sg->instance, inst_buf, inst_size);
+                    inst_size = 0;
+                }
                 (void)sens_temp(sg, ckt);
                 (void)OSDIcollapseChanged(sg->instance);
 
@@ -891,6 +921,10 @@ int sens_sens(CKTcircuit* ckt, int restart)
             if (mod_size) {                     /* undo the setter's side effects */
                 memcpy(sg->model, mod_buf, mod_size);
                 mod_size = 0;
+            }
+            if (inst_size) {                    /* Enhancement-685: and the instance's */
+                memcpy(sg->instance, inst_buf, inst_size);
+                inst_size = 0;
             }
             (void)sens_temp(sg, ckt); /* XXX is this necessary? */
 
@@ -1101,6 +1135,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
 
     ckt->CKTbypass = bypass;
     FREE(mod_buf);
+    FREE(inst_buf);             /* Enhancement-685 */
 
 #ifdef OSDI
     /* Enhancement-683 (hunt F2 of 2026-09-21): the analysis is over and the
