@@ -914,6 +914,33 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
       TMALLOC(uint32_t, 2 * (size_t)descr->num_collapsible + 2 +
                             2 * (size_t)(descr->num_nodes - descr->num_terminals)); /* E-690: + one per internal node */
 
+  /* Enhancement-692: the deck nodes a collapsed internal node may be bound to
+   * (Enhancement-690) -- a parse-time node whose name carries '#' and that no
+   * device line named (devRef 0), or one bound at an earlier setup (the
+   * adopted mark) -- collected ONCE per call. The per-instance test used to
+   * fetch every internal node's struct by number (CKTnum2nod walks the node
+   * list from its head) and, for a collapsed one, walk the list again by
+   * name: instances x internal nodes x circuit nodes at every setup, nine
+   * seconds before a photonic chip's sweep started. The set is empty in
+   * almost every deck, and then the per-instance work is nothing at all. */
+  CKTnode **twin_cand = NULL;
+  int n_twin = 0;
+  {
+    CKTnode *nd;
+    int cap = 0;
+    for (nd = ckt->CKTnodes; nd; nd = nd->next) {
+      if (nd->number == 0 || !nd->name || !strchr(nd->name, '#'))
+        continue;
+      if (nd->devRef && !nd->adopted)
+        continue;                       /* a device line's own node */
+      if (n_twin == cap) {
+        cap = cap ? 2 * cap : 8;
+        twin_cand = TREALLOC(CKTnode *, twin_cand, cap);
+      }
+      twin_cand[n_twin++] = nd;
+    }
+  }
+
   /* determine the number of states required by each instance */
   int num_states = (int)descr->num_states;
   for (uint32_t i = 0; i < descr->num_nodes; i++) {
@@ -1271,48 +1298,44 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
          * there. A node a device line named (devRef 1) is the deck's own and
          * is left alone. The `adopted` mark, which a parse-time node otherwise
          * never carries, says it was bound here: said once, and found again
-         * at every later setup. */
-        const uint32_t *glob_map =
-            (const uint32_t *)(((const char *)inst) + descr->node_mapping_offset);
-        for (uint32_t i = descr->num_terminals; i < descr->num_nodes; i++) {
-          const char *nm = descr->nodes[i].name;
-          CKTnode *target, *pn = NULL, *scan;
-          char *full;
-          if (!nm || descr->nodes[i].is_flow)
-            continue;
-          target = CKTnum2nod(ckt, (int)glob_map[i]);
-          if (!target || !target->name)
-            continue;
-          full = tprintf("%s#%s", gen_inst->GENname, nm);
-          if (strcmp(target->name, full) == 0) {
-            tfree(full);
-            continue;                       /* built, not collapsed */
-          }
-          for (scan = ckt->CKTnodes; scan; scan = scan->next)
-            if (scan->name && strcmp(scan->name, full) == 0) {
-              pn = scan;
-              break;
+         * at every later setup. Enhancement-692: the candidates come from the
+         * list collected once above, matched to this instance by name; the
+         * one node fetched by number is the collapse target of a match. */
+        if (n_twin > 0) {
+          const uint32_t *glob_map =
+              (const uint32_t *)(((const char *)inst) + descr->node_mapping_offset);
+          size_t ilen = strlen(gen_inst->GENname);
+          int c;
+          for (c = 0; c < n_twin; c++) {
+            CKTnode *pn = twin_cand[c], *target;
+            const char *suffix;
+            uint32_t i;
+            if (strncmp(pn->name, gen_inst->GENname, ilen) != 0 || pn->name[ilen] != '#')
+              continue;
+            suffix = pn->name + ilen + 1;
+            for (i = descr->num_terminals; i < descr->num_nodes; i++)
+              if (descr->nodes[i].name && !descr->nodes[i].is_flow &&
+                  strcmp(descr->nodes[i].name, suffix) == 0)
+                break;
+            if (i == descr->num_nodes)
+              continue;                     /* no internal node of that name */
+            if (pn->number == (int)glob_map[i])
+              continue;                     /* built (adopted), not collapsed */
+            target = CKTnum2nod(ckt, (int)glob_map[i]);
+            if (!target || !target->name)
+              continue;
+            syn_pairs[2 * nshort] = (uint32_t)pn->number;
+            syn_pairs[2 * nshort + 1] = glob_map[i];
+            nshort++;
+            pn->devRef = 1;                 /* connected now: no phantom */
+            if (!pn->adopted) {
+              pn->adopted = 1;
+              fprintf(stdout,
+                      "Note: %s names %s's internal node '%s', which the model "
+                      "collapses into '%s'; the two are one node.\n",
+                      pn->name, gen_inst->GENname, suffix, target->name);
             }
-          /* a fresh phantom (devRef 0), or one bound here at an earlier
-           * setup (devRef 1 and the adopted mark); a device line's node
-           * (devRef 1, never adopted) is the deck's own */
-          if (!pn || pn->number == 0 || pn->number == (int)glob_map[i] ||
-              (pn->devRef && !pn->adopted)) {
-            tfree(full);
-            continue;
           }
-          syn_pairs[2 * nshort] = (uint32_t)pn->number;
-          syn_pairs[2 * nshort + 1] = glob_map[i];
-          nshort++;
-          pn->devRef = 1;                   /* connected now: no phantom */
-          if (!pn->adopted) {
-            pn->adopted = 1;
-            fprintf(stdout,
-                    "Note: %s names %s's internal node '%s', which the model "
-                    "collapses into '%s'; the two are one node.\n",
-                    full, gen_inst->GENname, nm, target->name);
-          }
-          tfree(full);
         }
 
         /* `sens` runs DEVsetup() a second time on a still-set-up circuit and
@@ -1470,6 +1493,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
 
   free(node_ids);
   free(syn_pairs);
+  tfree(twin_cand);                     /* Enhancement-692 */
 
   /* `.option osdimc` (Enhancement-535 fix): nominals of statistical
    * parameters are resolvable HERE -- the loops above ran every model's own

@@ -86,12 +86,24 @@ short, as a collapse merge is) or, after a setup, resolved to it. `sens` and
        resolved to 'a'; v(n1#ai) reads v(a)
   [18] a mistyped suffix in a .sens/.pz CARD: refused as a phantom (the sens
        used to print a table of -0.0)
+
+Enhancement-692: the E-690 test above fetched every internal node of every
+OSDI instance by number at every setup (CKTnum2nod walks the node list from
+its head) and, for a collapsed one, walked the list again by name --
+instances x internal nodes x circuit nodes, nine seconds before a photonic
+chip's sweep started. The candidate deck nodes (a '#' in the name, no device
+line naming them) are collected once per setup, an empty set in almost every
+deck, and matched to instances by name.
+  [19] 1000 instances of a 40-internal-node module (42k nodes): the op runs
+       within 1 s, and four times the instances cost less than eight times
+       the 250-instance run (it was 1.5 s and a 14x ratio)
 """
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -327,6 +339,38 @@ check("[18] a mistyped suffix in a .sens and a .pz CARD: both refused as a node 
       "Sensitivity output node V(n1#mdi) does not exist (no device connects to it)" in out
       and "Pole-zero output node n1#mdi does not exist (no device connects to it)" in out
       and not re.search(r"^0\s+-0\.0", out, re.M), out[-500:])
+
+# ------------------------------------------------------------ [19] ---
+K = 40
+_nodes = ", ".join(f"m{k}" for k in range(1, K + 1))
+_body = ["I(p, m1) <+ V(p, m1) / r;"] + [f"I(m{k}, m{k + 1}) <+ V(m{k}, m{k + 1}) / r;" for k in range(1, K)] \
+        + [f"I(m{K}, n) <+ V(m{K}, n) / r;"]
+compile_va("many", '`include "disciplines.vams"\nmodule many(p, n);\n  inout p, n; electrical p, n, ' + _nodes
+           + ';\n  parameter real r = 1 from (0:inf);\n  analog begin\n    ' + "\n    ".join(_body)
+           + '\n  end\nendmodule\n')
+
+
+def many_deck(n):
+    lines = [".model mm many", "v1 in 0 dc 1"] + [f"n{i} in a{i} mm" for i in range(n)] \
+            + [f"r{i} a{i} 0 1k" for i in range(n)] + [".control", "pre_osdi many.osdi", "op", "print v(a1)", ".endc"]
+    return "\n".join(lines)
+
+
+def timed_run(body, tag):
+    t0 = time.perf_counter()
+    out = run(body, tag)
+    return time.perf_counter() - t0, out
+
+
+timed_run(many_deck(250), "t19w")           # warm-up: the first load of many.osdi
+t250, out250 = timed_run(many_deck(250), "t19a")
+t1000, out1000 = timed_run(many_deck(1000), "t19b")
+check("[19] 1000 instances of a 40-internal-node module (42k nodes): the op runs within 1 s (was 1.5 s), the value right",
+      t1000 < 1.0 and close(val(out1000, "v(a1)")[0] if val(out1000, "v(a1)") else None, 1e3 / (1e3 + 41.0), 1e-6)
+      and close(val(out250, "v(a1)")[0] if val(out250, "v(a1)") else None, 1e3 / (1e3 + 41.0), 1e-6),
+      f"t(1000) = {t1000:.3f} s, t(250) = {t250:.3f} s")
+check("[19] ...four times the instances cost less than eight times the 250-instance run (the setup is linear; it was a 14x ratio)",
+      t250 > 0 and t1000 / t250 < 8.0, f"ratio {t1000 / t250:.1f}")
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

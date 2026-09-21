@@ -72,7 +72,7 @@ model-kind only (set it on the `.model` card / `altermod`).
    warns loudly, naming each affected device type.
 
 Everything else in the table above already worked and is pinned by
-`verify_analyses.py` (36 checks per solver, both solvers).
+`verify_analyses.py` (37 checks per solver, both solvers).
 
 Enhancement-684 (hunt F3 of 2026-09-21) adds a module (`aname`) and nine checks, one per
 analysis: the operating points of `.sp`, `.pz`, `.disto` and an AC `.sens` answer
@@ -88,3 +88,7 @@ capacitor's `ic=` does, a floating branch splits the difference, a `.ic` on the 
 and the model's value is reported as not applied, an unconditional potential contribution is
 not seeded, a built-in capacitor without `ic=` on the seeded node takes the seeded value, and
 without `uic` nothing changes.
+
+Enhancement-692 adds one check: the seeding pass cleared two whole residual vectors per
+instance per round; only the instance's own entries are cleared now, pinned at scale with
+3000 seeded instances under `uic`.

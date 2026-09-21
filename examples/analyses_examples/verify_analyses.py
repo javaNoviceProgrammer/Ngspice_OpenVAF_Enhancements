@@ -451,6 +451,14 @@ check("a built-in capacitor without ic= on the seeded node takes its initial vol
 log, v = uic_run("nouic", "R1 in a 1k\nN1 a 0 mc c=1n ic=0.5", "v(a)[0] v(a)[1]", uic="")
 check("without uic nothing changes: the transient operating point applies the ic branch, v(a) = 0.5 at t = 0, no Note",
       near(v.get("v(a)[0]"), 0.5) and NOTE not in log, f"{v}")
+# Enhancement-692: the seeding pass cleared two whole residual vectors per
+# instance per round (instances x matrix size); only the instance's entries
+# are cleared now. Pinned at scale: 3000 seeded instances, every node at 0.5.
+BIG = "\n".join([f"R{i} in a{i} 1k" for i in range(3000)] + [f"N{i} a{i} 0 mc c=1n ic=0.5" for i in range(3000)])
+log, v = uic_run("big", BIG, "v(a0)[0] v(a1499)[0] v(a2999)[0]")
+check("3000 instances under uic: every node seeded (the Note names v(a0) = 0.5 ...), v(a0), v(a1499), v(a2999) start at 0.5",
+      (NOTE + "v(a0) = 0.5, v(a1) = 0.5") in log and all(near(v.get(f"v(a{k})[0]"), 0.5) for k in (0, 1499, 2999)),
+      f"{v} {log[-200:]}")
 
 print(f"\n{'ALL PASS' if failed == 0 else 'FAILURES'}: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

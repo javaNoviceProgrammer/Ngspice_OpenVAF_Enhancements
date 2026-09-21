@@ -1306,6 +1306,8 @@ int OSDIuicSeed(CKTcircuit *ckt) {
   res_no = TMALLOC(double, size + 1);
   v0 = TMALLOC(double, size + 1);
   moved = TMALLOC(bool, size + 1);
+  memset(res_ic, 0, (size_t)(size + 1) * sizeof(double));
+  memset(res_no, 0, (size_t)(size + 1) * sizeof(double));
   memset(moved, 0, (size_t)(size + 1) * sizeof(bool));
 
   for (round = 0; round < 6; round++) {
@@ -1341,12 +1343,17 @@ int OSDIuicSeed(CKTcircuit *ckt) {
           OsdiSimInfo si = osdi_uic_siminfo;
           OsdiNgspiceHandle handle = (OsdiNgspiceHandle){.kind = 3, .name = gi->GENname};
           si.prev_solve = ckt->CKTrhsOld;
+          /* Enhancement-692: only this instance's entries are read below, so
+           * only they are cleared -- the two whole-vector memsets per
+           * instance were instances x matrix size per round */
+          for (li = 0; li < descr->num_nodes; li++) {
+            res_no[node_mapping[li]] = 0.0;
+            res_ic[node_mapping[li]] = 0.0;
+          }
           si.flags &= ~(uint32_t)ANALYSIS_IC;
-          memset(res_no, 0, (size_t)(size + 1) * sizeof(double));
           (void)descr->eval(&handle, inst, model, &si);
           descr->load_residual_resist(inst, model, res_no);
           si.flags |= ANALYSIS_IC;      /* the ic branch again, last: as the load left it */
-          memset(res_ic, 0, (size_t)(size + 1) * sizeof(double));
           (void)descr->eval(&handle, inst, model, &si);
           descr->load_residual_resist(inst, model, res_ic);
           for (li = 0; li < descr->num_nodes; li++) {
