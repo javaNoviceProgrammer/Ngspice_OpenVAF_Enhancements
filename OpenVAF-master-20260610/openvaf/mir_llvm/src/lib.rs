@@ -213,21 +213,61 @@ impl<'t> LLVMBackend<'t> {
     /// This function calls the LLVM-C Api which may not be entirely safe.
     /// Exercise caution!
     pub unsafe fn target_available(&self) -> Result<(), String> {
-        let tm = create_target(
-            &self.target.llvm_target,
-            &self.target_cpu,
-            &self.features,
-            LLVMCodeGenOptLevel::LLVMCodeGenLevelNone,
-            llvm_sys::target_machine::LLVMRelocMode::LLVMRelocPIC,
-            llvm_sys::target_machine::LLVMCodeModel::LLVMCodeModelDefault,
-        );
+        self.probe().map(|_| ())
+    }
+
+    /// Enhancement-695 (hunt F5 of 2026-09-21): the probe of `target_available`,
+    /// which also answers whether LLVM knows `--target_cpu`.
+    ///
+    /// The C API validates nothing: `LLVMCreateTargetMachine` accepts any string,
+    /// and `MCSubtargetInfo` writes "'<cpu>' is not a recognized processor for
+    /// this target (ignoring processor)" to its own stderr stream -- twice per
+    /// target machine, which is once per codegen unit per thread, so a typo in
+    /// the flag compiled with exit 0 for a generic CPU behind 33 interleaved,
+    /// garbled copies of someone else's warning. There is no C API that lists
+    /// or checks processor names (rustc needs a C++ wrapper for the same
+    /// question), so the answer is taken from the message itself: the one probe
+    /// target machine is created with fd 2 redirected into a pipe, and whatever
+    /// LLVM wrote there is the verdict -- `Ok(Some(line))` for an unknown CPU,
+    /// `Ok(None)` for a known one, `Err` when there is no code generator for the
+    /// target at all. Unix only: where the capture cannot be done the question is
+    /// left to LLVM, as before. LLVM must already be initialized.
+    ///
+    /// # Safety
+    ///
+    /// This function calls the LLVM-C Api which may not be entirely safe.
+    /// Exercise caution!
+    pub unsafe fn probe(&self) -> Result<Option<String>, String> {
+        let mut tm = Ok(ptr::null_mut());
+        let complaint = capture_stderr(|| {
+            tm = create_target(
+                &self.target.llvm_target,
+                &self.target_cpu,
+                &self.features,
+                LLVMCodeGenOptLevel::LLVMCodeGenLevelNone,
+                llvm_sys::target_machine::LLVMRelocMode::LLVMRelocPIC,
+                llvm_sys::target_machine::LLVMCodeModel::LLVMCodeModelDefault,
+            );
+        });
         match tm {
             Ok(tm) => {
-                llvm_sys::target_machine::LLVMDisposeTargetMachine(tm);
-                Ok(())
+                if !tm.is_null() {
+                    llvm_sys::target_machine::LLVMDisposeTargetMachine(tm);
+                }
+                let unknown = complaint.and_then(|text| {
+                    text.lines()
+                        .find(|l| l.contains("is not a recognized processor"))
+                        .map(|l| l.trim().to_owned())
+                });
+                Ok(unknown)
             }
             Err(err) => Err(err.to_string()),
         }
+    }
+
+    /// The CPU the code is generated for, after `native` and `generic` are resolved.
+    pub fn target_cpu(&self) -> &str {
+        &self.target_cpu
     }
 
     /// # Safety
@@ -262,6 +302,54 @@ extern "C" fn diagnostic_handler(info: *mut llvm_sys::LLVMDiagnosticInfo, _: *mu
             llvm_sys::LLVMDiagnosticSeverity::LLVMDSNote => log::trace!("{msg}"),
         }
     }
+}
+
+/// Enhancement-695: run `f` with fd 2 redirected into a pipe and return what was
+/// written there. LLVM's `errs()` is an unbuffered stream on fd 2, which is why
+/// the redirection sees it. `None` where the capture is not available (not Unix)
+/// or fails; the pipe holds far more than the one line expected, so `f` cannot
+/// block on it.
+#[cfg(unix)]
+fn capture_stderr(f: impl FnOnce()) -> Option<String> {
+    unsafe {
+        let mut fds = [0 as libc::c_int; 2];
+        if libc::pipe(fds.as_mut_ptr()) != 0 {
+            return None;
+        }
+        let saved = libc::dup(2);
+        if saved < 0 {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+            return None;
+        }
+        if libc::dup2(fds[1], 2) < 0 {
+            libc::close(saved);
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+            return None;
+        }
+        libc::close(fds[1]);
+        f();
+        libc::dup2(saved, 2);
+        libc::close(saved);
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = libc::read(fds[0], buf.as_mut_ptr() as *mut libc::c_void, buf.len());
+            if n <= 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..n as usize]);
+        }
+        libc::close(fds[0]);
+        Some(String::from_utf8_lossy(&out).into_owned())
+    }
+}
+
+#[cfg(not(unix))]
+fn capture_stderr(f: impl FnOnce()) -> Option<String> {
+    f();
+    None
 }
 
 // Helper function to convert Rust string to C string

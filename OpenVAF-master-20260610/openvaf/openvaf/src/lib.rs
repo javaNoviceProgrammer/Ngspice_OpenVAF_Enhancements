@@ -267,7 +267,8 @@ pub fn compile(opts: &Opts) -> Result<CompilationTermination> {
     // *driver* knows; only LLVM knows which of those it can actually emit, and
     // it is initialized with the native target alone.
     osdi::initialize_llvm();
-    if let Err(err) = unsafe { back.target_available() } {
+    let probe = unsafe { back.probe() };
+    if let Err(err) = &probe {
         let usable: Vec<_> = get_target_names()
             .filter(|name| {
                 Target::search(name).map_or(false, |target| {
@@ -286,6 +287,27 @@ pub fn compile(opts: &Opts) -> Result<CompilationTermination> {
             } else {
                 usable.join(", ")
             }
+        );
+    }
+
+    // Enhancement-695 (hunt F5 of 2026-09-21): refuse a `--target_cpu` LLVM does
+    // not know, here and once. The C API accepts any string and LLVM's own
+    // "'bogus' is not a recognized processor for this target (ignoring
+    // processor)" came out once per codegen unit per thread -- 33 interleaved,
+    // garbled lines -- while the build went on with exit 0 and generic code.
+    // `-O 5` and a missing `--target` are refused before any work; a CPU typo
+    // is the same kind of mistake and is refused the same way.
+    if let Ok(Some(complaint)) = &probe {
+        let host_cpu = unsafe { mir_llvm::get_host_cpu_name() };
+        bail!(
+            "--target_cpu '{}' is not a processor LLVM knows for {} ({})\n\
+             help: 'native' (this machine: {}) and 'generic' are always accepted; \
+             LLVM lists the target's processors with `llc -mtriple={} -mcpu=help`",
+            opts.target_cpu,
+            opts.target.llvm_target,
+            complaint.trim_end_matches(" (ignoring processor)"),
+            host_cpu,
+            opts.target.llvm_target,
         );
     }
 

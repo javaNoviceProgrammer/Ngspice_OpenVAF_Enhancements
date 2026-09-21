@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Enhancement-453: the batch cache answered with the wrong build, and an
-impossible target crashed the compiler.
+impossible target crashed the compiler. Enhancement-695: an unknown
+--target_cpu is refused the same way (it compiled behind 33 LLVM lines).
 
 BATCH MODE keys its cache on the source text, the defines, the lints and the
 compiler version. The settings that decide what MACHINE CODE comes out were not
@@ -142,6 +143,33 @@ check("[E-453] ...and says what this binary CAN build for",
       out_f.strip().splitlines()[0][:60] if out_f.strip() else "")
 check("[E-453] ...and did not leave a half-written output",
       not os.path.isfile(os.path.join(HERE, "_bk_x.osdi")))
+
+# ------------------------------------------------- the cpu must be honest too
+# Enhancement-695 (hunt F5 of 2026-09-21): `--target_cpu bogus` compiled with
+# exit 0 for a generic CPU behind LLVM's own "'bogus' is not a recognized
+# processor for this target (ignoring processor)", printed twice per codegen
+# unit per thread -- 33 interleaved, garbled lines. The C API validates nothing;
+# the one probe target machine of E-453 is now created with stderr captured,
+# and LLVM's complaint becomes the compiler's refusal, once, before any work.
+print("\nan unknown --target_cpu is refused, once, in the compiler's words")
+for f in ("_bk_cpu.osdi",):
+    if os.path.isfile(os.path.join(HERE, f)):
+        os.remove(os.path.join(HERE, f))
+rc_c, out_c = run([va, "-o", "_bk_cpu.osdi", "--target_cpu", "bogus_cpu"])
+lines_c = out_c.strip().splitlines()
+check("[E-695] --target_cpu bogus_cpu is refused (it compiled with exit 0)", rc_c != 0 and rc_c != 101, f"rc={rc_c}")
+check("[E-695] ...in one error line naming the flag, the value and the target, with the CPU help line",
+      sum(1 for l in lines_c if l.startswith("error: --target_cpu 'bogus_cpu' is not a processor LLVM knows for")) == 1
+      and any(l.startswith("help:") and "'native'" in l and "'generic'" in l and "-mcpu=help" in l for l in lines_c),
+      lines_c[0][:80] if lines_c else "")
+check("[E-695] ...and LLVM's own line does not appear (it appeared 33 times)",
+      not any(l.startswith("'bogus_cpu' is not a recognized processor") for l in lines_c), f"{len(lines_c)} lines")
+check("[E-695] ...and no output file was written", not os.path.isfile(os.path.join(HERE, "_bk_cpu.osdi")))
+rc_g, out_g = run([va, "-o", "_bk_cpu.osdi", "--target_cpu", "generic"])
+check("[E-695] 'generic' still builds, without a word from LLVM",
+      rc_g == 0 and os.path.isfile(os.path.join(HERE, "_bk_cpu.osdi")) and "recognized processor" not in out_g, f"rc={rc_g}")
+if os.path.isfile(os.path.join(HERE, "_bk_cpu.osdi")):
+    os.remove(os.path.join(HERE, "_bk_cpu.osdi"))
 
 # ------------------------------------------------------------------- controls
 print("\nordinary compilation is untouched (controls)")
