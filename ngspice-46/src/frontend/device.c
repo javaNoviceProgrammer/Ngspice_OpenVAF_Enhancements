@@ -376,6 +376,38 @@ static int count;
    still fits `width` when it can; a name wider than the screen gets one column. */
 static int leftw = LEFT_WIDTH;
 static int colw = DEV_WIDTH;
+
+/* Enhancement-687: the instance defaults a .model card carries (E-599's
+ * listing), one block per card of the group. Called through dgen_for_n. */
+static int defaults_group_n;    /* models in the group being listed */
+
+static int
+count_defaults_m(dgen *dg, IFparm *p, int i)
+{
+    NG_IGNORE(dg);
+    NG_IGNORE(p);
+    NG_IGNORE(i);
+    defaults_group_n++;
+    return 0;
+}
+
+static int
+print_defaults_m(dgen *dg, IFparm *p, int i)
+{
+    wordlist *w;
+    NG_IGNORE(p);
+    NG_IGNORE(i);
+    if (!dg->model || !dg->model->defaults)
+        return 0;
+    if (defaults_group_n > 1)
+        fprintf(cp_out, "%*s %s:\n", leftw + 21, "instance defaults on card",
+                dg->model->GENmodName);
+    else
+        fprintf(cp_out, "%*s\n", leftw + 24, "instance defaults on this card:");
+    for (w = dg->model->defaults; w && w->wl_next; w = w->wl_next->wl_next)
+        fprintf(cp_out, "%*s %*s\n", leftw, w->wl_word, colw, w->wl_next->wl_word);
+    return 0;
+}
 static int name_max;
 
 static int
@@ -848,15 +880,15 @@ all_show_old(wordlist *wl, int mode, int quiet)
                  * They live in no model-parameter table, so nothing above
                  * printed them, and the one place they could be seen was
                  * the deck. `altermod` moves them now, so show them. */
-                if (dg->model && dg->model->defaults) {
-                    wordlist *w;
-                    fprintf(cp_out, "%*s\n", leftw + 24,
-                            "instance defaults on this card:");
-                    for (w = dg->model->defaults; w && w->wl_next;
-                         w = w->wl_next->wl_next)
-                        fprintf(cp_out, "%*s %*s\n", leftw, w->wl_word, colw,
-                                w->wl_next->wl_word);
-                }
+                /* Enhancement-687 (hunt F5 of 2026-09-21): a group of several
+                 * models printed the FIRST card's defaults only -- `showmod
+                 * mt1 mt2 mt4` listed mt4's `_mfactor=2` and not mt1's
+                 * `temp=60` or mt2's `dtemp=10`, which read as if the card
+                 * path had skipped them. One block per card of the group,
+                 * named when the group has more than one. */
+                defaults_group_n = 0;
+                dgen_for_n(dg, count, count_defaults_m, NULL, 0);
+                dgen_for_n(dg, count, print_defaults_m, NULL, 0);
                 fprintf(cp_out, "\n");
             }
         }

@@ -1529,6 +1529,20 @@ altermod_instance_default(CKTcircuit *ckt, int typecode, IFdevice *device,
         return 0;
     if (opt->dataType & IF_VECTOR)
         return 0;                       /* per-element spellings stay as they are */
+    /* Enhancement-687 (hunt F5 of 2026-09-21): the .model card refuses `m`
+     * (Enhancement-426: the multiplier is an instance parameter, and a stray
+     * `m=` on a card must not silently multiply a deck), yet this command took
+     * `altermod <model> m=3` and applied it to every instance. Same rule, same
+     * words, either way in. */
+    if (strcmp(opt->keyword, "m") == 0) {
+        fprintf(cp_err,
+                "Error: `altermod %s m=` is refused, as `m` on the .model card is: the "
+                "multiplier is an instance parameter -- set it on the instance "
+                "(`alter <instance> m=...`)%s.\n",
+                name, device->registry_entry
+                    ? ", or `_mfactor` on the card and `altermod ... _mfactor=`" : "");
+        return 1;
+    }
 
     for (inst = mod->GENinstances; inst; inst = inst->GENnextInstance) {
         if (!INPcardDefaultFollows(inst, opt->id)) {

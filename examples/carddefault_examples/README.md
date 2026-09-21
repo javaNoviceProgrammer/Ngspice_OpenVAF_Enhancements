@@ -9,4 +9,10 @@ the default onto the followers, leaves the rest, records it on the card, and
 behind other commands in its block gets a Note naming `osdi -f`, and `pre_osdi`
 works at the prompt.
 
-Run: `python3 verify_carddefault.py` (15 checks per solver, both solvers).
+Run: `python3 verify_carddefault.py` (19 checks per solver, both solvers).
+
+Enhancement-687 (F5 of the 2026-09-21 hunt) adds four checks: `showmod` of a group of
+cards lists each card's instance defaults under its own name (it printed the first card's
+only), a card without defaults gets no block and a single card keeps "instance defaults on
+this card"; `altermod <model> m=` is refused with the card's reason (E-426) and changes
+nothing, while `altermod ... _mfactor=` still works.

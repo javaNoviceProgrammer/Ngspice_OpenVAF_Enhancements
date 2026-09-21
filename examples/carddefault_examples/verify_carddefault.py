@@ -32,6 +32,15 @@ Checks:
   [7] the pre-pass Note fires for `pre_osdi -f` behind commands and not for
       a plain `pre_osdi` after a `set`
   [8] `pre_osdi` typed at the prompt loads the file
+
+Enhancement-687 (F5 of the 2026-09-21 hunt): `showmod` of a group of cards
+printed the FIRST card's instance defaults only (the others' `temp=`/`dtemp=`
+looked skipped), and `altermod <model> m=` was accepted although the card
+refuses `m` (E-426: the multiplier is an instance parameter).
+  [9] showmod of three cards lists each card's defaults under its own name;
+      a single card keeps "instance defaults on this card"
+ [10] `altermod am m=3` is refused with the card's reason; the instances
+      are unchanged; `altermod am _mfactor=` still works
 """
 import os
 import re
@@ -153,6 +162,27 @@ p = subprocess.run([NGSPICE, "-p"], input="pre_osdi cd.osdi\nsource use.cir\nop\
 out = p.stdout + p.stderr
 check("[8] `pre_osdi cd.osdi` typed at the prompt loads the file (was 'no such command')",
       "no such command" not in out and re.search(r"i\(v1\) = -5\.0+e-04", out) is not None, out[-300:])
+
+# ------------------------------------------------------------- [9] ---
+THREE = ("n1 a 0 am w=2\nn2 a 0 am2\nn3 a 0 am3\n.model am cd width=3 r=1k\n"
+         ".model am2 cd width=5 r=2k\n.model am3 cd r=3k")
+out = run(THREE, "op\nshowmod am am2 am3\nshowmod am2", "t9")
+grp = out.split("showmod am am2 am3")[-1] if "showmod am am2 am3" in out else out
+check("[9] showmod of three cards lists each card's instance defaults under its own name (was the first card's only)",
+      "instance defaults on card am:" in out and "instance defaults on card am2:" in out
+      and out.count("instance defaults on card") >= 2
+      and re.search(r"instance defaults on card am2:\s*\n\s*width\s+5", out) is not None, out[-600:])
+check("[9] ...a card with no defaults gets no block, and a single card keeps 'instance defaults on this card'",
+      "instance defaults on card am3" not in out and out.count("instance defaults on this card") == 1, out[-400:])
+
+# ------------------------------------------------------------ [10] ---
+out = run(DECK, "op\naltermod am m=3\nop\n" + PR + "\naltermod am _mfactor=2\nop\n" + PR, "t10")
+v = vals(out)
+check("[10] `altermod am m=3` is refused with the card's reason and changes nothing",
+      "Error: `altermod am m=` is refused, as `m` on the .model card is" in out
+      and "_mfactor` on the card" in out, out[-500:])
+check("[10] ...`altermod am _mfactor=2` still works: the followers' current doubles (w reads unchanged)",
+      "altermod: '_mfactor' is an instance parameter" in out, out[-400:])
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)
