@@ -1085,6 +1085,9 @@ the phase belongs to the owning analysis, so `@(initial_step("dc"))`
 stays silent there and `@(final_step("ac"))` stays silent at the end of a
 `.noise` run (the same Table 4-22 rows fix `analysis("dc")`/`analysis("ac")`
 at those points, since both channels share the flag derivation).
+The same owning-analysis rule names the operating points of `.sp`, `.pz`,
+`.disto` and an AC `.sens` `"ac"` (E-684); `.tf` and a DC `.sens`, computed
+at zero frequency, stay `"dc"`.
 **`cross` obeys 5.10.3.2**: it "will not generate events for
 non-transient analyses" and "can only generate an event after the
 simulation time has advanced from zero" — it used to fire during `.dc`

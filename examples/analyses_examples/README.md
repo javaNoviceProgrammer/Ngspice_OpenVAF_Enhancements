@@ -72,4 +72,10 @@ model-kind only (set it on the `.model` card / `altermod`).
    warns loudly, naming each affected device type.
 
 Everything else in the table above already worked and is pinned by
-`verify_analyses.py` (19 checks).
+`verify_analyses.py` (29 checks per solver, both solvers).
+
+Enhancement-684 (hunt F3 of 2026-09-21) adds a module (`aname`) and nine checks, one per
+analysis: the operating points of `.sp`, `.pz`, `.disto` and an AC `.sens` answer
+`analysis("ac")` = 1 and `analysis("dc")` = 0, carry `$simparam$str("analysis_name")`
+"ac", and fire `@(initial_step("ac"))` and `@(final_step("ac"))` (they answered "dc");
+`.tf` and a DC `.sens` stay "dc"; `op`, `ac` and `noise` are the controls.

@@ -15,6 +15,7 @@
 #include "ngspice/typedefs.h"
 
 #include "ngspice/cktdefs.h"   /* Enhancement-492: CKTvaFatalRaised */
+#include "ngspice/sensdefs.h"   /* Enhancement-684: SENS_AN::step_type */
 #include "ngspice/osdiitf.h"
 
 /* Enhancement-492: defined here because this file owns the only place a
@@ -569,6 +570,41 @@ static void build_plusarg_arrays(void) {
   ext_built = 1;
 }
 
+/* Enhancement-683: the analysis-name bit an operating-point evaluation of
+ * the running job carries (Enhancement-53's consultation: the op phase of an
+ * AC or NOISE job belongs to that analysis), shared by OSDIload and
+ * OSDIfinalStep so the two can never disagree about a job's name. 0 for
+ * every other job (op, dc, tran, and the small-signal jobs tf, pz, sp,
+ * disto, sens, whose operating points report "dc" -- hunt F3 of 2026-09-21
+ * is where that list is decided, in one place). */
+static uint32_t osdi_job_name_flags(const CKTcircuit *ckt) {
+  if (ckt->CKTcurJob && ft_sim->analyses[ckt->CKTcurJob->JOBtype]) {
+    const char *job_name = ft_sim->analyses[ckt->CKTcurJob->JOBtype]->name;
+    if (strcmp(job_name, "AC") == 0)
+      return ANALYSIS_AC;
+    if (strcmp(job_name, "NOISE") == 0)
+      return ANALYSIS_NOISE;
+    /* Enhancement-684 (hunt F3 of 2026-09-21): the other small-signal jobs
+     * belong to "ac" as well. An S-parameter sweep IS an AC sweep with
+     * ports, a pole-zero and a distortion analysis linearise the model the
+     * same way and work in the frequency domain, and the AC form of a
+     * sensitivity analysis sweeps the AC response; their operating points
+     * answered analysis("dc") = 1, analysis("ac") = 0, so a model that
+     * selects its small-signal formulation under analysis("ac") -- or fires
+     * @(initial_step("ac")) -- took the DC path. The LRM knows no other name
+     * for them (the compiler accepts ac, dc, ic, nodeset, noise, static and
+     * tran), and the .tf transfer function and the DC form of .sens stay
+     * "dc": both are computed at zero frequency. */
+    if (strcmp(job_name, "SP") == 0 || strcmp(job_name, "PZ") == 0 ||
+        strcmp(job_name, "DISTO") == 0)
+      return ANALYSIS_AC;
+    if (strcmp(job_name, "SENS") == 0 &&
+        ((const SENS_AN *)ckt->CKTcurJob)->step_type != SENS_DC)
+      return ANALYSIS_AC;
+  }
+  return 0;
+}
+
 /* Enhancement-394: the single source of truth for "which analysis is running",
  * mirroring the ANALYSIS_* flag derivation in OSDIload term for term so that
  * $simparam$str("analysis_name") and analysis() can never disagree.
@@ -590,10 +626,15 @@ static const char *osdi_analysis_name(const CKTcircuit *ckt) {
 
   if (ckt->CKTmode & MODEACNOISE)
     return "noise";
-  if (is_dc && job && !strcmp(job, "NOISE"))
-    return "noise";
-  if (is_dc && job && !strcmp(job, "AC"))
-    return "ac";
+  if (is_dc) {
+    /* Enhancement-684: the job's own name, from the one helper the flags use
+     * (AC, NOISE, and the small-signal jobs SP, PZ, DISTO, an AC SENS). */
+    uint32_t name = osdi_job_name_flags(ckt);
+    if (name & ANALYSIS_NOISE)
+      return "noise";
+    if (name & ANALYSIS_AC)
+      return "ac";
+  }
   if (is_ac)
     return "ac";
   if (is_tran)
@@ -1184,23 +1225,6 @@ static void osdi_op_solve_capture(CKTcircuit *ckt) {
   osdi_op_solve_valid = true;
 }
 
-/* Enhancement-683: the analysis-name bit an operating-point evaluation of
- * the running job carries (Enhancement-53's consultation: the op phase of an
- * AC or NOISE job belongs to that analysis), shared by OSDIload and
- * OSDIfinalStep so the two can never disagree about a job's name. 0 for
- * every other job (op, dc, tran, and the small-signal jobs tf, pz, sp,
- * disto, sens, whose operating points report "dc" -- hunt F3 of 2026-09-21
- * is where that list is decided, in one place). */
-static uint32_t osdi_job_name_flags(const CKTcircuit *ckt) {
-  if (ckt->CKTcurJob && ft_sim->analyses[ckt->CKTcurJob->JOBtype]) {
-    const char *job_name = ft_sim->analyses[ckt->CKTcurJob->JOBtype]->name;
-    if (strcmp(job_name, "AC") == 0)
-      return ANALYSIS_AC;
-    if (strcmp(job_name, "NOISE") == 0)
-      return ANALYSIS_NOISE;
-  }
-  return 0;
-}
 
 extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
   GENmodel *gen_model;

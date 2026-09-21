@@ -24,3 +24,28 @@ module ires(a,c); inout a,c; electrical a,c;
   (* type="instance" *) parameter real r = 1e3;
   analog I(a,c) <+ V(a,c)/r;
 endmodule
+
+// Enhancement-684 (hunt F3 of 2026-09-21): which analyses answer analysis("ac").
+// The operating points of .sp, .pz, .disto and an AC .sens answered "dc" while
+// a plain .ac's answered "ac" (E-53's owning-analysis rule), so a model that
+// selects its small-signal formulation under analysis("ac"), or fires
+// @(initial_step("ac")), took the DC path there. They belong to "ac" now; .tf
+// and a DC .sens stay "dc" (computed at zero frequency); noise stays "noise".
+module aname(a,c); inout a,c; electrical a,c;
+  (* type="instance" *) parameter real r = 1e3;
+  (* desc="analysis ac" *) integer is_ac;
+  (* desc="analysis dc" *) integer is_dc;
+  (* desc="analysis static" *) integer is_static;
+  (* desc="analysis noise" *) integer is_noise;
+  analog begin
+    is_ac = analysis("ac"); is_dc = analysis("dc");
+    is_static = analysis("static"); is_noise = analysis("noise");
+    @(initial_step("ac")) $strobe("AN_EV initial_ac");
+    @(initial_step("dc")) $strobe("AN_EV initial_dc");
+    @(final_step("ac")) $strobe("AN_EV final_ac");
+    @(final_step("dc")) $strobe("AN_EV final_dc");
+    @(final_step("noise")) $strobe("AN_EV final_noise");
+    @(initial_step) $strobe("AN_NAME %s", $simparam$str("analysis_name", "?"));
+    I(a,c) <+ V(a,c) / r;
+  end
+endmodule

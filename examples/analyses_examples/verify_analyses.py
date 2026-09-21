@@ -345,5 +345,51 @@ check("a limiting model's distortion is non-zero, not a silent zero",
 check("analysis still completes (linear part valid)",
       re.search(r"length\(v\(a\)\) = [0-9]", log) is not None)
 
+print("[7] Enhancement-684: which analyses answer analysis(\"ac\") -- the name, the flags, the events")
+A = "@"
+NAMES = ((A + "n1[is_ac]"), (A + "n1[is_dc]"), (A + "n1[is_static]"), (A + "n1[is_noise]"))
+# expected: (name, ac, dc, static, noise, initial event, final event)
+EXPECT = (
+    ("op",      "op",                          "", "",                                  "dc",    0, 1, 1, 0),
+    ("ac",      "ac lin 1 1k 1k",              "", "",                                  "ac",    1, 0, 1, 0),
+    ("sp",      "sp lin 1 1k 1k",              "portnum 1 z0 50", "Vp2 a 0 dc 0 portnum 2 z0 50\n", "ac", 1, 0, 1, 0),
+    ("pz",      "pz in 0 a 0 vol pz",          "", "",                                  "ac",    1, 0, 1, 0),
+    ("disto",   "disto lin 1 1k 1k",           "distof1 0.01", "",                      "ac",    1, 0, 1, 0),
+    ("sens ac", "sens v(a) ac lin 1 1k 1k",    "", "",                                  "ac",    1, 0, 1, 0),
+    ("tf",      "tf v(a) V1",                  "", "",                                  "dc",    0, 1, 1, 0),
+    ("sens dc", "sens v(a)",                   "", "",                                  "dc",    0, 1, 1, 0),
+    ("noise",   "noise v(a) V1 lin 2 1k 2k",   "", "",                                  "noise", 0, 0, 1, 1),
+)
+for tag, an, vsrc, extra, name, e_ac, e_dc, e_st, e_no in EXPECT:
+    log = run_deck("_aname.cir", f"""* analysis name {tag}
+.control
+pre_osdi analyses_blocks.osdi
+.endc
+V1 in 0 dc 1 ac 1 {vsrc}
+N1 in a am r=1k
+.model am aname
+R2 a 0 1k
+C1 a 0 1n
+{extra}.control
+{an}
+print {' '.join(NAMES)}
+.endc
+.end
+""")
+    vals = []
+    for nm in NAMES:
+        m = re.search(re.escape(nm) + r"\s*=\s*([-\d.eE+]+)", log)
+        vals.append(int(float(m.group(1))) if m else None)
+    names = set(re.findall(r"AN_NAME (\w+)", log))
+    ev = re.findall(r"AN_EV (\w+)", log)
+    want_init = "initial_" + ("ac" if e_ac else "dc") if name != "noise" else None
+    want_final = "final_" + name
+    ok = (vals == [e_ac, e_dc, e_st, e_no] and names == {name}
+          and (want_init is None or (want_init in ev and ("initial_ac" if want_init == "initial_dc" else "initial_dc") not in ev))
+          and ev.count(want_final) == 1 and all(e == want_final or e.startswith("initial_") for e in ev))
+    check(f"{tag}: analysis_name '{name}', flags ac/dc/static/noise = {e_ac}{e_dc}{e_st}{e_no}, "
+          f"initial_step/final_step qualified by that name", ok,
+          f"(got {vals}, names {sorted(names)}, events {ev})")
+
 print(f"\n{'ALL PASS' if failed == 0 else 'FAILURES'}: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
