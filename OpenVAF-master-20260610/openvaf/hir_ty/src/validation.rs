@@ -1,6 +1,6 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
 use basedb::lints::builtin::{
-    dead_range_member, const_simparam, contribution_to_input_port, mfactor_double_scaling, lossy_integer_constant, param_default_out_of_range, rng_in_loop, runtime_format_string, trivial_probe, unknown_analysis_name, unknown_limit_function, unknown_simparam, variant_const_simparam, non_standard_code,
+    dead_range_member, const_simparam, contribution_to_input_port, mfactor_double_scaling, table_data_captured, lossy_integer_constant, param_default_out_of_range, rng_in_loop, runtime_format_string, trivial_probe, unknown_analysis_name, unknown_limit_function, unknown_simparam, variant_const_simparam, non_standard_code,
 };
 use basedb::lints::{self, Lint, LintSrc};
 use basedb::{AstIdMap, BaseDB, FileId};
@@ -163,6 +163,10 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             BodyValidationDiagnostic::MfactorScalesFlowContribution { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, mfactor_double_scaling);
                 Some((mfactor_double_scaling, src))
+            }
+            BodyValidationDiagnostic::TableDataCaptured { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, table_data_captured);
+                Some((table_data_captured, src))
             }
             BodyValidationDiagnostic::RngInLoop { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, rng_in_loop);
@@ -1873,6 +1877,38 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                          (`if (r / $mfactor < 1e-3) V(a,b) <+ 0;`, the LRM's `parares`), a display, \
                          an operating-point variable -- or silence this with \
                          (* openvaf_allow=\"mfactor_double_scaling\" *) on the statement"
+                            .to_owned(),
+                    ])
+            }
+            BodyValidationDiagnostic::TableDataCaptured { expr, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                Report::warning()
+                    .with_message(
+                        "$table_model: the table data depends on the solution and is \
+                         captured once"
+                            .to_owned(),
+                    )
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: "this array is computed from a potential, a flow or the time"
+                            .to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "LRM 9.21.1: 'the state of the data source is captured on the first \
+                         call to the table model function. Any change after this point is \
+                         ignored.' The table is built from the array's values at the \
+                         instance's first evaluation of each analysis (and of each parameter \
+                         or temperature sweep point, where the simulator sets the instance up \
+                         again) and held there; it does not follow the solution from one \
+                         iteration to the next"
+                            .to_owned(),
+                        "help: fill the array from parameters, constants or in @(initial_step) \
+                         if one table is meant; if the table is meant to move with the \
+                         solution, put that dependence on the input or on the result instead \
+                         (`$table_model(V(a,b) - v0, xs, ys)`); or silence this with \
+                         (* openvaf_allow=\"table_data_captured\" *) on the statement"
                             .to_owned(),
                     ])
             }

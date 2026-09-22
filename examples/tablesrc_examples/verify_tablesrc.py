@@ -16,6 +16,12 @@ verify_tablesrc.py -- the lookup-table features of the 2026-09-05 book audit
   6. the refusals: an overridable `parameter string` as control string or file
      name, an overridable `parameter` array, an array written at run time,
      'I' on runtime arrays, 'I' on inline `'{...}` data, a wrong array shape
+  7. Enhancement-702 (hunt F6 of 2026-09-21): LRM 9.21.1 captures run-time array
+     data at the first evaluation -- a knot computed from V(a,b) makes one table
+     for a whole sweep (and draws L038), captured at the first evaluation that
+     reaches the call site and afresh in a new analysis; parameter and
+     temperature data is left live (no warning) and follows every sweep point
+     and `alter`
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
@@ -55,6 +61,32 @@ def op_current(osdi, model, params):
         if line.strip().lower().startswith("i(vin) "):
             return float(line.split("=", 1)[1])
     return None
+
+
+def currents(osdi, model, mparams, iparams, ctl):
+    """every `i(vin)` value the control lines print, in order: an `op`'s
+    `i(vin) = X` line and a sweep's `idx  sweep  X` rows alike (vin = 1.5 V)"""
+    deck = ("* tablesrc\nvin a 0 dc 1.5\nn1 a 0 dm " + iparams + "\n"
+            f".model dm {model}({mparams})\n"
+            f".control\npre_osdi {osdi}\n" + "\n".join(ctl) + "\n.endc\n.end\n")
+    with open(os.path.join(HERE, "_o.cir"), "w") as fh:
+        fh.write(deck)
+    out = subprocess.run([NGSPICE, "-b", "_o.cir"], cwd=HERE,
+                         capture_output=True, text=True, timeout=120).stdout
+    vals = []
+    for line in out.splitlines():
+        t = line.strip()
+        if t.lower().startswith("i(vin) ="):
+            vals.append(float(t.split("=", 1)[1]))
+        else:
+            cols = t.split()
+            if len(cols) == 3 and cols[0].isdigit():
+                vals.append(float(cols[2]))
+    return vals
+
+
+def close(got, exp, rel=2e-5):
+    return len(got) == len(exp) and all(abs(g - e) <= rel * abs(e) for g, e in zip(got, exp))
 
 
 def quad_spline(xs, vs, x, clamp):
@@ -152,6 +184,46 @@ def main():
     ):
         r, log = refused(src, needle)
         check(f"refused/{src}: {needle}", r, "" if r else log.strip().splitlines()[0])
+
+    print("[7] LRM 9.21.1: run-time array data is captured at the first evaluation (E-702)")
+    built, log = compile_va("tablesrc_capture.va", "tablesrc_capture.osdi")
+    check("tablesrc_capture.va builds and draws L038 (a knot computed from V(a,b))",
+          built and "L038" in log, "" if built else log.strip().splitlines()[0])
+    built, log = compile_va("tablesrc_recapture.va", "tablesrc_recapture.osdi")
+    check("tablesrc_recapture.va builds without L038 (parameter and temperature data)",
+          built and "L038" not in log, "" if built else log.strip().splitlines()[0])
+    # captured at the initial guess (V = 0): ys[1] = 1, the table {0, 1, 4} for the
+    # whole sweep -- the knot used to be re-read at every iterate (0.75, 2.0, 3.25)
+    got = currents("tablesrc_capture.osdi", "tablesrc_capture", "", "",
+                   ["dc vin 0.5 1.5 0.5", "print i(vin)"])
+    check("captured: dc 0.5/1.0/1.5 == 0.5, 1.0, 2.5 (one table)",
+          close(got, [-0.5e-3, -1.0e-3, -2.5e-3]), f"got {got}")
+    i = op_current("tablesrc_capture.osdi", "tablesrc_capture", "")
+    check("captured: op at 1 V == 1.0 (tracking would give 2.0)",
+          i is not None and abs(i + 1.0e-3) < 1e-9, f"i = {i!r}")
+    # the call site is not reached at the initial guess (V = 0): the capture
+    # happens at the next evaluation, V = 1.5 -> {0, 2.5, 4}, f = 3.25; the second
+    # analysis captures afresh at V = 1.2 -> {0, 2.2, 4}, f = 2.56 (zeroed slots
+    # would give 0; a capture that never repeats would give 2.8)
+    got = currents("tablesrc_capture.osdi", "tablesrc_capture", "gated=1", "",
+                   ["op", "print i(vin)", "alter vin = 1.2", "op", "print i(vin)"])
+    check("a gated call site captures at the first evaluation that reaches it, "
+          "and afresh in the next analysis", close(got, [-3.25e-3, -2.56e-3]), f"got {got}")
+    A = "@"
+    T = lambda c: c + 273.15
+    f = lambda p, t: (0.5 * p * t / 300.0 + 2.0 * p) * 1e-3     # f(1.5) on {0, pT/300, 4p}
+    got = currents("tablesrc_recapture.osdi", "tablesrc_recapture", "gated=0", "p=1",
+                   [f"dc {A}n1[p] 1 3 1", "print i(vin)"])
+    check("recaptured at every point of a dc sweep of the instance parameter p",
+          close(got, [-f(p, T(27)) for p in (1, 2, 3)]), f"got {got}")
+    got = currents("tablesrc_recapture.osdi", "tablesrc_recapture", "gated=0", "p=1",
+                   ["dc temp 27 127 50", "print i(vin)"])
+    check("recaptured at every point of a temperature sweep ($temperature in a knot)",
+          close(got, [-f(1, T(c)) for c in (27, 77, 127)]), f"got {got}")
+    got = currents("tablesrc_recapture.osdi", "tablesrc_recapture", "gated=1", "p=1",
+                   ["op", "print i(vin)", f"alter {A}n1[p]=2", "op", "print i(vin)"])
+    check("live parameter data under a gated call site follows alter",
+          close(got, [-f(1, T(27)), -f(2, T(27))]), f"got {got}")
 
     print("\nALL PASSED" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)

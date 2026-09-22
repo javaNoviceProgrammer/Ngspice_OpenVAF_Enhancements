@@ -27,6 +27,8 @@ The lookup-table gaps the
 | `tablesrc_locparam.va` | `localparam` arrays, `localparam string ctl`, `localparam string fname` for the file form | 2·(2x + y) |
 | `tablesrc_ignore.va` | `"I,1L,1L"` on a four-column file, `"I,1,1"` on four arrays (the first a tag) | 2·(2x + y) |
 | `tablesrc_quad.va` | `"2L"` / `"2C"` on inline `'{...}` data and on runtime arrays, knots x² at 0..3 | equal to an independent Python evaluation of the spline, inside and outside the grid |
+| `tablesrc_capture.va` | a knot computed from `V(a,b)` in the run-time array form, the call site optionally under a condition the initial guess fails | captured at the first evaluation (LRM 9.21.1): one table `{0, 1, 4}` for a whole `dc` sweep, the compiler's L038 warning; a gated call site captures at the first evaluation that reaches it and afresh in the next analysis |
+| `tablesrc_recapture.va` | knots from an instance parameter and `$temperature`, the call site optionally gated the same way | left live (its data cannot change between two setups): follows every sweep point and `alter`, no warning |
 | `refused/*.va` | overridable `parameter string` (control, file name), overridable `parameter` array, an array written under a condition, `I` on runtime arrays, `I` on inline data, a wrong array shape | each refused with the named diagnostic |
 
 The array form is read **when the model is compiled**, exactly as a data file
@@ -52,4 +54,16 @@ hands two inputs a two-column file and reads "its rows have 2 columns, but the
 call has 2 inputs and needs at least 3" (it read "missing, unreadable, or
 contains no usable table data", under notes about non-finite values).
 
-67 checks per solver, all PASS.
+Since [E-702](../../enhancements_doc/Enhancement-702.md) the run-time array
+form captures its data at the instance's first evaluation of each analysis, as
+LRM 9.21.1 says ("captured on the first call ... any change after this point is
+ignored"): a knot computed from `V(a,b)` makes one table for a whole sweep,
+where it used to make a different table at every Newton iterate, and the
+compiler warns (L038, `table_data_captured`) that the dependence never reaches
+the table. A table whose data comes from parameters, constants, the
+temperature or an `@(initial_step)` fill is not captured at all: it cannot
+change between two setups, and ngspice sets the instance up again at every
+analysis start, sweep point and `alter`, so it is left live and keeps its
+compile-time folding.
+
+57 checks per solver, all PASS.

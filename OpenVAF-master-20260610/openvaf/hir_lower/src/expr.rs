@@ -22,6 +22,7 @@ use stdx::iter::zip;
 use syntax::ast::{BinaryOp, UnaryOp};
 
 use crate::body::BodyLoweringCtx;
+use crate::stmt::bool_or;
 use crate::fmt::DisplayKind;
 use crate::{
     CallBackKind, CurrentKind, FileOp, IdtKind, ImplicitEquationKind, NoiseTable, ParamKind,
@@ -2590,6 +2591,33 @@ impl BodyLoweringCtx<'_, '_, '_> {
             // spline control codes instead of silently interpolating linearly.
             let (mut grid, mut vals) = (grid[..n].to_vec(), vals[..n].to_vec());
             self.sort_pairs_runtime(&mut grid, &mut vals);
+            // Enhancement-702 (hunt F6 of 2026-09-21): LRM 9.21.1 -- "the state of
+            // the data source is captured on the first call to the table model
+            // function. Any change after this point is ignored." The sorted knots
+            // are latched into per-call-site instance slots at the first
+            // evaluation of each analysis and read back from there afterwards, so
+            // an element the body computes from the solution makes ONE table (it
+            // used to make a different table at every iterate). Data that cannot
+            // change between two setups -- parameters, the temperature, an
+            // `@(initial_step)` fill -- is unaffected: the simulator sets the
+            // instance up again at every analysis start and sweep point, and the
+            // capture follows it. The sort runs on the live values, so for
+            // constant data it stays in the setup phase. Only a table whose data
+            // depends on the solution is latched (the answer inference computed,
+            // the same one the `table_data_captured` lint reports): a table built
+            // from parameters, constants, the temperature or an `@(initial_step)`
+            // fill cannot change between two setups, so its capture would be a
+            // no-op that costs the compile-time folding of its interpolant -- a
+            // 256-knot cubic table that folds today does not compile as an
+            // evaluation-time spline -- and its slots.
+            let (grid, vals) = if self.body.table_data_captured(args[1])
+                || self.body.table_data_captured(args[2])
+            {
+                let frozen = self.capture_table_data(grid.into_iter().chain(vals).collect());
+                (frozen[..n].to_vec(), frozen[n..].to_vec())
+            } else {
+                (grid, vals)
+            };
             let result = match ctrl.interp {
                 TblInterp::Cubic => self.interp_1d_spline_runtime(x, &grid, &vals, linear_extrap),
                 TblInterp::Quadratic => {
@@ -2712,6 +2740,37 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// The columns become the rows of the same N+M table a data file holds and go
     /// through the same isoline tree, so the two data sources cannot disagree.
     /// Validation has established that every element is a compile-time constant.
+    /// Enhancement-702 (hunt F6 of 2026-09-21): latches `values` into persistent
+    /// per-call-site slots (`ParamKind::EventState`/`PlaceKind::EventState`) at the
+    /// first evaluation of each analysis and returns the latched values -- LRM
+    /// 9.21.1's "captured on the first call". One further slot per call site is
+    /// the "captured" flag: set here once the data is stored, and cleared by
+    /// `state::insert_var_init` at every `IsInitialStep` in the entry block, so a
+    /// call site that the first evaluation does not reach (a table inside a
+    /// region `if`) still captures at its own first evaluation of the analysis
+    /// instead of reading zeroed slots, and every setup (a new analysis, a
+    /// parameter or temperature sweep point, an `alter`) captures afresh.
+    fn capture_table_data(&mut self, values: Vec<Value>) -> Vec<Value> {
+        if values.is_empty() {
+            return values;
+        }
+        let (raw_flag, flag_idx) = self.new_event_state();
+        self.ctx.intern.table_capture_flags.push(flag_idx);
+        let is_initial = self.ctx.use_param(ParamKind::IsInitialStep);
+        let not_captured = self.ctx.ins().feq(raw_flag, F_ZERO);
+        let capture = bool_or(self.ctx, is_initial, not_captured);
+        self.ctx.def_place(PlaceKind::EventState(flag_idx), F_ONE);
+        values
+            .into_iter()
+            .map(|live| {
+                let (raw, idx) = self.new_event_state();
+                let latched = self.ctx.ins().select(capture, live, raw);
+                self.ctx.def_place(PlaceKind::EventState(idx), latched);
+                latched
+            })
+            .collect()
+    }
+
     fn lower_table_model_arrays(&mut self, args: &[ExprId], k: usize) -> Value {
         let is_arr = |sel: &Self, e: ExprId| {
             sel.body.array_var_ref(e).is_some() || sel.body.array_param_ref(e).is_some()

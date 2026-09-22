@@ -232,6 +232,10 @@ pub enum BodyValidationDiagnostic {
     /// `$mfactor` read, or the read of a variable assigned from one, inside the
     /// contribution's value.
     MfactorScalesFlowContribution { stmt: StmtId, expr: ExprId },
+    /// Enhancement-702 (hunt F6 of 2026-09-21): the array data of a run-time
+    /// `$table_model` is computed from the solution; LRM 9.21.1 captures it on
+    /// the first call, so the dependence never reaches the table.
+    TableDataCaptured { stmt: StmtId, expr: ExprId },
     TrivialBranchAccess {
         branch: BranchWrite,
         expr: ExprId,
@@ -675,6 +679,10 @@ impl BodyValidationDiagnostic {
         // Enhancement-686 (hunt F4 of 2026-09-21): a flow contribution whose value
         // depends on `$mfactor` is scaled twice (LRM 6.3.6).
         lint_mfactor_double_scaling(&body, &infere, &mut validator.diagnostics);
+
+        // Enhancement-702 (hunt F6 of 2026-09-21): a run-time `$table_model` whose
+        // array data is computed from the solution is captured once (LRM 9.21.1).
+        lint_table_data_captured(&infere, &mut validator.diagnostics);
 
         // Enhancement-532 (bug-hunt H3): judge a parameter's default against the
         // parameter's own range, where both fold to compile-time constants.
@@ -4678,6 +4686,20 @@ fn lint_mfactor_double_scaling(
         if let Some(expr) = tainted_read(body, val, &tainted) {
             diagnostics.push(BodyValidationDiagnostic::MfactorScalesFlowContribution { stmt, expr });
         }
+    }
+}
+
+/// Enhancement-702 (hunt F6 of 2026-09-21): LRM 9.21.1 captures a run-time
+/// `$table_model`'s array data at the first evaluation; a data array that depends
+/// on the solution is reported, from the analysis inference ran
+/// (`table_capture::captured_table_data` -- the same answer the lowering keys the
+/// capture on, so what is warned about is exactly what is captured).
+fn lint_table_data_captured(
+    infere: &InferenceResult,
+    diagnostics: &mut Vec<BodyValidationDiagnostic>,
+) {
+    for &(stmt, expr) in &infere.captured_table_data {
+        diagnostics.push(BodyValidationDiagnostic::TableDataCaptured { stmt, expr });
     }
 }
 

@@ -336,6 +336,13 @@ pub struct HirInterner {
     /// `last_crossing_equations`): `openvaf/osdi/src/inst_data.rs` derives the live set of
     /// `EventState` slots directly by scanning `intern.params`, exactly like `hidden_state`.
     pub event_state_count: u32,
+    /// Enhancement-702 (hunt F6 of 2026-09-21): the `EventState` slot that holds
+    /// each run-time `$table_model` call site's "data captured" flag. LRM 9.21.1
+    /// captures the array data on the first call; `state::insert_var_init` clears
+    /// the slot at every `IsInitialStep`, so the capture happens afresh at the
+    /// first evaluation of each analysis whether or not that evaluation reaches
+    /// the call site. See `expr::capture_table_data`.
+    pub table_capture_flags: Vec<u32>,
 }
 
 pub type LiveParams<'a> = FilterMap<
@@ -359,6 +366,7 @@ impl Default for HirInterner {
             slew_equations: Vec::default(),
             indirect_branch_equations: Vec::default(),
             event_state_count: 0,
+            table_capture_flags: Vec::default(),
         }
     }
 }

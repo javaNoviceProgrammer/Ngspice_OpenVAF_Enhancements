@@ -317,7 +317,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// seeding it with the current value on the first evaluation, so no spurious edge fires) --
     /// there's no single sensible default across `cross`/`above`/`timer`, so it isn't baked
     /// in here.
-    fn new_event_state(&mut self) -> (Value, u32) {
+    pub(crate) fn new_event_state(&mut self) -> (Value, u32) {
         let idx = self.ctx.intern.event_state_count;
         self.ctx.intern.event_state_count += 1;
         (self.ctx.use_param(ParamKind::EventState(idx)), idx)

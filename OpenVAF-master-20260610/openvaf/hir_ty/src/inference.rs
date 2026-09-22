@@ -224,6 +224,12 @@ pub struct InferenceResult {
     /// Enhancement-405: dynamic-index reads of a *parameter* array, `p[i]`.
     pub dynamic_param_index_refs: AHashMap<ExprId, DynParamArrayIndex>,
     pub diagnostics: Vec<InferenceDiagnostic>,
+    /// Enhancement-702 (hunt F6 of 2026-09-21): the data arguments of run-time 1-D
+    /// `$table_model` calls whose array depends on the solution, with their
+    /// statements -- see `table_capture::captured_table_data`. The lowering
+    /// latches exactly these tables at the first evaluation (LRM 9.21.1) and the
+    /// `table_data_captured` lint reports them.
+    pub captured_table_data: Vec<(StmtId, ExprId)>,
 }
 
 impl InferenceResult {
@@ -273,6 +279,11 @@ impl InferenceResult {
             ctx.int_param_bound = int_param && i > 0;
             ctx.infere_stmt(*stmt);
         }
+
+        // Enhancement-702: which run-time table data depends on the solution --
+        // one analysis for the lint and for the lowering's capture
+        ctx.result.captured_table_data =
+            crate::table_capture::captured_table_data(&body, &ctx.result);
 
         Arc::new(ctx.result)
     }

@@ -274,5 +274,13 @@ pub mod builtin {
         // error". Warn, as the sentence before it has it ("shall issue a
         // warning"); -E raises it.
         pub const mfactor_double_scaling = LintData{default_lvl: Warn, documentation_id: 37};
+        // Enhancement-702 (hunt F6 of 2026-09-21): the array data of a run-time
+        // `$table_model` is computed from the solution (a potential, a flow, the
+        // time). LRM 9.21.1 captures the data source on the first call and ignores
+        // every later change, and the table is now built that way -- from the
+        // arrays' values at the instance's first evaluation of each analysis --
+        // so the dependence the author wrote never reaches the table. Warn; -E
+        // raises it.
+        pub const table_data_captured = LintData{default_lvl: Warn, documentation_id: 38};
     }
 }

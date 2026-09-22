@@ -1,0 +1,21 @@
+// Enhancement-702 (hunt F6 of 2026-09-21): LRM 9.21.1 -- "the state of the data
+// source is captured on the first call to the table model function. Any change
+// after this point is ignored." A knot computed from the solution is read at the
+// instance's first evaluation of each analysis (the initial guess, V = 0 here) and
+// held: one table, {0, 1, 4}, for the whole sweep. The compiler says so (L038).
+// `gated=1` puts the call site under a condition the initial guess does not
+// satisfy: the capture then happens at the first evaluation that reaches it, and
+// a new analysis (after `alter`) captures afresh.
+`include "disciplines.vams"
+module tablesrc_capture(inout electrical a, b);
+parameter integer gated = 0;
+real xs[0:2], ys[0:2];
+analog begin
+  xs[0] = 0.0; xs[1] = 1.0; xs[2] = 2.0;
+  ys[0] = 0.0; ys[1] = 1.0 + V(a,b); ys[2] = 4.0;
+  if (gated == 0 || V(a,b) > 0.7)
+    I(a,b) <+ 1e-3 * $table_model(V(a,b), xs, ys);
+  else
+    I(a,b) <+ 1e-6 * V(a,b);
+end
+endmodule

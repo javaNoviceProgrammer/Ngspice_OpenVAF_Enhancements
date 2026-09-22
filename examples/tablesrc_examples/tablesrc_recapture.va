@@ -1,0 +1,20 @@
+// Enhancement-702 (hunt F6 of 2026-09-21): data that cannot change between two
+// setups -- an instance parameter, the temperature -- is not captured at all: it
+// is left live, keeps its compile-time folding, and follows every analysis start,
+// sweep point and `alter`, where the simulator sets the instance up again. No
+// warning is drawn. `gated=1` puts the call site under a condition the initial
+// guess does not satisfy; a live table is unaffected by that.
+`include "disciplines.vams"
+module tablesrc_recapture(inout electrical a, b);
+(* type="instance" *) parameter real p = 1.0;
+parameter integer gated = 0;
+real xs[0:2], ys[0:2];
+analog begin
+  xs[0] = 0.0; xs[1] = 1.0; xs[2] = 2.0;
+  ys[0] = 0.0; ys[1] = p * $temperature / 300.0; ys[2] = 4.0 * p;
+  if (gated == 0 || V(a,b) > 0.7)
+    I(a,b) <+ 1e-3 * $table_model(V(a,b), xs, ys);
+  else
+    I(a,b) <+ 1e-6 * V(a,b);
+end
+endmodule

@@ -30,7 +30,7 @@ the sources' silence in `op`, `ac` and `tran`.
 | [F3](#f3--a-cubic-spline-under-c-keeps-the-natural-end-condition) | `3C` builds the natural spline and clamps outside it, so the first derivative jumps at the table edge (7.43 to 0 on the `x²` samples); LRM 9.21.4 sets the end derivative to zero under `C` precisely to avoid that | deviation, silent, reaches the Jacobian |
 | [F4](#f4--a-trailing-comment-on-a-data-line-makes-the-file-unusable) | a `#` comment after the numbers on a line makes the whole file "missing, unreadable, or contains no usable table data" for `$table_model`, `noise_table` and `noise_table_log`; 9.21.1 allows comments anywhere, 4.6.4.3 before or after any pair | refusal of legal input |
 | [F5](#f5--the-data-errors-of-921-are-not-raised) | one isoline in a 2-D table, an isoline with a single point, and two rows with the same coordinates and different values are all accepted — the last with a warning that says the LAST value anchors when the FIRST is kept; a dependent selector outside 1..M picks a column in silence | silence, one slip |
-| [F6](#f6--a-run-time-array-table-follows-the-solution) | the 1-D array form whose data the body computes is rebuilt at every evaluation; 9.21.1 captures the data on the first call and ignores later changes, and the analogous `laplace_*` policy at least warns | deviation, silent |
+| [F6](#f6--a-run-time-array-table-follows-the-solution) | *(fixed in [E-702](../../enhancements_doc/Enhancement-702.md): the sorted knots are latched into per-call-site instance slots at the instance's first evaluation of each analysis and read back afterwards — the clause's "captured on the first call"; a table built from parameters, constants, the temperature or an `@(initial_step)` fill is left live, and a knot computed from the solution draws the `table_data_captured` warning)* the 1-D array form whose data the body computes is rebuilt at every evaluation; 9.21.1 captures the data on the first call and ignores later changes, and the analogous `laplace_*` policy at least warns | deviation, silent |
 | [F7](#f7--diagnostic-slips) | *(fixed in [E-700](../../enhancements_doc/Enhancement-700.md): the file check names its cause, the null denominator draws one error with 4.5.11's zeros-only rule, the Laplace `abstol` is checked as `ddt`'s is, and the run-time array form takes `E` and per-end methods)* a file with too few columns for its inputs is reported as unreadable; a null denominator draws a type error spelt `_[0:0]` beside the real one; a negative or zero Laplace `abstol` passes where `ddt`'s is refused; the run-time array form refuses `"1E"` as "unsupported" while its own note lists `E` as supported | diagnostic slips |
 
 Dropped after checking the LRM, the code or the numbers: every `laplace_*` form with a
@@ -385,6 +385,20 @@ the Laplace one does.
 **Kind.** Deviation, silent; only tables whose array data depends on a circuit quantity
 (the parameter- and `initial_step`-filled idioms are unaffected). Not
 platform-specific.
+
+*Fixed in [E-702](../../enhancements_doc/Enhancement-702.md).* The sorted knots
+are latched into per-call-site instance slots at the instance's first evaluation
+and read back from there afterwards — one table, `{0, 1, 4}`, so the sweep gives
+0.5, 1.0 and 2.5 — and a per-call-site "captured" flag, cleared at every initial
+step in the entry block, lets a call site the initial guess does not reach
+capture at its own first evaluation, and afresh in the next analysis. Only a
+table whose data depends on the solution is latched, as one analysis at the end
+of inference decides for the lint and the lowering alike; a table built from
+parameters, constants, the temperature or an `@(initial_step)` fill is left
+live — it cannot change between two setups, and ngspice sets the instance up
+again at every analysis start, sweep point and `alter` — and keeps its
+compile-time folding. The `table_data_captured` lint (L038) names the data
+array when it depends on a potential, a flow or the time.
 
 ## F7 — diagnostic slips
 

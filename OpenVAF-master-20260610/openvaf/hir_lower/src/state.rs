@@ -1,7 +1,7 @@
 use hir::{CompilationDB, ParamSysFun, Parameter};
 use lasso::Rodeo;
 use mir::builder::InstBuilder;
-use mir::Function;
+use mir::{Function, F_ZERO};
 use mir_build::{FunctionBuilder, FunctionBuilderContext};
 
 use crate::ctx::LoweringCtx;
@@ -52,6 +52,28 @@ impl HirInterner {
 
                 for use_ in existing_uses {
                     ctx.dfg_mut().use_set_value(use_, selected);
+                }
+            }
+        }
+
+        // Enhancement-702 (hunt F6 of 2026-09-21): a run-time `$table_model`'s
+        // "data captured" flag (see `expr::capture_table_data`) is cleared at every
+        // `IsInitialStep`, here in the entry block, so the capture happens afresh at
+        // the first evaluation of each analysis even when that evaluation does not
+        // reach the call site (a table inside a region `if`). Between two setups
+        // the slot keeps its value, as every `EventState` slot does.
+        let flags = ctx.intern.table_capture_flags.clone();
+        if !flags.is_empty() {
+            for (kind, param) in ctx.intern.params.clone().iter() {
+                let ParamKind::EventState(idx) = *kind else { continue };
+                if !flags.contains(&idx) || ctx.dfg().value_dead(*param) {
+                    continue;
+                }
+                let is_initial = ctx.use_param(ParamKind::IsInitialStep);
+                let existing_uses: Vec<_> = ctx.dfg().values.uses(*param).collect();
+                let cleared = ctx.ins().select(is_initial, F_ZERO, *param);
+                for use_ in existing_uses {
+                    ctx.dfg_mut().use_set_value(use_, cleared);
                 }
             }
         }

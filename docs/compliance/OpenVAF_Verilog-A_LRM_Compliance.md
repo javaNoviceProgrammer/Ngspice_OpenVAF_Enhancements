@@ -830,7 +830,15 @@ per-operator override, not nature tolerances in general.
   on the runtime form; the runtime array-variable form takes `1`/`2`/`3`
   and, since [E-700](../../enhancements_doc/Enhancement-700.md), the per-end `C`/`L`/`E` methods against its
   run-time endpoints (it used to refuse `E` and mixed ends as
-  "unsupported" under a note that listed `E`). A data file the call cannot
+  "unsupported" under a note that listed `E`). Since
+  [E-702](../../enhancements_doc/Enhancement-702.md) the runtime
+  array-variable form **captures its data at the first evaluation** of each
+  analysis, 9.21.1's "captured on the first call" — a knot the body computed
+  from the solution made a different table at every iterate, in silence; the
+  `table_data_captured` lint (L038) names such data, and a table built from
+  parameters, constants, the temperature or an `@(initial_step)` fill is left
+  live, keeping its compile-time folding (its data cannot change between two
+  setups). A data file the call cannot
   use is refused with its cause named since E-700 — the column shortage
   against the input count, the line and token that is not a number, the
   ragged row — where one label served every cause.

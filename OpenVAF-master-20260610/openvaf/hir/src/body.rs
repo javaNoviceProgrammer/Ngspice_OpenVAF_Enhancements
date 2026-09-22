@@ -415,6 +415,14 @@ impl<'a> BodyRef<'a> {
         Some(ids.iter().map(|&id| Parameter { id }).collect())
     }
 
+    /// Enhancement-702 (hunt F6 of 2026-09-21): is this run-time `$table_model` data
+    /// argument an array that depends on the solution? Such a table is latched at
+    /// the instance's first evaluation (LRM 9.21.1); see
+    /// `hir_ty::table_capture::captured_table_data`.
+    pub fn table_data_captured(&self, expr: ExprId) -> bool {
+        self.infere.captured_table_data.iter().any(|&(_, e)| e == expr)
+    }
+
     /// For a dynamic-index array *read* `c[i]` / `m[i][j]` (non-constant indices): the element
     /// variables flattened in declaration order, the per-dimension `(msb, lsb)` bounds, and one
     /// index expression per dimension. HIR lowering computes the flat position at runtime.
