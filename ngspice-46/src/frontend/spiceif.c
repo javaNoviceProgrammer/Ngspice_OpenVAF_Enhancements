@@ -78,6 +78,7 @@ CDHW*/
 
 #include "ngspice/osdiitf.h" /* OSDImcNewRun: .option osdimc Monte-Carlo */
 #include "mcsave.h"          /* Enhancement-610: .option savemc */
+#include "cornersave.h"      /* Enhancement-701: .option savecorner */
 
 extern INPmodel *modtab;
 extern NGHASHPTR modtabhash;
@@ -447,6 +448,7 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
 
         ft_curckt->ci_curOpt = ft_curckt->ci_defOpt;
         MCSAVErunBegin();                       /* Enhancement-624: which plot is current now */
+        CSAVErunBegin();                        /* Enhancement-701: the savecorner twin */
         if ((err = ft_sim->doAnalyses (ckt, 1, ft_curckt->ci_curTask)) != OK) {
             /* Enhancement-590 (hunt F7 of 2026-09-07): a Verilog-A $fatal
              * during the operating point is reported in full by CKTop and
@@ -459,12 +461,14 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
             /* Enhancement-610: the draw happened, failed or (Enhancement-625,
              * hunt F9) stopped at a breakpoint -- a row either way */
             MCSAVErun(what, err == E_PAUSE ? MCS_PAUSED : MCS_FAILED);
+            CSAVErun(what, err == E_PAUSE ? MCS_PAUSED : MCS_FAILED);   /* Enhancement-701 */
             if (err == E_PAUSE)
                 return (1);
             else
                 return (2);
         }
         MCSAVErun(what, MCS_OK);            /* Enhancement-610: one row per run */
+        CSAVErun(what, MCS_OK);             /* Enhancement-701: one row per corner run */
     } else if (eq(what, "resume")) {
         if ((err = ft_sim->doAnalyses (ckt, 0, ft_curckt->ci_curTask)) != OK) {
             ft_sperror(err, "doAnalyses");
@@ -472,9 +476,11 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
             if (err == E_PAUSE)
                 return (1);
             MCSAVEresumed(MCS_FAILED);      /* Enhancement-625: the paused row's outcome */
+            CSAVEresumed(MCS_FAILED);       /* Enhancement-701 */
             return (2);
         }
         MCSAVEresumed(MCS_OK);              /* Enhancement-625 */
+        CSAVEresumed(MCS_OK);               /* Enhancement-701 */
     } else {
         fprintf(cp_err, "if_run: Internal Error: bad run type %s\n", what);
         return (2);
@@ -559,6 +565,9 @@ if_is_option(const char *name)
         /* Enhancement-619: the workbook's fonts, read by mcsave.c's xlsx writer */
         "savemc_font", "savemc_fontsize", "savemc_model", "savemc_instance",
         "savemc_writemc",
+        /* Enhancement-701: read through cp_getvar by cornersave.c */
+        "savecorner", "nosavecorner", "savecorner_font", "savecorner_fontsize",
+        "savecorner_model", "savecorner_instance", "savecorner_output",
         /* Enhancement-572: the documented OFF spellings of these options were
            honoured but reported as unknown, the defect E-511 removed for
            osdicache and seedinfo. */

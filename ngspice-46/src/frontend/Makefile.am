@@ -58,6 +58,8 @@ libfte_la_SOURCES = \
     com_track.h  \
     mcsave.c  \
     mcsave.h  \
+    cornersave.c  \
+    cornersave.h  \
     com_stb.c  \
     com_stb.h  \
     com_rfstab.c  \

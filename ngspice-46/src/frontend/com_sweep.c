@@ -63,6 +63,7 @@ analyses is suppressed via `ft_optimizing`.
 #include "com_aging.h"      /* Enhancement-501: aging_replay() */
 #include "com_track.h"      /* Enhancement-582: montecarlo -track */
 #include "mcsave.h"         /* Enhancement-610: savemc */
+#include "cornersave.h"     /* Enhancement-701: savecorner */
 #include "ngspice/osdiitf.h" /* Enhancement-535: osdimc trial policy */
 #include "variable.h"       /* struct variable: sw_read_knob reads a bare knob's principal value */
 
@@ -6594,7 +6595,9 @@ void com_corners(wordlist *wl)
             snprintf(cmd, sizeof cmd, "montecarlo %d %s", mc_n, mcargs);
             ft_optimizing = save_optimizing;    /* montecarlo prints its own summary */
             fprintf(cp_out, "corners: --- corner %s ---\n", set[c]);
+            CSAVEhold(1);                       /* Enhancement-701: the samples are not corner runs */
             sw_run_cmd(cmd);
+            CSAVEhold(0);
             if (cp_getvar("montecarlo_n", CP_REAL, &v, 0)) {
                 data[c * 4 + 2] = v;
                 if (cp_getvar("montecarlo_yield", CP_REAL, &v, 0))
@@ -6606,6 +6609,13 @@ void com_corners(wordlist *wl)
             } else {
                 failed[c] = 1;                  /* montecarlo refused or published nothing */
             }
+            /* Enhancement-701: `.option savecorner` -- the samples' runs made
+             * no rows (a montecarlo loop is not a corner run); this corner's
+             * row is the montecarlo's summary, yield/npass/nsamples/nfailed */
+            {
+                static const char *const mcnames[] = { "yield", "npass", "nsamples", "nfailed" };
+                CSAVEsummaryRow(set[c], cmd, !failed[c], mcnames, data + c * 4, 4);
+            }
         } else {
             ft_optimizing = TRUE;               /* silence the per-corner chatter */
             sw_run_cmd(analysis);
@@ -6616,6 +6626,10 @@ void com_corners(wordlist *wl)
                 if (!ok)
                     outbad[k]++;
                 data[c * ncolumn + k] = (failed[c] || !ok) ? NAN : v;
+                /* Enhancement-701: the -output value onto this corner's
+                 * `.option savecorner` row (the analysis's run made it) */
+                if (!failed[c] && ok)
+                    (void) CSAVEappend(outname[k], v);
             }
             ft_optimizing = save_optimizing;
         }

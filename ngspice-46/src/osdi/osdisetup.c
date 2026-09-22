@@ -3961,12 +3961,14 @@ bool OSDImcHasStats(CKTcircuit *ckt) {
 static void osdimc_snapshot_item(OSDImcSnapshotFn fn, void *ctx,
                                  const char *owner, const char *param,
                                  double value, int is_model,
-                                 const OsdiMcNominal *e) {
+                                 const OsdiMcNominal *e, int has_stats, int held) {
   OSDImcSnapshotItem it;
   it.owner = owner;
   it.param = param;
   it.value = value;
   it.is_model = is_model;
+  it.has_stats = has_stats;           /* Enhancement-701 */
+  it.held = held;
   it.writes = e ? e->run_writes : 0;
   it.points = it.writes > 1 ? it.writes - 1 : it.writes;
   if (it.writes > 1) {
@@ -3985,11 +3987,13 @@ static void osdimc_snapshot_id(OSDImcSnapshotFn fn, void *ctx,
                                const OsdiDescriptor *descr, GENmodel *gen_model,
                                void *model, uint32_t id) {
   const char *pname = descr->param_opvar[id].name[0];
+  const int has_stats = osdimc_stat_of(entry, id) != NULL;     /* Enhancement-701 */
+  const int held = osdimc_cornered(entry, id);
   if (id >= descr->num_instance_params) {
     void *src = descr->access(NULL, model, id, ACCESS_FLAG_READ);
     if (src)
       osdimc_snapshot_item(fn, ctx, (char *)gen_model->GENmodName, pname,
-                           *(double *)src, 1, osdimc_find(model, id));
+                           *(double *)src, 1, osdimc_find(model, id), has_stats, held);
   } else {
     for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
          gen_inst = gen_inst->GENnextInstance) {
@@ -3998,7 +4002,7 @@ static void osdimc_snapshot_id(OSDImcSnapshotFn fn, void *ctx,
                                 ACCESS_FLAG_READ | ACCESS_FLAG_INSTANCE);
       if (src)
         osdimc_snapshot_item(fn, ctx, (char *)gen_inst->GENname, pname,
-                             *(double *)src, 0, osdimc_find(inst, id));
+                             *(double *)src, 0, osdimc_find(inst, id), has_stats, held);
     }
   }
 }
@@ -4031,6 +4035,49 @@ void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx) {
             osdimc_snapshot_id(fn, ctx, entry, descr, gen_model, model, cinfos[s].param_id);
     }
   }
+}
+
+/* Enhancement-701: `.option savecorner` records the cornered parameters and
+ * nothing else -- one item per parameter carrying a `corner` attribute (the
+ * attribute names one entry per corner; the first entry stands for the
+ * parameter), read off the devices as they run: the corner's value when a
+ * corner is in force, the nominal at tt. A parameter with statistics AND a
+ * corner is reported here too; `OSDImcSnapshot` above is the statistical view. */
+void OSDImcCornerSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx) {
+  if (!ckt || !fn)
+    return;
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+    const OsdiDescriptor *descr = entry->descriptor;
+    const OsdiCornerParam *cinfos = entry->corner_param_infos;
+    if (entry->num_corner_params == 0 || !cinfos)
+      continue;
+    for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
+         gen_model = gen_model->GENnextModel) {
+      void *model = osdi_model_data(gen_model);
+      for (uint32_t s = 0; s < entry->num_corner_params; s++)
+        if (osdimc_corner_first(cinfos, s))
+          osdimc_snapshot_id(fn, ctx, entry, descr, gen_model, model, cinfos[s].param_id);
+    }
+  }
+}
+
+/* Enhancement-701: does any loaded model declare a corner? (`OSDImcHasStats`
+ * answers for statistics OR corners; the recorder of corner runs needs the
+ * corners alone) */
+bool OSDImcHasCorners(CKTcircuit *ckt) {
+  if (!ckt)
+    return false;
+  for (int type = 0; type < DEVmaxnum; type++) {
+    if (!ckt->CKThead[type] || !osdi_devtype_is_osdi(type))
+      continue;
+    OsdiRegistryEntry *entry = osdi_reg_entry_model(ckt->CKThead[type]);
+    if (entry->num_corner_params > 0 && entry->corner_param_infos)
+      return true;
+  }
+  return false;
 }
 
 void OSDImcNewRun(CKTcircuit *ckt) {

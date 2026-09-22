@@ -9,6 +9,7 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 
 #include "ngspice/ngspice.h"
 #include "mcsave.h"        /* Enhancement-610 */
+#include "cornersave.h"    /* Enhancement-701 */
 #include "ngspice/cpdefs.h"
 #include "ngspice/ftedefs.h"
 #include "ngspice/ftedev.h"
@@ -217,6 +218,7 @@ com_remcirc(wordlist *wl)
     nupa_del_dicoS();
     /* delete entry in dicoslist */
     MCSAVEcircuitFreed(ft_curckt);      /* Enhancement-610: the file completed */
+    CSAVEcircuitFreed(ft_curckt);       /* Enhancement-701: the savecorner file too */
     nupa_rem_dicoslist(ft_curckt->ci_dicos);
 
     dbfree(ft_curckt->ci_dbs);

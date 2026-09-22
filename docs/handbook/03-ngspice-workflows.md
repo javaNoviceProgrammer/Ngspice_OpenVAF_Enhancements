@@ -697,6 +697,36 @@ puts it on that corner's `savemc` row; the copies keep their accessor readable �
 command ends the devices follow the `corner` variable (the nominal when none
 holds), instead of staying at the last corner until the next run.
 
+**A record of every corner run — `.option savecorner`.** The corner twin of
+`.option savemc` ([E-701](../../enhancements_doc/Enhancement-701.md);
+[`examples/savecorner_examples/`](../../examples/savecorner_examples/)): keyed by
+corner where savemc keys by trial. For every corner run — a plain run at the
+deck's `.option corner=<name>` (`tt` without one), each corner of an
+`.option autocorner` pass, each corner of the `corners` command — one row of
+`corner`, `analysis`, `status`, then the value in force of every cornered
+parameter (each parameter carrying a `corner` attribute, read off the devices
+as `@rm[rsh]` / `@n1[w]`: the corner's value under a corner, the nominal at
+`tt`), then what the run computed: the `corners -output` values, `writemc`'s
+(on an `autocorner` combined plot evaluated on every corner's own plot and put
+on that corner's row), and under `corners -mc N` the montecarlo's `yield`,
+`npass`, `nsamples` and `nfailed` as one summary row per corner, a drawn
+parameter's cell left empty. A loop command's samples make no rows
+(`montecarlo`, `sweep`, `optimize`, `wcd`, `highsigma` — savemc's business);
+a `dc` that sweeps a cornered parameter leaves its cell empty (E-626's rule).
+The file is `corners_<date>_<time>.<ext>` beside the netlist, or
+`savecorner=<name>.<ext>` (its directories made, its case kept); `txt` is
+tab-separated, `excel` a genuine `.xlsx` with sheet `corners`, a model
+parameter's header bold, an instance parameter's regular, an output's blue —
+`savecorner_font`, `savecorner_fontsize`, `savecorner_model`,
+`savecorner_instance`, `savecorner_output` set them, each falling back to the
+savemc option. One file per circuit: a `reset` continues it, `nosavecorner`
+last turns it off, a circuit without corners has nothing to record, said once.
+
+```spice
+.option savecorner=excel autocorner     * every run at tt and every corner: one row each
+.option savecorner=corners.csv          * with `corners -output v(out) gain=v(out)/v(in)`
+```
+
 ## 3.8 XSPICE code models
 
 Alongside the OpenVAF/OSDI device path, this ngspice is built with **XSPICE**

@@ -413,7 +413,8 @@ static char *keep_case_in_quotes(char *buffer)
  * NAME is still folded, and everything else on the card with it. */
 static const char *const inp_file_options[] = {
     "savemc=", "automc_save=", "osdimc_save=",
-    "savemc_font="              /* Enhancement-619: a font name, as the system spells it */
+    "savemc_font=",              /* Enhancement-619: a font name, as the system spells it */
+    "savecorner=", "savecorner_font="   /* Enhancement-701: the corner-run recorder's */
 };
 
 /* If `p` (a position inside `line`) starts one of the file-name options,

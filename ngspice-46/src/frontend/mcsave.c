@@ -43,6 +43,7 @@
 #include "ngspice/randnumb.h"     /* Enhancement-634: mc_wcd_active */
 #include "mcsave.h"
 #include "com_sweep.h"      /* Enhancement-666: autocorner_corner_plots */
+#include "cornersave.h"     /* Enhancement-701: writemc feeds the savecorner rows too */
 extern char *spice_analysis_get_name(int index);
 #include <time.h>
 #include <ctype.h>
@@ -469,41 +470,59 @@ mcs_option(char **given)
     if (!on || cp_getvar("nosavemc", CP_BOOL, NULL, 0))
         return 0;
 
-    if (!val[0] || cieq(val, "csv") || cieq(val, "true")) {
-        fmt = FMT_CSV;
-    } else if (cieq(val, "txt") || cieq(val, "text")) {
-        fmt = FMT_TXT;
-    } else if (cieq(val, "excel") || cieq(val, "xlsx") || cieq(val, "xls")) {
-        fmt = FMT_XLSX;
-    } else {
-        /* a file name: its extension picks the format */
-        const char *dot = strrchr(val, '.');
-        if (dot && cieq(dot, ".csv"))
-            fmt = FMT_CSV;
-        else if (dot && (cieq(dot, ".txt") || cieq(dot, ".tsv")))
-            fmt = FMT_TXT;
-        else if (dot && (cieq(dot, ".xlsx") || cieq(dot, ".xls")))
-            fmt = FMT_XLSX;
-        else {
-            fprintf(cp_err, "Warning: .option savemc=%s: not a format (csv, txt, excel) "
-                            "and not a file name ending in .csv, .txt or .xlsx; "
-                            "csv is used\n", val);
-            fmt = FMT_CSV;
-            return 1;
-        }
-        *given = copy(val);
-    }
+    fmt = MCSAVEparseFormat("savemc", val, given);   /* Enhancement-701: shared */
     return 1;
 }
 
-static const char *
-mcs_ext(void)
+/* Enhancement-701: the value of a recorder option -- `savemc=...` or
+ * `savecorner=...` -- parsed once for both recorders */
+int
+MCSAVEparseFormat(const char *optname, const char *val, char **given)
 {
-    return fmt == FMT_CSV ? "csv" : fmt == FMT_TXT ? "txt" : "xlsx";
+    *given = NULL;
+    if (!val[0] || cieq(val, "csv") || cieq(val, "true"))
+        return FMT_CSV;
+    if (cieq(val, "txt") || cieq(val, "text"))
+        return FMT_TXT;
+    if (cieq(val, "excel") || cieq(val, "xlsx") || cieq(val, "xls"))
+        return FMT_XLSX;
+    {
+        /* a file name: its extension picks the format */
+        const char *dot = strrchr(val, '.');
+        int f;
+        if (dot && cieq(dot, ".csv"))
+            f = FMT_CSV;
+        else if (dot && (cieq(dot, ".txt") || cieq(dot, ".tsv")))
+            f = FMT_TXT;
+        else if (dot && (cieq(dot, ".xlsx") || cieq(dot, ".xls")))
+            f = FMT_XLSX;
+        else {
+            fprintf(cp_err, "Warning: .option %s=%s: not a format (csv, txt, excel) "
+                            "and not a file name ending in .csv, .txt or .xlsx; "
+                            "csv is used\n", optname, val);
+            return FMT_CSV;
+        }
+        *given = copy(val);
+        return f;
+    }
+}
+
+static const char *
+mcs_ext_of(int f)
+{
+    return f == FMT_CSV ? "csv" : f == FMT_TXT ? "txt" : "xlsx";
 }
 
 static char *
 mcs_path(const char *given)
+{
+    return MCSAVEmakePath(given, "mcparams", fmt);
+}
+
+/* Enhancement-701: the file naming, shared with the savecorner recorder
+ * (`stem` is `mcparams` or `corners`) */
+char *
+MCSAVEmakePath(const char *given, const char *stem, int f)
 {
     const char *dir = Infile_Path && *Infile_Path ? Infile_Path : ".";
     if (given && (given[0] == '/' || given[0] == '\\' ||
@@ -522,12 +541,12 @@ mcs_path(const char *given)
             strftime(stamp, sizeof stamp, "%Y%m%d_%H%M%S", lt);
         else
             strcpy(stamp, "00000000_000000");
-        name = tprintf("%s/mcparams_%s.%s", dir, stamp, mcs_ext());
+        name = tprintf("%s/%s_%s.%s", dir, stem, stamp, mcs_ext_of(f));
         /* two runs within the same second (a script) must not share a file */
         for (k = 2; (probe = fopen(name, "r")) != NULL && k < 1000; k++) {
             fclose(probe);
             tfree(name);
-            name = tprintf("%s/mcparams_%s_%d.%s", dir, stamp, k, mcs_ext());
+            name = tprintf("%s/%s_%s_%d.%s", dir, stem, stamp, k, mcs_ext_of(f));
         }
         if (probe)
             fclose(probe);
@@ -538,8 +557,8 @@ mcs_path(const char *given)
 /* Enhancement-613: create the missing directories of a file name, each
  * component in turn like `mkdir -p`. 0, or -1 with `*why` the reason the
  * first directory that is still missing afterwards could not be made. */
-static int
-mcs_mkdirs(const char *file, char **why)
+int
+MCSAVEmkdirs(const char *file, char **why)
 {
     char *p, *s;
     int rc = 0;
@@ -574,10 +593,10 @@ mcs_mkdirs(const char *file, char **why)
 /* can the file be written? A try at the first row, so that a name that
  * cannot be opened is found then and not never; the file is created empty
  * and the row that follows writes it. */
-static int
-mcs_can_open(const char *file, char **why)
+int
+MCSAVEcanOpen(const char *file, int f_fmt, char **why)
 {
-    FILE *f = fopen(file, fmt == FMT_XLSX ? "wb" : "w");
+    FILE *f = fopen(file, f_fmt == FMT_XLSX ? "wb" : "w");
     if (f) {
         fclose(f);
         *why = NULL;
@@ -585,6 +604,12 @@ mcs_can_open(const char *file, char **why)
     }
     *why = tprintf("%s", strerror(errno));
     return 0;
+}
+
+static int
+mcs_can_open(const char *file, char **why)
+{
+    return MCSAVEcanOpen(file, fmt, why);
 }
 
 /* a later open of the file failed (a directory removed, a disk full):
@@ -613,8 +638,8 @@ static struct mcs_used {
 } *used;
 static int nused, capused;
 
-static const char *
-mcs_used_by(const char *p)
+const char *
+MCSAVEusedBy(const char *p)
 {
     int i;
     for (i = 0; i < nused; i++)
@@ -623,8 +648,8 @@ mcs_used_by(const char *p)
     return NULL;
 }
 
-static void
-mcs_note_used(const char *p, const char *title)
+void
+MCSAVEnoteUsed(const char *p, const char *title)
 {
     if (nused == capused) {
         capused = capused ? 2 * capused : 8;
@@ -648,8 +673,8 @@ mcs_free_used(void)
 }
 
 /* `<stem>_<k>.<ext>` for the smallest k >= 2 this session has not written */
-static char *
-mcs_unused_variant(const char *p)
+char *
+MCSAVEunusedVariant(const char *p)
 {
     const char *base = strrchr(p, '/');
 #if defined(_WIN32)
@@ -662,7 +687,7 @@ mcs_unused_variant(const char *p)
     for (k = 2; ; k++) {
         char *cand = dot ? tprintf("%.*s_%d%s", (int) (dot - p), p, k, dot)
                          : tprintf("%s_%d", p, k);
-        if (!mcs_used_by(cand))
+        if (!MCSAVEusedBy(cand))
             return cand;
         tfree(cand);
     }
@@ -670,10 +695,10 @@ mcs_unused_variant(const char *p)
 
 /* ------------------------------------------------------------ csv / txt */
 
-static void
-put_name(FILE *f, const char *name)
+void
+MCSAVEputName(FILE *f, const char *name, int csv)
 {
-    if (fmt == FMT_CSV && (strchr(name, ',') || strchr(name, '"'))) {
+    if (csv && (strchr(name, ',') || strchr(name, '"'))) {
         const char *p;
         putc('"', f);
         for (p = name; *p; p++) {
@@ -688,12 +713,24 @@ put_name(FILE *f, const char *name)
 }
 
 static void
-put_value(FILE *f, double v)
+put_name(FILE *f, const char *name)
+{
+    MCSAVEputName(f, name, fmt == FMT_CSV);
+}
+
+void
+MCSAVEputValue(FILE *f, double v)
 {
     if (isnan(v))
         fputs("", f);   /* Enhancement-634 (hunt D12): a cell the row never got is empty in every format */
     else
         fprintf(f, "%.12g", v);
+}
+
+static void
+put_value(FILE *f, double v)
+{
+    MCSAVEputValue(f, v);
 }
 
 static int
@@ -995,28 +1032,40 @@ mcs_font_parse(const char *opt, const char *spec, struct mcs_font *f)
 }
 
 /* the four fonts as the options have them now */
+/* Enhancement-701: `prefix` is the recorder's option stem -- `savemc` reads
+ * savemc_font/fontsize/model/instance/writemc; `savecorner` reads its own
+ * savecorner_font/fontsize/model/instance/output and, for each it does not
+ * set, savemc's, so one set of font options styles both files */
 static void
-mcs_fonts(char *name, size_t namesz, double *size, struct mcs_font f[NSTYLES])
+mcs_fonts(const char *prefix, char *name, size_t namesz, double *size, struct mcs_font f[NSTYLES])
 {
-    static const char *const optname[NSTYLES] = {
-        NULL, "savemc_model", "savemc_instance", "savemc_writemc" };
+    static const char *const kind[NSTYLES] = { NULL, "model", "instance", "writemc" };
     static const char *const dflt[NSTYLES] = { "", "bold", "regular", "blue" };
-    char spec[256];
+    const int own = eq(prefix, "savemc");
+    char spec[256], opt[80], mopt[80];
     int k;
 
-    if (!cp_getvar("savemc_font", CP_STRING, name, namesz) || !name[0])
-        (void) snprintf(name, namesz, "%s", "Calibri");
-    if (!cp_getvar("savemc_fontsize", CP_REAL, size, 0) || !(*size > 0.0)) {
-        int n;
-        *size = cp_getvar("savemc_fontsize", CP_NUM, &n, 0) && n > 0 ? (double) n : 11.0;
-    }
+    snprintf(opt, sizeof opt, "%s_font", prefix);
+    if (!cp_getvar(opt, CP_STRING, name, namesz) || !name[0])
+        if (own || !cp_getvar("savemc_font", CP_STRING, name, namesz) || !name[0])
+            (void) snprintf(name, namesz, "%s", "Calibri");
+    snprintf(opt, sizeof opt, "%s_fontsize", prefix);
+    if (!cp_getvar(opt, CP_STRING, spec, sizeof spec) || !(atof(spec) > 0.0))
+        if (own || !cp_getvar("savemc_fontsize", CP_STRING, spec, sizeof spec) || !(atof(spec) > 0.0))
+            strcpy(spec, "11");
+    *size = atof(spec);
     for (k = 0; k < NSTYLES; k++) {
         memset(&f[k], 0, sizeof f[k]);
-        if (!optname[k])
+        if (!kind[k])
             continue;
-        mcs_font_parse(optname[k], dflt[k], &f[k]);
-        if (cp_getvar(optname[k], CP_STRING, spec, sizeof spec))
-            mcs_font_parse(optname[k], spec, &f[k]);
+        snprintf(opt, sizeof opt, "%s_%s", prefix,
+                 (!own && k == STYLE_WRITEMC) ? "output" : kind[k]);
+        snprintf(mopt, sizeof mopt, "savemc_%s", kind[k]);
+        mcs_font_parse(opt, dflt[k], &f[k]);
+        if (cp_getvar(opt, CP_STRING, spec, sizeof spec))
+            mcs_font_parse(opt, spec, &f[k]);
+        else if (!own && cp_getvar(mopt, CP_STRING, spec, sizeof spec))
+            mcs_font_parse(mopt, spec, &f[k]);
     }
 }
 
@@ -1038,8 +1087,15 @@ xlsx_font_xml(DSTRING *d, const struct mcs_font *f, const char *name, double siz
     ds_cat_str(d, "\"/></font>");
 }
 
-static void
-xlsx_write(void)
+/* Enhancement-701: the workbook writer, shared with the savecorner recorder:
+ * a stored zip with inline strings, one sheet, the fonts of Enhancement-619
+ * (`prefix` names the recorder's font options). This was `xlsx_write`
+ * reading this file's static table; the table now comes in, and
+ * `xlsx_write` below builds savemc's from its columns and rows. */
+int
+MCSAVExlsxWrite(const char *file, const char *sheet_name, const char *prefix,
+                int ncols_in, const char *const *hdr, const int *hdr_style,
+                int nrows_in, const struct mcs_xcell *const *cells)
 {
     static const char *ctypes =
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
@@ -1055,11 +1111,6 @@ xlsx_write(void)
         "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
         "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>"
         "</Relationships>";
-    static const char *workbook =
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
-        "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" "
-        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
-        "<sheets><sheet name=\"mcparams\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>";
     static const char *wbrels =
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
         "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
@@ -1068,16 +1119,25 @@ xlsx_write(void)
         "</Relationships>";
     DS_CREATE(sheet, 4096);
     DS_CREATE(styles, 2048);
+    DS_CREATE(workbook, 512);
     struct zent z[6];
     FILE *f;
-    int r, i, c;
+    int r, c, i;
     char fname[128];
     double fsize;
     struct mcs_font fonts[NSTYLES];
 
+    ds_cat_str(&workbook,
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" "
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
+        "<sheets><sheet name=\"");
+    xml_text(&workbook, sheet_name);
+    ds_cat_str(&workbook, "\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>");
+
     /* Enhancement-619: font 0 is every cell's; 1, 2, 3 the header row's
      * styles for a model, an instance and a writemc column */
-    mcs_fonts(fname, sizeof fname, &fsize, fonts);
+    mcs_fonts(prefix, fname, sizeof fname, &fsize, fonts);
     ds_cat_str(&styles,
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
         "<styleSheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
@@ -1103,42 +1163,33 @@ xlsx_write(void)
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
         "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
         "<sheetData><row r=\"1\">");
-    xlsx_str_cell(&sheet, 0, 1, "trial");
-    xlsx_str_cell(&sheet, 1, 1, "analysis");
-    xlsx_str_cell(&sheet, 2, 1, "status");
-    if (any_corner)                             /* Enhancement-655 */
-        xlsx_str_cell(&sheet, 3, 1, "corner");
-    for (i = 0, c = any_corner ? 4 : 3; i < ncols; i++)
-        if (col_wanted(i))
-            xlsx_str_cell_style(&sheet, c++, 1, cols[i].name,
-                                cols[i].written ? STYLE_WRITEMC :
-                                cols[i].model ? STYLE_MODEL : STYLE_INSTANCE);
+    for (c = 0; c < ncols_in; c++)
+        xlsx_str_cell_style(&sheet, c, 1, hdr[c], hdr_style ? hdr_style[c] : 0);
     ds_cat_str(&sheet, "</row>");
-    for (r = 0; r < nrows; r++) {
+    for (r = 0; r < nrows_in; r++) {
         ds_cat_printf(&sheet, "<row r=\"%d\">", r + 2);
-        xlsx_num_cell(&sheet, 0, r + 2, (double) (r + 1));
-        xlsx_str_cell(&sheet, 1, r + 2, rowan[r]);
-        xlsx_str_cell(&sheet, 2, r + 2, rowst[r]);
-        if (any_corner)                         /* Enhancement-655 */
-            xlsx_str_cell(&sheet, 3, r + 2, rowcn[r]);
-        for (i = 0, c = any_corner ? 4 : 3; i < ncols; i++)
-            if (col_wanted(i))
-                xlsx_num_cell(&sheet, c++, r + 2, i < rowcols[r] ? rows[r][i] : NAN);
+        for (c = 0; c < ncols_in; c++) {
+            if (cells[r][c].s)
+                xlsx_str_cell(&sheet, c, r + 2, cells[r][c].s);
+            else
+                xlsx_num_cell(&sheet, c, r + 2, cells[r][c].v);
+        }
         ds_cat_str(&sheet, "</row>");
     }
     ds_cat_str(&sheet, "</sheetData></worksheet>");
 
-    f = fopen(path, "wb");
+    f = fopen(file, "wb");
     if (!f) {
-        mcs_note_write_fail();
+        int e = errno;
         ds_free(&sheet);
         ds_free(&styles);
-        return;
+        ds_free(&workbook);
+        errno = e;
+        return -1;
     }
-    noted_write_fail = 0;
     zip_entry(f, &z[0], "[Content_Types].xml", ctypes, strlen(ctypes));
     zip_entry(f, &z[1], "_rels/.rels", rels, strlen(rels));
-    zip_entry(f, &z[2], "xl/workbook.xml", workbook, strlen(workbook));
+    zip_entry(f, &z[2], "xl/workbook.xml", ds_get_buf(&workbook), ds_get_length(&workbook));
     zip_entry(f, &z[3], "xl/_rels/workbook.xml.rels", wbrels, strlen(wbrels));
     zip_entry(f, &z[4], "xl/styles.xml", ds_get_buf(&styles), ds_get_length(&styles));
     zip_entry(f, &z[5], "xl/worksheets/sheet1.xml", ds_get_buf(&sheet), ds_get_length(&sheet));
@@ -1146,6 +1197,65 @@ xlsx_write(void)
     fclose(f);
     ds_free(&sheet);
     ds_free(&styles);
+    ds_free(&workbook);
+    return 0;
+}
+
+/* savemc's table -- trial, analysis, status, (corner), the columns wanted --
+ * handed to the shared writer */
+static void
+xlsx_write(void)
+{
+    const char **hdr;
+    int *hstyle;
+    struct mcs_xcell **cells, *pool;
+    int nc = 3 + (any_corner ? 1 : 0), i, r, c;
+
+    for (i = 0; i < ncols; i++)
+        if (col_wanted(i))
+            nc++;
+    hdr = TMALLOC(const char *, nc);
+    hstyle = TMALLOC(int, nc);
+    c = 0;
+    hdr[c] = "trial"; hstyle[c++] = 0;
+    hdr[c] = "analysis"; hstyle[c++] = 0;
+    hdr[c] = "status"; hstyle[c++] = 0;
+    if (any_corner) {                           /* Enhancement-655 */
+        hdr[c] = "corner"; hstyle[c++] = 0;
+    }
+    for (i = 0; i < ncols; i++)
+        if (col_wanted(i)) {
+            hdr[c] = cols[i].name;
+            hstyle[c++] = cols[i].written ? STYLE_WRITEMC :
+                          cols[i].model ? STYLE_MODEL : STYLE_INSTANCE;
+        }
+    pool = TMALLOC(struct mcs_xcell, (size_t) nrows * (size_t) nc);
+    cells = TMALLOC(struct mcs_xcell *, nrows ? nrows : 1);
+    for (r = 0; r < nrows; r++) {
+        struct mcs_xcell *row = pool + (size_t) r * (size_t) nc;
+        cells[r] = row;
+        c = 0;
+        row[c].s = NULL; row[c++].v = (double) (r + 1);
+        row[c].s = rowan[r]; row[c++].v = NAN;
+        row[c].s = rowst[r]; row[c++].v = NAN;
+        if (any_corner) {
+            row[c].s = rowcn[r]; row[c++].v = NAN;
+        }
+        for (i = 0; i < ncols; i++)
+            if (col_wanted(i)) {
+                row[c].s = NULL;
+                row[c++].v = i < rowcols[r] ? rows[r][i] : NAN;
+            }
+    }
+    if (MCSAVExlsxWrite(path, "mcparams", "savemc", nc, hdr, hstyle, nrows,
+                        (const struct mcs_xcell *const *) cells) != 0)
+        mcs_note_write_fail();
+    else
+        noted_write_fail = 0;
+    tfree(hdr);
+    tfree(hstyle);
+    tfree(pool);
+    tfree(cells);
 }
 
 /* ------------------------------------------------------------ the rows */
@@ -1305,9 +1415,9 @@ MCSAVErun(const char *analysis, int ok)
         /* Enhancement-615 (hunt F17): a name another deck wrote in this
          * session is kept; this deck gets the next free variant */
         if (given) {
-            const char *by = mcs_used_by(path);
+            const char *by = MCSAVEusedBy(path);
             if (by) {
-                char *alt = mcs_unused_variant(path);
+                char *alt = MCSAVEunusedVariant(path);
                 fprintf(cp_out, "Note: savemc: %s holds the rows of '%s' from earlier in "
                                 "this session and is kept; this deck's rows go to %s\n",
                         path, by, alt);
@@ -1321,7 +1431,7 @@ MCSAVErun(const char *analysis, int ok)
          * recorder says so and records nothing for this circuit */
         if (given) {
             char *mkwhy = NULL;
-            (void) mcs_mkdirs(path, &mkwhy);
+            (void) MCSAVEmkdirs(path, &mkwhy);
             ok = mcs_can_open(path, &why);
             if (!ok) {
                 char *fallback = mcs_path(NULL);
@@ -1342,7 +1452,7 @@ MCSAVErun(const char *analysis, int ok)
             tfree(given);
             return;
         }
-        mcs_note_used(path, owner_name);        /* Enhancement-615 */
+        MCSAVEnoteUsed(path, owner_name);       /* Enhancement-615 */
         fprintf(cp_out, "Note: savemc: recording the %d parameter%s with statistics, "
                         "one row per analysis run, to %s\n",
                 n, n == 1 ? "" : "s", path);
@@ -1654,7 +1764,8 @@ com_writemc(wordlist *wl)
                         "savemc row of the last analysis run\n");
         return;
     }
-    if (!MCSAVEactive()) {
+    /* Enhancement-701: `.option savecorner` rows take the values too */
+    if (!MCSAVEactive() && !CSAVEactive()) {
         if (!said_off)
             fprintf(cp_err, "writemc: nothing is recorded -- `.option savemc` is not set "
                             "(said once)\n");
@@ -1697,6 +1808,7 @@ com_writemc(wordlist *wl)
                                             "their plain names (v(out), not v(out_<corner>))\n");
                         continue;
                     }
+                    (void) CSAVEappendPlot(cps[c], name, v);   /* Enhancement-701 */
                     r = MCSAVEappendPlot(cps[c], name, v);
                     if (r == -5)
                         fprintf(cp_err, "writemc: no row is %s's run; %s is not put on one\n",
@@ -1720,16 +1832,27 @@ com_writemc(wordlist *wl)
             return;
         }
     }
-    {
+    int mc_on = MCSAVEactive(), cs_on = CSAVEactive();    /* Enhancement-701 */
+    if (mc_on) {
         /* Enhancement-624 (hunt F8): the values are read off the current
          * plot; the row must be that plot's run */
         char *why = NULL;
         if (!MCSAVEplotIsRow(&why)) {
             fprintf(cp_err, "writemc: %s; nothing is put on that row\n", why);
             tfree(why);
-            return;
+            mc_on = 0;
         }
     }
+    if (cs_on) {
+        char *why = NULL;
+        if (!CSAVEplotIsRow(&why)) {
+            fprintf(cp_err, "writemc: %s; nothing is put on that savecorner row\n", why);
+            tfree(why);
+            cs_on = 0;
+        }
+    }
+    if (!mc_on && !cs_on)
+        return;
     for (w = wl; w; w = w->wl_next) {
         char *name, *expr, *why = NULL, *tok = cp_unquote(w->wl_word);
         double v;
@@ -1740,7 +1863,10 @@ com_writemc(wordlist *wl)
             fprintf(cp_err, "writemc: %s: %s\n", expr, why ? why : "?");
             tfree(why);
         } else {
-            r = MCSAVEappend(name, v);
+            if (cs_on && CSAVEappend(name, v) == -4)     /* Enhancement-701 */
+                fprintf(cp_err, "writemc: `%s` is one of the savecorner row's fixed columns "
+                                "(corner, analysis, status); give the value another name\n", name);
+            r = mc_on ? MCSAVEappend(name, v) : -2;
             if (r == -1 && ran_no_row)          /* Enhancement-634 (hunt D7) */
                 fprintf(cp_err, "writemc: the last run made no row -- this circuit has no "
                                 "parameter with statistics to record (said above) -- so there "

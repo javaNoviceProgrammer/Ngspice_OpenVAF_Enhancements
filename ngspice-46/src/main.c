@@ -57,6 +57,7 @@ extern int rl_catch_signals;        /* missing from editline/readline.h */
 
 #include "frontend/spiceif.h"
 #include "frontend/mcsave.h"     /* Enhancement-610 */
+#include "frontend/cornersave.h" /* Enhancement-701 */
 #include "frontend/resource.h"
 #include "frontend/variable.h"
 #include "frontend/display.h"  /* added by SDB to pick up Input() fcn */
@@ -533,6 +534,7 @@ static ATTRIBUTE_NORETURN void
 sp_shutdown(int exitval)
 {
     MCSAVEfinish();                     /* Enhancement-610: the savemc file completed */
+    CSAVEfinish();                      /* Enhancement-701: the savecorner file completed */
 #ifdef CIDER
     {
 

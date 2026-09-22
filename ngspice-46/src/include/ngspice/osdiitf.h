@@ -244,6 +244,8 @@ typedef struct OSDImcSnapshotItem {
     int writes;
     int points;
     double lo, hi;
+    int has_stats;    /* Enhancement-701: the parameter declares statistics */
+    int held;         /* Enhancement-701: the corner in force names it (the draw appliers skip it) */
 } OSDImcSnapshotItem;
 typedef void (*OSDImcSnapshotFn)(const OSDImcSnapshotItem *it, void *ctx);
 extern bool OSDImcEnabled(void);
@@ -254,6 +256,11 @@ extern bool OSDImcCornerDeclared(CKTcircuit *ckt, const char *name); /* E-669: a
 extern const char *OSDImcCornerName(void); /* E-655: the corner in force, "" when none */
 extern bool OSDImcHasStats(CKTcircuit *ckt);
 extern void OSDImcSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx);
+/* Enhancement-701: the cornered parameters alone -- every parameter carrying a
+ * `corner` attribute, once each, as the devices hold it (the corner's value
+ * under a corner, the nominal at tt) -- for the `.option savecorner` recorder */
+extern void OSDImcCornerSnapshot(CKTcircuit *ckt, OSDImcSnapshotFn fn, void *ctx);
+extern bool OSDImcHasCorners(CKTcircuit *ckt);   /* Enhancement-701: any loaded model declares one */
 
 /* bug-hunt F1: a USER (`alter`/`altermod`, wildcards included) stored a scalar
  * real parameter -- recenter its Monte-Carlo nominal if it has one. Called

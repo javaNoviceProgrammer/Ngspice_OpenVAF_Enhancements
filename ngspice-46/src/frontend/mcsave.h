@@ -3,6 +3,7 @@
 #ifndef ngspice_MCSAVE_H
 #define ngspice_MCSAVE_H
 
+#include <stdio.h>
 #include "ngspice/cpdefs.h"
 
 struct circ;        /* a `struct circ *` in a prototype below, whatever is included first */
@@ -62,6 +63,41 @@ extern int MCSAVEappend(const char *name, double value);
 extern void com_writemc(wordlist *wl);
 struct plot;
 extern int MCSAVEappendPlot(struct plot *pl, const char *name, double value); /* E-666 */
+
+/* ------------------------------------------------------------ Enhancement-701:
+ * what the `.option savecorner` recorder (cornersave.c) shares with this one:
+ * the option value's format parsing, the file naming beside the netlist, the
+ * directory making and open probe, the session's used-name registry, the
+ * csv/txt cell writers and the workbook writer with its font options. */
+enum { MCS_FMT_CSV = 0, MCS_FMT_TXT = 1, MCS_FMT_XLSX = 2 };
+/* `val` is the option's value (empty for a bare `.option <name>`): a format
+ * word (csv, txt, excel) or a file name whose extension picks the format;
+ * returns the MCS_FMT_* and, in *given, a private copy of the file name or
+ * NULL for the dated default. An unusable value is said (naming `optname`)
+ * and csv is used. */
+extern int MCSAVEparseFormat(const char *optname, const char *val, char **given);
+/* the file's path: `given` as is when absolute, else beside the netlist; NULL
+ * for `<stem>_<date>_<time>.<ext>` there, unique within a second */
+extern char *MCSAVEmakePath(const char *given, const char *stem, int fmt);
+extern int MCSAVEmkdirs(const char *file, char **why);
+extern int MCSAVEcanOpen(const char *file, int fmt, char **why);
+extern const char *MCSAVEusedBy(const char *path);
+extern void MCSAVEnoteUsed(const char *path, const char *title);
+extern char *MCSAVEunusedVariant(const char *path);
+extern void MCSAVEputName(FILE *f, const char *name, int csv);
+extern void MCSAVEputValue(FILE *f, double v);
+/* a workbook cell: a string when `s` is set, else the number (NAN: empty) */
+struct mcs_xcell { const char *s; double v; };
+/* one sheet named `sheet`: a header row whose column styles are 0 (plain),
+ * 1 (a model parameter), 2 (an instance parameter) or 3 (a value written
+ * after the run), then `nrows` rows of `ncols` cells; the fonts from the
+ * `<prefix>_font`, `<prefix>_fontsize`, `<prefix>_model`, `<prefix>_instance`
+ * and `<prefix>_writemc` (`savemc`) / `<prefix>_output` options, a recorder
+ * other than savemc falling back to savemc's. 0, or -1 with errno set when
+ * the file cannot be opened. */
+extern int MCSAVExlsxWrite(const char *file, const char *sheet, const char *prefix,
+                           int ncols, const char *const *hdr, const int *hdr_style,
+                           int nrows, const struct mcs_xcell *const *rows);
 
 /* the circuit is being freed / the program ends: the file is completed */
 extern void MCSAVEcircuitFreed(struct circ *ci);
