@@ -486,6 +486,19 @@ DCtran(CKTcircuit *ckt,
     /* end LTRA code addition */
 
     error = CKTaccept(ckt);
+#ifdef OSDI
+    /* Enhancement-703 (hunt F2 of 2026-09-21): a fatal judged on the accepted
+     * solution -- the point just accepted (OSDIaccept flushed its output).
+     * Before the point is output, as a $fatal in its solve would have been. */
+    {
+        char where[64];
+        snprintf(where, sizeof where, "time point %e s", ckt->CKTtime);
+        if (OSDIdeferredFatal(ckt, where)) {
+            UPDATE_STATS(DOING_TRAN);
+            return (E_PANIC);
+        }
+    }
+#endif
     /* check if current breakpoint is outdated; if so, clear */
     if (ckt->CKTtime > ckt->CKTbreaks[0])
         CKTclrBreak(ckt);

@@ -274,6 +274,43 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
         self.call(CallBackKind::SetRetFlag(RetFlag::Abort), &[]);
     }
 
+    /// Enhancement-703 (hunt F2 of 2026-09-21): `runtime_fatal` judged on the
+    /// ACCEPTED solution. The message is a fatal-level print the simulator holds
+    /// with the iteration's other output and prints only when that iteration is
+    /// accepted (`DisplayKind::FatalDeferred`: `LOG_FLAG_DEFER`, the one thing
+    /// that lets a fatal-level message wait), and the flag is
+    /// `RetFlag::AbortDeferred`, which the analyses act on at the accepted-point
+    /// boundary, exactly where they act on a deferred `$finish` -- so a Newton
+    /// iterate that strays out of a table's domain on its way to a solution
+    /// inside it raises nothing, where `runtime_fatal` ended the run on the
+    /// first such iterate (every operating point starts at 0, and a table over
+    /// 1..4 V could never start under 'E'). Where there is no accepted
+    /// iteration to wait for -- an event context, an `analog initial` block --
+    /// this is `runtime_fatal`. For a check on a constant (a sampling period, a
+    /// leading coefficient) `runtime_fatal` remains the right call: no iteration
+    /// can change what it saw.
+    pub fn runtime_fatal_deferred(&mut self, msg: &str, val: Option<Value>) {
+        if self.in_event_ctx || self.in_analog_initial {
+            return self.runtime_fatal(msg, val);
+        }
+        let (fmt_lit, arg_tys): (String, Vec<FmtArg>) = match val {
+            Some(_) => (format!("{msg} %g\n"), vec![Type::Real.into()]),
+            None => (format!("{msg}\n"), Vec::new()),
+        };
+        let fmt = self.sconst(&fmt_lit);
+        let mut call_args = vec![fmt];
+        call_args.extend(val);
+        let cb = CallBackKind::Print {
+            kind: DisplayKind::FatalDeferred,
+            arg_tys: arg_tys.into_boxed_slice(),
+            dst: PrintDst::Console,
+            immediate: false,
+            in_initial: false,
+        };
+        self.call(cb, &call_args);
+        self.call(CallBackKind::SetRetFlag(RetFlag::AbortDeferred), &[]);
+    }
+
     /// Enhancement-651 (hunt F7): the deck-derived twin of `runtime_fatal` for a
     /// domain that HAS a natural projection. Enhancement-504/505/506 clamp a
     /// negative noise power to 0, a negative standard deviation to the mean and

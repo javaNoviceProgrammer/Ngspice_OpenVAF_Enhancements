@@ -1822,6 +1822,20 @@ DCtrCurv(CKTcircuit *ckt, int restart)
         }
 #endif
 
+#ifdef OSDI
+        /* Enhancement-703 (hunt F2 of 2026-09-21): a fatal judged on the
+         * accepted solution -- this sweep point's. Before the point is output,
+         * as E-673's $fatal path above; the swept sources keep their values as
+         * they do there. */
+        {
+            char where[64];
+            snprintf(where, sizeof where, "sweep value %g", ckt->CKTtime);
+            if (OSDIdeferredFatal(ckt, where)) {
+                return (E_PANIC);
+            }
+        }
+#endif
+
         CKTdump(ckt,ckt->CKTtime,plot);
 
 #ifdef OSDI

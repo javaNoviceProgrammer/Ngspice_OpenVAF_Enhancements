@@ -182,7 +182,18 @@ extern char *osdi_find_openvaf(void);
  * @(final_step)) or pause resumably ($stop). */
 #define OSDI_REQ_FINISH 1
 #define OSDI_REQ_STOP 2
+/* Enhancement-703 (hunt F2 of 2026-09-21): a Verilog-A device's LAST
+ * evaluation raised EVAL_RET_FLAG_FATAL_DEFERRED -- a fatal judged on the
+ * accepted solution (the 'E' extrapolation error of $table_model). */
+#define OSDI_REQ_FATAL 4
 extern int OSDIpendingRequests(CKTcircuit *ckt);
+/* Enhancement-703: if the accepted solution just reached carries a deferred
+ * fatal, flush the point's held output (the device's own message), record a
+ * Verilog-A fatal for the frontend (CKTvaFatalRaised) and say so on stderr,
+ * naming `where` ("operating point", "sweep value 5", "time point 3e-06 s");
+ * returns 1 and the analysis returns E_PANIC. 0 otherwise. Called by every
+ * analysis at its accepted-point boundary, before the point is output. */
+extern int OSDIdeferredFatal(CKTcircuit *ckt, const char *where);
 
 /* Enhancement-53: fire Verilog-A `@(final_step)` blocks. Called by the
  * analyses (tran/op/dc/ac) once they complete successfully; issues one

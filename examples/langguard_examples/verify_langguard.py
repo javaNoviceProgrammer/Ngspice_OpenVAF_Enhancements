@@ -508,6 +508,76 @@ endmodule
               "OSDI(fatal)" in o and "above the table" in o and "'E'" in o,
               next((l[:70] for l in o.splitlines() if "OSDI(fatal)" in l), o.strip().splitlines()[-1][:70] if o.strip() else ""))
 
+    # ======================= [5] 'E' judged on the accepted solution (E-703)
+    print("\n  -- [5] the 'E' extrapolation error is judged on the accepted solution (E-703) --")
+    # Enhancement-703 (hunt F2 of 2026-09-21): a table whose domain excludes the
+    # zero initial guess of every operating point. The check used to fire on that
+    # first Newton iterate ("below the table", "it is 0") and end the run before
+    # the source's equation was solved, whatever the solution was.
+    A = "@"
+    src_e = HDR + """module dut(p,n); inout p,n; electrical p,n;
+ real gx[0:2], gy[0:2];
+ (* desc="y" *) real y;
+ analog begin
+   gx[0]=1.0; gx[1]=2.0; gx[2]=4.0;
+   gy[0]=1.0; gy[1]=2.0; gy[2]=4.0;
+   y = $table_model(V(p,n), gx, gy, "1E");
+   I(p,n) <+ y*1e-3;
+ end
+endmodule
+"""
+    rows_of = lambda o: [float(m.group(2)) for m in
+                         re.finditer(r"^\d+\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)", o, re.M)]
+    d, rc2, o = build(src_e, "te")
+    check('[E-703] a run-time "1E" table over [1, 4] compiles', rc2 == 0,
+          (o.strip().splitlines() or [""])[0][:60])
+    if rc2 == 0:
+        rc3, o = op(d, "N1 a 0 md", card="dut()", src="V1 a 0 dc 2.5", body=f"op\nprint {A}n1[y]")
+        v = vals(o, f"{A}n1[y]")
+        check('[E-703] op at x=2.5, inside the table, runs and gives 2.5 (it aborted on the zero initial guess)',
+              close(v[0] if v else None, 2.5, 1e-9),
+              f"{v} " + next((l[:60] for l in o.splitlines() if "OSDI(fatal)" in l), ""))
+        rc3, o = op(d, "N1 a 0 md", card="dut()", src="V1 a 0 dc 6", body=f"op\nprint {A}n1[y]")
+        check('[E-703] op at x=6, above the table, still aborts -- at the ACCEPTED point, naming the right side',
+              "OSDI(fatal)" in o and "above the table" in o and "it is 6" in o
+              and "at the accepted operating point" in o,
+              next((l[:70] for l in o.splitlines() if "OSDI(fatal)" in l or "accepted" in l),
+                   o.strip().splitlines()[-1][:70] if o.strip() else ""))
+        rc3, o = op(d, "N1 a 0 md", card="dut()", src="V1 a 0 dc 1", body="dc v1 1 5 1\nprint i(v1)")
+        rows = rows_of(o)
+        check('[E-703] dc 1..5 runs the four points inside the table and aborts at the one outside',
+              len(rows) == 4 and all(abs(r + 1e-3 * (k + 1)) < 1e-12 for k, r in enumerate(rows))
+              and "at the accepted sweep value 5" in o and "it is 5" in o,
+              f"rows={rows} " + next((l[:60] for l in o.splitlines() if "accepted sweep" in l), ""))
+        rc3, o = op(d, "N1 a 0 md", card="dut()", src="V1 a 0 pulse(2 5 3u 1n 1n 5u 20u)",
+                    body="tran 1u 6u\nprint i(v1)")
+        rows = rows_of(o)
+        check('[E-703] tran runs while the input is inside the table and aborts at the time point that leaves it',
+              len(rows) >= 3 and abs(rows[0] + 2e-3) < 1e-12
+              and all(-4e-3 - 1e-12 <= r <= -2e-3 + 1e-12 for r in rows)
+              and "at the accepted time point 3.0" in o and "above the table" in o,
+              f"{len(rows)} rows " + next((l[:60] for l in o.splitlines() if "accepted time" in l), ""))
+    # a constant operand outside the table has no iteration to wait for
+    src_c = HDR + """module dut(p,n); inout p,n; electrical p,n;
+ parameter real xp = 6.0;
+ real gx[0:2], gy[0:2];
+ (* desc="y" *) real y;
+ analog begin
+   gx[0]=1.0; gx[1]=2.0; gx[2]=4.0;
+   gy[0]=1.0; gy[1]=2.0; gy[2]=4.0;
+   y = $table_model(xp, gx, gy, "1E");
+   I(p,n) <+ y*1e-3*V(p,n);
+ end
+endmodule
+"""
+    d, rc2, o = build(src_c, "tec")
+    if rc2 == 0:
+        rc3, o = op(d, "N1 a 0 md", card="dut()", src="V1 a 0 dc 2.5", body=f"op\nprint {A}n1[y]")
+        check('[E-703] a constant operand outside the table is still refused ("above", "it is 6")',
+              "OSDI(fatal)" in o and "above the table" in o and "it is 6" in o,
+              next((l[:70] for l in o.splitlines() if "OSDI(fatal)" in l),
+                   o.strip().splitlines()[-1][:70] if o.strip() else ""))
+
     # =================================================== [6] foreign access
     print("\n  -- [6] access function from a foreign discipline --")
     for label, body, want_reject in [

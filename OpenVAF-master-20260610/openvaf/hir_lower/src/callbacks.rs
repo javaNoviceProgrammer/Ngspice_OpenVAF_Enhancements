@@ -37,6 +37,14 @@ pub enum RetFlag {
     /// analysis, and outside an `analog initial` block it must not stop
     /// anything at all. Raised nowhere else.
     InitErr,
+    /// Enhancement-703 (hunt F2 of 2026-09-21): [`RetFlag::Abort`] judged on the
+    /// ACCEPTED solution. Raised by `LoweringCtx::runtime_fatal_deferred` for a
+    /// run-time check whose operand is a circuit quantity -- the `E`
+    /// extrapolation error of `$table_model` -- so that a Newton iterate outside
+    /// the domain on its way to a solution inside it raises nothing; the
+    /// simulator acts on it where it acts on a deferred `$finish`, at the
+    /// accepted-point boundary. `EVAL_RET_FLAG_FATAL_DEFERRED` in the OSDI header.
+    AbortDeferred,
 }
 
 /// The statistical-distribution family selected for a `$random`/`$dist_*`/`$rdist_*`
@@ -108,6 +116,7 @@ impl std::fmt::Display for RetFlag {
             Self::Limited => "limited",
             Self::Discont => "discont",
             Self::InitErr => "initerr",
+            Self::AbortDeferred => "abort_deferred",
         };
         write!(f, "{}", txt)
     }

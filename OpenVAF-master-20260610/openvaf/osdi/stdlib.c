@@ -343,6 +343,10 @@ void set_ret_flag_discont(int *flags) { *flags |= EVAL_RET_FLAG_DISCONT; }
  * see EVAL_RET_FLAG_INITERR. */
 void set_ret_flag_initerr(int *flags) { *flags |= EVAL_RET_FLAG_INITERR; }
 
+/* Enhancement-703 (hunt F2 of 2026-09-21): a fatal judged on the accepted
+ * solution -- see EVAL_RET_FLAG_FATAL_DEFERRED. */
+void set_ret_flag_fatal_deferred(int *flags) { *flags |= EVAL_RET_FLAG_FATAL_DEFERRED; }
+
 double store_lim(void *sim_info_, int idx, double val) {
   OsdiSimInfo *sim_info = (OsdiSimInfo *)sim_info_;
   sim_info->next_state[idx] = val;

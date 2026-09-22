@@ -26,7 +26,7 @@ the sources' silence in `op`, `ac` and `tran`.
 | # | finding | kind |
 |---|---|---|
 | [F1](#f1--a-z-filter-root-at-the-origin-is-dropped) | *(fixed in [E-699](../../enhancements_doc/Enhancement-699.md): the origin roots are split off when the model is compiled and applied as the power of `z` they are — a shift of the coefficient vector in z⁻¹ — so a zp/zd/np pole at zero is the one-period delay and a zero the advance of 4.5.12, exactly the `zi_nd` spelling; a root the deck can set stays `1 − z⁻¹ r`)* a `zi_zp`/`zi_zd`/`zi_np` root at the origin contributes **1** where LRM 4.5.12 implements it as **`z`**: a pole at zero (the zp spelling of a one-sample delay) is a wire, and the same delay written as `zi_nd` coefficients is right | wrong result, silent |
-| [F2](#f2--e-extrapolation-aborts-on-the-first-newton-iterate) | the `E` extrapolation error is judged on every Newton iterate, so a table whose domain excludes the zero initial guess aborts before the first solve — the LRM's own `sample.dat` under `"1L,1E"` cannot evaluate its Figure 9-2 point | abort where the solution is inside the table |
+| [F2](#f2--e-extrapolation-aborts-on-the-first-newton-iterate) | *(fixed in [E-703](../../enhancements_doc/Enhancement-703.md): the check raises a deferred fatal — a new OSDI return bit and a fatal-level message that waits for the accepted iteration — which the six analyses act on at the accepted-point boundary, before the point is output; an `op` inside the table runs, a point above it is named as above, a sweep or transient aborts at the point that leaves the table)* the `E` extrapolation error is judged on every Newton iterate, so a table whose domain excludes the zero initial guess aborts before the first solve — the LRM's own `sample.dat` under `"1L,1E"` cannot evaluate its Figure 9-2 point | abort where the solution is inside the table |
 | [F3](#f3--a-cubic-spline-under-c-keeps-the-natural-end-condition) | `3C` builds the natural spline and clamps outside it, so the first derivative jumps at the table edge (7.43 to 0 on the `x²` samples); LRM 9.21.4 sets the end derivative to zero under `C` precisely to avoid that | deviation, silent, reaches the Jacobian |
 | [F4](#f4--a-trailing-comment-on-a-data-line-makes-the-file-unusable) | a `#` comment after the numbers on a line makes the whole file "missing, unreadable, or contains no usable table data" for `$table_model`, `noise_table` and `noise_table_log`; 9.21.1 allows comments anywhere, 4.6.4.3 before or after any pair | refusal of legal input |
 | [F5](#f5--the-data-errors-of-921-are-not-raised) | one isoline in a 2-D table, an isoline with a single point, and two rows with the same coordinates and different values are all accepted — the last with a warning that says the LAST value anchors when the FIRST is kept; a dependent selector outside 1..M picks a column in silence | silence, one slip |
@@ -229,6 +229,16 @@ point outside the table.
 
 **Kind.** Abort where the answer exists; every `E` table whose domain excludes the
 initial guess. Not platform-specific.
+
+*Fixed in [E-703](../../enhancements_doc/Enhancement-703.md).* The `E` check
+raises a deferred fatal: a fatal-level message carrying the new `LOG_FLAG_DEFER`,
+which the simulator holds with the iteration's output and prints only if that
+iteration is accepted, and the new `EVAL_RET_FLAG_FATAL_DEFERRED`, on which the
+six analyses act at their accepted-point boundary — `OSDIdeferredFatal`, reading
+the last evaluation's flag, before the point is output. The `sample.dat` deck
+and the table over `[1, 4]` run; a point above the table is reported as above
+it, at the accepted operating point; a `dc` sweep aborts at the first point
+outside the table and a transient at the time point that leaves it.
 
 ## F3 — a cubic spline under `C` keeps the natural end condition
 

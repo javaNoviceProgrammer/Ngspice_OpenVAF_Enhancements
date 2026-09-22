@@ -1610,8 +1610,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// Applies `ctrl`'s per-end extrapolation to an interpolation whose
     /// interior `result` already extends linearly past both ends: Clamp
     /// selects the endpoint value, Error reports the LRM 9.21.2 runtime
-    /// fatal (and clamps as the never-observed safe value), Linear leaves
-    /// the segment extension alone.
+    /// fatal -- judged on the accepted solution since Enhancement-703 -- (and
+    /// clamps as the safe value the iterates on the way there see), Linear
+    /// leaves the segment extension alone.
     fn apply_end_extrap(
         &mut self,
         x: Value,
@@ -1646,8 +1647,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let fatal = ctrl.lo == TblExtrap::Error;
             result = self.ctx.make_select(below, move |ctx, b| {
                 if b {
+                    // Enhancement-703 (hunt F2 of 2026-09-21): judged on the
+                    // accepted solution. `runtime_fatal` fired on the first
+                    // Newton iterate outside the table -- the zero initial
+                    // guess of every operating point -- so a table whose
+                    // domain excludes 0 could never start under 'E', and the
+                    // message named the wrong side for a point above it.
                     if fatal {
-                        ctx.runtime_fatal(
+                        ctx.runtime_fatal_deferred(
                             "$table_model: the evaluation point is below the table and the \
                              control string requests an error there ('E', LRM 9.21.2); it is",
                             Some(x),
@@ -1665,7 +1672,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
             result = self.ctx.make_select(above, move |ctx, b| {
                 if b {
                     if fatal {
-                        ctx.runtime_fatal(
+                        ctx.runtime_fatal_deferred(
                             "$table_model: the evaluation point is above the table and the \
                              control string requests an error there ('E', LRM 9.21.2); it is",
                             Some(x),

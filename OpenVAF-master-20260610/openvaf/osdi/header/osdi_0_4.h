@@ -71,6 +71,16 @@
  * afterwards. Additive bit, so an older simulator simply ignores it and gets
  * exactly today's behaviour. */
 #define EVAL_RET_FLAG_INITERR 32
+/* Enhancement-703 (hunt F2 of 2026-09-21): a fatal condition judged on the
+ * ACCEPTED solution -- raised by a run-time check whose operand is a circuit
+ * quantity (the 'E' extrapolation error of $table_model, LRM 9.21.2). The
+ * evaluation completes with a safe substitute; the simulator acts on the flag
+ * at the accepted-point boundary (OSDIpendingRequests), exactly where it acts
+ * on a deferred $finish, so a Newton iterate that strays on its way to a
+ * solution inside the domain raises nothing. The message travels as a
+ * LOG_LVL_FATAL print with LOG_FLAG_DEFER. Additive bit: an older simulator
+ * ignores it and continues with the substitute. */
+#define EVAL_RET_FLAG_FATAL_DEFERRED 64
 
 
 #define LOG_LVL_MASK 7
@@ -86,6 +96,11 @@
 /* Round-3 audit / LRM 9.7.3: the display statement sits in an `analog
  * initial` block; a severity task reports "during initialization". */
 #define LOG_FLAG_INIT 32
+/* Enhancement-703: a LOG_LVL_FATAL message that waits for the accepted
+ * iteration like a $warning does (the fatal level is otherwise never
+ * deferred, since $fatal terminates without checking whether the iteration
+ * is rejected). Paired with EVAL_RET_FLAG_FATAL_DEFERRED. */
+#define LOG_FLAG_DEFER 64
 
 #define INIT_ERR_OUT_OF_BOUNDS 1
 

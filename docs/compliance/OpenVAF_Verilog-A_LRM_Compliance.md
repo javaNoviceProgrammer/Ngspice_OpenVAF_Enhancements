@@ -804,7 +804,10 @@ per-operator override, not nature tolerances in general.
   **comma-separated sub-strings apply per dimension**, outermost first
   (any code used to apply to every axis); **up to two extrapolation
   characters set each end separately** (`"1CL"`); **`E`
-  errors on extrapolation** at run time; the **`;N` dependent-column
+  errors on extrapolation** at run time — judged on the accepted solution
+  since [E-703](../../enhancements_doc/Enhancement-703.md), where it fired on
+  the zero initial guess of every operating point, so a table whose domain
+  excluded 0 could never start under `E`; the **`;N` dependent-column
   selector is honoured**; data files may be the LRM 9.21.1 normative
   **N+M-column isoline format** — **ragged isolines included** (the
   LRM's own sample file interpolates correctly), with the project's

@@ -2005,11 +2005,37 @@ int OSDIpendingRequests(CKTcircuit *ckt) {
         if (extra_inst_data->point_eval_flags & EVAL_RET_FLAG_STOP) {
           req |= OSDI_REQ_STOP;
         }
+        /* Enhancement-703: the LAST evaluation's flags, not the attempt's
+         * accumulation -- an iterate outside a table's domain on the way to
+         * the accepted solution inside it is exactly what this flag is
+         * deferred past. The last evaluation of a converged solve sits within
+         * the tolerance of the solution the analysis accepts. */
+        if (extra_inst_data->eval_flags & EVAL_RET_FLAG_FATAL_DEFERRED) {
+          req |= OSDI_REQ_FATAL;
+        }
       }
     }
   }
 
   return req;
+}
+
+/* Enhancement-703 (hunt F2 of 2026-09-21): see osdiitf.h. */
+int OSDIdeferredFatal(CKTcircuit *ckt, const char *where) {
+  if (!(OSDIpendingRequests(ckt) & OSDI_REQ_FATAL)) {
+    return 0;
+  }
+  /* the device's own message was held with the iteration's output */
+  OSDIpendingFlush(ckt);
+  CKTvaFatalRaised = 1;
+  fprintf(stderr,
+          "\nError: a Verilog-A device raised a fatal error at the accepted"
+          " %s; aborting.\n"
+          "       This is not a convergence failure -- see the OSDI(fatal)"
+          " message above for the cause.\n",
+          where);
+  fflush(stderr);
+  return 1;
 }
 
 /* Enhancement-53: fire Verilog-A `@(final_step)` blocks (LRM 5.10.2: the

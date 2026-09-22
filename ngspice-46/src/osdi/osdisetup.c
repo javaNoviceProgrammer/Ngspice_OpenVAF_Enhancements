@@ -109,14 +109,18 @@ static void osdi_range_note(const OsdiDescriptor *descr, void *inst, void *model
 static int handle_init_info(OsdiInitInfo info, const OsdiDescriptor *descr,
                             const OsdiNgspiceHandle *handle, void *inst,
                             void *model) {
-  if (info.flags & (EVAL_RET_FLAG_FATAL | EVAL_RET_FLAG_FINISH)) {
+  /* Enhancement-703: a deferred fatal raised while the setup evaluated a
+   * CONSTANT operand (a table input the model card fixes, outside the table
+   * under 'E') has no iteration to wait for -- it is a rejection like $fatal. */
+  if (info.flags &
+      (EVAL_RET_FLAG_FATAL | EVAL_RET_FLAG_FINISH | EVAL_RET_FLAG_FATAL_DEFERRED)) {
     /* Enhancement-56: a Verilog-A $fatal/$finish during setup is the model
      * rejecting its parameters/configuration (the model's own message was
      * already printed via the log callback). Say so instead of surfacing
      * E_PANIC's baffling "impossible error - can't occur". */
     errMsg = tprintf("a Verilog-A device rejected its configuration during "
                      "setup (%s raised)",
-                     (info.flags & EVAL_RET_FLAG_FATAL) ? "$fatal" : "$finish");
+                     (info.flags & EVAL_RET_FLAG_FINISH) ? "$finish" : "$fatal");
     return (E_PRIVATE);
   }
 

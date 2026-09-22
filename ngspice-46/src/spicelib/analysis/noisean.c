@@ -257,6 +257,10 @@ NOISEan(CKTcircuit* ckt, int restart)
         if (error) return(error);
 
 #ifdef OSDI
+        /* Enhancement-703 (hunt F2 of 2026-09-21): a fatal judged on the
+         * accepted solution -- the operating point that load evaluated. */
+        if (OSDIdeferredFatal(ckt, "noise operating point"))
+            return (E_PANIC);
         /* Enhancement-56: honor deferred Verilog-A $finish/$stop raised
            during the noise analysis's operating point (E-55 defers them to
            analysis boundaries; without this check a model that rejected its

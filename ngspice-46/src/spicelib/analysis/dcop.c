@@ -178,6 +178,16 @@ DCop(CKTcircuit *ckt, int notused)
 
     converged = CKTload(ckt);
 
+#ifdef OSDI
+    /* Enhancement-703 (hunt F2 of 2026-09-21): a fatal judged on the accepted
+     * solution -- that load evaluated every device at the converged point.
+     * Before the point is output: the model declared it an error. */
+    if (converged == 0 && OSDIdeferredFatal(ckt, "operating point")) {
+        SPfrontEnd->OUTendPlot(plot);
+        return (E_PANIC);
+    }
+#endif
+
     if(converged == 0) {
         CKTdump(ckt, 0.0, plot);
         if (ckt->CKTsoaCheck)

@@ -157,6 +157,10 @@ ACan(CKTcircuit* ckt, int restart)
         if (error) return(error);
 
 #ifdef OSDI
+        /* Enhancement-703 (hunt F2 of 2026-09-21): a fatal judged on the
+         * accepted solution -- the operating point that load evaluated. */
+        if (OSDIdeferredFatal(ckt, "AC operating point"))
+            return (E_PANIC);
         /* Enhancement-426: E-55 defers $finish/$stop to an analysis boundary
          * and E-56 taught the NOISE analysis to honour them at its operating
          * point -- but .ac was never given the same check, so a model that

@@ -58,6 +58,13 @@ TFanal(CKTcircuit *ckt, int restart)
     if (converged)
         return converged;
 
+#ifdef OSDI
+    /* Enhancement-703 (hunt F2 of 2026-09-21): a fatal judged on the accepted
+     * solution -- the operating point just found. */
+    if (OSDIdeferredFatal(ckt, "transfer-function operating point"))
+        return (E_PANIC);
+#endif
+
     /* Enhancement-426: the SOURCE was checked (just below) and the OUTPUT NODE
      * was not -- and the consequence is worse than a wrong number. A node that
      * no device ever stamped still owns an equation number drawn from

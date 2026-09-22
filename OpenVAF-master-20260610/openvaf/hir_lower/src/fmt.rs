@@ -14,6 +14,11 @@ pub enum DisplayKind {
     Warn,
     Error,
     Fatal,
+    /// Enhancement-703 (hunt F2 of 2026-09-21): a fatal-level message that waits
+    /// for the accepted iteration as a `$warning` does -- `LOG_LVL_FATAL` with
+    /// `LOG_FLAG_DEFER`. The companion of `RetFlag::AbortDeferred`; `$fatal`
+    /// itself stays `Fatal`, which the simulator never defers (LRM 9.7.3).
+    FatalDeferred,
     Monitor,
 }
 

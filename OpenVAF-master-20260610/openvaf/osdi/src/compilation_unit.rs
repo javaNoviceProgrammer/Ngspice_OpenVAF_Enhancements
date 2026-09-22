@@ -24,7 +24,7 @@ use typed_indexmap::TiSet;
 
 use crate::inst_data::OsdiInstanceData;
 use crate::metadata::osdi_0_4::{
-    stdlib_bitcode, OsdiTys, LOG_FLAG_IMMEDIATE, LOG_FLAG_INIT, LOG_FMT_ERR, LOG_LVL_DEBUG,
+    stdlib_bitcode, OsdiTys, LOG_FLAG_DEFER, LOG_FLAG_IMMEDIATE, LOG_FLAG_INIT, LOG_FMT_ERR, LOG_LVL_DEBUG,
     LOG_LVL_DISPLAY,
     LOG_LVL_ERR, LOG_LVL_FATAL, LOG_LVL_INFO, LOG_LVL_MONITOR, LOG_LVL_WARN,
 };
@@ -359,6 +359,12 @@ pub fn general_callbacks<'ll>(
                             .cx
                             .get_func_by_name("set_ret_flag_initerr")
                             .expect("stdlib function set_ret_flag_initerr is missing")
+                    } else if *flag == RetFlag::AbortDeferred {
+                        // Enhancement-703: a fatal judged on the accepted solution
+                        builder
+                            .cx
+                            .get_func_by_name("set_ret_flag_fatal_deferred")
+                            .expect("stdlib function set_ret_flag_fatal_deferred is missing")
                     } else {
                         panic!("Unsupported RetFlag encountered.");
                     };
@@ -779,6 +785,9 @@ fn print_callback<'ll>(
             DisplayKind::Warn => LOG_LVL_WARN,
             DisplayKind::Error => LOG_LVL_ERR,
             DisplayKind::Fatal => LOG_LVL_FATAL,
+            // Enhancement-703: a fatal the simulator holds with the iteration's
+            // other output and prints only if that iteration is accepted
+            DisplayKind::FatalDeferred => LOG_LVL_FATAL | LOG_FLAG_DEFER,
         };
         // Event-gated display statements fire on the event's own iteration
         // (e.g. @(initial_step)); the simulator must print them right away

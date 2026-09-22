@@ -84,6 +84,18 @@
  * EVAL_RET_FLAG_FATAL the evaluation itself completes; the analysis is
  * stopped afterwards. */
 #define EVAL_RET_FLAG_INITERR 32
+/* Enhancement-703 (hunt F2 of 2026-09-21): a fatal condition judged on the
+ * ACCEPTED solution -- a run-time check whose operand is a circuit quantity
+ * (the 'E' extrapolation error of $table_model, LRM 9.21.2). The evaluation
+ * completes with a safe substitute and the analyses act on the flag of the
+ * LAST evaluation at the accepted-point boundary (OSDIpendingRequests,
+ * OSDIdeferredFatal), exactly where they act on a deferred $finish -- so a
+ * Newton iterate outside the domain on its way to a solution inside it
+ * raises nothing, where EVAL_RET_FLAG_FATAL ended the run on the zero
+ * initial guess of every operating point. Its message is a LOG_LVL_FATAL
+ * print carrying LOG_FLAG_DEFER. Raised during setup (a constant operand) it
+ * is a plain rejection of the configuration. */
+#define EVAL_RET_FLAG_FATAL_DEFERRED 64
 
 
 /* Enhancement-377: the level occupies the low THREE bits (DEBUG 0 .. FATAL 5),
@@ -113,6 +125,14 @@
  * simulation time. Additive bit: an .osdi from an older compiler never sets
  * it and reads exactly as before. */
 #define LOG_FLAG_INIT 32
+/* Enhancement-703: a LOG_LVL_FATAL message that waits for the accepted
+ * iteration as a $warning does. The fatal level is otherwise never deferred
+ * ($fatal "terminates the simulation without checking whether the iteration
+ * would be rejected", LRM 9.7.3), and a $fatal print reaches this file
+ * without LOG_FLAG_IMMEDIATE, so the level alone cannot say which is which:
+ * the compiler sets this bit on exactly the messages whose flag is
+ * EVAL_RET_FLAG_FATAL_DEFERRED. */
+#define LOG_FLAG_DEFER 64
 
 #define INIT_ERR_OUT_OF_BOUNDS 1
 

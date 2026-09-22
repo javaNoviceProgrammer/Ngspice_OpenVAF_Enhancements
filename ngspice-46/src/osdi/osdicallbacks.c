@@ -674,6 +674,9 @@ void osdi_log(void *handle_, char *msg, uint32_t lvl) {
     prefix = "OSDI(fatal) ";
     to_err = true;
     severity = true;
+    /* Enhancement-703: a fatal judged on the accepted solution waits for it
+     * (LOG_FLAG_DEFER); $fatal itself never does, whatever its other bits. */
+    defers = (lvl & LOG_FLAG_DEFER) != 0;
     break;
   default:
     prefix = "OSDI(unknown) ";

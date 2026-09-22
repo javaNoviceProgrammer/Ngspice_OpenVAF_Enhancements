@@ -55,6 +55,9 @@ pub const EVAL_RET_FLAG_STOP: u32 = 8;
 pub const EVAL_RET_FLAG_DISCONT: u32 = 16;
 /// Round-3 audit / LRM 9.7.3: `$error` inside an `analog initial` block.
 pub const EVAL_RET_FLAG_INITERR: u32 = 32;
+/// Enhancement-703 (hunt F2 of 2026-09-21): a fatal condition judged on the accepted
+/// solution -- the simulator acts on it at the accepted-point boundary.
+pub const EVAL_RET_FLAG_FATAL_DEFERRED: u32 = 64;
 pub const LOG_LVL_MASK: u32 = 7;
 pub const LOG_LVL_DEBUG: u32 = 0;
 pub const LOG_LVL_DISPLAY: u32 = 1;
@@ -67,6 +70,8 @@ pub const LOG_FLAG_IMMEDIATE: u32 = 8;
 pub const LOG_FMT_ERR: u32 = 16;
 /// Round-3 audit / LRM 9.7.3: the statement is inside an `analog initial` block.
 pub const LOG_FLAG_INIT: u32 = 32;
+/// Enhancement-703: a LOG_LVL_FATAL message deferred to the accepted iteration.
+pub const LOG_FLAG_DEFER: u32 = 64;
 pub const INIT_ERR_OUT_OF_BOUNDS: u32 = 1;
 pub const ATTR_TYPE_STR: u32 = 0;
 pub const ATTR_TYPE_INT: u32 = 1;
