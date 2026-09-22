@@ -46,4 +46,10 @@ The quadratic spline is the C1 construction with knot slopes `z_0 = s_0`,
 python3 verify_tablesrc.py
 ```
 
-66 checks per solver, all PASS.
+A data file the call cannot use is refused with its cause named since
+[E-700](../../enhancements_doc/Enhancement-700.md): `refused/short_columns.va`
+hands two inputs a two-column file and reads "its rows have 2 columns, but the
+call has 2 inputs and needs at least 3" (it read "missing, unreadable, or
+contains no usable table data", under notes about non-finite values).
+
+67 checks per solver, all PASS.

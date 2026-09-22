@@ -1913,7 +1913,16 @@ impl Ctx<'_> {
                     // `den_is_roots` above, so reject only this one shape.
                     let empty_direct_den =
                         is_den && !den_is_roots && matches!(val, Some(Type::EmptyArray));
-                    if !is_coeff || empty_direct_den {
+                    if empty_direct_den {
+                        // Enhancement-700 (hunt F7): hir_ty::validation::body's
+                        // coefficient check refuses this shape with a message that
+                        // says what is wrong ("an empty coefficient list ... LRM
+                        // 4.5.11 allows a null argument for the zeros vector only");
+                        // the type mismatch this used to add beside it spelt the
+                        // empty array as `_[0:0]` and said nothing the other did not.
+                        // One problem, one message: the call is still invalid.
+                        valid = false;
+                    } else if !is_coeff {
                         self.result.diagnostics.push(
                             TypeMismatch {
                                 expected: Cow::Owned(vec![TyRequirement::Val(Type::Real)]),

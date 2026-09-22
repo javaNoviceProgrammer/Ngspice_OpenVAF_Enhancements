@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+// Enhancement-700 (hunt F7): a readable file with too few columns for the
+// call's inputs -- two inputs need three columns (LRM 9.21.1) -- used to be
+// refused as "missing, unreadable, or contains no usable table data".
+module m(inout electrical a, b);
+analog I(a,b) <+ $table_model(0.5, V(a,b), "two_col.dat");
+endmodule

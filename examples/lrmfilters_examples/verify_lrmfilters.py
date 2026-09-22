@@ -257,5 +257,22 @@ if rc == 0:
           and close(num(sim, "a2"), num(sim, "b2"), 1e-6),
           f"zp={num(sim, 'a1')},{num(sim, 'a2')} nd={num(sim, 'b1')},{num(sim, 'b2')}")
 
+# ---- [6] the Laplace abstol argument is a magnitude (4.5.11, E-700) --------
+print("\nthe laplace_* abstol argument (LRM 4.5.11, Enhancement-700):")
+for label, tol, want_ok in [("-1e-9", "-1e-9", False), ("0.0", "0.0", False),
+                            ("1e-9", "1e-9", True), ("a nature (Voltage)", "Voltage", True)]:
+    rc, out, _ = compile_src(
+        '`include "disciplines.vams"\n'
+        "module ltol(i, o); inout i, o; electrical i, o;\n"
+        f"  analog V(o) <+ laplace_nd(V(i), '{{1.0}}, '{{1.0, 1e-3}}, {tol});\nendmodule\n",
+        "ltol" + re.sub(r"[^a-z0-9]", "", label))
+    if want_ok:
+        check(f"abstol = {label} compiles", rc == 0, out.strip().splitlines()[0][:70] if rc else "")
+    else:
+        check(f"abstol = {label} is refused as ddt's is: 'the absolute tolerance must be "
+              "greater than zero' (it compiled in silence)",
+              rc != 0 and "the absolute tolerance must be greater than zero" in out
+              and "laplace_nd" in out, out.strip().splitlines()[0][:70])
+
 print(f"\n{'ALL PASS' if checks == passed else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if checks == passed else 1)

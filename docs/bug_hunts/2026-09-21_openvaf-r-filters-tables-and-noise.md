@@ -31,7 +31,7 @@ the sources' silence in `op`, `ac` and `tran`.
 | [F4](#f4--a-trailing-comment-on-a-data-line-makes-the-file-unusable) | a `#` comment after the numbers on a line makes the whole file "missing, unreadable, or contains no usable table data" for `$table_model`, `noise_table` and `noise_table_log`; 9.21.1 allows comments anywhere, 4.6.4.3 before or after any pair | refusal of legal input |
 | [F5](#f5--the-data-errors-of-921-are-not-raised) | one isoline in a 2-D table, an isoline with a single point, and two rows with the same coordinates and different values are all accepted — the last with a warning that says the LAST value anchors when the FIRST is kept; a dependent selector outside 1..M picks a column in silence | silence, one slip |
 | [F6](#f6--a-run-time-array-table-follows-the-solution) | the 1-D array form whose data the body computes is rebuilt at every evaluation; 9.21.1 captures the data on the first call and ignores later changes, and the analogous `laplace_*` policy at least warns | deviation, silent |
-| [F7](#f7--diagnostic-slips) | a file with too few columns for its inputs is reported as unreadable; a null denominator draws a type error spelt `_[0:0]` beside the real one; a negative or zero Laplace `abstol` passes where `ddt`'s is refused; the run-time array form refuses `"1E"` as "unsupported" while its own note lists `E` as supported | diagnostic slips |
+| [F7](#f7--diagnostic-slips) | *(fixed in [E-700](../../enhancements_doc/Enhancement-700.md): the file check names its cause, the null denominator draws one error with 4.5.11's zeros-only rule, the Laplace `abstol` is checked as `ddt`'s is, and the run-time array form takes `E` and per-end methods)* a file with too few columns for its inputs is reported as unreadable; a null denominator draws a type error spelt `_[0:0]` beside the real one; a negative or zero Laplace `abstol` passes where `ddt`'s is refused; the run-time array form refuses `"1E"` as "unsupported" while its own note lists `E` as supported | diagnostic slips |
 
 Dropped after checking the LRM, the code or the numbers: every `laplace_*` form with a
 real, complex, null and origin root gives the closed-form response (the null zeros
@@ -412,3 +412,15 @@ platform-specific.
   runtime-array controls to the shapes they can express", `lower_table_model` 2555), not
   the string's; the message should say the form does not support `E` (or `E` should be
   implemented there, which F2's deferral would make straightforward).
+
+*Fixed in [E-700](../../enhancements_doc/Enhancement-700.md).* `table_file_problem` returns the reason the old bool hid — the
+two-column file now reads "its rows have 2 columns, but the call has 2 inputs
+and needs at least 3 (LRM 9.21.1 …)", a bad token names its line, a ragged row
+its line and count; `infere_laplace` no longer adds the `_[0:0]` type mismatch
+beside the validator's message, which now names the null argument and the
+zeros-only rule (the `zi_*` forms read the same); the validator's Laplace arm
+runs the same positivity check as `ddt`'s on the trailing `abstol`; and the
+run-time array form applies the per-end methods and `E` to its result against
+its run-time endpoints, so `"1E"`, `"1CL"`, `"1LC"` and `"3CL"` compile and
+give the compile-time grid's numbers (`D` and `I` stay refused there, by
+name).

@@ -1617,12 +1617,30 @@ impl BodyLoweringCtx<'_, '_, '_> {
         grid: &[f64],
         v_first: Value,
         v_last: Value,
+        result: Value,
+        ctrl: TblAxisCtrl,
+    ) -> Value {
+        let g0 = self.ctx.fconst(grid[0]);
+        let gl = self.ctx.fconst(grid[grid.len() - 1]);
+        self.apply_end_extrap_at(x, g0, gl, v_first, v_last, result, ctrl)
+    }
+
+    /// Enhancement-700 (hunt F7): `apply_end_extrap` with RUN-TIME endpoints --
+    /// the first and last knot of the sorted run-time array form -- so that
+    /// form takes the per-end methods and 'E' exactly as a compile-time grid
+    /// does. Its kernels keep their single linear/clamp switch; the selects
+    /// here override the end that asked for something else.
+    fn apply_end_extrap_at(
+        &mut self,
+        x: Value,
+        g0: Value,
+        gl: Value,
+        v_first: Value,
+        v_last: Value,
         mut result: Value,
         ctrl: TblAxisCtrl,
     ) -> Value {
-        let n = grid.len();
         if ctrl.lo != TblExtrap::Linear {
-            let g0 = self.ctx.fconst(grid[0]);
             let below = self.ctx.ins().flt(x, g0);
             let fatal = ctrl.lo == TblExtrap::Error;
             result = self.ctx.make_select(below, move |ctx, b| {
@@ -1641,7 +1659,6 @@ impl BodyLoweringCtx<'_, '_, '_> {
             });
         }
         if ctrl.hi != TblExtrap::Linear {
-            let gl = self.ctx.fconst(grid[n - 1]);
             let above = self.ctx.ins().fgt(x, gl);
             let fatal = ctrl.hi == TblExtrap::Error;
             result = self.ctx.make_select(above, move |ctx, b| {
@@ -2560,19 +2577,31 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 Some(c) => parse_table_ctrl(Some(&c), 1)[0],
                 None => TblAxisCtrl::default(),
             };
-            let linear_extrap = ctrl.lo == TblExtrap::Linear;
+            // Enhancement-700 (hunt F7): the kernels' single switch is set to LINEAR
+            // when either end asks for it, and the per-end methods -- a clamped end
+            // beside a linear one, and 'E' -- are then applied to the result against
+            // the sorted grid's run-time endpoints by `apply_end_extrap_at`, exactly
+            // as `apply_end_extrap` does for a compile-time grid. Validation used to
+            // refuse 'E' and mixed ends on this form as "unsupported", under a note
+            // that listed 'E' as supported.
+            let linear_extrap = ctrl.lo == TblExtrap::Linear || ctrl.hi == TblExtrap::Linear;
             let x = self.lower_expr(args[0]);
             // Enhancement-390: sort as the compile-time forms do, and honour the
             // spline control codes instead of silently interpolating linearly.
             let (mut grid, mut vals) = (grid[..n].to_vec(), vals[..n].to_vec());
             self.sort_pairs_runtime(&mut grid, &mut vals);
-            return match ctrl.interp {
+            let result = match ctrl.interp {
                 TblInterp::Cubic => self.interp_1d_spline_runtime(x, &grid, &vals, linear_extrap),
                 TblInterp::Quadratic => {
                     self.interp_1d_quad_runtime(x, &grid, &vals, linear_extrap)
                 }
                 _ => self.interp_1d_runtime(x, &grid, &vals, linear_extrap),
             };
+            if n == 0 {
+                return result;
+            }
+            let (g0, gl, v0, vl) = (grid[0], grid[n - 1], vals[0], vals[n - 1]);
+            return self.apply_end_extrap_at(x, g0, gl, v0, vl, result, ctrl);
         }
         if let Some(k) = (1..args.len()).find(|&i| is_arr(self, args[i])) {
             return self.lower_table_model_arrays(args, k);

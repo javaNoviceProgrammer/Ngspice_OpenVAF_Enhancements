@@ -146,6 +146,9 @@ def main():
         ("runtime_ignore.va", "not supported for runtime array data"),
         ("inline_ignore.va", "inline `'{...}` data has no column to ignore"),
         ("array_shape.va", "invalid array data source for $table_model"),
+        # Enhancement-700 (hunt F7): the cause is named -- it read "missing,
+        # unreadable, or contains no usable table data" for a good file
+        ("short_columns.va", "its rows have 2 columns, but the call has 2 inputs and needs at least 3"),
     ):
         r, log = refused(src, needle)
         check(f"refused/{src}: {needle}", r, "" if r else log.strip().splitlines()[0])

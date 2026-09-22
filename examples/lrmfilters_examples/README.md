@@ -38,4 +38,10 @@ deviation in the laplace filters. This suite pins the fixes:
   term 1, so `zi_zp(x, , '{0, 0}, T)` was a wire. On the unit circle only
   the phase shows the missing factor, which is what the checks read.
 
-Run `python3 verify_lrmfilters.py` — 22 checks, both solvers.
+- **The `laplace_*` abstol argument is a magnitude** (4.5.11): a zero or
+  negative one is refused as `ddt`'s is ("the absolute tolerance must be
+  greater than zero"); it compiled in silence until
+  [E-700](../../enhancements_doc/Enhancement-700.md). A nature and a
+  positive real still pass.
+
+Run `python3 verify_lrmfilters.py` — 26 checks, both solvers.

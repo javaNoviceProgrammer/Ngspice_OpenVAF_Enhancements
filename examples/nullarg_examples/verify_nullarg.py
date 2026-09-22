@@ -182,6 +182,23 @@ for label, body, extra in [
     check(f"[E-453] {label} is refused", rc != 0, f"rc={rc}")
     check(f"[E-453] ...and does not crash the compiler", not crashed(rc, out), f"rc={rc}")
 
+# Enhancement-700 (hunt F7 of 2026-09-21): a null DENOMINATOR is refused for
+# the right reason, ONCE. It used to draw two errors -- "type mismatch:
+# expected real value but found _[0:0] value" (the empty array's internal
+# spelling) and then the one that matters.
+for label, body in [
+    ("laplace_nd(x, num, )", "V(out) <+ laplace_nd(V(in), '{1.0}, );"),
+    ("laplace_zd(x, zeros, )", "V(out) <+ laplace_zd(V(in), '{-1e4,0}, );"),
+]:
+    tag = re.sub(r"[^a-z0-9]", "", label.lower())[:10]
+    rc, out, _ = compile_src(module(body), tag)
+    errs = [l for l in out.splitlines() if l.startswith("error:") and "could not compile" not in l]
+    check(f"[E-700] {label} -- a null denominator -- is refused with ONE error",
+          rc != 0 and len(errs) == 1, f"{len(errs)}: {[e[:60] for e in errs]}")
+    check("[E-700] ...naming the null argument and LRM 4.5.11's zeros-only rule",
+          any("null argument" in l and "zeros vector only" in l for l in out.splitlines()),
+          (errs[0][:70] if errs else ""))
+
 # A null DISPLAY argument is a different story: LRM 9.4.1 (via IEEE 1364
 # 17.1.1.2) makes `$strobe("a",,"b")` legal -- the empty slot renders as a
 # single space. E-516's display audit implemented exactly that, so the old

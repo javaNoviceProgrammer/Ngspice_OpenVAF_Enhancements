@@ -3538,6 +3538,19 @@ impl ExprValidator<'_, '_> {
                 // everything that is not an array literal".
                 if let [_in, num, den, const_args @ ..] = args {
                     self.check_filter_orders(call, *num, *den);
+                    // Enhancement-700 (hunt F7): the optional trailing argument is
+                    // "a real number or a nature used for deriving an absolute
+                    // tolerance" (LRM 4.5.11) -- a magnitude, so zero and negatives
+                    // are refused exactly as ddt/idt/idtmod's are above; it passed
+                    // here unexamined. A nature does not fold to a number and goes
+                    // through untouched, as there.
+                    if let Some(&tol) = const_args.first() {
+                        self.require_positive(
+                            Self::filter_name(call).unwrap_or("laplace_*"),
+                            "the absolute tolerance",
+                            tol,
+                        );
+                    }
                     // LRM 4.5.14 / Table 4-20 (filter-operators audit): the
                     // zero/pole/coefficient vectors are CONSTANT-class
                     // arguments -- a dynamic expression there takes its value
@@ -3806,7 +3819,9 @@ impl ExprValidator<'_, '_> {
             self.bad_arg(
                 name,
                 "the denominator",
-                "is an empty coefficient list; it needs at least a constant term".to_owned(),
+                "is an empty coefficient list (a null argument, or '{}'); it needs at least a \
+                 constant term -- LRM 4.5.11 allows a null argument for the zeros vector only"
+                    .to_owned(),
                 den,
             );
             return;
@@ -4219,10 +4234,13 @@ fn calls_reach(
 /// silently change the answer of every existing model written with `"1"` or
 /// `"3"`, including this project's own suites. It is documented rather than
 /// changed, and an explicit `L` or `C` always means exactly what it says.
-/// `runtime_data` marks the Enhancement-389 array-VARIABLE form, whose
-/// kernels keep a single linear/clamp switch: the closest-point lookup,
-/// error-on-extrapolation and per-end methods are compile-time-grid features
-/// (kernel audit) and stay refused there rather than silently degraded.
+/// `runtime_data` marks the Enhancement-389 array-VARIABLE form: the
+/// closest-point lookup and the ignored column are compile-time-grid features
+/// (kernel audit) and stay refused there rather than silently degraded. Since
+/// Enhancement-700 (hunt F7) the per-end methods and error-on-extrapolation
+/// ('E') are applied to that form's result against its run-time endpoints,
+/// exactly as to a compile-time grid, so they are no longer refused -- the
+/// refusal called them "unsupported" under a note that listed 'E' as supported.
 fn table_ctrl_problem(ctrl: &str, runtime_data: bool, columns: bool) -> Option<String> {
     // strip the dependent-variable selector
     let body = match ctrl.split_once(';') {
@@ -4283,28 +4301,11 @@ fn table_ctrl_problem(ctrl: &str, runtime_data: bool, columns: bool) -> Option<S
         }
         for &c in &ext {
             match c {
-                'C' | 'L' | 'c' | 'l' => {}
-                'E' | 'e' if runtime_data => {
-                    return Some(
-                        "error-on-extrapolation ('E') is not supported for runtime array \
-                         data; use 'C' or 'L'"
-                            .to_owned(),
-                    )
-                }
-                'E' | 'e' => {}
+                'C' | 'L' | 'c' | 'l' | 'E' | 'e' => {}
                 other => {
                     return Some(format!("'{other}' is not an extrapolation control character"))
                 }
             }
-        }
-        if runtime_data
-            && ext.len() == 2
-            && ext[0].to_ascii_uppercase() != ext[1].to_ascii_uppercase()
-        {
-            return Some(format!(
-                "'{sub}' asks for a different extrapolation method at each end, which is not \
-                 supported for runtime array data; both ends use the same method"
-            ));
         }
     }
     None

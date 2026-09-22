@@ -437,7 +437,9 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     ])
             }
             // Enhancement-390: only reached when the file is genuinely unusable --
-            // `to_report` filters out the readable, parseable ones.
+            // `to_report` filters out the readable, parseable ones, and since
+            // Enhancement-700 builds the report itself with the cause named; this
+            // arm is the fallback shape.
             BodyValidationDiagnostic::TableFileUnusable { expr, ref path, .. } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 Report::error()
@@ -1938,10 +1940,29 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
         // Enhancement-390: a `$table_model` data file is reported only when it
         // cannot actually be used. The check lives here because this is the first
         // point with both the root file (to resolve a relative path) and the VFS.
-        if let BodyValidationDiagnostic::TableFileUnusable { ref path, ndim, .. } = *self.diag {
-            if table_file_is_usable(root_file, db, path, ndim, true) {
-                return None;
-            }
+        if let BodyValidationDiagnostic::TableFileUnusable { expr, ref path, ndim } = *self.diag {
+            // Enhancement-700 (hunt F7): the report names the cause the file
+            // check found, instead of the one label for every cause.
+            let why = table_file_problem(root_file, db, path, ndim, true)?;
+            let FileSpan { range, file } = self.expr_src(expr);
+            return Some(
+                Report::error()
+                    .with_message(format!("cannot use '{path}' as $table_model data"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: why,
+                    }])
+                    .with_notes(vec![
+                        "the path is resolved relative to the directory of the file being \
+                         compiled"
+                            .to_owned(),
+                        "an unusable data file used to yield an EMPTY table, so the device \
+                         silently contributed zero with nothing reported"
+                            .to_owned(),
+                    ]),
+            );
         }
         // Bug-hunt F15: the duplicate-knot WARNING is kept only when the file is
         // otherwise usable (an unusable file already gets its own error), is the
@@ -2484,49 +2505,73 @@ fn table_file_is_usable(
     ndim: usize,
     multi_col: bool,
 ) -> bool {
-    let Some(dir) = db.file_path(root_file).parent() else { return true };
-    let Some(full) = dir.join(path) else { return true };
-    let Some(abs) = full.as_path() else { return true };
-    let Ok(content) = std::fs::read_to_string(abs) else { return false };
+    table_file_problem(root_file, db, path, ndim, multi_col).is_none()
+}
+
+/// Enhancement-700 (hunt F7 of 2026-09-21, filters/tables/noise): WHY a
+/// `$table_model`/`noise_table` data file cannot be used, or `None` when it can.
+/// The `bool` this replaces collapsed every cause into "missing, unreadable, or
+/// contains no usable table data", so a readable file with too few columns for
+/// the call's inputs was reported as unreadable, under notes about non-finite
+/// values and the path that did not apply. Each cause names itself now: the
+/// line and token that is not a (finite) number, the row whose column count
+/// differs from the first, the column shortage against the call's input count,
+/// the noise table that is not two columns, the grid header that does not
+/// account for its tokens.
+fn table_file_problem(
+    root_file: FileId,
+    db: &dyn BaseDB,
+    path: &str,
+    ndim: usize,
+    multi_col: bool,
+) -> Option<String> {
+    let Some(dir) = db.file_path(root_file).parent() else { return None };
+    let Some(full) = dir.join(path) else { return None };
+    let Some(abs) = full.as_path() else { return None };
+    let Ok(content) = std::fs::read_to_string(abs) else {
+        return Some("the file is missing or cannot be read".to_owned());
+    };
     // Whole-line comments only, exactly as all three readers in `hir_lower` do it.
     // Inline comments are deliberately NOT stripped here: no reader strips them
     // either, so stripping them would make this check disagree with the code that
     // consumes the file -- and the invariant that the validator and the readers
     // apply the same rule is what Enhancement-396 relied on.
     let lines = || {
-        content
-            .lines()
-            .map(str::trim)
-            .filter(|l| {
-                !(l.is_empty()
-                    || l.starts_with('#')
-                    || l.starts_with("//")
-                    || l.starts_with('*'))
-            })
+        content.lines().enumerate().map(|(i, l)| (i + 1, l.trim())).filter(|(_, l)| {
+            !(l.is_empty() || l.starts_with('#') || l.starts_with("//") || l.starts_with('*'))
+        })
     };
 
     // Parse every non-comment line into finite numeric rows; any unusable
-    // token fails the file, exactly as before.
+    // token fails the file, exactly as before -- naming it now.
     let mut rows: Vec<Vec<f64>> = Vec::new();
-    for line in lines() {
+    let mut row_lines: Vec<usize> = Vec::new();
+    for (lineno, line) in lines() {
         let mut row = Vec::new();
         for tok in line.split_ascii_whitespace() {
             // Enhancement-396: `f64::from_str` accepts "nan", "inf", "-infinity",
             // and returns an INFINITY rather than an error for an overflowing
             // exponent like 1e400 -- exactly how a measured data file spells a
             // missing value. The readers in hir_lower apply the same rule.
-            let Ok(v) = tok.parse::<f64>() else { return false };
+            let Ok(v) = tok.parse::<f64>() else {
+                return Some(format!("line {lineno} holds '{tok}', which is not a number"));
+            };
             if !v.is_finite() {
-                return false;
+                return Some(format!(
+                    "line {lineno} holds '{tok}', which is not a finite number -- 'nan', \
+                     'inf' or an overflowing exponent such as 1e400 would poison every \
+                     interpolation drawn from the file"
+                ));
             }
             row.push(v);
         }
         if !row.is_empty() {
             rows.push(row);
+            row_lines.push(lineno);
         }
     }
     if rows.is_empty() {
-        return false;
+        return Some("the file holds no numeric rows".to_owned());
     }
 
     // The LRM 9.21.1 isoline judgement: one sample per line and a CONSTANT
@@ -2534,51 +2579,87 @@ fn table_file_is_usable(
     // of samples may be different on each isoline" -- the LRM's own sample
     // file is ragged), so no grid-completeness demand: the reader
     // interpolates the isoline tree directly.
-    let isoline_ok = |rows: &[Vec<f64>], ndim: usize, multi_col: bool| -> bool {
+    let isoline_problem = |rows: &[Vec<f64>], ndim: usize, multi_col: bool| -> Option<String> {
         let width = rows[0].len();
-        if width <= ndim || rows.iter().any(|r| r.len() != width) {
-            return false;
+        if let Some(i) = rows.iter().position(|r| r.len() != width) {
+            return Some(format!(
+                "line {} has {} columns where the first row has {width}; every row of an \
+                 LRM 9.21.1 table has the same count",
+                row_lines[i],
+                rows[i].len()
+            ));
+        }
+        if width <= ndim {
+            let s = |n: usize| if n == 1 { "" } else { "s" };
+            return Some(format!(
+                "its rows have {width} column{}, but the call has {ndim} input{} and needs \
+                 at least {} (LRM 9.21.1: the {ndim} independent column{} first, then the \
+                 dependent ones)",
+                s(width),
+                s(ndim),
+                ndim + 1,
+                s(ndim)
+            ));
         }
         if !multi_col && width != ndim + 1 {
-            return false;
+            return Some(format!(
+                "a noise table is two columns, frequency and power, and its rows have {width}"
+            ));
         }
-        true
+        None
     };
 
     if ndim <= 1 {
         // The one-dimensional form is line-structured. A noise file must be
         // exactly the two-column pair form; a `$table_model` file may carry
         // extra dependent columns (LRM 9.21.1; the `;N` selector picks one).
-        return isoline_ok(&rows, 1, multi_col);
+        return isoline_problem(&rows, 1, multi_col);
     }
+
+    // Kernel audit: the LRM 9.21.1 N+M-column format is the normative one
+    // and is accepted alongside the project's self-describing grid, exactly
+    // as `lower_table_model` tries both.
+    let Some(iso) = isoline_problem(&rows, ndim, true) else { return None };
 
     // The self-describing N-dimensional grid: free-form whitespace across
     // lines (grid4.tbl puts its 36-value tensor on one line), the header
-    // accounting for the token count EXACTLY.
+    // accounting for the token count EXACTLY. `Err(None)` means the file is
+    // not shaped as a grid at all, so the isoline reason is the one to give;
+    // `Err(Some(..))` a well-formed grid header whose count does not add up.
     let nums: Vec<f64> = rows.iter().flatten().copied().collect();
-    let grid_ok = (|| {
+    let grid: Result<(), Option<String>> = (|| {
         if nums.len() < 1 + ndim {
-            return false;
+            return Err(None);
         }
         // The file's own leading `ndim` must agree with the call's.
         if nums[0].fract() != 0.0 || nums[0] != ndim as f64 {
-            return false;
+            return Err(None);
         }
         let sizes: Vec<usize> = nums[1..1 + ndim]
             .iter()
             .map(|v| if v.fract() == 0.0 && *v >= 1.0 { *v as usize } else { 0 })
             .collect();
         if sizes.iter().any(|&s| s == 0) {
-            return false;
+            return Err(None);
         }
         let axes: usize = sizes.iter().sum();
         let vals: usize = sizes.iter().product();
-        nums.len() == 1 + ndim + axes + vals
+        let expect = 1 + ndim + axes + vals;
+        if nums.len() == expect {
+            Ok(())
+        } else {
+            Err(Some(format!(
+                "its self-describing grid header (dimension {ndim}, sizes {sizes:?}) \
+                 accounts for {expect} numbers, but the file holds {}",
+                nums.len()
+            )))
+        }
     })();
-    // Kernel audit: the LRM 9.21.1 N+M-column format is the normative one
-    // and is accepted alongside the project's self-describing grid, exactly
-    // as `lower_table_model` now tries both.
-    grid_ok || isoline_ok(&rows, ndim, true)
+    match grid {
+        Ok(()) => None,
+        Err(Some(why)) => Some(why),
+        Err(None) => Some(iso),
+    }
 }
 
 /// Bug-hunt F15: the first duplicated abscissa of a LINE-STRUCTURED 1-D table

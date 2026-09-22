@@ -462,7 +462,7 @@ endmodule
 module dut(p,n);
  inout p,n; electrical p,n;
  real gx[0:2], gy[0:2];
- real y;
+ (* desc="y" *) real y;
  analog begin
    gx[0]=0.0; gx[1]=1.0; gx[2]=2.0;
    gy[0]=0.0; gy[1]=1.0; gy[2]=4.0;
@@ -472,18 +472,41 @@ module dut(p,n);
 endmodule
 """ % ctrl
         _d, _rc, _o = build(src, "tc")
-        return _rc, _o
+        return _d, _rc, _o
 
-    for ctrl in ["D", "I", "E", "1E", "1CL", "1LC", "3CL", "Q"]:
-        rc2, o = tbl_ctrl(ctrl)
+    for ctrl in ["D", "I", "Q"]:
+        _d, rc2, o = tbl_ctrl(ctrl)
         check(f'control "{ctrl}" is rejected rather than silently substituted',
               rc2 != 0, (o.strip().splitlines() or [""])[0][:60])
+    # Enhancement-700 (hunt F7 of 2026-09-21): 'E' and a different method at each
+    # end are applied to the run-time array form as to a compile-time grid; they
+    # were refused as "unsupported" under a note that listed 'E' as supported.
     for ctrl in ["1", "1L", "1C", "3L", "3C", "1L,1L", "3C,3C", "1;5", "3 L",
                  " 1L ", "1L ,1L", "3", "3;2", "1C,1C",
-                 "1C,1L", "1L,1C", "1CC", "3LL", "2", "2L", "3,2"]:
-        rc2, o = tbl_ctrl(ctrl)
+                 "1C,1L", "1L,1C", "1CC", "3LL", "2", "2L", "3,2",
+                 "E", "1E", "1CL", "1LC", "3CL"]:
+        _d, rc2, o = tbl_ctrl(ctrl)
         check(f'control "{ctrl}" still compiles', rc2 == 0,
               (o.strip().splitlines() or [""])[0][:60])
+    # y = x^2 sampled at 0, 1, 2 -- the linear kernel's end slopes are 1 and 3,
+    # the natural spline's end tangent at 2 is 3.5 (E-391 continues it)
+    for ctrl, xq, want, note in [("1LC", -1.0, -1.0, "linear below"), ("1LC", 3.0, 4.0, "clamped above"),
+                                 ("1CL", -1.0, 0.0, "clamped below"), ("1CL", 3.0, 7.0, "linear above"),
+                                 ("3CL", -1.0, 0.0, "clamped below"), ("3CL", 3.0, 7.5, "the spline tangent above"),
+                                 ("1E", 1.5, 2.5, "inside the table")]:
+        d, rc2, o = tbl_ctrl(ctrl)
+        if rc2 != 0:
+            continue
+        rc3, o = op(d, "N1 a 0 md", card="dut()", src=f"V1 a 0 dc {xq}", body="op\nprint @n1[y]")
+        v = vals(o, "@n1[y]")
+        check(f'[E-700] run-time "{ctrl}" at x={xq:g} gives {want:g} ({note})',
+              close(v[0] if v else None, want, 1e-9), f"{v}")
+    d, rc2, o = tbl_ctrl("1E")
+    if rc2 == 0:
+        rc3, o = op(d, "N1 a 0 md", card="dut()", src="V1 a 0 dc 3", body="op\nprint @n1[y]")
+        check('[E-700] run-time "1E" above the table raises the $table_model extrapolation fatal',
+              "OSDI(fatal)" in o and "above the table" in o and "'E'" in o,
+              next((l[:70] for l in o.splitlines() if "OSDI(fatal)" in l), o.strip().splitlines()[-1][:70] if o.strip() else ""))
 
     # =================================================== [6] foreign access
     print("\n  -- [6] access function from a foreign discipline --")
