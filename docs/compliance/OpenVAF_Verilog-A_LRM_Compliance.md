@@ -789,7 +789,8 @@ per-operator override, not nature tolerances in general.
   next step *and* makes the integrator bisect onto the event): ✅
 - `$table_model` (LRM 9.21; an earlier revision of this document cited
   it as 9.19): 1-D piecewise-linear, **N-dimensional multilinear**,
-  **natural cubic-spline**, and — since the kernel audit — **closest-point
+  **cubic-spline** (with 9.21.4's end conditions since E-704), and — since
+  the kernel audit — **closest-point
   lookup** (`D`, with 9.21.4's farther-from-zero tie rule), all lowered
   to differentiable MIR so *all* partial derivatives feed the Jacobian
   (a table-based MOSFET gets exact gm and gds):
@@ -841,7 +842,13 @@ per-operator override, not nature tolerances in general.
   `table_data_captured` lint (L038) names such data, and a table built from
   parameters, constants, the temperature or an `@(initial_step)` fill is left
   live, keeping its compile-time folding (its data cannot change between two
-  setups). A data file the call cannot
+  setups). Since [E-704](../../enhancements_doc/Enhancement-704.md) the cubic
+  spline (`3`) takes 9.21.4's end conditions — natural where an end
+  extrapolates linearly or aborts, the end derivative zero where it holds the
+  endpoint value (`C`), so the spline meets its constant extension with a
+  continuous derivative; every spline was the natural one with the clamp
+  applied outside it, and the derivative that feeds the Jacobian jumped at the
+  table edge. A data file the call cannot
   use is refused with its cause named since E-700 — the column shortage
   against the input count, the line and token that is not a number, the
   ragged row — where one label served every cause.

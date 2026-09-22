@@ -13,6 +13,11 @@ checks prove the point of splines over the existing piecewise-linear interpolati
                    across a grid node (and matches cos(V)), while linear gm jumps;
   3. exactness  -- a natural cubic spline reproduces straight-line data exactly;
   4. N-D        -- 2-D tensor-product cubic reproduces sin(x)cos(y) accurately;
+  5. end conditions (Enhancement-704) -- LRM 9.21.4: a 'C' end pins the end
+                   derivative to zero, so the value near the edge is the
+                   clamped-end spline's and gm runs to zero into the constant
+                   extension instead of jumping there; 'L' keeps the natural
+                   spline;
 
 all lowered to differentiable MIR (the AC gm is the autodiff Jacobian).
 
@@ -129,6 +134,48 @@ def main():
         got = -last_val("_o.txt")
         err2d = max(err2d, abs(got - math.sin(x) * math.cos(y)))
     check("2-D cubic accurate", err2d < 5e-3, f"max err = {err2d:.2e}")
+
+    # 5. Enhancement-704 (hunt F3 of 2026-09-21): LRM 9.21.4's end conditions.
+    # "If the user selects linear extrapolation this leads to a natural spline.
+    # If constant extrapolation is specified the end point derivative is set to
+    # zero thus avoiding a discontinuity in the first order derivative at that
+    # end point." Every spline used to be the natural one, with the constant
+    # extension bolted on outside the last knot, so gm jumped at the table edge.
+    print("\n[5] LRM 9.21.4 end conditions: a 'C' end pins the end derivative to zero (E-704)")
+
+    def at(model, x):
+        pts = dc_I(f".model dm {model}", "dm", "va a 0 dc 0\nn1 a 0 dm", "va", f"{x} {x} 1")
+        return pts[0][1] if pts else None
+
+    def near(got, want, tol=1e-7):   # wrdata writes nine significant digits
+        return got is not None and abs(got - want) <= tol * max(1.0, abs(want))
+
+    # y = x^2 sampled at 0..4. The exact fractions come from the moment systems:
+    # the natural spline gives 125/56 at 1.5; with both end derivatives zero
+    # (2h0*M0 + h0*M1 = 6*s0 at the bottom, its mirror at the top) it is 131/56,
+    # with the top end alone 1799/776 and the bottom alone 1751/776. A linear
+    # end continues the tangent of the spline the OTHER end shaped.
+    for model, x, want, note in [
+            ("edge_cubic_l", 1.5, 125 / 56, "\"3L\": the natural spline, as before"),
+            ("edge_cubic_c", 1.5, 131 / 56, "\"3C\": both end derivatives zero"),
+            ("edge_cubic_lc", 1.5, 1799 / 776, "\"3LC\": the top end derivative zero"),
+            ("edge_cubic_cl", 1.5, 1751 / 776, "\"3CL\": the bottom end derivative zero"),
+            ("edge_cubic_cl", 5.0, 16 + 720 / 97, "\"3CL\" above the table continues the bottom-clamped spline's tangent (natural: 16 + 52/7)"),
+            ("edge_cubic_lc", -1.0, -48 / 97, "\"3LC\" below the table continues the top-clamped spline's tangent (natural: -4/7)"),
+            ("edge_cubic_c", 5.0, 16.0, "\"3C\" above the table holds the endpoint"),
+            ("edge_line_c", 3.9, 5577 / 1400, "y = x under \"3C\" bends to meet the flat extension (the line gives 3.9)")]:
+        got = at(model, x)
+        check(f"{note}: {want:.9g} at x={x:g}", near(got, want), f"got {got}")
+    # the derivative that feeds the Jacobian is continuous across a 'C' edge
+    gcl, gcr = ac_gm("edge_cubic_c", 3.99), ac_gm("edge_cubic_c", 4.01)
+    check("\"3C\": gm runs to 0 at the top edge and is 0 outside (it dropped from 7.43 to 0)",
+          abs(gcl - 0.255385714) < 1e-6 and abs(gcr) < 1e-12, f"gm(3.99)={gcl:.6f} gm(4.01)={gcr:.6f}")
+    gc0, gc0m = ac_gm("edge_cubic_c", 0.01), ac_gm("edge_cubic_c", -0.01)
+    check("\"3C\": the same at the bottom edge",
+          abs(gc0 - 0.017185714) < 1e-6 and abs(gc0m) < 1e-12, f"gm(0.01)={gc0:.6f} gm(-0.01)={gc0m:.6f}")
+    gll, glr = ac_gm("edge_cubic_l", 3.99), ac_gm("edge_cubic_l", 4.01)
+    check("\"3L\": gm continues the natural spline's tangent, 7.43 on both sides",
+          abs(gll - 7.428442857) < 1e-6 and abs(glr - 52 / 7) < 1e-6, f"gm(3.99)={gll:.6f} gm(4.01)={glr:.6f}")
 
     print("\nALL PASS" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)

@@ -27,7 +27,7 @@ the sources' silence in `op`, `ac` and `tran`.
 |---|---|---|
 | [F1](#f1--a-z-filter-root-at-the-origin-is-dropped) | *(fixed in [E-699](../../enhancements_doc/Enhancement-699.md): the origin roots are split off when the model is compiled and applied as the power of `z` they are — a shift of the coefficient vector in z⁻¹ — so a zp/zd/np pole at zero is the one-period delay and a zero the advance of 4.5.12, exactly the `zi_nd` spelling; a root the deck can set stays `1 − z⁻¹ r`)* a `zi_zp`/`zi_zd`/`zi_np` root at the origin contributes **1** where LRM 4.5.12 implements it as **`z`**: a pole at zero (the zp spelling of a one-sample delay) is a wire, and the same delay written as `zi_nd` coefficients is right | wrong result, silent |
 | [F2](#f2--e-extrapolation-aborts-on-the-first-newton-iterate) | *(fixed in [E-703](../../enhancements_doc/Enhancement-703.md): the check raises a deferred fatal — a new OSDI return bit and a fatal-level message that waits for the accepted iteration — which the six analyses act on at the accepted-point boundary, before the point is output; an `op` inside the table runs, a point above it is named as above, a sweep or transient aborts at the point that leaves the table)* the `E` extrapolation error is judged on every Newton iterate, so a table whose domain excludes the zero initial guess aborts before the first solve — the LRM's own `sample.dat` under `"1L,1E"` cannot evaluate its Figure 9-2 point | abort where the solution is inside the table |
-| [F3](#f3--a-cubic-spline-under-c-keeps-the-natural-end-condition) | `3C` builds the natural spline and clamps outside it, so the first derivative jumps at the table edge (7.43 to 0 on the `x²` samples); LRM 9.21.4 sets the end derivative to zero under `C` precisely to avoid that | deviation, silent, reaches the Jacobian |
+| [F3](#f3--a-cubic-spline-under-c-keeps-the-natural-end-condition) | *(fixed in [E-704](../../enhancements_doc/Enhancement-704.md): the moment system takes the clamped-end rows — `2h₀M₀ + h₀M₁ = 6s₀` and its mirror — for each end whose method is `C`, in the compile-time matrix and in the run-time Thomas solve alike, so the spline's derivative is zero at that end and continuous into the constant extension; an `L` or `E` end stays natural)* `3C` builds the natural spline and clamps outside it, so the first derivative jumps at the table edge (7.43 to 0 on the `x²` samples); LRM 9.21.4 sets the end derivative to zero under `C` precisely to avoid that | deviation, silent, reaches the Jacobian |
 | [F4](#f4--a-trailing-comment-on-a-data-line-makes-the-file-unusable) | a `#` comment after the numbers on a line makes the whole file "missing, unreadable, or contains no usable table data" for `$table_model`, `noise_table` and `noise_table_log`; 9.21.1 allows comments anywhere, 4.6.4.3 before or after any pair | refusal of legal input |
 | [F5](#f5--the-data-errors-of-921-are-not-raised) | one isoline in a 2-D table, an isoline with a single point, and two rows with the same coordinates and different values are all accepted — the last with a warning that says the LAST value anchors when the FIRST is kept; a dependent selector outside 1..M picks a column in silence | silence, one slip |
 | [F6](#f6--a-run-time-array-table-follows-the-solution) | *(fixed in [E-702](../../enhancements_doc/Enhancement-702.md): the sorted knots are latched into per-call-site instance slots at the instance's first evaluation of each analysis and read back afterwards — the clause's "captured on the first call"; a table built from parameters, constants, the temperature or an `@(initial_step)` fill is left live, and a knot computed from the solution draws the `table_data_captured` warning)* the 1-D array form whose data the body computes is rebuilt at every evaluation; 9.21.1 captures the data on the first call and ignores later changes, and the analogous `laplace_*` policy at least warns | deviation, silent |
@@ -278,6 +278,16 @@ per end by `ctrl.lo`/`ctrl.hi`.
 
 **Kind.** Deviation, silent; every `3C`/`3CC`/`3LC`/`3CL` table, in value near the
 edge and in derivative across it. Not platform-specific.
+
+*Fixed in [E-704](../../enhancements_doc/Enhancement-704.md).* The moment matrix
+of the compile-time spline and the unrolled Thomas solve of the run-time array form
+both take the end conditions from the control string: an end whose method is `C`
+adds its moment to the unknowns with the clamped row (`2h₀M₀ + h₀M₁ = 6s₀` at the
+bottom, `hₗMₙ₋₂ + 2hₗMₙ₋₁ = −6sₗ` at the top), an `L` or `E` end keeps `M = 0`. The
+table above now reads 2.33929, 3.66071, 3.98357 and 0.255 / 0 for the derivative
+across the edge, on the file form and on the run-time array form alike; `"3L"` and
+`"3"` are unchanged. `cubic_table_examples` section [5] and langguard section [4]
+pin the values and the derivative on both sides of each edge.
 
 ## F4 — a trailing comment on a data line makes the file unusable
 

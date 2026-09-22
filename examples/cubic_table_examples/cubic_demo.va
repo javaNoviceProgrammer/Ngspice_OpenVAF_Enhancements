@@ -32,3 +32,37 @@ module surf_cubic(p, n);
     inout p, n; electrical p, n;
     analog I(p, n) <+ $table_model(V(p), V(n), "surf.grid", "3,3");
 endmodule
+
+// Enhancement-704 (hunt F3 of 2026-09-21): LRM 9.21.4's END CONDITIONS. "If the
+// user selects linear extrapolation this leads to a natural spline. If constant
+// extrapolation is specified the end point derivative is set to zero thus
+// avoiding a discontinuity in the first order derivative at that end point."
+// y = x^2 sampled at 0..4 under each control; the values differ from the natural
+// spline's everywhere, and under "C" the derivative runs to zero at the edge
+// instead of jumping from 7.43 to 0 there.
+module edge_cubic_c(p, n);
+    inout p, n; electrical p, n;
+    analog I(p, n) <+ $table_model(V(p, n), '{0,0, 1,1, 2,4, 3,9, 4,16}, "3C");
+endmodule
+
+module edge_cubic_l(p, n);
+    inout p, n; electrical p, n;
+    analog I(p, n) <+ $table_model(V(p, n), '{0,0, 1,1, 2,4, 3,9, 4,16}, "3L");
+endmodule
+
+module edge_cubic_lc(p, n);
+    inout p, n; electrical p, n;
+    analog I(p, n) <+ $table_model(V(p, n), '{0,0, 1,1, 2,4, 3,9, 4,16}, "3LC");
+endmodule
+
+module edge_cubic_cl(p, n);
+    inout p, n; electrical p, n;
+    analog I(p, n) <+ $table_model(V(p, n), '{0,0, 1,1, 2,4, 3,9, 4,16}, "3CL");
+endmodule
+
+// y = x under "3C": the clamped-end spline is NOT the line -- it bends to meet
+// the flat extension with a zero derivative (3.98357 at 3.9, the line 3.9).
+module edge_line_c(p, n);
+    inout p, n; electrical p, n;
+    analog I(p, n) <+ $table_model(V(p, n), '{0,0, 1,1, 2,2, 3,3, 4,4}, "3C");
+endmodule

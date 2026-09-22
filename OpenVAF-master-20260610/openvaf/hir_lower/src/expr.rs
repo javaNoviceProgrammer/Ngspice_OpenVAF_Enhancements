@@ -185,39 +185,68 @@ fn drop_table_columns(rows: &mut [Vec<f64>], ignored: &[usize]) {
     }
 }
 
-/// Builds the natural-cubic-spline "moment matrix" `L` (n×n) for an ascending `grid`, such that the
+/// Builds the cubic-spline "moment matrix" `L` (n×n) for an ascending `grid`, such that the
 /// vector of second derivatives (moments) `M = L · y` for any data vector `y` sampled on the grid.
 ///
-/// A natural cubic spline pins `M[0] = M[n-1] = 0` and solves a tridiagonal system for the interior
-/// moments; because that system is linear in `y` and depends only on the grid spacings, `M` is a
+/// The end conditions follow LRM 9.21.4 (Enhancement-704, hunt F3 of 2026-09-21).
+/// A NATURAL end pins its moment to zero -- "if the user selects linear
+/// extrapolation this leads to a natural spline". A CLAMPED end (`clamp_lo`,
+/// `clamp_hi`: Table 9-31's 'C' at that end) pins the spline's FIRST derivative
+/// there to zero instead -- "if constant extrapolation is specified the end
+/// point derivative is set to zero thus avoiding a discontinuity in the first
+/// order derivative at that end point" -- so that end's moment joins the
+/// unknowns with the row `2·h₀·M₀ + h₀·M₁ = 6·s₀` (mirrored at the top), and
+/// the spline meets its constant extension outside the table with a continuous
+/// derivative. Until Enhancement-704 every spline was the natural one and the
+/// constant extension was bolted on outside the last knot, so the derivative
+/// that feeds the Jacobian jumped at the table edge (7.43 to 0 on `x²`).
+///
+/// The tridiagonal system is linear in `y` and depends only on the grid spacings, so `M` is a
 /// fixed linear operator on `y`. Precomputing `L` at compile time (here) lets the runtime evaluation
 /// express each moment as a constant-weighted sum of the (possibly runtime) grid values — so the
 /// whole spline lowers to differentiable MIR with no runtime linear solve. Returns an all-zero
 /// matrix for `n < 3` (callers fall back to linear interpolation there).
-fn natural_cubic_spline_moment_matrix(grid: &[f64]) -> Vec<Vec<f64>> {
+fn cubic_spline_moment_matrix(grid: &[f64], clamp_lo: bool, clamp_hi: bool) -> Vec<Vec<f64>> {
     let n = grid.len();
     let mut l = vec![vec![0.0f64; n]; n];
     if n < 3 {
         return l;
     }
     let h: Vec<f64> = (0..n - 1).map(|i| grid[i + 1] - grid[i]).collect();
-    let m = n - 2; // number of interior unknowns M[1..=n-2]
+    // the unknown moments: the interior ones, plus each clamped end's
+    let first = if clamp_lo { 0 } else { 1 };
+    let last = if clamp_hi { n - 1 } else { n - 2 };
+    let m = last + 1 - first;
 
-    // Interior tridiagonal system  T · m_interior = R · y.
+    // Tridiagonal system  T · m_unknown = R · y  (row `k - first` is knot k's).
     let mut t = vec![vec![0.0f64; m]; m];
     let mut r = vec![vec![0.0f64; n]; m];
-    for row in 0..m {
-        let k = row + 1; // full-grid index of this interior moment
-        t[row][row] = 2.0 * (h[k - 1] + h[k]);
-        if row >= 1 {
-            t[row][row - 1] = h[k - 1];
+    for k in first..=last {
+        let row = k - first;
+        if k == 0 {
+            // clamped low end, S'(x₀) = 0:  2h₀M₀ + h₀M₁ = 6(y₁ − y₀)/h₀
+            t[row][row] = 2.0 * h[0];
+            t[row][row + 1] = h[0];
+            r[row][0] += -6.0 / h[0];
+            r[row][1] += 6.0 / h[0];
+        } else if k == n - 1 {
+            // clamped high end, S'(xₙ₋₁) = 0:  hₗMₙ₋₂ + 2hₗMₙ₋₁ = −6(yₙ₋₁ − yₙ₋₂)/hₗ
+            t[row][row - 1] = h[n - 2];
+            t[row][row] = 2.0 * h[n - 2];
+            r[row][n - 2] += 6.0 / h[n - 2];
+            r[row][n - 1] += -6.0 / h[n - 2];
+        } else {
+            t[row][row] = 2.0 * (h[k - 1] + h[k]);
+            if k - 1 >= first {
+                t[row][row - 1] = h[k - 1];
+            }
+            if k + 1 <= last {
+                t[row][row + 1] = h[k];
+            }
+            r[row][k - 1] += 6.0 / h[k - 1];
+            r[row][k] += -6.0 * (1.0 / h[k - 1] + 1.0 / h[k]);
+            r[row][k + 1] += 6.0 / h[k];
         }
-        if row + 1 < m {
-            t[row][row + 1] = h[k];
-        }
-        r[row][k - 1] += 6.0 / h[k - 1];
-        r[row][k] += -6.0 * (1.0 / h[k - 1] + 1.0 / h[k]);
-        r[row][k + 1] += 6.0 / h[k];
     }
 
     // Invert T (small, dense) via Gauss–Jordan, then L_interior = T⁻¹ · R.
@@ -258,14 +287,14 @@ fn natural_cubic_spline_moment_matrix(grid: &[f64]) -> Vec<Vec<f64>> {
             }
         }
     }
-    // L rows 1..=n-2 = (T⁻¹ · R); rows 0 and n-1 stay zero (natural boundary).
+    // L rows first..=last = (T⁻¹ · R); a natural end's row stays zero.
     for row in 0..m {
         for col in 0..n {
             let mut s = 0.0;
             for kk in 0..m {
                 s += inv[row][kk] * r[kk][col];
             }
-            l[row + 1][col] = s;
+            l[row + first][col] = s;
         }
     }
     l
@@ -1881,8 +1910,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
     }
 
     /// Dispatches one axis of a compile-time-grid `$table_model` on its
-    /// control (LRM 9.21.2): linear, quadratic or natural cubic spline, or
-    /// closest-point.
+    /// control (LRM 9.21.2): linear, quadratic or cubic spline (with 9.21.4's
+    /// end conditions), or closest-point.
     fn interp_1d_ctrl(
         &mut self,
         x: Value,
@@ -1975,7 +2004,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
     }
 
-    /// Enhancement-390: natural cubic spline over a RUNTIME grid.
+    /// Enhancement-390: cubic spline over a RUNTIME grid.
     ///
     /// `interp_1d_spline` builds its moment matrix by inverting the tridiagonal
     /// system at COMPILE time, which needs the abscissae as constants. With array
@@ -1988,12 +2017,19 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// elimination and back-substitution are straight-line code over runtime
     /// values. Divisions are guarded, so a degenerate grid yields zero moments
     /// (i.e. the linear result) rather than NaN.
+    ///
+    /// Enhancement-704 (hunt F3 of 2026-09-21): the end conditions are LRM
+    /// 9.21.4's, as in `cubic_spline_moment_matrix` -- a natural end for 'L'
+    /// (and 'E'), a zero end DERIVATIVE for `clamp_lo`/`clamp_hi` ('C'), whose
+    /// moment then joins the unknowns.
     fn interp_1d_spline_runtime(
         &mut self,
         x: Value,
         grid: &[Value],
         vals: &[Value],
         linear_extrap: bool,
+        clamp_lo: bool,
+        clamp_hi: bool,
     ) -> Value {
         let n = grid.len();
         if n < 3 {
@@ -2016,35 +2052,58 @@ impl BodyLoweringCtx<'_, '_, '_> {
             })
             .collect();
 
-        // Interior system for M[1..n-2] (natural spline: M[0] = M[n-1] = 0):
+        // The tridiagonal system over the unknown moments:
         //   h[i-1]*M[i-1] + 2*(h[i-1]+h[i])*M[i] + h[i]*M[i+1] = 6*(d[i] - d[i-1])
+        // Enhancement-704: the unknowns are the interior moments M[1..n-2] plus
+        // each clamped end's (LRM 9.21.4: the end derivative is zero there); a
+        // natural end keeps M = 0 outside the system. Written with h = 0 and
+        // d = 0 past the ends, the clamped-end rows are the interior formula with
+        // one dead interval -- 2h₀M₀ + h₀M₁ = 6d₀ at the bottom and
+        // hₗMₙ₋₂ + 2hₗMₙ₋₁ = −6dₗ at the top -- which is also what the last LIVE
+        // knot's row comes out as after compaction, since the replicated interval
+        // after it has zero width and a guarded zero slope.
         let six = self.ctx.fconst(6.0);
         let two = self.ctx.fconst(2.0);
-        let m_int = n - 2; // number of unknowns
+        let first = if clamp_lo { 0 } else { 1 };
+        let last = if clamp_hi { n - 1 } else { n - 2 };
+        let m_int = last + 1 - first; // number of unknowns
         let mut a = Vec::with_capacity(m_int); // sub-diagonal
         let mut b = Vec::with_capacity(m_int); // diagonal
         let mut c = Vec::with_capacity(m_int); // super-diagonal
         let mut r = Vec::with_capacity(m_int); // rhs
-        for k in 0..m_int {
-            let i = k + 1;
-            // Enhancement-391: a knot at the END of the live range -- the last
-            // distinct knot and every replicated slot after it -- carries the
-            // natural boundary condition M = 0. Compaction guarantees the live
-            // prefix has strictly increasing abscissae, so every OTHER row is an
+        for i in first..=last {
+            let h_prev = if i == 0 { F_ZERO } else { h[i - 1] };
+            let h_next = if i == n - 1 { F_ZERO } else { h[i] };
+            let d_prev = if i == 0 { F_ZERO } else { d[i - 1] };
+            let d_next = if i == n - 1 { F_ZERO } else { d[i] };
+            // Enhancement-391: the replicated slots after the last distinct knot
+            // carry the identity row M = 0 rather than a singular one. With a
+            // NATURAL top end the last live knot itself does too -- that is its
+            // boundary condition; with a CLAMPED top end only the replicas (a
+            // zero-width interval BEFORE the knot) are dead, and the last live
+            // knot's row is the clamped one. Compaction guarantees the live
+            // prefix has strictly increasing abscissae, so every other row is an
             // ordinary interior row with two non-degenerate intervals, exactly as
-            // in the de-duplicated compile-time system.
-            let at_end = self.ctx.ins().feq(grid[i], last_x);
-            let ai = h[i - 1];
-            let sum = self.ctx.ins().fadd(h[i - 1], h[i]);
+            // in the de-duplicated compile-time system. A clamped bottom knot is
+            // dead only when the whole table is one knot.
+            let dead = if i == 0 {
+                self.ctx.ins().feq(h_next, F_ZERO)
+            } else if clamp_hi {
+                self.ctx.ins().feq(h_prev, F_ZERO)
+            } else {
+                self.ctx.ins().feq(grid[i], last_x)
+            };
+            let ai = h_prev;
+            let sum = self.ctx.ins().fadd(h_prev, h_next);
             let bi = self.ctx.ins().fmul(two, sum);
-            let ci = h[i];
-            let dd = self.ctx.ins().fsub(d[i], d[i - 1]);
+            let ci = h_next;
+            let dd = self.ctx.ins().fsub(d_next, d_prev);
             let ri = self.ctx.ins().fmul(six, dd);
             let one = self.ctx.fconst(1.0);
-            a.push(self.ctx.make_select(at_end, move |_c, b| if b { F_ZERO } else { ai }));
-            b.push(self.ctx.make_select(at_end, move |_c, b| if b { one } else { bi }));
-            c.push(self.ctx.make_select(at_end, move |_c, b| if b { F_ZERO } else { ci }));
-            r.push(self.ctx.make_select(at_end, move |_c, b| if b { F_ZERO } else { ri }));
+            a.push(self.ctx.make_select(dead, move |_c, b| if b { F_ZERO } else { ai }));
+            b.push(self.ctx.make_select(dead, move |_c, b| if b { one } else { bi }));
+            c.push(self.ctx.make_select(dead, move |_c, b| if b { F_ZERO } else { ci }));
+            r.push(self.ctx.make_select(dead, move |_c, b| if b { F_ZERO } else { ri }));
         }
         // forward elimination
         let mut cp = Vec::with_capacity(m_int);
@@ -2064,7 +2123,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 rp.push(rpk);
             }
         }
-        // back substitution -> interior moments
+        // back substitution -> the unknown moments
         let mut m_rev: Vec<Value> = Vec::with_capacity(m_int);
         for k in (0..m_int).rev() {
             let v = if k == m_int - 1 {
@@ -2078,9 +2137,13 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
         m_rev.reverse();
         let mut moments = Vec::with_capacity(n);
-        moments.push(F_ZERO);
+        if !clamp_lo {
+            moments.push(F_ZERO);
+        }
         moments.extend(m_rev);
-        moments.push(F_ZERO);
+        if !clamp_hi {
+            moments.push(F_ZERO);
+        }
 
         // segment i:  M[i]*a^3/(6h) + M[i+1]*b^3/(6h)
         //           + (vals[i]/h - M[i]*h/6)*a + (vals[i+1]/h - M[i+1]*h/6)*b
@@ -2129,7 +2192,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // Extrapolation, mirroring the compile-time spline exactly: with 'L' the
         // END TANGENT is continued, NOT the cubic extended. Getting this wrong is
         // invisible inside the grid -- interior values match to the last digit
-        // either way -- and shows up only outside it.
+        // either way -- and shows up only outside it. The tangent formulas take
+        // the end's moment as zero: a linear end is a natural one, and a clamped
+        // end's extension is overridden with the endpoint value by the caller.
         let g0 = grid[0];
         let gl = grid[n - 1];
         if linear_extrap {
@@ -2377,7 +2442,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
     }
 
     /// Weighted sum `Σ_j w[j]·vals[j]` (compile-time weights, runtime values), skipping zero
-    /// weights. Used to express a natural-spline moment `M_i = Σ_j L[i][j]·vals[j]` in MIR.
+    /// weights. Used to express a spline moment `M_i = Σ_j L[i][j]·vals[j]` in MIR.
     fn weighted_sum(&mut self, w: &[f64], vals: &[Value]) -> Value {
         let mut acc: Option<Value> = None;
         for (j, &wj) in w.iter().enumerate() {
@@ -2394,14 +2459,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
         acc.unwrap_or(F_ZERO)
     }
 
-    /// One-dimensional **natural cubic spline** interpolation of runtime `vals` at `x`, built as a
+    /// One-dimensional **cubic spline** interpolation of runtime `vals` at `x`, built as a
     /// select chain over the grid intervals so it is differentiable (and C¹ — the smooth-derivative
     /// point of splines: `gm`/`gds` are continuous, unlike piecewise-linear). The per-point second
     /// derivatives (moments) are `M = L·vals` with `L` precomputed from the (compile-time) grid, so
     /// each moment is a constant-weighted sum of the runtime `vals` — no runtime linear solve.
-    /// Degenerates to `interp_1d_values` (linear) for fewer than 3 points. Extrapolation mirrors the
-    /// linear kernel: clamp to the endpoint value, or (with `linear_extrap`) continue the spline's
-    /// end tangent.
+    /// Degenerates to `interp_1d_values` (linear) for fewer than 3 points. The end conditions
+    /// are LRM 9.21.4's (Enhancement-704): natural where the end extrapolates linearly (or
+    /// aborts, 'E'), a zero end derivative where it holds the endpoint value ('C'), so the
+    /// clamp outside the table continues the spline with a continuous derivative. Extrapolation
+    /// mirrors the linear kernel: clamp to the endpoint value, or (with `linear_extrap`)
+    /// continue the spline's end tangent.
     fn interp_1d_spline(
         &mut self,
         x: Value,
@@ -2413,8 +2481,10 @@ impl BodyLoweringCtx<'_, '_, '_> {
         if n < 3 {
             return self.interp_1d_values(x, grid, vals, ctrl);
         }
-        let l = natural_cubic_spline_moment_matrix(grid);
-        // moments M[i] (M[0] = M[n-1] = 0 for a natural spline)
+        let clamp_lo = ctrl.lo == TblExtrap::Clamp;
+        let clamp_hi = ctrl.hi == TblExtrap::Clamp;
+        let l = cubic_spline_moment_matrix(grid, clamp_lo, clamp_hi);
+        // moments M[i] (a natural end's is zero, a clamped end's is solved for)
         let moments: Vec<Value> =
             (0..n).map(|i| self.weighted_sum(&l[i], vals)).collect();
 
@@ -2466,12 +2536,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
         // Extrapolation outside [grid[0], grid[n-1]], PER END (LRM 9.21.2).
         // Linear continues the spline's end tangent; Clamp holds the endpoint
-        // value; Error is Table 9-31's 'E' via `apply_end_extrap`.
+        // value; Error is Table 9-31's 'E' via `apply_end_extrap`. A linear end
+        // is a natural one, so its tangent formula may take that end's moment
+        // as zero.
         let h0 = grid[1] - grid[0];
         let hl = grid[n - 1] - grid[n - 2];
         if ctrl.lo == TblExtrap::Linear {
             // continue the spline's end tangent:
-            //   S'(grid[0])   = (v1-v0)/h0 - h0/6 · M[1]
+            //   S'(grid[0])   = (v1-v0)/h0 - h0/6 · M[1]      (M[0] = 0)
             let g0 = self.ctx.fconst(grid[0]);
             let h0c = self.ctx.fconst(h0);
             let h06 = self.ctx.fconst(h0 / 6.0);
@@ -2486,7 +2558,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
             result = self.ctx.make_select(below, move |_c, b| if b { low } else { result });
         }
         if ctrl.hi == TblExtrap::Linear {
-            //   S'(grid[n-1]) = (v_{n-1}-v_{n-2})/h_l + h_l/6 · M[n-2]
+            //   S'(grid[n-1]) = (v_{n-1}-v_{n-2})/h_l + h_l/6 · M[n-2]   (M[n-1] = 0)
             let gl = self.ctx.fconst(grid[n - 1]);
             let hlc = self.ctx.fconst(hl);
             let hl6 = self.ctx.fconst(hl / 6.0);
@@ -2507,9 +2579,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// N-dimensional interpolation as recursive 1-D interpolation: peel the outermost axis,
     /// interpolate each of its slices over the remaining axes (giving one runtime value per grid
     /// line), then interpolate those along the outermost axis. `tensor` is row-major (outermost axis
-    /// slowest). With `cubic`, each 1-D step is a natural cubic spline (giving the exact
-    /// tensor-product natural spline — recursive-1D natural spline equals the tensor-product one);
-    /// otherwise multilinear. Differentiable in every coordinate.
+    /// slowest). With `cubic`, each 1-D step is a cubic spline with that axis's end conditions
+    /// (giving the exact tensor-product spline — recursive-1D spline equals the tensor-product
+    /// one); otherwise multilinear. Differentiable in every coordinate.
     fn interp_nd(
         &mut self,
         coords: &[Value],
@@ -2626,7 +2698,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 (grid, vals)
             };
             let result = match ctrl.interp {
-                TblInterp::Cubic => self.interp_1d_spline_runtime(x, &grid, &vals, linear_extrap),
+                TblInterp::Cubic => self.interp_1d_spline_runtime(
+                    x,
+                    &grid,
+                    &vals,
+                    linear_extrap,
+                    ctrl.lo == TblExtrap::Clamp,
+                    ctrl.hi == TblExtrap::Clamp,
+                ),
                 TblInterp::Quadratic => {
                     self.interp_1d_quad_runtime(x, &grid, &vals, linear_extrap)
                 }

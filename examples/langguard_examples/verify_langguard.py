@@ -488,11 +488,15 @@ endmodule
         _d, rc2, o = tbl_ctrl(ctrl)
         check(f'control "{ctrl}" still compiles', rc2 == 0,
               (o.strip().splitlines() or [""])[0][:60])
-    # y = x^2 sampled at 0, 1, 2 -- the linear kernel's end slopes are 1 and 3,
-    # the natural spline's end tangent at 2 is 3.5 (E-391 continues it)
+    # y = x^2 sampled at 0, 1, 2 -- the linear kernel's end slopes are 1 and 3.
+    # Enhancement-704 (hunt F3 of 2026-09-21): a 'C' end pins the spline's end
+    # DERIVATIVE to zero (LRM 9.21.4), so "3CL" is the spline with S'(0) = 0 and
+    # a natural top end, whose tangent at 2 is 24/7 -- the natural spline's is
+    # 3.5, which E-391 continued and E-700 pinned as 7.5 here.
     for ctrl, xq, want, note in [("1LC", -1.0, -1.0, "linear below"), ("1LC", 3.0, 4.0, "clamped above"),
                                  ("1CL", -1.0, 0.0, "clamped below"), ("1CL", 3.0, 7.0, "linear above"),
-                                 ("3CL", -1.0, 0.0, "clamped below"), ("3CL", 3.0, 7.5, "the spline tangent above"),
+                                 ("3CL", -1.0, 0.0, "clamped below"),
+                                 ("3CL", 3.0, 4.0 + 24.0 / 7.0, "the tangent of the bottom-clamped spline above (E-704; 7.5 for the natural one)"),
                                  ("1E", 1.5, 2.5, "inside the table")]:
         d, rc2, o = tbl_ctrl(ctrl)
         if rc2 != 0:
@@ -501,6 +505,56 @@ endmodule
         v = vals(o, "@n1[y]")
         check(f'[E-700] run-time "{ctrl}" at x={xq:g} gives {want:g} ({note})',
               close(v[0] if v else None, want, 1e-9), f"{v}")
+    # Enhancement-704: LRM 9.21.4's end conditions on the run-time array form --
+    # "if constant extrapolation is specified the end point derivative is set to
+    # zero thus avoiding a discontinuity in the first order derivative at that
+    # end point". Both splines were the natural one with the clamp bolted on
+    # outside the last knot. On the same three knots: both ends clamped gives
+    # moments (0, 6, -12) and 23/8 at 1.5 (the natural spline: (0, 3, 0), 37/16);
+    # the bottom alone gives (12/7, 18/7, 0) and 131/56; a top-clamped spline's
+    # tangent at 0 is 0 (the natural one's is 1/2), so "3LC" at -1 is 0.
+    for ctrl, xq, want, note in [("3CC", 1.5, 23.0 / 8.0, "both end derivatives zero; the natural spline gives 2.3125"),
+                                 ("3C", 1.5, 23.0 / 8.0, "one 'C' clamps both ends"),
+                                 ("3CL", 1.5, 131.0 / 56.0, "the bottom end derivative zero, the top natural"),
+                                 ("3LC", -1.0, 0.0, "the tangent of a top-clamped spline at 0 is 0 (the natural one's is 0.5)"),
+                                 ("3L", 1.5, 37.0 / 16.0, "the natural spline, unchanged")]:
+        d, rc2, o = tbl_ctrl(ctrl)
+        if rc2 != 0:
+            continue
+        rc3, o = op(d, "N1 a 0 md", card="dut()", src=f"V1 a 0 dc {xq}", body="op\nprint @n1[y]")
+        v = vals(o, "@n1[y]")
+        check(f'[E-704] run-time "{ctrl}" at x={xq:g} gives {want:.9g} ({note})',
+              close(v[0] if v else None, want, 1e-9), f"{v}")
+    # the derivative that feeds the Jacobian is continuous across the edge of a
+    # 'C' table: S'(2) = 0 meets the flat extension (it dropped from 3.49 to 0)
+    src_g = HDR + """
+module dut(p,n);
+ inout p,n; electrical p,n;
+ real gx[0:2], gy[0:2];
+ (* desc="g" *) real g;
+ analog begin
+   gx[0]=0.0; gx[1]=1.0; gx[2]=2.0;
+   gy[0]=0.0; gy[1]=1.0; gy[2]=4.0;
+   g = ddx($table_model(V(p,n), gx, gy, "%s"), V(p,n));
+   I(p,n) <+ g*1e-3;
+ end
+endmodule
+"""
+    for ctrl, pts, note in [("3C", [(1.99, 0.1191), (2.01, 0.0), (0.01, 0.0003), (-0.01, 0.0)],
+                             "S' runs to 0 at each end and stays 0 outside"),
+                            ("3L", [(1.99, 3.49985), (2.01, 3.5)], "the natural spline's tangent continues")]:
+        d, rc2, o = build(src_g % ctrl, "tg")
+        if rc2 != 0:
+            check(f'[E-704] ddx of a run-time "{ctrl}" table compiles', False, (o.strip().splitlines() or [""])[0][:60])
+            continue
+        got = []
+        for xq, _w in pts:
+            rc3, o = op(d, "N1 a 0 md", card="dut()", src=f"V1 a 0 dc {xq}", body="op\nprint @n1[g]")
+            v = vals(o, "@n1[g]")
+            got.append(v[0] if v else None)
+        check(f'[E-704] ddx of the run-time "{ctrl}" table across the edge: ' +
+              ", ".join(f"{w:g} at {xq:g}" for xq, w in pts) + f" ({note})",
+              all(close(g, w, 1e-6) for g, (_x, w) in zip(got, pts)), f"{got}")
     d, rc2, o = tbl_ctrl("1E")
     if rc2 == 0:
         rc3, o = op(d, "N1 a 0 md", card="dut()", src="V1 a 0 dc 3", body="op\nprint @n1[y]")
