@@ -193,8 +193,149 @@ def main():
                 same = False
         check(f"{fam}: four transient waveforms identical", same and base is not None)
 
+    e712_checks()
+
     print(f"\n{passed}/{checks} checks passed")
     return 0 if passed == checks else 1
+
+
+# ------------------------------------------------- Enhancement-712 (campaign F9)
+E712_OSDI = os.path.join(tempfile.gettempdir(), "filterforms_e712.osdi")
+
+
+def e712_compile(name, src, timeout=600):
+    """Compile `src`; returns (ok, seconds, peak RSS of the compiler in MB, log)."""
+    import resource
+    import time
+    path = os.path.join(tempfile.gettempdir(), f"ff_{name}.va")
+    with open(path, "w") as fh:
+        fh.write(src)
+    try:
+        os.remove(E712_OSDI)
+    except OSError:
+        pass
+    r0 = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    t0 = time.time()
+    try:
+        r = subprocess.run([OPENVAF, path, "-o", E712_OSDI], capture_output=True, text=True,
+                           timeout=timeout)
+        log = r.stdout + r.stderr
+        ok = r.returncode == 0 and os.path.exists(E712_OSDI)
+    except subprocess.TimeoutExpired:
+        log, ok = f"timeout after {timeout} s", False
+    t = time.time() - t0
+    r1 = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    # ru_maxrss is the largest of all children so far (bytes on macOS, kB on
+    # Linux); it only says something when this compile raised it.
+    unit = 1e6 if sys.platform == "darwin" else 1e3
+    rss = (r1 / unit) if r1 > r0 else float("nan")
+    return ok, t, rss, log
+
+
+def e712_run(name, source, control, osdi=None):
+    path = os.path.join(tempfile.gettempdir(), f"ff_{name}.cir")
+    with open(path, "w") as fh:
+        fh.write(f"""* filterforms {name}
+{source}
+.control
+pre_osdi {osdi or E712_OSDI}
+{control}
+.endc
+.end
+""")
+    r = subprocess.run([NGSPICE, "-b", path], capture_output=True, text=True, timeout=300)
+    return r.stdout + r.stderr
+
+
+def e712_filters(n, poles):
+    body = "\n".join(
+        "I(p,n) <+ laplace_zp(V(p,n), '{}, '{%s});"
+        % ",".join("-%d.0e6,0.0" % (k + 1) for k in range(poles)) for _ in range(n))
+    return ('`include "disciplines.vams"\nmodule many(p, n);\ninout p, n; electrical p, n;\n'
+            'analog begin\n%s\nend\nendmodule\n' % body)
+
+
+def e712_checks():
+    """Enhancement-712 (robustness campaign F9 of 2026-09-23): compile time and
+    memory of a module with many Laplace filters, and of a module with many
+    Jacobian entries, and the answers such modules give.
+
+    A 100-filter module of twenty poles each (2 000 filter states) took 113 s and
+    48 GB: the zero-root choice of the root-to-polynomial expansion was four
+    branch diamonds per (root, coefficient) pair, 54 000 blocks for 20 filters,
+    and the OSDI descriptor module's straight-line helper functions -- one
+    memory operation per Jacobian entry -- hit two quadratic LLVM backend
+    passes. The expansion decides the choice at compile time for constant
+    roots (a `select` otherwise) and the descriptor module is built at -O0
+    above 256 entries. The budgets below are loose (a loaded sweep machine);
+    before the fix the 100-filter compile was two orders of magnitude outside
+    both.
+    """
+    print("\nEnhancement-712: many filters and many Jacobian entries (campaign F9)")
+
+    # 100 filters of 20 poles, 2 000 states, 6 200 Jacobian entries: 113 s and
+    # 48 GB before, 1.6 s and 0.55 GB now.
+    ok, t, rss, log = e712_compile("many100", e712_filters(100, 20))
+    check("100 twenty-pole filters compile", ok, "" if ok else log.strip()[:80])
+    check(f"  ... in under 60 s ({t:.1f} s)", ok and t < 60.0)
+    check(f"  ... in under 4 GB ({rss:.0f} MB peak)", ok and (rss != rss or rss < 4000.0))
+    if ok:
+        # every filter has unit dc gain (prod(1 - 0/r) = 1), so I = 100 V
+        out = e712_run("many100", "v1 a 0 dc 0.01\nn1 a 0 mm\n.model mm many()", "op\nprint i(v1)")
+        m = re.findall(r"i\(v1\)\s*=\s*(-?[\d.eE+-]+)", out)
+        got = float(m[0]) if m else None
+        check(f"  dc current of 100 unit-gain filters at 10 mV: {got}",
+              got is not None and abs(got + 1.0) < 1e-6)
+        # 20 states per filter: the transient response of one is 1/100 of all
+        out = e712_run("many100t", "v1 a 0 pulse(0 0.01 0 1p 1p 1 2)\nn1 a 0 mm\n.model mm many()",
+                       "tran 5e-8 5e-5 uic\nprint i(v1)")
+        rows = [float(v) for v in re.findall(r"^\s*\d+\s+[\d.eE+-]+\s+(-?[\d.eE+-]+)\s*$", out, re.M)]
+        # the time constants of poles at 1..20 Mrad/s add up to 3.6 us; at 50 us
+        # the step response has settled to the dc gain
+        check(f"  transient settles to the dc current ({rows[-1] if rows else None})",
+              bool(rows) and abs(rows[-1] + 1.0) < 1e-3)
+
+    # a root that is a parameter is decided at run time (a select, not a
+    # branch); a zero root makes the factor a bare s (LRM 4.5.11): the same
+    # differentiator written with a literal 0 and with a parameter set to 0
+    src = ('`include "disciplines.vams"\n'
+           'module zlit(p, n); inout p, n; electrical p, n;\n'
+           "analog I(p,n) <+ 1.0e-6 * laplace_zp(V(p,n), '{0.0, 0.0}, '{-1.0e6, 0.0});\nendmodule\n"
+           'module zpar(p, n); inout p, n; electrical p, n; parameter real z0 = 0.0;\n'
+           "analog I(p,n) <+ 1.0e-6 * laplace_zp(V(p,n), '{z0, 0.0}, '{-1.0e6, 0.0});\nendmodule\n")
+    ok, t, rss, log = e712_compile("zeroroot", src)
+    check("a zero root as a literal and as a parameter compiles", ok, "" if ok else log.strip()[:80])
+    if ok:
+        # an admittance of H(s) = 1e-6 s / (1 + s/1e6): |I| = w*1e-6 / |1 + jw/1e6| per volt
+        for mod in ("zlit", "zpar"):
+            f = 1e5
+            w = 2 * math.pi * f
+            want = w * 1e-6 / abs(1 + 1j * w / 1e6)
+            out = e712_run(mod, f"v1 a 0 dc 0 ac 1\nn1 a 0 m{mod}\n.model m{mod} {mod}()",
+                           f"ac lin 1 {f:g} {f:g}\nprint mag(i(v1))")
+            mg = re.findall(r"mag\(i\(v1\)\)\s*=\s*([\d.eE+-]+)", out)
+            got = float(mg[0]) if mg else None
+            check(f"  {mod}: |H| at 100 kHz {got} vs {want:.6g}",
+                  got is not None and abs(got - want) <= 1e-4 * want)
+
+    # no filter at all: a 300-node resistor ladder has 904 Jacobian entries, so
+    # its descriptor module is the -O0 path; 5.8 s at 400 nodes before
+    nodes = 300
+    src = ('`include "disciplines.vams"\nmodule ladder(p, n);\ninout p, n; electrical p, n;\n'
+           + " ".join("electrical x%d;" % i for i in range(nodes))
+           + "\nanalog begin\nI(p, x0) <+ V(p, x0)*1e-3;\n"
+           + "\n".join("I(x%d, x%d) <+ V(x%d, x%d)*1e-3;" % (i, i + 1, i, i + 1) for i in range(nodes - 1))
+           + "\nI(x%d, n) <+ V(x%d, n)*1e-3;\nend\nendmodule\n" % (nodes - 1, nodes - 1))
+    ok, t, rss, log = e712_compile("ladder300", src)
+    check(f"a 300-node ladder (904 Jacobian entries) compiles in under 20 s ({t:.1f} s)",
+          ok and t < 20.0, "" if ok else log.strip()[:80])
+    if ok:
+        out = e712_run("ladder300", "v1 a 0 dc 3.01\nn1 a 0 mm\n.model mm ladder()", "op\nprint i(v1)")
+        m = re.findall(r"i\(v1\)\s*=\s*(-?[\d.eE+-]+)", out)
+        got = float(m[0]) if m else None
+        # 301 resistors of 1 kOhm in series: 3.01 V / 301 kOhm = 10 uA
+        check(f"  its dc current is 3.01 V over 301 kOhm: {got}",
+              got is not None and abs(got + 1e-5) < 1e-11)
 
 
 if __name__ == "__main__":

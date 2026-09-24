@@ -28,6 +28,12 @@ use llvm_sys::target_machine::LLVMCodeGenOptLevel;
 /// Enhancement-579: parameter count above which a module's setup functions are
 /// generated at -O0. See the comment at the setup module creation.
 const SETUP_FAST_CODEGEN_PARAMS: usize = 1024;
+
+/// Enhancement-712: Jacobian entry count (summed over the file's modules) above
+/// which the descriptor module -- the `load_jacobian_*`, `load_residual_*`,
+/// `load_spice_rhs_*` and `write_jacobian_array_*` helpers -- is generated at
+/// -O0. See the comment at the descriptor module creation.
+const MAIN_FAST_CODEGEN_ENTRIES: usize = 256;
 use mir_llvm::{CodegenCx, LLVMBackend};
 use ndatable::nda_arrays;
 use salsa::ParallelDatabase;
@@ -130,6 +136,14 @@ pub fn compile<'a>(
     // compact models included, is compiled exactly as before. Decided here,
     // before the code-generation threads start, because the switch is
     // process-wide and must precede the first pass pipeline.
+    // Enhancement-712: `OPENVAF_LLVM_ARGS` hands LLVM command-line options to
+    // the process -- `-time-passes`, `-print-after=codegenprepare
+    // -print-module-scope`, `-enable-misched=false` -- which is how the
+    // descriptor module was found and measured. A diagnostic aid; the switch
+    // below and every other setting are decided by the compiler itself.
+    if let Ok(args) = std::env::var("OPENVAF_LLVM_ARGS") {
+        mir_llvm::parse_llvm_args(&args);
+    }
     if hir_lower::LARGEST_SELECT_TREE.load(std::sync::atomic::Ordering::Relaxed)
         > SLP_TABLE_KNOTS_LIMIT
     {
@@ -231,8 +245,13 @@ pub fn compile<'a>(
 
                 if emit {
                     let path = &paths[i * 4];
+                    let _pt = std::time::Instant::now();
                     llmod.optimize();
-                    assert_eq!(llmod.emit_object(path.as_ref()), Ok(()))
+                    let _po = _pt.elapsed();
+                    assert_eq!(llmod.emit_object(path.as_ref()), Ok(()));
+                    if std::env::var("PHASE_PROF").is_ok() {
+                        eprintln!("PHASE llvm {} optimize {:?} emit {:?}", name1, _po, _pt.elapsed() - _po);
+                    }
                 }
 
                 if dump_ir {
@@ -280,8 +299,13 @@ pub fn compile<'a>(
 
                 if emit {
                     let path = &paths[i * 4 + 1];
+                    let _pt = std::time::Instant::now();
                     llmod.optimize();
-                    assert_eq!(llmod.emit_object(path.as_ref()), Ok(()))
+                    let _po = _pt.elapsed();
+                    assert_eq!(llmod.emit_object(path.as_ref()), Ok(()));
+                    if std::env::var("PHASE_PROF").is_ok() {
+                        eprintln!("PHASE llvm {} optimize {:?} emit {:?}", name1, _po, _pt.elapsed() - _po);
+                    }
                 }
 
                 if dump_ir {
@@ -313,8 +337,13 @@ pub fn compile<'a>(
 
                 if emit {
                     let path = &paths[i * 4 + 2];
+                    let _pt = std::time::Instant::now();
                     llmod.optimize();
-                    assert_eq!(llmod.emit_object(path.as_ref()), Ok(()))
+                    let _po = _pt.elapsed();
+                    assert_eq!(llmod.emit_object(path.as_ref()), Ok(()));
+                    if std::env::var("PHASE_PROF").is_ok() {
+                        eprintln!("PHASE llvm {} optimize {:?} emit {:?}", name1, _po, _pt.elapsed() - _po);
+                    }
                 }
 
                 if dump_ir {
@@ -344,8 +373,13 @@ pub fn compile<'a>(
 
                 if emit {
                     let path = &paths[i * 4 + 3];
+                    let _pt = std::time::Instant::now();
                     llmod.optimize();
-                    assert_eq!(llmod.emit_object(path.as_ref()), Ok(()))
+                    let _po = _pt.elapsed();
+                    assert_eq!(llmod.emit_object(path.as_ref()), Ok(()));
+                    if std::env::var("PHASE_PROF").is_ok() {
+                        eprintln!("PHASE llvm {} optimize {:?} emit {:?}", name1, _po, _pt.elapsed() - _po);
+                    }
                 }
 
                 if dump_ir {
@@ -355,7 +389,31 @@ pub fn compile<'a>(
             });
         }
 
-        let llmod = unsafe { back.new_module(&name, opt_lvl).unwrap() };
+        // Enhancement-712 (robustness campaign F9 of 2026-09-23): the
+        // descriptor module's helper functions are each one straight-line block
+        // with a few memory operations per Jacobian entry or unknown --
+        // `*jacobian_ptr[i] += value[i]` for every entry, `rhs[node[i]] -= ...`
+        // for every entry of every row -- and two of LLVM's backend passes are
+        // quadratic in such a block: the post-legalisation DAG combine's
+        // post-indexed load/store search, and the machine scheduler's alias
+        // checks between every pair of memory operations through the loaded
+        // pointers. At 2 000 entries the descriptor module alone took 24 s of a
+        // 24 s compile, and 2 480 (40 twenty-pole filters) 14 s; the eval
+        // function of the same modules took half a second. Above
+        // MAIN_FAST_CODEGEN_ENTRIES Jacobian entries the descriptor module is
+        // built at -O0 (FastISel and no middle-end passes), which is linear:
+        // the helpers are memory-bound copies whose code quality does not
+        // change with the optimisation level. Every compact model keeps the
+        // requested level (the largest CMC models have about a hundred
+        // entries); the eval, access and setup modules are unaffected either
+        // way.
+        let main_entries: usize = osdi_modules.iter().map(|m| m.dae_system.jacobian.len()).sum();
+        let main_lvl = if main_entries > MAIN_FAST_CODEGEN_ENTRIES {
+            LLVMCodeGenOptLevel::LLVMCodeGenLevelNone
+        } else {
+            opt_lvl
+        };
+        let llmod = unsafe { back.new_module(&name, main_lvl).unwrap() };
         let cx = new_codegen(back, &llmod, &literals);
         let tys = OsdiTys::new(&cx, NonNull::from(target_data).as_ptr());
 
@@ -966,9 +1024,17 @@ pub fn compile<'a>(
 
         if emit {
             // println!("{}", llmod.to_str());
+            let _pt = std::time::Instant::now();
             llmod.optimize();
+            let _po = _pt.elapsed();
             // println!("{}", llmod.to_str());
-            assert_eq!(llmod.emit_object(main_file.as_ref()), Ok(()))
+            assert_eq!(llmod.emit_object(main_file.as_ref()), Ok(()));
+            if std::env::var("PHASE_PROF").is_ok() {
+                let (_j, _u): (usize, usize) = osdi_modules.iter().fold((0, 0), |(j, u), m| {
+                    (j + m.dae_system.jacobian.len(), u + m.dae_system.unknowns.len())
+                });
+                eprintln!("PHASE llvm main optimize {:?} emit {:?} jacobian={} unknowns={}", _po, _pt.elapsed() - _po, _j, _u);
+            }
         }
     });
 

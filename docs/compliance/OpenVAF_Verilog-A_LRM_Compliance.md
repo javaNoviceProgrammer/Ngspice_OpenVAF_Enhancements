@@ -635,6 +635,14 @@ V(out) <+ ac_stim("ac", 1.0, `M_PI/2);     // AC stimulus; phase in RADIANS (LRM
   test is a compile-time one, since Table 4-20 fixes the root vectors and with
   them the filter's order: a literal, an expression of literals or a
   `localparam` zero is the origin, a root the deck can set never is.
+  The Laplace root forms' own origin exception (4.5.11, a root at zero is the
+  factor `s`) is decided at compile time for a constant root and by a
+  branchless select for a parameter root since
+  [E-712](../../enhancements_doc/Enhancement-712.md) — it was four branch
+  diamonds per root and coefficient, 54 000 blocks for twenty 20-pole
+  filters, and 100 of them took 113 s and 48 GB to compile (1.6 s and
+  0.55 GB now; the OSDI descriptor helpers of any module above 256
+  Jacobian entries are built at -O0 in the same enhancement).
 
   Two approximations in this group are deliberate and now stated
   plainly (a third, `transition`/`slew` as one rate-limited tracking loop

@@ -169,7 +169,12 @@ impl<'a> CompiledModule<'a> {
         sink: &mut ConsoleSink,
     ) -> CompiledModule<'a> {
         // Build MIR for the module
+        let _pt = std::env::var("PHASE_PROF").is_ok();
+        let _t = std::time::Instant::now();
         let mut cx = Context::new(db, literals, module);
+        if _pt {
+            eprintln!("PHASE lower {:?}  insts={}", _t.elapsed(), cx.func.dfg.num_insts());
+        }
 
         if dump_unopt_mir {
             println!("Unoptimized MIR (no DAE) of {}", module.module.name(db));
@@ -177,13 +182,21 @@ impl<'a> CompiledModule<'a> {
         }
 
         // Some basic optimization
+        let _t = std::time::Instant::now();
         cx.compute_outputs(true);
         cx.compute_cfg();
         cx.optimize(OptimiziationStage::Initial);
         debug_assert!(cx.func.validate());
+        if _pt {
+            eprintln!("PHASE optimize-initial {:?}  insts={}", _t.elapsed(), cx.func.dfg.num_insts());
+        }
 
         // Add extra stuff needed for evaluating the DAE system
+        let _t = std::time::Instant::now();
         let topology = Topology::new(&mut cx);
+        if _pt {
+            eprintln!("PHASE topology {:?}", _t.elapsed());
+        }
         debug_assert!(cx.func.validate());
         let _t0 = std::time::Instant::now();
         let mut terminal_shorts = Vec::new();

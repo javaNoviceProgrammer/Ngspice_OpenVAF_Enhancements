@@ -58,7 +58,7 @@ through.
 | [F6](#f6--a-nan-or-infinity-from-the-constant-folder-passes-every-constant-argument-check) | *(fixed in [E-706](../../enhancements_doc/Enhancement-706.md): `0.0/0.0` is a compile error, `1.0/0.0` folds to the infinity it is and the consumer that needs a finite number says so, `exp(1000.0)` and `pow(10.0, 400.0)` are refused as exceeding the largest double)* `0.0/0.0` and `1.0/0.0` fold to NaN and infinity without a word where `ln(0.0)`, `sqrt(-1.0)` and `pow(0.0, -1.0)` are compile errors; the NaN then passes every constant-argument check that refuses −1 (`absdelay`, `transition`, `slew`, `$bound_step`, `$limit`, the distributions, a parameter default or range bound), and at run time a NaN delay is a zero delay, a NaN `maxdelay` holds the output at 0 for the whole run, a NaN transition time is the default, a NaN slew rate is no limit and a NaN Laplace coefficient is refused as "zero" | diagnostic gap with silent wrong outputs |
 | [F7](#f7--compile-time-grows-quadratically-with-the-size-of-a-table-array-or-coefficient-list) | compile time is quadratic or worse in the size of an array or list: a `localparam` array of 20 000 values takes 15.5 s and 100 000 does not finish in 300 s; a loop that fills a 20 000-element array takes 107 s (40 000 does not finish in 400 s) and one that only reads a 10 000-element array 27 s; an inline `noise_table` of 5 000 pairs takes 58 s (100 000 pairs, 300 s, unfinished); a `laplace_nd` denominator of 1 000 coefficients 17 s (100 000, unfinished) | pathological compile time at realistic sizes |
 | [F8](#f8--a-file-of-1800-or-more-modules-fails-at-the-link-step-as-linker-not-found) | *(fixed in [E-707](../../enhancements_doc/Enhancement-707.md): a response file above 16 KiB of arguments, an `exec` failure names the program and the cause, a failed link removes its object files; 2 000 modules link in 14.4 s)* 1 700 modules in one file compile in 12 s and 1.7 GB; 1 800 fail after the same 12 s with "linker not found: Argument list too long (os error 7)" — one object file per module is passed on the linker's command line, and the message reports the `exec` error as a missing linker | wrong message, hard limit |
-| [F9](#f9--compile-memory-grows-quadratically-with-the-number-of-filter-states) | 20 `laplace_zp` filters of 20 poles in one module compile in 7 s and 2.6 GB; 100 of them (2 000 filter states) in 113 s and **48 GB** — five times the filters, eighteen times the memory | pathological compile memory |
+| [F9](#f9--compile-memory-grows-quadratically-with-the-number-of-filter-states) | *(fixed in [E-712](../../enhancements_doc/Enhancement-712.md): the root expansion decides the zero-root choice at compile time instead of opening four branch diamonds per root and coefficient, and the OSDI descriptor module is built at -O0 above 256 Jacobian entries; 100 filters compile in 1.6 s and 0.55 GB, 20 in 0.3 s and 134 MB)* 20 `laplace_zp` filters of 20 poles in one module compile in 7 s and 2.6 GB; 100 of them (2 000 filter states) in 113 s and **48 GB** — five times the filters, eighteen times the memory | pathological compile memory |
 | [F10](#f10--diagnostic-slips) | *(fixed in [E-708](../../enhancements_doc/Enhancement-708.md): L030 for a based literal wider than its size, an empty `` `include `` name named, a width or precision above 4096 refused and a `*` width clamped, the Laplace coefficient must be a finite non-zero number)* a hex literal that does not fit 32 bits (`'hFFFFFFFFFF`) is truncated to −1 in silence where the decimal `2147483648` draws L030; `` `include "" `` is reported as "is a directory"; `$sformat` honours a width up to 10⁹ (2 GB at run time) and drops a wider one in silence; `laplace_nd` with a NaN coefficient is refused at run time as a "highest-order coefficient [that] must not be zero" | diagnostic slips |
 
 Everything else held. The list of what was thrown at the compiler and answered
@@ -485,6 +485,22 @@ few hundred megabytes.
 
 **Kind.** Pathological compile memory, superlinear; at 500 states (ten 50-pole
 transmission-line macromodels) it is already several gigabytes. Not platform-specific.
+
+*Fixed in [E-712](../../enhancements_doc/Enhancement-712.md).* The "where" above was
+wrong: the DAE build, the derivatives and the optimiser took 110 ms of the 20-filter
+module's 7 s. The memory was blocks — the root-to-polynomial expansion selected the
+LRM's zero-root exception at run time with four branch diamonds per (root, coefficient)
+pair, 54 183 blocks for 20 filters, every one folded away a moment later because the
+roots are literals, and the SSA construction over them was the 2.6 GB and the 48 GB.
+The time was the OSDI descriptor module: its helper functions are straight-line code
+with a few memory operations per Jacobian entry, and two LLVM backend passes (the
+post-legalisation DAG combine and the machine scheduler) are quadratic in such a
+block — 24 s of a 25 s compile at 2 000 entries, with or without filters (400 `idt`
+states 25 s, 1 000 of them 139 s, a 1 000-node ladder 18 s). Now the zero-root choice
+of a constant root is decided at lowering time (a branchless `select` for a parameter
+root), and the descriptor module is built at -O0 above 256 Jacobian entries, where
+its code quality does not matter and FastISel is linear: 20 filters 0.3 s and 134 MB,
+100 filters 1.6 s and 550 MB, 1 000 `idt` states 1.8 s, the ladder 1.2 s.
 
 ## F10 — diagnostic slips
 

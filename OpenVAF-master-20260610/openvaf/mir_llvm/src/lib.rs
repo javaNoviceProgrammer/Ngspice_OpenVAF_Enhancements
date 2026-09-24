@@ -679,6 +679,26 @@ impl Drop for ModuleLlvm {
 /// did this), so the switch is LLVM's own command-line option, parsed once; it
 /// must run before the first pass pipeline is built, which `osdi::compile`
 /// guarantees by deciding before it spawns the code-generation threads.
+/// Enhancement-712: whitespace-separated LLVM `cl::opt` settings (as `llc` and
+/// `opt` take them) handed to LLVM's command-line parser once, before the first
+/// pass pipeline. The driver feeds it the `OPENVAF_LLVM_ARGS` environment
+/// variable, a diagnostic aid for reading LLVM's own pass timings and dumps.
+pub fn parse_llvm_args(args: &str) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let mut owned = vec![CString::new("openvaf-r").unwrap()];
+        owned.extend(args.split_whitespace().map(|a| CString::new(a).unwrap()));
+        let ptrs: Vec<*const std::os::raw::c_char> = owned.iter().map(|a| a.as_ptr()).collect();
+        unsafe {
+            llvm_sys::support::LLVMParseCommandLineOptions(
+                ptrs.len() as std::os::raw::c_int,
+                ptrs.as_ptr(),
+                std::ptr::null(),
+            );
+        }
+    });
+}
+
 pub fn disable_slp_vectorizer() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {

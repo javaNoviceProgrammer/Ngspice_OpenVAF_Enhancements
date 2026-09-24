@@ -5217,19 +5217,67 @@ impl BodyLoweringCtx<'_, '_, '_> {
             let mut nre = vec![F_ZERO; n + 1];
             let mut nim = vec![F_ZERO; n + 1];
 
-            // is_zero = (rr == 0) && (ri == 0)
-            let rr_z = self.ctx.ins().feq(rr, F_ZERO);
-            let ri_z = self.ctx.ins().feq(ri, F_ZERO);
-            let is_zero = crate::stmt::bool_and(self.ctx, rr_z, ri_z);
+            // Enhancement-712 (robustness campaign F9 of 2026-09-23): the
+            // zero-root choice was FOUR `make_select`s per (root, coefficient)
+            // pair -- each a branch, two arms and a merge block -- so a
+            // 20-pole filter opened 4 * 20 * 21 / 2 = 840 diamonds (2 520
+            // blocks) and 20 such filters 54 000 blocks, before the optimiser
+            // folded every one of them away for the constant roots they always
+            // are. The SSA construction over that many blocks was the 2.6 GB
+            // (20 filters) and 48 GB (100 filters) the campaign measured, and
+            // most of the compile time: a "filter states" cost that was really
+            // a block count.
+            //
+            // The choice is now decided at lowering time when a root is a
+            // constant (a literal, or a negated literal), which every ordinary
+            // filter's roots are, and emitted as a branchless `select` on the
+            // values otherwise. The arithmetic is unchanged operation for
+            // operation, so the coefficients are the same numbers.
+            let known_zero = match (self.const_real_value(rr), self.const_real_value(ri)) {
+                (Some(r), Some(i)) => Some(r == 0.0 && i == 0.0),
+                (Some(r), _) if r != 0.0 => Some(false),
+                (_, Some(i)) if i != 0.0 => Some(false),
+                _ => None,
+            };
+
+            if known_zero == Some(true) {
+                // The factor is a bare `s`: P shifts up one degree and
+                // contributes nothing at its own degree.
+                for i in 0..n {
+                    nre[i + 1] = self.ctx.ins().fadd(nre[i + 1], re[i]);
+                    nim[i + 1] = self.ctx.ins().fadd(nim[i + 1], im[i]);
+                }
+                re = nre;
+                im = nim;
+                continue;
+            }
+
+            // is_zero = (rr == 0) && (ri == 0), only when it cannot be decided here
+            let is_zero = if known_zero.is_none() {
+                let rr_z = self.ctx.ins().feq(rr, F_ZERO);
+                let ri_z = self.ctx.ins().feq(ri, F_ZERO);
+                Some(crate::stmt::bool_and(self.ctx, rr_z, ri_z))
+            } else {
+                None
+            };
 
             // 1/r = conj(r)/|r|^2, guarded so the zero-root branch cannot produce
-            // a NaN that the select would then have to discard.
+            // a NaN that the select would then have to discard. The guard is a
+            // `select` too (Enhancement-712): `fdiv_guarded` is a branch, and two
+            // per root were the last 4 000 diamonds of a 100-filter module.
             let rr2 = self.ctx.ins().fmul(rr, rr);
             let ri2 = self.ctx.ins().fmul(ri, ri);
             let mag2 = self.ctx.ins().fadd(rr2, ri2);
-            let inv_re = self.fdiv_guarded(rr, mag2);
+            let mag2_zero = self.ctx.ins().feq(mag2, F_ZERO);
+            let inv_re = {
+                let quot = self.ctx.ins().fdiv(rr, mag2);
+                self.ctx.ins().select(mag2_zero, F_ZERO, quot)
+            };
             let ri_neg = self.ctx.ins().fneg(ri);
-            let inv_im = self.fdiv_guarded(ri_neg, mag2);
+            let inv_im = {
+                let quot = self.ctx.ins().fdiv(ri_neg, mag2);
+                self.ctx.ins().select(mag2_zero, F_ZERO, quot)
+            };
 
             for i in 0..n {
                 // (1/r) * P[i]
@@ -5247,10 +5295,15 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 // zero root: the factor is a bare `s`, i.e. P[i] shifts up and
                 // contributes nothing at its own degree.
                 let (pr, pi) = (re[i], im[i]);
-                let low_re = self.ctx.make_select(is_zero, move |_c, z| if z { F_ZERO } else { pr });
-                let low_im = self.ctx.make_select(is_zero, move |_c, z| if z { F_ZERO } else { pi });
-                let hi_re = self.ctx.make_select(is_zero, move |_c, z| if z { pr } else { up_re });
-                let hi_im = self.ctx.make_select(is_zero, move |_c, z| if z { pi } else { up_im });
+                let (low_re, low_im, hi_re, hi_im) = match is_zero {
+                    Some(z) => (
+                        self.ctx.ins().select(z, F_ZERO, pr),
+                        self.ctx.ins().select(z, F_ZERO, pi),
+                        self.ctx.ins().select(z, pr, up_re),
+                        self.ctx.ins().select(z, pi, up_im),
+                    ),
+                    None => (pr, pi, up_re, up_im),
+                };
 
                 nre[i] = self.ctx.ins().fadd(nre[i], low_re);
                 nim[i] = self.ctx.ins().fadd(nim[i], low_im);
@@ -5261,6 +5314,25 @@ impl BodyLoweringCtx<'_, '_, '_> {
             im = nim;
         }
         re
+    }
+
+    /// Enhancement-712: the real constant a lowered value is, if it is one --
+    /// an `fconst`, or the `fneg` of one, which is what a negative literal such
+    /// as the `-1.0` of a pole lowers to.
+    fn const_real_value(&self, v: Value) -> Option<f64> {
+        match self.ctx.dfg().value_def(v) {
+            ValueDef::Const(Const::Float(f)) => Some(f.into()),
+            ValueDef::Result(inst, _) => match self.ctx.dfg().insts[inst] {
+                InstructionData::Unary { opcode: Opcode::Fneg, arg } => {
+                    match self.ctx.dfg().value_def(arg) {
+                        ValueDef::Const(Const::Float(f)) => Some(-f64::from(f)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// Enhancement-405: expands **complex** z-domain roots into ascending-power *real*

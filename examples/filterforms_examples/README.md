@@ -75,3 +75,29 @@ the Laplace path alone.
 ```
 OPENVAF_BIN=/path/to/old/openvaf-r python3 verify_filterforms.py   # 58/85, exit 1
 ```
+
+## Enhancement-712: many filters and many Jacobian entries (robustness campaign F9)
+
+Section "Enhancement-712" of `verify_filterforms.py` (10 checks, 95 in all) guards the
+compile time and memory of a module with many Laplace filters, and the answers such
+modules give. A module of 100 `laplace_zp` filters of twenty poles each (2 000 filter
+states, 6 200 Jacobian entries) took 113 s and 48 GB before
+[E-712](../../enhancements_doc/Enhancement-712.md): the root-to-polynomial expansion
+selected the LRM's zero-root exception at run time with four branch diamonds per
+(root, coefficient) pair — 54 000 blocks for twenty filters, all folded away a moment
+later — and the OSDI descriptor module's straight-line helper functions hit two
+quadratic LLVM backend passes. The checks:
+
+- the 100-filter module compiles in under 60 s and 4 GB (1.6 s and 0.54 GB; 119 s and
+  47.9 GB on the E-711 binaries), its dc current is 100 × V — every filter has unit dc
+  gain — and its step response settles to that current;
+- a zero root written as the literal `0` and as a parameter set to `0` give the same
+  differentiator, 0.532018 at 100 kHz against the analytic value (the compile-time
+  path and the `select` path);
+- a 300-node resistor ladder (904 Jacobian entries, so its descriptor module is the
+  -O0 path) compiles in under 20 s (0.4 s; 4.3 s before) and its dc current is
+  3.01 V over 301 kΩ to eleven digits.
+
+```
+OPENVAF_BIN=/path/to/E-711/openvaf-r python3 verify_filterforms.py   # 93/95, exit 1
+```
