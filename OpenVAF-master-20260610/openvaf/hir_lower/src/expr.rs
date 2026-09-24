@@ -22,6 +22,7 @@ use stdx::iter::zip;
 use syntax::ast::{BinaryOp, UnaryOp};
 
 use crate::body::BodyLoweringCtx;
+use crate::ctx::LoweringCtx;
 use crate::stmt::bool_or;
 use crate::fmt::DisplayKind;
 use crate::{
@@ -82,20 +83,29 @@ fn build_tbl_tree(rows: &[&Vec<f64>], depth: usize, ndim: usize, dep_col: usize)
     if depth == ndim {
         return TblTree::Leaf(rows[0][dep_col]);
     }
-    let mut groups: Vec<(f64, Vec<&Vec<f64>>)> = Vec::new();
-    for &row in rows {
-        match groups.iter_mut().find(|(c, _)| *c == row[depth]) {
-            Some((_, g)) => g.push(row),
-            None => groups.push((row[depth], vec![row])),
+    // Enhancement-705 (robustness campaign F1 of 2026-09-23): the rows are
+    // grouped by their coordinate on this axis with a STABLE SORT and one pass
+    // over the sorted list. They used to be grouped by a linear search of the
+    // groups seen so far for every row -- on a one-dimensional file every row
+    // is its own group, so that was n²/2 comparisons: a third of the 100 000-row
+    // file's compile time, and a million rows never got past it. The result is
+    // the same: groups in ascending coordinate order, the rows of a group in
+    // file order (a stable sort keeps equal keys in their original order), and
+    // the first row of a group of duplicates is the one that reaches the leaf.
+    let mut sorted: Vec<&Vec<f64>> = rows.to_vec();
+    sorted.sort_by(|a, b| a[depth].partial_cmp(&b[depth]).unwrap_or(std::cmp::Ordering::Equal));
+    let mut axis = Vec::new();
+    let mut i = 0;
+    while i < sorted.len() {
+        let c = sorted[i][depth];
+        let mut j = i + 1;
+        while j < sorted.len() && sorted[j][depth] == c {
+            j += 1;
         }
+        axis.push((c, build_tbl_tree(&sorted[i..j], depth + 1, ndim, dep_col)));
+        i = j;
     }
-    groups.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    TblTree::Axis(
-        groups
-            .into_iter()
-            .map(|(c, g)| (c, build_tbl_tree(&g, depth + 1, ndim, dep_col)))
-            .collect(),
-    )
+    TblTree::Axis(axis)
 }
 
 /// Splits a `$table_model` control string's trailing dependent-variable
@@ -298,6 +308,77 @@ fn cubic_spline_moment_matrix(grid: &[f64], clamp_lo: bool, clamp_hi: bool) -> V
         }
     }
     l
+}
+
+/// Enhancement-705 (robustness campaign F1 of 2026-09-23): the interval search
+/// of a compile-time table, as a balanced tree that is a BINARY SEARCH in
+/// branches above `SELECT_LEAF` knots and a tree of branchless `select`s
+/// below.
+///
+/// Returns, for each vector in `vals`, its entry `k` for the largest `k >= 1`
+/// whose `cond_at(k - 1)` holds, and entry 0 when none does; `cond_at(i)` is
+/// emitted where it is needed (at a branch, or inside the leaf's block) and
+/// must be a prefix of trues followed by falses over `i` -- the comparisons
+/// `x >= grid[i + 1]` against a sorted grid are, and so are the closest-point
+/// kernel's midpoint tests -- which is what makes the split at `mid` pick the
+/// same index the linear chain `result = select(cond_at(i-1), vals[i], result)`
+/// picked. All vectors are selected through ONE structure, so a kernel picks
+/// the parameters of its segment (knots, values, slopes, moments) together and
+/// evaluates one polynomial.
+///
+/// The chain was real control flow -- a branch, two arms and a merge per knot,
+/// in a row -- so a 100 000-row data file lowered to a 300 000-block function:
+/// the first recursive walk over it overflowed the stack (`Postorder::dfs`, now
+/// iterative), the CFG simplifier paid a pass per block it merged (its cursor,
+/// now fixed), and LLVM's block placement took minutes over the rest; with all
+/// segments evaluated up front, LLVM's scheduler and SLP vectoriser then choked
+/// on one block of 100 000 live values and 100 000 comparisons. The hybrid
+/// keeps every block to at most `SELECT_LEAF` comparisons and selects, makes
+/// about `n / SELECT_LEAF` blocks, and costs an evaluation `log2 n` branches
+/// plus one leaf: nothing about the numbers changes -- the same comparisons,
+/// the same per-segment arithmetic -- and a NaN input fails every test and
+/// falls through to entry 0.
+const SELECT_LEAF: usize = 64;
+
+fn select_tree_multi(
+    ctx: &mut LoweringCtx<'_, '_>,
+    cond_at: &mut dyn FnMut(&mut LoweringCtx<'_, '_>, usize) -> Value,
+    vals: &[&[Value]],
+) -> Vec<Value> {
+    fn build(
+        ctx: &mut LoweringCtx<'_, '_>,
+        cond_at: &mut dyn FnMut(&mut LoweringCtx<'_, '_>, usize) -> Value,
+        vals: &[&[Value]],
+        lo: usize,
+        hi: usize,
+    ) -> Vec<Value> {
+        if lo == hi {
+            return vals.iter().map(|v| v[lo]).collect();
+        }
+        let mid = (lo + hi + 1) / 2;
+        let cond = cond_at(ctx, mid - 1);
+        if hi - lo + 1 > SELECT_LEAF {
+            let ((then_bb, then_vals), (else_bb, else_vals)) = ctx.make_cond(cond, |ctx, b| {
+                if b {
+                    build(ctx, cond_at, vals, mid, hi)
+                } else {
+                    build(ctx, cond_at, vals, lo, mid - 1)
+                }
+            });
+            then_vals
+                .into_iter()
+                .zip(else_vals)
+                .map(|(t, e)| ctx.func.ins().phi(&[(then_bb, t), (else_bb, e)]))
+                .collect()
+        } else {
+            let upper = build(ctx, cond_at, vals, mid, hi);
+            let lower = build(ctx, cond_at, vals, lo, mid - 1);
+            upper.into_iter().zip(lower).map(|(u, l)| ctx.ins().select(cond, u, l)).collect()
+        }
+    }
+    let n = vals[0].len();
+    debug_assert!(vals.iter().all(|v| v.len() == n));
+    build(ctx, cond_at, vals, 0, n - 1)
 }
 
 impl BodyLoweringCtx<'_, '_, '_> {
@@ -1610,25 +1691,36 @@ impl BodyLoweringCtx<'_, '_, '_> {
             return vals[0];
         }
         // segment i:  vals[i] + (x - grid[i]) * (vals[i+1]-vals[i]) / (grid[i+1]-grid[i])
-        let mut seg = Vec::with_capacity(n - 1);
+        //
+        // Enhancement-705: the segment's PARAMETERS -- its left knot, left value
+        // and slope -- are selected through the balanced tree and ONE line is
+        // evaluated, instead of every segment's line being evaluated and the
+        // results selected. Same operations in the same order per segment, so
+        // the numbers are bit for bit those of the chain; but the evaluation
+        // costs one polynomial, and the compiler no longer holds n segment
+        // values live at once (100 000 of them kept LLVM's scheduler busy for
+        // minutes).
+        let mut g_lo = Vec::with_capacity(n - 1);
+        let mut v_lo = Vec::with_capacity(n - 1);
+        let mut slopes = Vec::with_capacity(n - 1);
         for i in 0..n - 1 {
             let dv = self.ctx.ins().fsub(vals[i + 1], vals[i]);
             let dgrid = self.ctx.fconst(grid[i + 1] - grid[i]);
-            let slope = self.ctx.ins().fdiv(dv, dgrid);
-            let xi = self.ctx.fconst(grid[i]);
-            let dx = self.ctx.ins().fsub(x, xi);
-            let term = self.ctx.ins().fmul(dx, slope);
-            seg.push(self.ctx.ins().fadd(vals[i], term));
+            slopes.push(self.ctx.ins().fdiv(dv, dgrid));
+            g_lo.push(self.ctx.fconst(grid[i]));
+            v_lo.push(vals[i]);
         }
         // segment i applies once x >= grid[i] (segment 0 is the default and covers below the grid;
         // the last segment covers above it -- i.e. linear extrapolation from the end slopes).
-        let mut result = seg[0];
-        for i in 1..n - 1 {
-            let gi = self.ctx.fconst(grid[i]);
-            let ge = self.ctx.ins().fge(x, gi);
-            let seg_i = seg[i];
-            result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
-        }
+        let mut cond_at = |ctx: &mut LoweringCtx<'_, '_>, i: usize| {
+            let g = ctx.fconst(grid[i + 1]);
+            ctx.ins().fge(x, g)
+        };
+        let sel = select_tree_multi(self.ctx, &mut cond_at, &[&g_lo, &v_lo, &slopes]);
+        let (xi, vi, slope) = (sel[0], sel[1], sel[2]);
+        let dx = self.ctx.ins().fsub(x, xi);
+        let term = self.ctx.ins().fmul(dx, slope);
+        let mut result = self.ctx.ins().fadd(vi, term);
         // LRM 9.21.2 (kernel audit): the extrapolation method is PER END.
         // Linear is the segments' own behaviour; Clamp overrides with the
         // endpoint value; Error aborts the evaluation (Table 9-31's 'E').
@@ -1735,18 +1827,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
         if n == 0 {
             return F_ZERO;
         }
-        let mut result = vals[0];
-        for i in 1..n {
-            let mid = self.ctx.fconst(0.5 * (grid[i - 1] + grid[i]));
-            let upper_wins_tie = grid[i].abs() >= grid[i - 1].abs();
-            let take_upper = if upper_wins_tie {
-                self.ctx.ins().fge(x, mid)
+        // Enhancement-705: the midpoint tests drive the balanced search tree.
+        let mut cond_at = |ctx: &mut LoweringCtx<'_, '_>, i: usize| {
+            let mid = ctx.fconst(0.5 * (grid[i] + grid[i + 1]));
+            let upper_wins_tie = grid[i + 1].abs() >= grid[i].abs();
+            if upper_wins_tie {
+                ctx.ins().fge(x, mid)
             } else {
-                self.ctx.ins().fgt(x, mid)
-            };
-            let vi = vals[i];
-            result = self.ctx.make_select(take_upper, move |_c, b| if b { vi } else { result });
-        }
+                ctx.ins().fgt(x, mid)
+            }
+        };
+        let result = select_tree_multi(self.ctx, &mut cond_at, &[vals])[0];
         // 'E' still aborts out of range; C/L are the closest point itself.
         let err_only = |e: TblExtrap| {
             if e == TblExtrap::Error {
@@ -1794,26 +1885,33 @@ impl BodyLoweringCtx<'_, '_, '_> {
             z.push(self.ctx.ins().fsub(two_s, zi));
         }
         // piece i:  v_i + z_i·dx + (z_{i+1} - z_i) / (2 h_i) · dx²
-        let mut seg = Vec::with_capacity(n - 1);
+        // Enhancement-705: the piece's parameters (left knot, value, slope and
+        // curvature) are selected through the balanced tree and one parabola
+        // is evaluated; the operations per piece are those of before, in order.
+        let mut g_lo = Vec::with_capacity(n - 1);
+        let mut v_lo = Vec::with_capacity(n - 1);
+        let mut z_lo = Vec::with_capacity(n - 1);
+        let mut curv = Vec::with_capacity(n - 1);
         for i in 0..n - 1 {
-            let xi = self.ctx.fconst(grid[i]);
-            let dx = self.ctx.ins().fsub(x, xi);
-            let lin = self.ctx.ins().fmul(z[i], dx);
+            g_lo.push(self.ctx.fconst(grid[i]));
+            v_lo.push(vals[i]);
+            z_lo.push(z[i]);
             let dz = self.ctx.ins().fsub(z[i + 1], z[i]);
             let inv_2h = self.ctx.fconst(0.5 / (grid[i + 1] - grid[i]));
-            let c = self.ctx.ins().fmul(dz, inv_2h);
-            let dx2 = self.ctx.ins().fmul(dx, dx);
-            let quad = self.ctx.ins().fmul(c, dx2);
-            let s = self.ctx.ins().fadd(vals[i], lin);
-            seg.push(self.ctx.ins().fadd(s, quad));
+            curv.push(self.ctx.ins().fmul(dz, inv_2h));
         }
-        let mut result = seg[0];
-        for i in 1..n - 1 {
-            let gi = self.ctx.fconst(grid[i]);
-            let ge = self.ctx.ins().fge(x, gi);
-            let seg_i = seg[i];
-            result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
-        }
+        let mut cond_at = |ctx: &mut LoweringCtx<'_, '_>, i: usize| {
+            let g = ctx.fconst(grid[i + 1]);
+            ctx.ins().fge(x, g)
+        };
+        let sel = select_tree_multi(self.ctx, &mut cond_at, &[&g_lo, &v_lo, &z_lo, &curv]);
+        let (xi, vi, zi, c) = (sel[0], sel[1], sel[2], sel[3]);
+        let dx = self.ctx.ins().fsub(x, xi);
+        let lin = self.ctx.ins().fmul(zi, dx);
+        let dx2 = self.ctx.ins().fmul(dx, dx);
+        let quad = self.ctx.ins().fmul(c, dx2);
+        let s = self.ctx.ins().fadd(vi, lin);
+        let mut result = self.ctx.ins().fadd(s, quad);
         // 'L': the end tangents continue, not the parabolas
         if ctrl.lo == TblExtrap::Linear {
             let g0 = self.ctx.fconst(grid[0]);
@@ -2490,49 +2588,66 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
         // cubic on interval i:  with a = grid[i+1]-x, b = x-grid[i], h = grid[i+1]-grid[i]:
         //   S = M[i]·a³/(6h) + M[i+1]·b³/(6h) + (vals[i]/h - M[i]·h/6)·a + (vals[i+1]/h - M[i+1]·h/6)·b
-        let mut seg = Vec::with_capacity(n - 1);
+        //
+        // Enhancement-705: the interval's parameters -- its two knots, 1/(6h),
+        // its two moments and the two linear coefficients c3, c4 -- are selected
+        // through the balanced tree and ONE cubic is evaluated. The per-interval
+        // arithmetic is that of before, in the same order, so the values are
+        // bit for bit the chain's.
+        let mut g_lo = Vec::with_capacity(n - 1);
+        let mut g_hi = Vec::with_capacity(n - 1);
+        let mut k6h = Vec::with_capacity(n - 1);
+        let mut m_lo = Vec::with_capacity(n - 1);
+        let mut m_hi = Vec::with_capacity(n - 1);
+        let mut c3s = Vec::with_capacity(n - 1);
+        let mut c4s = Vec::with_capacity(n - 1);
         for i in 0..n - 1 {
             let h = grid[i + 1] - grid[i];
-            let inv6h = self.ctx.fconst(1.0 / (6.0 * h));
             let invh = self.ctx.fconst(1.0 / h);
             let h6 = self.ctx.fconst(h / 6.0);
-            let xi1 = self.ctx.fconst(grid[i + 1]);
-            let xi = self.ctx.fconst(grid[i]);
-            let a = self.ctx.ins().fsub(xi1, x);
-            let b = self.ctx.ins().fsub(x, xi);
-            let a2 = self.ctx.ins().fmul(a, a);
-            let a3 = self.ctx.ins().fmul(a2, a);
-            let b2 = self.ctx.ins().fmul(b, b);
-            let b3 = self.ctx.ins().fmul(b2, b);
-
-            let mi_a3 = self.ctx.ins().fmul(moments[i], a3);
-            let t1 = self.ctx.ins().fmul(mi_a3, inv6h);
-            let mi1_b3 = self.ctx.ins().fmul(moments[i + 1], b3);
-            let t2 = self.ctx.ins().fmul(mi1_b3, inv6h);
+            k6h.push(self.ctx.fconst(1.0 / (6.0 * h)));
+            g_hi.push(self.ctx.fconst(grid[i + 1]));
+            g_lo.push(self.ctx.fconst(grid[i]));
+            m_lo.push(moments[i]);
+            m_hi.push(moments[i + 1]);
 
             let vih = self.ctx.ins().fmul(vals[i], invh);
             let mih6 = self.ctx.ins().fmul(moments[i], h6);
-            let c3 = self.ctx.ins().fsub(vih, mih6);
-            let t3 = self.ctx.ins().fmul(c3, a);
+            c3s.push(self.ctx.ins().fsub(vih, mih6));
 
             let vi1h = self.ctx.ins().fmul(vals[i + 1], invh);
             let mi1h6 = self.ctx.ins().fmul(moments[i + 1], h6);
-            let c4 = self.ctx.ins().fsub(vi1h, mi1h6);
-            let t4 = self.ctx.ins().fmul(c4, b);
-
-            let s12 = self.ctx.ins().fadd(t1, t2);
-            let s34 = self.ctx.ins().fadd(t3, t4);
-            seg.push(self.ctx.ins().fadd(s12, s34));
+            c4s.push(self.ctx.ins().fsub(vi1h, mi1h6));
         }
 
         // segment i applies once x >= grid[i]; segment 0 is the default (covers below the grid).
-        let mut result = seg[0];
-        for i in 1..n - 1 {
-            let gi = self.ctx.fconst(grid[i]);
-            let ge = self.ctx.ins().fge(x, gi);
-            let seg_i = seg[i];
-            result = self.ctx.make_select(ge, move |_c, b| if b { seg_i } else { result });
-        }
+        let mut cond_at = |ctx: &mut LoweringCtx<'_, '_>, i: usize| {
+            let g = ctx.fconst(grid[i + 1]);
+            ctx.ins().fge(x, g)
+        };
+        let sel = select_tree_multi(
+            self.ctx,
+            &mut cond_at,
+            &[&g_lo, &g_hi, &k6h, &m_lo, &m_hi, &c3s, &c4s],
+        );
+        let (xi, xi1, inv6h, mi, mi1, c3, c4) =
+            (sel[0], sel[1], sel[2], sel[3], sel[4], sel[5], sel[6]);
+
+        let a = self.ctx.ins().fsub(xi1, x);
+        let b = self.ctx.ins().fsub(x, xi);
+        let a2 = self.ctx.ins().fmul(a, a);
+        let a3 = self.ctx.ins().fmul(a2, a);
+        let b2 = self.ctx.ins().fmul(b, b);
+        let b3 = self.ctx.ins().fmul(b2, b);
+        let mi_a3 = self.ctx.ins().fmul(mi, a3);
+        let t1 = self.ctx.ins().fmul(mi_a3, inv6h);
+        let mi1_b3 = self.ctx.ins().fmul(mi1, b3);
+        let t2 = self.ctx.ins().fmul(mi1_b3, inv6h);
+        let t3 = self.ctx.ins().fmul(c3, a);
+        let t4 = self.ctx.ins().fmul(c4, b);
+        let s12 = self.ctx.ins().fadd(t1, t2);
+        let s34 = self.ctx.ins().fadd(t3, t4);
+        let mut result = self.ctx.ins().fadd(s12, s34);
 
         // Extrapolation outside [grid[0], grid[n-1]], PER END (LRM 9.21.2).
         // Linear continues the spline's end tangent; Clamp holds the endpoint
@@ -5258,9 +5373,17 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // one evaluation stamps finite numbers into the matrix -- the flag is
         // inspected after eval returns, never in the middle of it.
         let a_n_abs = self.lower_fabs(a_n);
-        let a_n_ok = self.ctx.ins().fgt(a_n_abs, F_ZERO); // false for 0 and NaN
+        let a_n_nonzero = self.ctx.ins().fgt(a_n_abs, F_ZERO); // false for 0 and NaN
+        // Enhancement-708 (robustness campaign F10 of 2026-09-23): a NaN was
+        // refused as "must not be zero", and an INFINITE coefficient passed --
+        // it normalised every other coefficient to 0 and the filter ran as a
+        // silent 0. Refuse both, and say what the value is.
+        let inf = self.ctx.fconst(f64::INFINITY);
+        let a_n_finite = self.ctx.ins().flt(a_n_abs, inf);
+        let a_n_ok = crate::stmt::bool_and(self.ctx, a_n_nonzero, a_n_finite);
         let a_n_msg = format!(
-            "{name}: the denominator's highest-order coefficient must not be zero, but is"
+            "{name}: the denominator's highest-order coefficient must be a finite non-zero \
+             number, but is"
         );
         let a_n = self.ctx.make_select(a_n_ok, |ctx, branch| {
             if branch {

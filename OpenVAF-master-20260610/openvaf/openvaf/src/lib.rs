@@ -440,15 +440,19 @@ pub fn compile(opts: &Opts) -> Result<CompilationTermination> {
     }
 
     // TODO configure linker
-    link(None, &opts.target, lib_file.as_ref(), |linker| {
+    let linked = link(None, &opts.target, lib_file.as_ref(), |linker| {
         for path in &paths {
             linker.add_object(path);
         }
-    })?;
+    });
 
+    // Enhancement-707: the object files go whether the link succeeded or not --
+    // a failed link (no linker, an oversized argument vector) used to leave
+    // four `.oN` files per module next to the output.
     for obj_file in paths {
         remove_file(obj_file).context("failed to delete intermediate compile artifact")?;
     }
+    linked?;
 
     let seconds = Instant::elapsed(&start).as_secs_f64();
     let mut stderr = StandardStream::stderr(basedb::diagnostics::stderr_color_choice()); // Enhancement-574

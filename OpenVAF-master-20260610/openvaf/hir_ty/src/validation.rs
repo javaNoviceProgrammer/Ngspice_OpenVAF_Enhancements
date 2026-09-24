@@ -203,8 +203,9 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                 let src = self.body_sm.lint_src(stmt, dead_range_member);
                 Some((dead_range_member, src))
             }
-            // Enhancement-590
+            // Enhancement-590; Enhancement-708 adds the truncated based literal
             BodyValidationDiagnostic::IntLiteralOverflow { stmt, .. }
+            | BodyValidationDiagnostic::BasedLiteralOverflow { stmt, .. }
             | BodyValidationDiagnostic::LossyIntegerDefault { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, lossy_integer_constant);
                 Some((lossy_integer_constant, src))
@@ -729,6 +730,44 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                         "Verilog-A's `integer` holds -2147483648 to 2147483647 (LRM 3.2); \
                          spell the number as a real, `3e9` or `3000000000.0`, where a real \
                          is meant"
+                            .to_owned(),
+                    ])
+            }
+            // Enhancement-708: a based literal wider than its size is truncated to
+            // the size (IEEE 1364-2005 3.5.1) -- in silence, until now.
+            BodyValidationDiagnostic::BasedLiteralOverflow {
+                expr, ref text, bits, size, value, ..
+            } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let sized = text.starts_with(|c: char| c.is_ascii_digit());
+                // a 100 000-digit literal is measured, not quoted whole
+                let text = if text.len() > 48 {
+                    format!("{}...{} ({} characters)", &text[..24], &text[text.len() - 8..], text.len())
+                } else {
+                    text.to_string()
+                };
+                let against = if sized {
+                    format!("its declared size of {size}")
+                } else {
+                    format!("the {size} of an `integer`")
+                };
+                Report::warning()
+                    .with_message(format!(
+                        "based literal {text} has {bits} significant bits, more than {against}"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!(
+                            "the high {} bits are dropped; it reads as {value}",
+                            bits - size
+                        ),
+                    }])
+                    .with_notes(vec![
+                        "Verilog-A's `integer` is 32 bits (LRM 3.2) and a based literal is \
+                         truncated to its size (IEEE 1364-2005 3.5.1); spell the number as a \
+                         real, `1099511627775.0`, where more than 32 bits are meant"
                             .to_owned(),
                     ])
             }

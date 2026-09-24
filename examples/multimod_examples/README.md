@@ -36,5 +36,21 @@ packaging surface — and pins the three defects the audit found and fixed
 
 ## Files
 
-`verify_multimod.py` (13 checks), the five multi-module `.va` fixtures,
+`verify_multimod.py` (28 checks), the five multi-module `.va` fixtures,
 and this README.
+
+## Enhancement-707 — a library of hundreds of modules links (robustness campaign F8 of 2026-09-23)
+
+Every module compiles to four object files and each path went onto the linker's
+argument vector, so a file of 1 800 one-line modules exceeded macOS's 256 KB `ARG_MAX`
+and failed as "linker not found: Argument list too long" (1 700 linked). Since
+[Enhancement-707](../../enhancements_doc/Enhancement-707.md) the linker reads its
+arguments from a response file (`<output>.rsp`, `@file`) above 16 KiB, an `exec`
+failure names the program and the cause, and a failed link removes its object files.
+
+Checks [14]–[15]: a generated file of 400 modules — 1 600 object files, about 130 KB of
+paths, eight times the threshold — compiles, leaves no `.rsp` behind, and its last
+module loads and conducts 0.5 mA through `r=2k`; with no linker on `PATH` the compile
+fails with "linker not found: '…' is not installed or not on PATH". The second fails on
+the E-704 binaries (27/28); the first passes there too, since 400 modules were always
+under the wall.

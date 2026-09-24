@@ -178,5 +178,49 @@ ok, out = compile_src(HDR + 'nature N1; units = "x"; access = X1; abstol = 1e-6;
                       'analog begin $strobe("%s", p.potential.abstol); Y1(p,n) <+ X1(p,n); end\nendmodule\n', "l1")
 check("[32] 'nature attribute reference' is spelt right", not ok and "nature attribute reference" in out and "attriubte" not in out, first(out))
 
+# ---------------------------------------------------------------- Enhancement-708 (robustness campaign F10 of 2026-09-23)
+ok, out = compile_src(MOD("integer i; analog begin i = 'hFFFFFFFFFF; I(p,n) <+ V(p,n)*i; end"), "m1")
+check("[33] 'hFFFFFFFFFF (40 bits) draws L030: truncated to 32 bits, it reads as -1",
+      ok and "warning[L030]" in out and "40 significant bits, more than the 32 of an `integer`" in out and "reads as -1" in out, first(out))
+ok, out = compile_src(MOD("integer i; analog begin i = 'hFFFFFFFF; I(p,n) <+ V(p,n)*i; end"), "m2")
+check("[34] 'hFFFFFFFF (32 bits) is silent", ok and "L030" not in out, first(out))
+ok, out = compile_src(MOD("integer i; analog begin i = 'h0FFFFFFFF; I(p,n) <+ V(p,n)*i; end"), "m3")
+check("[35] a leading 0 digit adds no bits: 'h0FFFFFFFF is silent", ok and "L030" not in out, first(out))
+ok, out = compile_src(MOD("integer i; analog begin i = 8'hFFF; I(p,n) <+ V(p,n)*i; end"), "m4")
+check("[36] 8'hFFF: 12 bits into a declared size of 8, reads as 255",
+      ok and "12 significant bits, more than its declared size of 8" in out and "reads as 255" in out, first(out))
+ok, out = compile_src(MOD("integer i; analog begin i = 'd4294967296; I(p,n) <+ V(p,n)*i; end"), "m5")
+check("[37] 'd4294967296 (33 bits) is judged like the hex form", ok and "33 significant bits" in out, first(out))
+ok, out = compile_src(MOD("integer i; analog begin i = 'h" + "F" * 100000 + "; I(p,n) <+ V(p,n)*i; end"), "m6")
+l030 = next((l for l in out.splitlines() if "L030" in l), "")
+check("[38] a 100 000-digit literal is measured (400000 bits) and abbreviated in the message",
+      ok and "400000 significant bits" in l030 and "(100002 characters)" in l030 and "F" * 100 not in l030, first(out))
+ok, out = compile_src(MOD("integer i; analog begin i = 'hFFFFFFFFFF; I(p,n) <+ V(p,n)*i; end"), "m7", args=("-A", "L030"))
+check("[39] -A L030 silences it", ok and "significant bits" not in out, first(out))
+ok, out = compile_src(HDR + '`include ""\n' + MOD("analog I(p,n) <+ V(p,n);"), "m8")
+check("[40] `include \"\" names the empty name, not the directory it resolved to",
+      not ok and "'`include \"\"' names no file" in out and "is a directory" not in out, first(out))
+ok, out = compile_src(MOD('string s; analog begin $sformat(s, "%999999999d", 1); I(p,n) <+ V(p,n); end'), "m9")
+check("[41] $sformat %999999999d (a 1 GB string at run time) is refused: above the limit of 4096",
+      not ok and "the field width 999999999 is above the limit of 4096" in out, first(out))
+ok, out = compile_src(MOD('string s; analog begin $sformat(s, "%.99999999999999999999f", 1.0); I(p,n) <+ V(p,n); end'), "m10")
+check("[42] a 20-digit precision is refused with its digits, not a wrapped number",
+      not ok and "the field precision 99999999999999999999 is above the limit of 4096" in out, first(out))
+ok, out = compile_src(MOD('string s; analog begin $sformat(s, "%4096d|%08.3f", 1, 2.0); I(p,n) <+ V(p,n); end'), "m11")
+check("[43] %4096d and %08.3f compile", ok, first(out))
+ok, out = compile_src(MOD('integer w; analog begin w = 100000; $strobe("[%*d]", w, 7); I(p,n) <+ V(p,n); end'), "m12")
+line = next((l for l in run("m12").splitlines() if "[" in l and "7]" in l), "")
+seg = line[line.index("["):line.index("]") + 1] if "[" in line and "]" in line else ""
+check("[44] a `*` width of 100 000 is clamped to 4096 at run time (the field is 4096 wide)",
+      ok and len(seg) == 4098 and seg.endswith("7]"), f"field of {max(len(seg) - 2, 0)}")
+ok, out = compile_src(MOD("parameter real a = 0.0, b = 0.0; analog I(p,n) <+ laplace_nd(V(p,n), '{1}, '{1, a/b});"), "m13")
+out2 = run("m13")
+check("[45] laplace_nd with a deck-fixed NaN highest-order coefficient: 'must be a finite non-zero number, but is nan', not 'must not be zero'",
+      ok and "must be a finite non-zero number" in out2 and "nan" in out2.lower() and "must not be zero" not in out2, first(out2))
+ok, out = compile_src(MOD("parameter real a = 1.0, b = 0.0; analog I(p,n) <+ laplace_nd(V(p,n), '{1}, '{1, a/b});"), "m14")
+out2 = run("m14")
+check("[46] ...and an infinite one, which used to normalise the filter to a silent 0",
+      ok and "must be a finite non-zero number" in out2 and "inf" in out2.lower(), first(out2))
+
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

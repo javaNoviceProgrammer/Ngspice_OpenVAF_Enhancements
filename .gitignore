@@ -128,6 +128,7 @@ examples/**/_*.osdi
 examples/**/*.osdi
 examples/**/_*.csv
 examples/**/_*.txt
+examples/**/_*.tbl
 examples/**/_*.dat
 examples/**/_*.raw
 examples/**/_*.s?p

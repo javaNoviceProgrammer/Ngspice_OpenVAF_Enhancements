@@ -694,7 +694,15 @@ impl<'a> Processor<'a> {
                     let mut trailing = Vec::new();
                     if let Some((file_name, range)) = parse_include(p, err, &mut trailing) {
                         let span = CtxSpan { range, ctx: p.ctx() };
-                        match self.include_file(file_name, span, p.dst, err, &p.working_dir) {
+                        // Enhancement-708: an empty name is its own mistake, not a
+                        // directory that failed to read
+                        let included = if file_name.is_empty() {
+                            err.push(PreprocessorDiagnostic::IncludeEmptyName { span });
+                            Ok(())
+                        } else {
+                            self.include_file(file_name, span, p.dst, err, &p.working_dir)
+                        };
+                        match included {
                             // Enhancement-641: the line break after the directive
                             Ok(_) => p.dst.extend(trailing),
                             Err((FileReadError::InvalidTextFormat(err_msg), file)) => {

@@ -125,5 +125,44 @@ accepted("[17] a RUN-TIME base", "pow(V(a,b),0.5)", "r1")
 accepted("[18] an overridable parameter base -- it may be overridden",
          "p**0.5", "r2", decl="  parameter real p = -2.0;\n")
 
+print("\nEnhancement-706: constant arithmetic that is not a number (robustness campaign F6 of 2026-09-23)")
+print("  the undefined quotient and the overflowing call are refused where they are born")
+rejected("[19] 0.0/0.0 -- folded to NaN in silence, and the NaN then passed every constant-argument check",
+         "V(a,b)*(0.0/0.0)", "n1", "the quotient is undefined; the result would be NaN")
+rejected("[20] exp(1000.0) -- inside the domain, past the largest double",
+         "exp(1000.0)", "n2", "exp exceeds the largest double")
+accepted("[21] exp(700.0) is finite", "exp(700.0)*1e-300", "n3")
+rejected("[22] cosh(1000.0)", "cosh(1000.0)", "n4", "cosh exceeds the largest double")
+rejected("[23] pow(10.0, 400.0)", "pow(10.0,400.0)", "n5", "pow exceeds the largest double")
+rejected("[24] 10.0 ** 400.0 -- the operator spelling", "10.0**400.0", "n6", "** exceeds the largest double")
+accepted("[25] pow(10.0, 300.0) is finite", "pow(10.0,300.0)*1e-300", "n7")
+
+print("\n  an infinity is a value (Enhancement-333 left IEEE's 1.0/0.0 to the model); its consumer judges it")
+accepted("[26] 1.0/0.0 in an expression stays legal", "(1.0/0.0 > 1e300) ? 1.0 : 0.0", "n8")
+accepted("[27] V(a,b)/0.0 -- a run-time dividend over a literal zero is IEEE arithmetic", "V(a,b)/0.0", "n9")
+rejected("[28] absdelay(V, 1.0/0.0) -- the infinity now folds, and the delay must be finite",
+         "absdelay(V(a,b), 1.0/0.0)", "n10", "the delay must be a finite number, but is inf")
+rejected("[29] absdelay(V, 1.0/z) with a localparam zero is the same infinity",
+         "absdelay(V(a,b), 1.0/z)", "n11", "the delay must be a finite number, but is inf",
+         decl="  localparam real z = 0.0;\n")
+accepted("[30] absdelay(V, 1.0/z) with an overridable parameter is the deck's business",
+         "absdelay(V(a,b), 1.0/z)", "n12", decl="  parameter real z = 0.0;\n")
+rejected("[31] parameter real q = 1.0/0.0 -- Enhancement-640's rule, reached at last",
+         "V(a,b)*q", "n13", "overflows to infinity", decl="  parameter real q = 1.0/0.0;\n")
+rejected("[32] absdelay(V, 1e308*10) -- was 'must not be negative, but is inf'",
+         "absdelay(V(a,b), 1e308*10)", "n14", "the delay must be a finite number, but is inf")
+
+print("\n  ...and the NaN no longer reaches the argument checks")
+rejected("[33] absdelay(V, 0.0/0.0) -- a NaN delay was a zero delay at run time",
+         "absdelay(V(a,b), 0.0/0.0)", "n15", "the quotient is undefined")
+rejected("[34] a NaN parameter range bound, from [0.0/0.0:1]", "V(a,b)*q", "n16",
+         "the quotient is undefined", decl="  parameter real q = 1 from [0.0/0.0:1];\n")
+rejected("[35] laplace_nd(V, '{1}, '{1, 0.0/0.0}) -- refused before the run time could call it zero",
+         "laplace_nd(V(a,b), '{1}, '{1, 0.0/0.0})", "n17", "the quotient is undefined")
+
+print("\n  the two siblings keep their own sentences")
+rejected("[36] integer 1/0 is Enhancement-333's", "1/0", "n18", "integer division by zero", vtype="integer")
+rejected("[37] 1.0 % 0.0 is Enhancement-578's", "1.0 % 0.0", "n19", "LRM 4.2.4 makes an error")
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

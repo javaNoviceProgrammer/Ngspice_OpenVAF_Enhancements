@@ -1,4 +1,4 @@
-use hir::{ExprId, Literal, Type};
+use hir::{ExprId, Literal, Type, MAX_FMT_WIDTH};
 use mir::builder::InstBuilder;
 use mir::cursor::{Cursor, FuncCursor};
 use mir::{Opcode, Value, GRAVESTONE};
@@ -121,7 +121,19 @@ impl BodyLoweringCtx<'_, '_, '_> {
                         while matches!(c, '-' | '+' | ' ' | '#' | '0'..='9' | '.' | '*') {
                             if c == '*' {
                                 arg_tys.push(Type::Integer.into());
-                                call_args.push(self.lower_expr(args[i]));
+                                // Enhancement-708 (robustness campaign F10 of
+                                // 2026-09-23): a run-time width or precision is
+                                // clamped to the compile-time limit -- a `*` fed
+                                // 10^9 reserved a 1 GB buffer, and past 2^31 the
+                                // C library dropped the specifier in silence.
+                                let val = self.lower_expr(args[i]);
+                                let hi = self.ctx.iconst(MAX_FMT_WIDTH as i32);
+                                let lo = self.ctx.iconst(-(MAX_FMT_WIDTH as i32));
+                                let above = self.ctx.ins().igt(val, hi);
+                                let val = self.ctx.ins().select(above, hi, val);
+                                let below = self.ctx.ins().ilt(val, lo);
+                                let val = self.ctx.ins().select(below, lo, val);
+                                call_args.push(val);
                                 i += 1;
                             }
                             prefix.push(c);

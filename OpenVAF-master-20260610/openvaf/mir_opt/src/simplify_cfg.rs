@@ -69,12 +69,25 @@ impl<'a> SimplifyCfg<'a> {
 
         loop {
             self.local_changed = false;
-            let mut cursor = self.func.layout.blocks_cursor();
             // Loop over all of the basic blocks and remove them if they are unneeded.
-            while let Some(bb) = cursor.next {
+            //
+            // Enhancement-705 (robustness campaign F1/F7 of 2026-09-23): the block
+            // to visit next is taken BEFORE `bb` is simplified. The cursor used to
+            // advance afterwards, through `bb`'s own layout link -- and a block that
+            // `simplify_bb` had just merged into its predecessor or dropped as an
+            // orphan has that link cleared, so the pass ended right there. Every
+            // pass then removed exactly one block and rescanned the whole function
+            // to find the next: a `$table_model` of n knots, whose lowering leaves
+            // about n blocks to merge, cost n passes over 3n blocks (10 000 rows:
+            // 29 995 passes, 17 s; 30 000 rows: 189 s), and the same quadratic sat
+            // under every long chain of selects -- table calls, `cross` events,
+            // nested instances. `simplify_bb(bb)` removes no block but `bb` itself,
+            // so the next block is still in the layout when it is visited; a block
+            // that became an orphan meanwhile is dropped on its own visit, as before.
+            let mut next = self.func.layout.entry_block();
+            while let Some(bb) = next {
+                next = self.func.layout.next_block(bb);
                 self.simplify_bb(bb);
-                // only advance after simplification to avoid visiting dead blocks
-                cursor.next(&self.func.layout);
             }
             if !self.local_changed {
                 break;

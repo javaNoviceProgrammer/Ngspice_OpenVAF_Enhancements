@@ -65,6 +65,15 @@ pub const MAX_CONCAT_ELEMS: u64 = 1 << 20;
 /// and is orders of magnitude above any legitimate source-level string literal.
 pub const MAX_CONCAT_STR_OPERANDS: u64 = 4096;
 
+/// Enhancement-708 (robustness campaign F10 of 2026-09-23): the largest field
+/// width or precision a format specifier may name, literally (`%999999999d`,
+/// refused at compile time) or through a `*` argument (clamped at run time).
+/// LRM 9.4 sets no bound; the run time formats into a buffer of the width's
+/// size, so `%999999999d` was a 1 GB string, and past 2^31 the C library
+/// dropped the specifier in silence. A width only pads: nothing a model prints
+/// is wider than this.
+pub const MAX_FMT_WIDTH: u64 = 4096;
+
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum AssignDst {
     Var(VarId),
@@ -3970,6 +3979,13 @@ pub enum InferenceDiagnostic {
     InvalidFmtSpecifierEnd {
         fmt_lit: ExprId,
         lit_range: TextRange,
+    },
+    /// Enhancement-708: a literal field width or precision above `MAX_FMT_WIDTH`
+    FmtWidthTooLarge {
+        fmt_lit: ExprId,
+        lit_range: TextRange,
+        what: &'static str,
+        value: Box<str>,
     },
 
     TypeMismatch(TypeMismatch),

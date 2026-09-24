@@ -209,6 +209,33 @@ def main():
     check("no crash (used to SIGSEGV in find_model_parameter)",
           rc >= 0 and rc < 128)
 
+    print("[14] Enhancement-707: 400 modules in one file link through a response file")
+    many = os.path.join(HERE, "_many.va")
+    open(many, "w").write('`include "disciplines.vams"\n' + "".join(
+        f"module r{i}(p,n); inout p,n; electrical p,n; parameter real r=1k; "
+        f"analog I(p,n) <+ V(p,n)/r; endmodule\n" for i in range(400)))
+    r = subprocess.run([OPENVAF, "_many.va", "-o", "_many.osdi"], cwd=HERE,
+                       capture_output=True, text=True)
+    os.remove(many)
+    check("400 one-line modules compile and link: 1 600 object files, about 130 KB of "
+          "paths, far above the 16 KiB threshold at which the linker is given @file",
+          r.returncode == 0)
+    check("the response file is removed after the link",
+          not os.path.exists(os.path.join(HERE, "_many.rsp")))
+    rc, out = run("* many\nvin in 0 dc 1\nn1 in 0 mlast\n.model mlast r399(r=2k)\n"
+                  ".control\npre_osdi _many.osdi\nop\nprint -i(vin)\n.endc\n.end\n", "t14")
+    check("the last of the 400 modules loads and conducts 0.5 mA",
+          val(out, "-i(vin)") is not None and abs(val(out, "-i(vin)") - 5e-4) < 1e-12)
+
+    print("[15] Enhancement-707: an exec failure names the linker and the cause")
+    r = subprocess.run([OPENVAF, "trio.va", "-o", "_nolinker.osdi"], cwd=HERE,
+                       capture_output=True, text=True, env=dict(os.environ, PATH="/nonexistent"))
+    out = r.stdout + r.stderr
+    check("with no linker on PATH: \"linker not found: '<program>' is not installed or not on "
+          "PATH (...)\" -- an oversized argument vector used to be reported the same way",
+          r.returncode != 0 and "linker not found: '" in out
+          and "is not installed or not on PATH" in out)
+
     n_pass = sum(checks)
     n_fail = len(checks) - n_pass
     print()

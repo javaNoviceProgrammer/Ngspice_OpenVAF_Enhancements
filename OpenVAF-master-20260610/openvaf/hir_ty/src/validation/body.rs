@@ -170,6 +170,18 @@ pub enum BodyValidationDiagnostic {
     /// (`value` as written, `sci` in scientific notation, `clipped` what an
     /// `integer` store makes of it).
     IntLiteralOverflow { expr: ExprId, stmt: StmtId, value: Box<str>, sci: Box<str>, clipped: i32 },
+    /// Enhancement-708 (robustness campaign F10 of 2026-09-23): a based literal
+    /// whose digits carry more bits than its size (32 when unsized) --
+    /// `'hFFFFFFFFFF` is 40 bits, is truncated to the low 32 and reads as -1,
+    /// where the decimal `4294967295` draws L030.
+    BasedLiteralOverflow {
+        expr: ExprId,
+        stmt: StmtId,
+        text: Box<str>,
+        bits: u32,
+        size: u32,
+        value: i32,
+    },
     /// Enhancement-590: an `integer` parameter whose constant default has a
     /// fraction (`fraction`) or does not fit 32 bits (`!fraction`); `verdict`
     /// says what the compiler makes of it ("rounded to 3", "clipped to ...").
@@ -668,6 +680,13 @@ impl BodyValidationDiagnostic {
                 .iter()
                 .copied()
                 .collect(),
+            based_overflow: db
+                .body_with_sourcemap(def)
+                .1
+                .based_overflow_literals
+                .iter()
+                .map(|(expr, text, bits, size)| (*expr, (text.clone(), *bits, *size)))
+                .collect(),
         };
 
         for stmt in &*body.entry_stmts {
@@ -944,6 +963,9 @@ struct BodyValidator<'a> {
     /// Enhancement-590: the literals body lowering read as reals because they
     /// did not fit an `integer` (`BodySourceMap::int_overflow_literals`).
     int_overflow: HashSet<ExprId>,
+    /// Enhancement-708: the based literals body lowering truncated to their
+    /// size (`BodySourceMap::based_overflow_literals`): spelling, bits, size.
+    based_overflow: HashMap<ExprId, (Box<str>, u32, u32)>,
 }
 
 impl BodyValidator<'_> {
@@ -2011,6 +2033,20 @@ impl ExprValidator<'_, '_> {
                 });
             }
         }
+        // Enhancement-708: a based literal truncated to its size
+        if let Some((text, bits, size)) = self.parent.based_overflow.get(&expr).cloned() {
+            if let Expr::Literal(Literal::Int(value)) = self.parent.body.exprs[expr] {
+                let stmt = self.stmt;
+                self.parent.diagnostics.push(BodyValidationDiagnostic::BasedLiteralOverflow {
+                    expr,
+                    stmt,
+                    text,
+                    bits,
+                    size,
+                    value,
+                });
+            }
+        }
         match self.parent.body.exprs[expr] {
             Expr::Call { ref fun, ref args, .. } => {
                 match self.parent.infer.resolved_calls.get(&expr) {
@@ -2308,6 +2344,17 @@ impl ExprValidator<'_, '_> {
                             ),
                             lhs,
                         )
+                    } else if base.is_finite() && exp.is_finite() && base.powf(exp).is_infinite() {
+                        // Enhancement-706: in the domain, past the largest double
+                        self.bad_arg(
+                            "**",
+                            "the base",
+                            format!(
+                                "is {base} with the exponent {exp}, for which ** exceeds the \
+                                 largest double (about 1.8e308); the result would be infinite"
+                            ),
+                            lhs,
+                        )
                     }
                 }
             }
@@ -2332,6 +2379,36 @@ impl ExprValidator<'_, '_> {
                             .to_owned(),
                         rhs,
                     )
+                }
+            }
+
+            // Enhancement-706 (robustness campaign F6 of 2026-09-23): `0.0/0.0`.
+            // Integer `1/0` has been a compile error since Enhancement-333 and
+            // `x % 0.0` since Enhancement-578; the real `0.0/0.0` folded to NaN
+            // without a word -- and the NaN then passed every constant-argument
+            // check, because `const_num` leaves a zero divisor unfolded, which
+            // made `absdelay(V(p,n), 0.0/0.0)` "not a constant" to the delay
+            // check that refuses `-1` (at run time a NaN delay is a zero delay
+            // and a NaN slew rate is no limit). ONLY the undefined quotient is
+            // refused here: `1.0/0.0` is IEEE's infinity, a value that
+            // Enhancement-333 deliberately left to the model 
+            // vafdivzero_examples compares against it), so it now FOLDS to inf
+            // and the consumer that needs a finite number says so -- a delay, a
+            // step bound, a parameter default (Enhancement-640) -- while a plain
+            // use of it stays legal.
+            Expr::BinaryOp { lhs, rhs, op: Some(BinaryOp::Division) }
+                if self.parent.infer.expr_types[expr].to_value() != Some(Type::Integer) =>
+            {
+                if let (Some(l), Some(r)) = (self.const_num(lhs), self.const_num(rhs)) {
+                    if r == 0.0 && (l == 0.0 || l.is_nan()) {
+                        self.bad_arg(
+                            "/",
+                            "the operands",
+                            "are both 0, so the quotient is undefined; the result would be NaN"
+                                .to_owned(),
+                            expr,
+                        )
+                    }
                 }
             }
 
@@ -2885,6 +2962,45 @@ impl ExprValidator<'_, '_> {
                             format!(
                                 "is 0 with the negative exponent {exp}, which is outside \
                                  the domain of pow; the result would be infinite"
+                            ),
+                            args[0],
+                        )
+                    } else if base.is_finite() && exp.is_finite() && base.powf(exp).is_infinite() {
+                        // Enhancement-706: in the domain, past the largest double
+                        self.bad_arg(
+                            "pow",
+                            "the base",
+                            format!(
+                                "is {base} with the exponent {exp}, for which pow exceeds the \
+                                 largest double (about 1.8e308); the result would be infinite"
+                            ),
+                            args[0],
+                        )
+                    }
+                }
+            }
+
+            // Enhancement-706: `exp(1000.0)`, `sinh(1000.0)`, `cosh(1000.0)` -- an
+            // argument inside the function's domain whose result lies past the
+            // largest double. The literal `1e400` is refused by the lexer as "too
+            // large to represent" and Enhancement-640 refuses a parameter default
+            // that folds to infinity; the same value born in one of these calls was
+            // folded to +inf in silence. Judged for a constant argument only, like
+            // the domain checks above.
+            (BuiltIn::exp | BuiltIn::sinh | BuiltIn::cosh, _) if !args.is_empty() => {
+                if let Some(v) = self.const_num(args[0]) {
+                    let (name, r) = match call {
+                        BuiltIn::exp => ("exp", v.exp()),
+                        BuiltIn::sinh => ("sinh", v.sinh()),
+                        _ => ("cosh", v.cosh()),
+                    };
+                    if v.is_finite() && r.is_infinite() {
+                        self.bad_arg(
+                            name,
+                            "the argument",
+                            format!(
+                                "is {v}, for which {name} exceeds the largest double (about \
+                                 1.8e308); the result would be infinite"
                             ),
                             args[0],
                         )
@@ -4086,7 +4202,11 @@ impl ExprValidator<'_, '_> {
     /// a "Timestep too small" that named neither the model nor the call.
     fn require_positive(&mut self, builtin: &str, what: &str, expr: ExprId) {
         if let Some(v) = self.const_num(expr) {
-            if !(v > 0.0) || !v.is_finite() {
+            if !v.is_finite() {
+                // Enhancement-706: `1e308*10` folds to inf and was "must be greater
+                // than zero, but is inf" -- name the actual defect
+                self.bad_arg(builtin, what, format!("must be a finite number, but is {v}"), expr)
+            } else if !(v > 0.0) {
                 self.bad_arg(builtin, what, format!("must be greater than zero, but is {v}"), expr)
             }
         }
@@ -4121,7 +4241,10 @@ impl ExprValidator<'_, '_> {
 
     fn require_non_negative(&mut self, builtin: &str, what: &str, expr: ExprId) {
         if let Some(v) = self.const_num(expr) {
-            if v < 0.0 || !v.is_finite() {
+            if !v.is_finite() {
+                // Enhancement-706: see `require_positive`
+                self.bad_arg(builtin, what, format!("must be a finite number, but is {v}"), expr)
+            } else if v < 0.0 {
                 self.bad_arg(builtin, what, format!("must not be negative, but is {v}"), expr)
             }
         }
@@ -4400,18 +4523,30 @@ pub(crate) fn const_num_in(
                 BinaryOp::Addition => Some(l + r),
                 BinaryOp::Subtraction => Some(l - r),
                 BinaryOp::Multiplication => Some(l * r),
-                // A zero divisor is left to the division checks, which
-                // report it themselves; folding it here would hand the
-                // caller an inf and produce a second, confusing complaint.
+                // A zero divisor of an INTEGER division is Enhancement-333's
+                // compile error, and `0.0/0.0` is Enhancement-706's: both are
+                // reported at the division, and folding them here would hand
+                // the caller a value and produce a second, confusing complaint.
                 // Enhancement-664 (hunt F5): LRM 4.2 -- "integer division
                 // truncates any fractional part toward zero". This folded
                 // `7/2` as 3.5, so L030 complained that an integer parameter's
                 // default 3.5 cannot be held while the model ran with 3, and
                 // `7/2*2 from [0:6]` was judged 7 against its range where the
                 // model ran with 6 (L027 the wrong way round, either way).
-                BinaryOp::Division if r != 0.0 => {
+                // Enhancement-706: `1.0/0.0` is IEEE's infinity -- a legal
+                // value (Enhancement-333 left it to the model) that was not
+                // folded at all, so `absdelay(V(p,n), 1.0/0.0)` was "not a
+                // constant" to the delay check. It folds to inf now, and the
+                // consumer that needs a finite number says so.
+                BinaryOp::Division => {
                     if is_integer_typed(infer, lhs) && is_integer_typed(infer, rhs) {
-                        Some((l / r).trunc())
+                        if r == 0.0 {
+                            None
+                        } else {
+                            Some((l / r).trunc())
+                        }
+                    } else if r == 0.0 && (l == 0.0 || l.is_nan()) {
+                        None
                     } else {
                         Some(l / r)
                     }

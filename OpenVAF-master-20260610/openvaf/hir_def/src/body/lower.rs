@@ -268,6 +268,16 @@ impl LowerCtx<'_> {
                     if int.overflows_integer() {
                         self.source_map.int_overflow_literals.push(id);
                     }
+                    // Enhancement-708: a based literal wider than its size is
+                    // truncated to the size; keep the spelling for the lint
+                    if let Some((text, bits, size)) = int.based_overflow() {
+                        self.source_map.based_overflow_literals.push((
+                            id,
+                            text.into_boxed_str(),
+                            bits,
+                            size,
+                        ));
+                    }
                     if int.dontcare_masks().is_some() {
                         self.body.stray_dontcare_literals.push(id);
                     }

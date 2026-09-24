@@ -61,6 +61,11 @@ pub struct BodySourceMap {
     /// Enhancement-590: integer literals that did not fit an `integer` and were
     /// lowered as reals (`Literal::new`), so validation can say so.
     pub int_overflow_literals: Vec<ExprId>,
+    /// Enhancement-708: based literals whose digits carry more bits than the
+    /// literal's size (32 when unsized) -- `'hFFFFFFFFFF` is 40 bits and reads
+    /// as -1 -- with the spelling, the bit count and the size, so validation
+    /// can say so (the decimal case is `int_overflow_literals`).
+    pub based_overflow_literals: Vec<(ExprId, Box<str>, u32, u32)>,
 }
 
 impl BodySourceMap {

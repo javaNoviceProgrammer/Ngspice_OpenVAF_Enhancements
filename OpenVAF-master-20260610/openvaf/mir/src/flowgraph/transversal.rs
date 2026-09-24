@@ -121,7 +121,16 @@ impl<'lt> Iterator for Postorder<'lt> {
 
 // Pascal's Postorder was wrong. Did not work for loops.
 // This one passses all tests, except for HiSIMHV (has loops that we are trying to fix).
-// TODO: rewrite this without using recursion
+//
+// Enhancement-705 (robustness campaign F1 of 2026-09-23): the traversal used to
+// recurse once per block, so a function whose control flow is one long chain --
+// the select chain of a 100 000-row `$table_model` data file, one branch and one
+// merge per knot -- overflowed the main thread's stack in the first post-order
+// walk after the lowering (`thread 'main' has overflowed its stack`, SIGABRT).
+// The walk is now an explicit stack of (block, next successor index) frames with
+// exactly the recursive version's visiting order: a block is pushed to the
+// result after all of its successors, successors taken in edge order, and a
+// block reached again -- through a back edge or a merge -- is not re-entered.
 pub struct Postorder<'a> {
     cfg: &'a ControlFlowGraph,
     visited: BitSet<Block>,
@@ -142,15 +151,26 @@ impl<'a> Postorder<'a> {
         po
     }
 
-    fn dfs(&mut self, bb: Block) {
-        if !self.visited.insert(bb) {
+    fn dfs(&mut self, root: Block) {
+        if !self.visited.insert(root) {
             return;
         }
-        for succ in self.cfg.successors(bb).iter() {
-            self.dfs(succ);
+        // (block, index of the next successor to enter)
+        let mut stack: Vec<(Block, usize)> = vec![(root, 0)];
+        while let Some(&mut (bb, ref mut next)) = stack.last_mut() {
+            match self.cfg.successors(bb).iter().nth(*next) {
+                Some(succ) => {
+                    *next += 1;
+                    if self.visited.insert(succ) {
+                        stack.push((succ, 0));
+                    }
+                }
+                None => {
+                    stack.pop();
+                    self.result.push(bb);
+                }
+            }
         }
-
-        self.result.push(bb);
     }
 }
 

@@ -66,7 +66,38 @@ pub fn link(
         file.write_all(target.options.import_lib).context("failed to write importlib")?;
         linker.add_object(&import_lib_path);
     }
-    let res = exec_linker(linker.take_cmd(), out_filename);
+    // Enhancement-707 (robustness campaign F8 of 2026-09-23): every module
+    // contributes four object files and each is named on the linker's command
+    // line, so a file of 1 800 modules built an argument vector past macOS's
+    // 256 KB `ARG_MAX` and `exec` failed with E2BIG -- reported as "linker not
+    // found: Argument list too long". Above a modest size the arguments go into
+    // a response file (`@file`), which clang, gcc, GNU ld and link.exe all
+    // read; the threshold sits well below Windows's 32 767-character limit on a
+    // command line, the tightest of the supported hosts.
+    let mut cmd = linker.take_cmd();
+    let program = cmd.get_program().to_owned();
+    let response_file = out_filename.with_extension("rsp");
+    let arg_bytes: usize = cmd.get_args().map(|arg| arg.len() + 1).sum();
+    let use_response_file = arg_bytes > RESPONSE_FILE_THRESHOLD;
+    if use_response_file {
+        let msvc = target.options.linker_flavor == LinkerFlavor::Msvc;
+        let contents = response_file_contents(cmd.get_args(), msvc);
+        std::fs::write(&response_file, contents)
+            .with_context(|| format!("failed to write the linker response file {response_file}"))?;
+        let mut via_file = std::process::Command::new(&program);
+        via_file.arg(format!("@{response_file}"));
+        for (key, val) in cmd.get_envs() {
+            match val {
+                Some(val) => via_file.env(key, val),
+                None => via_file.env_remove(key),
+            };
+        }
+        cmd = via_file;
+    }
+    let res = exec_linker(cmd, out_filename);
+    if use_response_file {
+        let _ = remove_file(&response_file);
+    }
     if !target.options.import_lib.is_empty() {
         remove_file(import_lib_path).context("failed to delete importlib")?;
     }
@@ -79,7 +110,67 @@ pub fn link(
             bail!("linking failed (see linker output for details)")
         }
         Ok(_) => Ok(()),
-        Err(err) => bail!("linker not found: {}", err),
+        // Enhancement-707: every `exec` failure used to be "linker not found" --
+        // a missing linker and an oversized argument vector call for different
+        // fixes, so say which it was and which program was run.
+        Err(err) if err.kind() == io::ErrorKind::NotFound => bail!(
+            "linker not found: '{}' is not installed or not on PATH ({err})",
+            program.to_string_lossy()
+        ),
+        Err(err) => bail!("failed to run the linker '{}': {err}", program.to_string_lossy()),
+    }
+}
+
+/// Enhancement-707: the argument-vector size above which the linker is given a
+/// response file instead. 16 KiB is about 140 object paths; the smallest limit
+/// among the hosts is Windows's 32 767 characters for the whole command line.
+const RESPONSE_FILE_THRESHOLD: usize = 16 * 1024;
+
+/// Enhancement-707: the linker's arguments as a response file, one per line.
+/// GNU-style readers (clang, gcc, GNU ld) split on white space and honour
+/// double quotes and backslash escapes, so every argument is quoted and `\`
+/// and `"` are escaped; link.exe reads a backslash literally (it is the path
+/// separator), so there only an argument with white space or a quote is quoted.
+fn response_file_contents<'a>(args: impl Iterator<Item = &'a OsStr>, msvc: bool) -> String {
+    let mut out = String::new();
+    for arg in args {
+        let arg = arg.to_string_lossy();
+        let quote = !msvc || arg.chars().any(|c| c.is_whitespace() || c == '"');
+        if quote {
+            out.push('"');
+        }
+        for c in arg.chars() {
+            if c == '"' || (c == '\\' && !msvc) {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        if quote {
+            out.push('"');
+        }
+        out.push('\n');
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+
+    use super::response_file_contents;
+
+    #[test]
+    fn gnu_response_file_quotes_every_argument_and_escapes() {
+        let args = ["-o", "/tmp/dir with space/x.osdi", "a\\b\"c"];
+        let text = response_file_contents(args.iter().map(OsStr::new), false);
+        assert_eq!(text, "\"-o\"\n\"/tmp/dir with space/x.osdi\"\n\"a\\\\b\\\"c\"\n");
+    }
+
+    #[test]
+    fn msvc_response_file_keeps_backslashes_and_quotes_only_white_space() {
+        let args = ["/DLL", "C:\\dir with space\\x.o1", "C:\\plain\\x.o2"];
+        let text = response_file_contents(args.iter().map(OsStr::new), true);
+        assert_eq!(text, "/DLL\n\"C:\\dir with space\\x.o1\"\nC:\\plain\\x.o2\n");
     }
 }
 

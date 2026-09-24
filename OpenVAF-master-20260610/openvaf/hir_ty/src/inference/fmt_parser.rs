@@ -3,7 +3,7 @@ use std::str::CharIndices;
 use hir_def::ExprId;
 use syntax::{TextRange, TextSize};
 
-use crate::inference::InferenceDiagnostic;
+use crate::inference::{InferenceDiagnostic, MAX_FMT_WIDTH};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone)]
 enum ParserState {
@@ -75,6 +75,12 @@ pub fn parse_fmt_spec(
     let mut dynamic_args = Vec::new();
     let mut err = None;
     let mut conversion = '\0';
+    // Enhancement-708 (robustness campaign F10 of 2026-09-23): the literal
+    // width and precision, as written and as a number, so a `%999999999d` --
+    // a 1 GB string at run time, and past 2^31 a specifier the C library
+    // drops in silence -- is refused here instead of honoured or ignored.
+    let mut width = (String::new(), 0u64, 0usize);
+    let mut precision = (String::new(), 0u64, 0usize);
     loop {
         if let Some((off, c)) = pos {
             end = (off + c.len_utf8()) as u32;
@@ -83,6 +89,7 @@ pub fn parse_fmt_spec(
                 '-' | '+' | ' ' | '#' if state == ParserState::Flags => {}
                 '0'..='9' if state == ParserState::Flags => {
                     state = ParserState::FixedFmtLit;
+                    width = (c.to_string(), c.to_digit(10).unwrap() as u64, off);
                 }
                 '*' if state == ParserState::Flags => {
                     dynamic_args.push(off.try_into().unwrap());
@@ -97,9 +104,18 @@ pub fn parse_fmt_spec(
                     state = ParserState::DynamicPrecsion
                 }
                 '0'..='9' if state == ParserState::AnyPrecision => {
-                    state = ParserState::FixedPrecision
+                    state = ParserState::FixedPrecision;
+                    precision = (c.to_string(), c.to_digit(10).unwrap() as u64, off);
                 }
-                '0'..='9' if state.eat_number() => (),
+                '0'..='9' if state.eat_number() => {
+                    let number = if state == ParserState::FixedFmtLit {
+                        &mut width
+                    } else {
+                        &mut precision
+                    };
+                    number.0.push(c);
+                    number.1 = number.1.saturating_mul(10).saturating_add(c.to_digit(10).unwrap() as u64);
+                }
                 // Enhancement-71: every conversion terminates a specifier
                 // (integer d/h/o/b/c, string s, real e/f/g/r) -- flags,
                 // width and precision are legal for all of them.
@@ -111,6 +127,24 @@ pub fn parse_fmt_spec(
                 | 'O' | 'b' | 'B' | 'c' | 'C' | 's' | 'S' | 't' | 'T'
                     if state != ParserState::AnyPrecision =>
                 {
+                    // Enhancement-708: the limit on a literal width or precision
+                    for (what, (text, value, at)) in [("width", &width), ("precision", &precision)]
+                    {
+                        if *value > MAX_FMT_WIDTH {
+                            let start: u32 = (*at).try_into().unwrap();
+                            let len: u32 = text.len().try_into().unwrap();
+                            err = Some(InferenceDiagnostic::FmtWidthTooLarge {
+                                fmt_lit: fmt_expr,
+                                lit_range: TextRange::new(start.into(), (start + len).into()),
+                                what,
+                                value: text.clone().into_boxed_str(),
+                            });
+                            break;
+                        }
+                    }
+                    if err.is_some() {
+                        break;
+                    }
                     conversion = c;
                     break;
                 }

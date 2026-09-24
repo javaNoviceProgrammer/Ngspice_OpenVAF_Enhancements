@@ -162,6 +162,21 @@ impl Diagnostic for PreprocessorDiagnostic {
                             .to_owned(),
                     ])
             }
+            PreprocessorDiagnostic::IncludeEmptyName { span } => {
+                let span = span.to_file_span(&sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: "empty file name".to_owned(),
+                    }])
+                    .with_notes(vec![
+                        "help: `include \"file.va\" -- the name is looked up in the including \
+                         file's directory, then in the -I directories"
+                            .to_owned(),
+                    ])
+            }
             PreprocessorDiagnostic::EmptyMacroArgList { span } => {
                 let span = span.to_file_span(&sm);
                 Report::error()

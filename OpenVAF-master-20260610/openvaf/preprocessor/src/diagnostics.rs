@@ -63,6 +63,10 @@ pub enum PreprocessorDiagnostic {
     /// which IEEE 1364-2005 19.3.1 does not allow. It was "unexpected token,
     /// expected 'an identifier'" at the `)`.
     EmptyMacroArgList { span: CtxSpan },
+    /// Enhancement-708 (robustness campaign F10 of 2026-09-23): `` `include "" ``.
+    /// The empty name resolved to the including file's directory and was
+    /// reported as "failed to read '<that directory>': is a directory".
+    IncludeEmptyName { span: CtxSpan },
 }
 
 use PreprocessorDiagnostic::*;
@@ -92,5 +96,6 @@ impl_display! {
         LineDirectiveNotApplied { .. } => "'`line' changes '`__FILE__' and '`__LINE__' only; diagnostics keep the physical file position";
         IncludeCycle { file, .. } => "'`include \"{}\"' includes a file that is already being included", file;
         EmptyMacroArgList { .. } => "a macro with parentheses needs at least one formal argument";
+        IncludeEmptyName { .. } => "'`include \"\"' names no file";
     }
 }

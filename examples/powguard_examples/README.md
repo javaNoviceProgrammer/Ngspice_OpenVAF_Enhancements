@@ -4,8 +4,10 @@
 python3 verify_powguard.py
 ```
 
-18 checks, a couple of seconds. **12/18** against the pre-fix compiler — **6**
-checks discriminate.
+37 checks, a couple of seconds. Of the first eighteen, **12/18** against the
+pre-fix compiler — **6** checks discriminate. Checks [19]–[37] are
+[Enhancement-706](../../enhancements_doc/Enhancement-706.md)'s (below): **25/37** on
+the E-704 binaries, twelve discriminate.
 
 ## What it is
 
@@ -72,3 +74,26 @@ So a later pass does not "extend" this:
 The whole 754-file `.va` corpus was recompiled before and after: **identical
 results**, 626 succeeding both times, and **zero** hits of the new diagnostic. Full
 ngspice regression 403/403.
+
+## Enhancement-706 — the folder's own NaN and infinity (robustness campaign F6 of 2026-09-23)
+
+The constant-domain guard above judges a constant argument *outside* a function's
+domain. Two shapes it did not see: the value the constant folder produces on its own —
+`0.0/0.0` folded to NaN in silence, and the NaN then passed every constant-argument
+check that refuses `-1`, because `const_num` leaves a zero divisor unfolded for "the
+division checks" and the real `/` had none; `1.0/0.0` was not folded at all, so an
+infinite delay was "not a constant" to the delay check — and a call *inside* its domain
+whose result is past the largest double: `exp(1000.0)`, `cosh(1000.0)`, `pow(10.0,
+400.0)`, `10.0 ** 400.0`, all +∞ without a word.
+
+Checks [19]–[37]: `0.0/0.0` is refused at the division ("the operands are both 0, so the
+quotient is undefined; the result would be NaN"); `exp(1000.0)`, `cosh(1000.0)`,
+`pow(10.0, 400.0)` and `10.0 ** 400.0` are refused as exceeding the largest double,
+`exp(700.0)` and `pow(10.0, 300.0)` compile; `1.0/0.0` in an expression and `V(a,b)/0.0`
+stay legal (Enhancement-333's contract — IEEE's infinity is a value); `absdelay(V,
+1.0/0.0)` and the `localparam`-zero form are refused as "the delay must be a finite
+number, but is inf", the overridable-`parameter` form is the deck's business, and
+`parameter real q = 1.0/0.0` is Enhancement-640's "overflows to infinity"; `absdelay(V,
+1e308*10)` is named finite-not-negative; `absdelay(V, 0.0/0.0)`, a `from [0.0/0.0:1]`
+bound and a `'{1, 0.0/0.0}` Laplace denominator are refused before any run time; and
+integer `1/0` and `1.0 % 0.0` keep Enhancement-333's and Enhancement-578's sentences.

@@ -32,6 +32,8 @@ pub use hir_ty::builtin;
 use hir_ty::db::HirTyDB as HirDatabase;
 use hir_ty::inference;
 pub use hir_ty::types::Signature;
+/// Enhancement-708: the format width/precision limit, shared with the lowering.
+pub use hir_ty::inference::MAX_FMT_WIDTH;
 pub use rec_declarations::RecDeclarations;
 use salsa::InternKey;
 use smol_str::SmolStr;

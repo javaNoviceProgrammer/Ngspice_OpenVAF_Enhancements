@@ -142,6 +142,83 @@ def main():
     ok = ok and good
     print(f"{'Transient: V(out) tracks table(V(in))':44s} max err {tran_err:.2e}  {'PASS' if good else 'FAIL'}")
 
+    # --- Enhancement-705: a 100 000-row data file and a 30 000-isoline file ---
+    # (robustness campaign F1 of 2026-09-23). The interval search of a
+    # compile-time table was a chain of one branch per knot; the first
+    # recursive walk over the 300 000 blocks of a 100 000-row file overflowed
+    # the compiler's stack ("thread 'main' has overflowed its stack"), and
+    # 30 000 rows took 189 s. The search is a binary tree now: the files
+    # compile in seconds and every value is the exact linear interpolation.
+    import time
+
+    def last_val(fname):
+        with open(os.path.join(HERE, fname)) as fh:
+            return float(fh.read().split()[-1])
+
+    n_big = 100_000
+    with open(os.path.join(HERE, "_big_iv.tbl"), "w") as fh:
+        for i in range(n_big):
+            fh.write(f"{i * 1e-4:.4f} {(i * i % 97) * 1e-6:.6e}\n")
+    big_xp = np.arange(n_big) * 1e-4
+    big_fp = np.array([(i * i % 97) * 1e-6 for i in range(n_big)])
+    t0 = time.time()
+    r = subprocess.run([OPENVAF, "table_big.va", "-o", "table_big.osdi"], cwd=HERE,
+                       capture_output=True, text=True)
+    t_big = time.time() - t0
+    good = r.returncode == 0 and os.path.exists(os.path.join(HERE, "table_big.osdi"))
+    ok = ok and good
+    print(f"{'E-705: 100 000-row data file compiles':44s} {t_big:5.1f} s, rc {r.returncode}  {'PASS' if good else 'FAIL'}")
+    if good:
+        pts = [0.00005, 0.12345, 3.14159, 7.77777, 9.99985]   # all inside the table
+        deck = ("* table_big points\nvin in 0 dc 0\nn1 in 0 mm\n.model mm table_big()\n"
+                ".control\npre_osdi table_big.osdi\n"
+                + "".join(f"dc vin {v} {v} 1\nwrdata _big{k}.txt i(vin)\n" for k, v in enumerate(pts))
+                + ".endc\n.end\n")
+        with open(os.path.join(HERE, "_t.cir"), "w") as fh:
+            fh.write(deck)
+        subprocess.run([NGSPICE, "-b", "_t.cir"], cwd=HERE, capture_output=True, text=True)
+        big_err = 0.0
+        for k, v in enumerate(pts):
+            got = -last_val(f"_big{k}.txt")
+            big_err = max(big_err, abs(got - np.interp(v, big_xp, big_fp)))
+        good = big_err < 1e-15
+        ok = ok and good
+        print(f"{'E-705: 100 000-row table, five points':44s} max err {big_err:.2e} A  {'PASS' if good else 'FAIL'}")
+        # the derivative through the search tree: AC conductance = the segment's slope
+        v0 = 3.14159
+        k = int(v0 / 1e-4)
+        want = (big_fp[k + 1] - big_fp[k]) / 1e-4
+        deck = (f"* table_big AC at {v0}\nvbias in 0 dc {v0} ac 1\nn1 in 0 mm\n.model mm table_big()\n"
+                ".control\npre_osdi table_big.osdi\nac dec 1 1k 1k\nwrdata _ac.txt mag(i(vbias))\n.endc\n.end\n")
+        a = np.atleast_2d(run_ngspice(deck, "_ac.txt"))
+        g = float(a[0, -1])
+        good = abs(g - abs(want)) < 1e-12
+        ok = ok and good
+        print(f"{'E-705: 100 000-row table, AC g = segment slope':44s} err {abs(g - abs(want)):.2e} S  {'PASS' if good else 'FAIL'}")
+    n_iso = 30_000
+    with open(os.path.join(HERE, "_big_iso.tbl"), "w") as fh:
+        for i in range(n_iso):
+            fh.write(f"{i} 0 {i}\n{i} 1 {i + 1}\n")
+    t0 = time.time()
+    r = subprocess.run([OPENVAF, "table_iso.va", "-o", "table_iso.osdi"], cwd=HERE,
+                       capture_output=True, text=True)
+    t_iso = time.time() - t0
+    good = r.returncode == 0 and os.path.exists(os.path.join(HERE, "table_iso.osdi"))
+    ok = ok and good
+    print(f"{'E-705: 30 000-isoline 2-D file compiles':44s} {t_iso:5.1f} s, rc {r.returncode}  {'PASS' if good else 'FAIL'}")
+    if good:
+        # y = 12345.5 lies between isolines 12345 and 12346; x = 0.25 on each
+        # gives z = i + 0.25, so the bilinear value is 12345.75
+        deck = ("* table_iso point\nvin in 0 dc 0.25\nn1 in 0 mm\n.model mm table_iso(y=12345.5)\n"
+                ".control\npre_osdi table_iso.osdi\ndc vin 0.25 0.25 1\nwrdata _iso.txt i(vin)\n.endc\n.end\n")
+        with open(os.path.join(HERE, "_t.cir"), "w") as fh:
+            fh.write(deck)
+        subprocess.run([NGSPICE, "-b", "_t.cir"], cwd=HERE, capture_output=True, text=True)
+        got = -last_val("_iso.txt") * 1e6
+        good = abs(got - 12345.75) < 1e-9
+        ok = ok and good
+        print(f"{'E-705: 30 000-isoline table at (12345.5, 0.25)':44s} got {got:.6f} (12345.75)  {'PASS' if good else 'FAIL'}")
+
     print("\nALL PASS" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)
 

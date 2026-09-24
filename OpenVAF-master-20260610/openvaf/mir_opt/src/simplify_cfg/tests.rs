@@ -156,13 +156,13 @@ pub fn const_terminator() {
             v5 = iconst 42
             v6 = iconst 23
         block0:
-            br v4, block6, block5
+            br v4, block1, block6
 
-        block5:
+        block1:
             jmp block6
 
         block6:
-            v8 = phi [v6, block0], [v5, block5]
+            v8 = phi [v5, block0], [v6, block1]
             v9 = imul v8, v8
         }
     "#]];

@@ -93,7 +93,9 @@ of the decimal point) and a string spanning a raw newline (LRM 2.7).
 [E-650](../../enhancements_doc/Enhancement-650.md) (it was "unexpected
 token '.'"); an octal escape above `\377` is refused (2.7.1 gives one 8-bit
 character) and an escape the LRM does not define is kept verbatim with a
-warning (E-650).
+warning (E-650). `` `include "" `` is refused as "names no file" since
+[E-708](../../enhancements_doc/Enhancement-708.md); the empty name used to
+resolve to the including file's directory and fail as "is a directory".
 A backslash immediately before the newline is a **line continuation**
 instead: the backslash–newline pair contributes nothing to the string
 (SystemVerilog 5.9 semantics and de-facto Verilog-A practice — BSIM4
@@ -544,7 +546,12 @@ literal, which folds before code generation, so the intrinsic is never emitted.
 out-of-domain *constant* — `sqrt(-4)`, `ln(0)`, `asin(2)`, `acosh(0.5)`,
 `atanh(1)`, `pow` with a negative base and a fractional exponent — is a
 compile-time error naming the builtin, the value and the domain
-(E-455/479/489/508). The identical value supplied from a **model card** is an
+(E-455/479/489/508); since [E-706](../../enhancements_doc/Enhancement-706.md)
+`0.0/0.0` is refused at the division ("the quotient is undefined; the result
+would be NaN"), `1.0/0.0` folds to IEEE's infinity and the consumer that needs
+a finite number refuses it (a delay, a step bound, a parameter default), and
+`exp(1000.0)`, `cosh(1000.0)`, `pow(10.0, 400.0)` and `10.0 ** 400.0` are
+refused as exceeding the largest double. The identical value supplied from a **model card** is an
 overridable `parameter`, which the compiler deliberately does not fold, and it
 used to reach the maths library untouched and return `nan`/`inf` silently;
 [E-509](../../enhancements_doc/Enhancement-509.md) refuses it at run time with
@@ -848,7 +855,10 @@ per-operator override, not nature tolerances in general.
   endpoint value (`C`), so the spline meets its constant extension with a
   continuous derivative; every spline was the natural one with the clamp
   applied outside it, and the derivative that feeds the Jacobian jumped at the
-  table edge. A data file the call cannot
+  table edge. Since [E-705](../../enhancements_doc/Enhancement-705.md) a data
+  file of any size compiles: the interval search is a binary tree over the
+  segment's parameters (a 100 000-row file overflowed the compiler's stack,
+  and 30 000 rows took 189 s; 14 s and 3 s now). A data file the call cannot
   use is refused with its cause named since E-700 — the column shortage
   against the input count, the line and token that is not a number, the
   ragged row — where one label served every cause.
@@ -1379,7 +1389,11 @@ a re-run of the instance initialization reproduces `$rewind`/`$fseek`
 files byte-exactly; and the pre-opened descriptors `32'h8000_0000/1/2`
 reach stdin/stdout/stderr. ⚠️ `$fmonitor` change detection remains a documented
 gap. `$sscanf`/`$fscanf` honour the format conversion base —
-`%h`/`%x` hex, `%o` octal, `%b` binary, `%d` decimal (E-105).
+`%h`/`%x` hex, `%o` octal, `%b` binary, `%d` decimal (E-105). A literal
+format width or precision above 4096 is a compile error and a `*` one is
+clamped to ±4096 at run time ([E-708](../../enhancements_doc/Enhancement-708.md)):
+`%999999999d` was a 1 GB string, and past 2³¹ the C library dropped the
+specifier in silence.
 
 [E-539](../../enhancements_doc/Enhancement-539.md) closed the 9.5.1 descriptor
 and read-position rules. **Multichannel descriptors are one-hot bits**: the

@@ -979,6 +979,33 @@ impl Diagnostic for InferenceDiagnosticWrapped<'_> {
                         "failed to parse format specifier; unexpected end of literal".to_owned(),
                     )
             }
+            // Enhancement-708: `%999999999d` -- a 1 GB string at run time
+            InferenceDiagnostic::FmtWidthTooLarge { fmt_lit, lit_range, what, ref value } => {
+                let fmt_lit = self.expr_range(fmt_lit);
+                let lit_src = self
+                    .parse
+                    .to_file_span(lit_range + fmt_lit.start() + TextSize::from(1u32), self.sm);
+
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: lit_src.file,
+                        range: lit_src.range.into(),
+                        message: format!("a {what} of {value}"),
+                    }])
+                    .with_message(format!(
+                        "the field {what} {value} is above the limit of {}",
+                        crate::inference::MAX_FMT_WIDTH
+                    ))
+                    .with_notes(vec![format!(
+                        "help: a width pads the field to at least that many characters and a \
+                         precision bounds the digits; the run time formats into a buffer of \
+                         that size, so a width of 999999999 is a 1 GB string. LRM 9.4 sets no \
+                         bound; this compiler stops at {}, and a `*` {what} supplied at run \
+                         time is clamped to it",
+                        crate::inference::MAX_FMT_WIDTH
+                    )])
+            }
         }
     }
 

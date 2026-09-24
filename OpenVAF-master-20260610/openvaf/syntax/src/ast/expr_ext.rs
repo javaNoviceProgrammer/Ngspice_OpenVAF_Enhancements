@@ -478,6 +478,25 @@ fn parse_based_int(text: &str) -> Option<i32> {
 /// in `x_mask`, `z`/`Z`/`?` digits set theirs in `z_mask`, and both
 /// contribute zero value bits. Returns `(value, x_mask, z_mask)`.
 pub fn parse_based_int_masked(text: &str) -> Option<(i32, i32, i32)> {
+    parse_based(text).map(|b| (b.val, b.x_mask, b.z_mask))
+}
+
+/// Enhancement-708: the parts of a based literal -- the value and the don't-care
+/// masks as the language sees them, and the width the digits were written with
+/// against the width the literal has.
+struct BasedInt {
+    val: i32,
+    x_mask: i32,
+    z_mask: i32,
+    /// significant bits in the digits as written: from the first digit that is
+    /// not `0` (an `x`/`z` digit is all ones), counted so that a 100 000-digit
+    /// literal is measured and not shifted through a 128-bit accumulator
+    bits: u32,
+    /// the declared size, or 32 for an unsized literal
+    size: u32,
+}
+
+fn parse_based(text: &str) -> Option<BasedInt> {
     let quote = text.find('\'')?;
     let (size_s, rest) = text.split_at(quote);
     let mut rest = &rest[1..];
@@ -498,6 +517,8 @@ pub fn parse_based_int_masked(text: &str) -> Option<(i32, i32, i32)> {
     }
     let (mut val, mut x_mask, mut z_mask) = (0u128, 0u128, 0u128);
     let mut any_digit = false;
+    // Enhancement-708: the width of the digits as written
+    let mut bits: u32 = 0;
     for c in digits.chars() {
         if c == '_' {
             continue;
@@ -508,11 +529,13 @@ pub fn parse_based_int_masked(text: &str) -> Option<(i32, i32, i32)> {
                 val <<= bits_per_digit;
                 x_mask = (x_mask << bits_per_digit) | ((1 << bits_per_digit) - 1);
                 z_mask <<= bits_per_digit;
+                bits = if bits == 0 { bits_per_digit } else { bits.saturating_add(bits_per_digit) };
             }
             'z' | 'Z' | '?' if bits_per_digit > 0 => {
                 val <<= bits_per_digit;
                 z_mask = (z_mask << bits_per_digit) | ((1 << bits_per_digit) - 1);
                 x_mask <<= bits_per_digit;
+                bits = if bits == 0 { bits_per_digit } else { bits.saturating_add(bits_per_digit) };
             }
             _ => {
                 let d = c.to_digit(radix)?;
@@ -520,6 +543,11 @@ pub fn parse_based_int_masked(text: &str) -> Option<(i32, i32, i32)> {
                     val = (val << bits_per_digit) | d as u128;
                     x_mask <<= bits_per_digit;
                     z_mask <<= bits_per_digit;
+                    if bits > 0 {
+                        bits = bits.saturating_add(bits_per_digit);
+                    } else if d > 0 {
+                        bits = 32 - d.leading_zeros();
+                    }
                 } else {
                     val = val.checked_mul(10)?.checked_add(d as u128)?;
                 }
@@ -528,6 +556,9 @@ pub fn parse_based_int_masked(text: &str) -> Option<(i32, i32, i32)> {
     }
     if !any_digit {
         return None;
+    }
+    if bits_per_digit == 0 {
+        bits = 128 - val.leading_zeros();
     }
     let size: u32 = if size_s.is_empty() {
         32
@@ -543,7 +574,13 @@ pub fn parse_based_int_masked(text: &str) -> Option<(i32, i32, i32)> {
             val |= !mask;
         }
     }
-    Some((val as u32 as i32, x_mask as u32 as i32, z_mask as u32 as i32))
+    Some(BasedInt {
+        val: val as u32 as i32,
+        x_mask: x_mask as u32 as i32,
+        z_mask: z_mask as u32 as i32,
+        bits,
+        size,
+    })
 }
 
 impl ast::StdRealNumber {
@@ -642,6 +679,21 @@ impl ast::IntNumber {
     pub fn overflows_integer(&self) -> bool {
         let src = self.number_text();
         !src.contains('\'') && src.parse::<i32>().is_err()
+    }
+
+    /// Enhancement-708: a based literal whose digits carry more bits than its
+    /// size -- `'hFFFFFFFFFF` (40 bits, unsized, so 32) or `8'hFFF` (12 bits
+    /// into 8) -- as `(bits, size)`. The value parser masks the high bits off
+    /// in silence, exactly as IEEE 1364-2005 3.5.1 prescribes, which is how
+    /// `'hFFFFFFFFFF` read as -1 with no message where the decimal
+    /// `4294967295` draws L030. Returns the spelling with it, for the message.
+    pub fn based_overflow(&self) -> Option<(String, u32, u32)> {
+        let src = self.number_text();
+        if !src.contains('\'') {
+            return None;
+        }
+        let b = parse_based(&src)?;
+        (b.bits > b.size).then_some((src, b.bits, b.size))
     }
 
     /// Enhancement-392: this literal's value NEGATED, when the negation fits in an
