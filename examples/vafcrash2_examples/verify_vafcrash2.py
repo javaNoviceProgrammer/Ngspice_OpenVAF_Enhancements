@@ -134,5 +134,24 @@ for name, src in valid.items():
     v = run(wr("ok.va", src))
     check(f"valid: {name} still compiles", v == "OK", v)
 
+# --- Enhancement-711 (robustness campaign F3 of 2026-09-23): the step guard ---
+# counts lookahead steps since the last consumed token, not over the whole
+# parse -- a legal file of about two million tokens used to reach ten million
+# steps and was cut off in mid-file with "unexpected token EOF".
+print("\nEnhancement-711: a legal file of any size parses; a stuck parser still winds down")
+big = HDR + MOD + "real s;\nanalog begin\ns = 0.0;\n" + "s = s + 1.0;\n" * 340000 + "I(a,b) <+ s*1e-3*V(a,b);\nend\nendmodule\n"
+t0 = time.time()
+v = run(wr("big.va", big), timeout=120)
+check(f"340 000 statements (4.4 MB, 2.4 M tokens) compile [{v}, {time.time() - t0:.1f} s]", v == "OK", v)
+try:
+    r = subprocess.run([OPENVAF, os.path.join(D, "big.va"), "-o", os.path.join(D, "out.osdi")],
+                       capture_output=True, text=True, timeout=120, errors="replace")
+    out = (r.stdout or "") + (r.stderr or "")
+except subprocess.TimeoutExpired:
+    out = "TIMEOUT"
+check("...and no 'unexpected token EOF' in the middle of it", "unexpected token EOF" not in out and "TIMEOUT" not in out)
+v = run(wr("stuck.va", HDR + MOD + "analog begin " + "module analog begin end case for " * 40 + " end endmodule\n"))
+check(f"the keyword-salad recovery stress of Enhancement-220 still ends cleanly [{v}]", v == "ERROR")
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

@@ -177,6 +177,71 @@ def main():
     check("\"3L\": gm continues the natural spline's tangent, 7.43 on both sides",
           abs(gll - 7.428442857) < 1e-6 and abs(glr - 52 / 7) < 1e-6, f"gm(3.99)={gll:.6f} gm(4.01)={glr:.6f}")
 
+    # Enhancement-710 (robustness campaign F2 of 2026-09-23): the moments of a
+    # data-file spline are solved by the Thomas algorithm, O(n), instead of
+    # applying a dense n x n operator that took O(n^3) to build -- 1 000 rows
+    # compiled in 6.8 s, 2 000 in 77 s, 4 000 not in 300 s. A 10 000-row file
+    # must compile in under a minute and give the natural spline's value and
+    # derivative, computed here on the same data.
+    print("\n[6] a 10 000-row cubic data file compiles, and is the natural spline (E-710)")
+    import time
+    n_big = 10000
+    xs = [i / 1000.0 for i in range(n_big)]
+    ys = [math.sin(x) for x in xs]
+    with open(os.path.join(HERE, "_big3.dat"), "w") as fh:
+        fh.write("".join(f"{x:.6f} {y:.15e}\n" for x, y in zip(xs, ys)))
+    t0 = time.time()
+    try:
+        r = subprocess.run([OPENVAF, "cubic_big.va", "-o", "cubic_big.osdi"], cwd=HERE,
+                           capture_output=True, text=True, timeout=120)
+        rc = r.returncode
+    except subprocess.TimeoutExpired:
+        rc = None
+    dt = time.time() - t0
+    check("10 000-row \"3L\" file compiles within 120 s", rc == 0, f"rc={rc} in {dt:.1f} s")
+
+    def natural_spline(xs, ys):
+        """moments of the natural cubic spline through (xs, ys), Thomas algorithm"""
+        n = len(xs)
+        h = [xs[i + 1] - xs[i] for i in range(n - 1)]
+        a = [0.0] * n; b = [1.0] * n; c = [0.0] * n; d = [0.0] * n
+        for i in range(1, n - 1):
+            a[i] = h[i - 1]; b[i] = 2.0 * (h[i - 1] + h[i]); c[i] = h[i]
+            d[i] = 6.0 * ((ys[i + 1] - ys[i]) / h[i] - (ys[i] - ys[i - 1]) / h[i - 1])
+        cp = [0.0] * n; dp = [0.0] * n
+        for i in range(n):
+            den = b[i] - a[i] * (cp[i - 1] if i else 0.0)
+            cp[i] = c[i] / den
+            dp[i] = (d[i] - a[i] * (dp[i - 1] if i else 0.0)) / den
+        m = [0.0] * n
+        for i in range(n - 1, -1, -1):
+            m[i] = dp[i] - cp[i] * (m[i + 1] if i + 1 < n else 0.0)
+        return m
+
+    def spline_at(xs, ys, m, x):
+        i = max(0, min(len(xs) - 2, next(k for k in range(len(xs) - 1) if x < xs[k + 1] or k == len(xs) - 2)))
+        h = xs[i + 1] - xs[i]; A = xs[i + 1] - x; B = x - xs[i]
+        val = (m[i] * A ** 3 + m[i + 1] * B ** 3) / (6 * h) + (ys[i] / h - m[i] * h / 6) * A + (ys[i + 1] / h - m[i + 1] * h / 6) * B
+        der = (-m[i] * A ** 2 + m[i + 1] * B ** 2) / (2 * h) - (ys[i] / h - m[i] * h / 6) + (ys[i + 1] / h - m[i + 1] * h / 6)
+        return val, der
+
+    if rc == 0:
+        m = natural_spline(xs, ys)
+        for x in (3.14159, 7.7777777, 0.0005):
+            want, dwant = spline_at(xs, ys, m, x)
+            deck = (f"* big cubic\nva a 0 dc {x} ac 1\nn1 a 0 dm\n.model dm cubic_big\n"
+                    f".control\npre_osdi cubic_big.osdi\nop\nwrdata _o.txt i(va)\n"
+                    f"ac lin 1 1 1\nwrdata _o2.txt mag(i(va))\n.endc\n.end\n")
+            with open(os.path.join(HERE, "_o.cir"), "w") as fh:
+                fh.write(deck)
+            subprocess.run([NGSPICE, "-b", "_o.cir"], cwd=HERE, capture_output=True, text=True)
+            got = -last_val("_o.txt")
+            gm = last_val("_o2.txt")
+            check(f"value at x={x:g} is the natural spline's ({want:.9g})",
+                  abs(got - want) <= 1e-9 * max(1.0, abs(want)), f"got {got:.12g}")
+            check(f"gm at x={x:g} is the spline's derivative ({dwant:.9g})",
+                  abs(gm - abs(dwant)) <= 1e-6 * max(1.0, abs(dwant)), f"got {gm:.9g}")
+
     print("\nALL PASS" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)
 

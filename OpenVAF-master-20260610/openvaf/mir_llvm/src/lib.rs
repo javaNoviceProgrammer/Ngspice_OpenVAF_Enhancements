@@ -663,3 +663,37 @@ impl Drop for ModuleLlvm {
         }
     }
 }
+
+/// Enhancement-710 (robustness campaign F2 of 2026-09-23): turn LLVM's SLP
+/// vectoriser off for the rest of this process.
+///
+/// The vectoriser packs the parallel select trees of a large table's leaves
+/// into vector lanes and then runs `optimizeGatherSequence`, a CSE over every
+/// gather it created in the function that is quadratic in their number: a
+/// 30 000-knot cubic table spent 27 of its 32 s there and a 100 000-knot one
+/// did not finish in 400 s. `osdi::compile` calls this for a file with a
+/// table above its knot limit and for nothing else, so ordinary models --
+/// the largest compact models included -- are compiled exactly as before.
+/// `LLVMPassBuilderOptionsSetSLPVectorization` has no effect on the
+/// `default<O3>` pipeline in this LLVM build (Enhancement-705 tried it, and so
+/// did this), so the switch is LLVM's own command-line option, parsed once; it
+/// must run before the first pass pipeline is built, which `osdi::compile`
+/// guarantees by deciding before it spawns the code-generation threads.
+pub fn disable_slp_vectorizer() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let args = [
+            CString::new("openvaf-r").unwrap(),
+            CString::new("-vectorize-slp=false").unwrap(),
+        ];
+        let ptrs: Vec<*const std::os::raw::c_char> = args.iter().map(|a| a.as_ptr()).collect();
+        unsafe {
+            llvm_sys::support::LLVMParseCommandLineOptions(
+                ptrs.len() as std::os::raw::c_int,
+                ptrs.as_ptr(),
+                std::ptr::null(),
+            );
+        }
+    });
+}
+

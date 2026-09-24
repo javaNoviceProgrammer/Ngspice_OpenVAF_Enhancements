@@ -800,7 +800,12 @@ per-operator override, not nature tolerances in general.
   the kernel audit — **closest-point
   lookup** (`D`, with 9.21.4's farther-from-zero tie rule), all lowered
   to differentiable MIR so *all* partial derivatives feed the Jacobian
-  (a table-based MOSFET gets exact gm and gds):
+  (a table-based MOSFET gets exact gm and gds). The spline's moments are
+  solved by the Thomas algorithm since
+  [E-710](../../enhancements_doc/Enhancement-710.md) — a 2 000-knot cubic
+  data file took 77 s through a dense n × n operator, 10 000 knots compile
+  in 1.5 s now — and a file with a table above 4 096 knots is optimised
+  without LLVM's SLP vectoriser:
 
   ```verilog
   I(d, s) <+ $table_model(V(g, s), V(d, s), "mos_iv.tbl", "1L");

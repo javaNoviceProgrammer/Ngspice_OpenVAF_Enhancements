@@ -37,6 +37,7 @@ mod body;
 mod callbacks;
 mod ctx;
 mod expr;
+pub use expr::LARGEST_SELECT_TREE;
 pub mod fmt;
 mod parameters;
 mod state;

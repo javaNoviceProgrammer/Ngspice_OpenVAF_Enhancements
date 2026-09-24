@@ -195,8 +195,9 @@ fn drop_table_columns(rows: &mut [Vec<f64>], ignored: &[usize]) {
     }
 }
 
-/// Builds the cubic-spline "moment matrix" `L` (n×n) for an ascending `grid`, such that the
-/// vector of second derivatives (moments) `M = L · y` for any data vector `y` sampled on the grid.
+/// Enhancement-710 (robustness campaign F2 of 2026-09-23): the tridiagonal
+/// system of a cubic spline's moments on an ascending `grid`, factored once
+/// for the Thomas algorithm.
 ///
 /// The end conditions follow LRM 9.21.4 (Enhancement-704, hunt F3 of 2026-09-21).
 /// A NATURAL end pins its moment to zero -- "if the user selects linear
@@ -207,107 +208,91 @@ fn drop_table_columns(rows: &mut [Vec<f64>], ignored: &[usize]) {
 /// order derivative at that end point" -- so that end's moment joins the
 /// unknowns with the row `2·h₀·M₀ + h₀·M₁ = 6·s₀` (mirrored at the top), and
 /// the spline meets its constant extension outside the table with a continuous
-/// derivative. Until Enhancement-704 every spline was the natural one and the
-/// constant extension was bolted on outside the last knot, so the derivative
-/// that feeds the Jacobian jumped at the table edge (7.43 to 0 on `x²`).
+/// derivative.
 ///
-/// The tridiagonal system is linear in `y` and depends only on the grid spacings, so `M` is a
-/// fixed linear operator on `y`. Precomputing `L` at compile time (here) lets the runtime evaluation
-/// express each moment as a constant-weighted sum of the (possibly runtime) grid values — so the
-/// whole spline lowers to differentiable MIR with no runtime linear solve. Returns an all-zero
-/// matrix for `n < 3` (callers fall back to linear interpolation there).
-fn cubic_spline_moment_matrix(grid: &[f64], clamp_lo: bool, clamp_hi: bool) -> Vec<Vec<f64>> {
+/// Until Enhancement-710 this was the moment MATRIX of Enhancement-22, which
+/// expressed the moments as a linear operator on the data -- the n × n matrix
+/// T⁻¹·R, T inverted by Gauss–Jordan -- so that a table whose values are
+/// run-time expressions still lowered without a run-time solve, and every
+/// moment was then a weighted sum over ALL n values. The inverse of a
+/// tridiagonal matrix is dense, so that was O(n³) time and O(n²) memory to
+/// build and O(n²) MIR to apply: 1 000 knots of a `"3L"` data file compiled in
+/// 6.8 s, 2 000 in 77 s and 1.4 GB, 4 000 not in 300 s, 200 000 filled 50 GB.
+/// The system is tridiagonal and its coefficients depend on the grid alone, so
+/// the Thomas factorisation is done here in O(n) and the solve for any data --
+/// constant or run-time -- is O(n) as well (`cubic_spline_moments`).
+///
+/// `None` for fewer than three knots (callers fall back to linear
+/// interpolation) or a degenerate grid (a zero pivot; the moments are then
+/// taken as zero, as the singular inverse was).
+struct SplineMomentSystem {
+    /// the index of the first unknown knot: 0 for a clamped low end, else 1
+    first: usize,
+    /// the sub-diagonal of each unknown row (unused for the first)
+    sub: Vec<f64>,
+    /// each row's pivot after forward elimination, b_k − a_k·c'_{k−1}
+    pivot: Vec<f64>,
+    /// c'_k = c_k / pivot_k (0 for the last row)
+    cprime: Vec<f64>,
+    /// each row's right-hand side as `(weight, data index)` terms, at most three
+    rhs: Vec<Vec<(f64, usize)>>,
+}
+
+fn cubic_spline_moment_system(
+    grid: &[f64],
+    clamp_lo: bool,
+    clamp_hi: bool,
+) -> Option<SplineMomentSystem> {
     let n = grid.len();
-    let mut l = vec![vec![0.0f64; n]; n];
     if n < 3 {
-        return l;
+        return None;
     }
     let h: Vec<f64> = (0..n - 1).map(|i| grid[i + 1] - grid[i]).collect();
     // the unknown moments: the interior ones, plus each clamped end's
     let first = if clamp_lo { 0 } else { 1 };
     let last = if clamp_hi { n - 1 } else { n - 2 };
     let m = last + 1 - first;
-
-    // Tridiagonal system  T · m_unknown = R · y  (row `k - first` is knot k's).
-    let mut t = vec![vec![0.0f64; m]; m];
-    let mut r = vec![vec![0.0f64; n]; m];
+    let mut sub = Vec::with_capacity(m);
+    let mut diag = Vec::with_capacity(m);
+    let mut sup = Vec::with_capacity(m);
+    let mut rhs = Vec::with_capacity(m);
     for k in first..=last {
-        let row = k - first;
         if k == 0 {
             // clamped low end, S'(x₀) = 0:  2h₀M₀ + h₀M₁ = 6(y₁ − y₀)/h₀
-            t[row][row] = 2.0 * h[0];
-            t[row][row + 1] = h[0];
-            r[row][0] += -6.0 / h[0];
-            r[row][1] += 6.0 / h[0];
+            sub.push(0.0);
+            diag.push(2.0 * h[0]);
+            sup.push(h[0]);
+            rhs.push(vec![(-6.0 / h[0], 0), (6.0 / h[0], 1)]);
         } else if k == n - 1 {
             // clamped high end, S'(xₙ₋₁) = 0:  hₗMₙ₋₂ + 2hₗMₙ₋₁ = −6(yₙ₋₁ − yₙ₋₂)/hₗ
-            t[row][row - 1] = h[n - 2];
-            t[row][row] = 2.0 * h[n - 2];
-            r[row][n - 2] += 6.0 / h[n - 2];
-            r[row][n - 1] += -6.0 / h[n - 2];
+            sub.push(h[n - 2]);
+            diag.push(2.0 * h[n - 2]);
+            sup.push(0.0);
+            rhs.push(vec![(6.0 / h[n - 2], n - 2), (-6.0 / h[n - 2], n - 1)]);
         } else {
-            t[row][row] = 2.0 * (h[k - 1] + h[k]);
-            if k - 1 >= first {
-                t[row][row - 1] = h[k - 1];
-            }
-            if k + 1 <= last {
-                t[row][row + 1] = h[k];
-            }
-            r[row][k - 1] += 6.0 / h[k - 1];
-            r[row][k] += -6.0 * (1.0 / h[k - 1] + 1.0 / h[k]);
-            r[row][k + 1] += 6.0 / h[k];
+            // a natural end's moment is zero and sits outside the system
+            sub.push(if k - 1 >= first { h[k - 1] } else { 0.0 });
+            diag.push(2.0 * (h[k - 1] + h[k]));
+            sup.push(if k + 1 <= last { h[k] } else { 0.0 });
+            rhs.push(vec![
+                (6.0 / h[k - 1], k - 1),
+                (-6.0 * (1.0 / h[k - 1] + 1.0 / h[k]), k),
+                (6.0 / h[k], k + 1),
+            ]);
         }
     }
-
-    // Invert T (small, dense) via Gauss–Jordan, then L_interior = T⁻¹ · R.
-    let mut a = t;
-    let mut inv = vec![vec![0.0f64; m]; m];
-    for i in 0..m {
-        inv[i][i] = 1.0;
+    // forward elimination of the matrix part (the data enters at solve time)
+    let mut pivot = Vec::with_capacity(m);
+    let mut cprime: Vec<f64> = Vec::with_capacity(m);
+    for k in 0..m {
+        let p = if k == 0 { diag[0] } else { diag[k] - sub[k] * cprime[k - 1] };
+        if p == 0.0 || !p.is_finite() {
+            return None;
+        }
+        pivot.push(p);
+        cprime.push(sup[k] / p);
     }
-    for col in 0..m {
-        // partial pivot
-        let mut piv = col;
-        for row in col + 1..m {
-            if a[row][col].abs() > a[piv][col].abs() {
-                piv = row;
-            }
-        }
-        a.swap(col, piv);
-        inv.swap(col, piv);
-        let d = a[col][col];
-        if d == 0.0 {
-            return vec![vec![0.0f64; n]; n]; // singular (degenerate grid) -> caller falls back
-        }
-        for j in 0..m {
-            a[col][j] /= d;
-            inv[col][j] /= d;
-        }
-        for row in 0..m {
-            if row == col {
-                continue;
-            }
-            let f = a[row][col];
-            if f == 0.0 {
-                continue;
-            }
-            for j in 0..m {
-                a[row][j] -= f * a[col][j];
-                inv[row][j] -= f * inv[col][j];
-            }
-        }
-    }
-    // L rows first..=last = (T⁻¹ · R); a natural end's row stays zero.
-    for row in 0..m {
-        for col in 0..n {
-            let mut s = 0.0;
-            for kk in 0..m {
-                s += inv[row][kk] * r[kk][col];
-            }
-            l[row + first][col] = s;
-        }
-    }
-    l
+    Some(SplineMomentSystem { first, sub, pivot, cprime, rhs })
 }
 
 /// Enhancement-705 (robustness campaign F1 of 2026-09-23): the interval search
@@ -339,6 +324,14 @@ fn cubic_spline_moment_matrix(grid: &[f64], clamp_lo: bool, clamp_hi: bool) -> V
 /// the same per-segment arithmetic -- and a NaN input fails every test and
 /// falls through to entry 0.
 const SELECT_LEAF: usize = 64;
+
+/// Enhancement-710 (robustness campaign F2 of 2026-09-23): the widest select
+/// tree lowered in this process, in knots -- read by `osdi::compile` to decide
+/// whether LLVM's SLP vectoriser can be let loose on the file (its gather CSE
+/// is quadratic in what it vectorises, and a table of tens of thousands of
+/// knots is exactly the input it chokes on; see `mir_llvm::disable_slp_vectorizer`).
+pub static LARGEST_SELECT_TREE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 fn select_tree_multi(
     ctx: &mut LoweringCtx<'_, '_>,
@@ -378,6 +371,7 @@ fn select_tree_multi(
     }
     let n = vals[0].len();
     debug_assert!(vals.iter().all(|v| v.len() == n));
+    LARGEST_SELECT_TREE.fetch_max(n, std::sync::atomic::Ordering::Relaxed);
     build(ctx, cond_at, vals, 0, n - 1)
 }
 
@@ -2104,8 +2098,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
     /// Enhancement-390: cubic spline over a RUNTIME grid.
     ///
-    /// `interp_1d_spline` builds its moment matrix by inverting the tridiagonal
-    /// system at COMPILE time, which needs the abscissae as constants. With array
+    /// `interp_1d_spline` factors its tridiagonal system at COMPILE time, which
+    /// needs the abscissae as constants. With array
     /// variables for the data they are not, so the cubic control code was silently
     /// ignored and `"3"` quietly interpolated LINEARLY -- the same table and the
     /// same control string gave 0.35 from a literal and 0.5 from arrays.
@@ -2117,7 +2111,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// (i.e. the linear result) rather than NaN.
     ///
     /// Enhancement-704 (hunt F3 of 2026-09-21): the end conditions are LRM
-    /// 9.21.4's, as in `cubic_spline_moment_matrix` -- a natural end for 'L'
+    /// 9.21.4's, as in `cubic_spline_moment_system` -- a natural end for 'L'
     /// (and 'E'), a zero end DERIVATIVE for `clamp_lo`/`clamp_hi` ('C'), whose
     /// moment then joins the unknowns.
     fn interp_1d_spline_runtime(
@@ -2541,13 +2535,90 @@ impl BodyLoweringCtx<'_, '_, '_> {
 
     /// Weighted sum `Σ_j w[j]·vals[j]` (compile-time weights, runtime values), skipping zero
     /// weights. Used to express a spline moment `M_i = Σ_j L[i][j]·vals[j]` in MIR.
-    fn weighted_sum(&mut self, w: &[f64], vals: &[Value]) -> Value {
+    /// Enhancement-710: the moments `M[0..n]` of the cubic spline through
+    /// `vals` on `grid`, by the Thomas algorithm on the factored system. For
+    /// constant data -- a data file, an inline literal, a `localparam` array --
+    /// the solve runs here in f64 and each moment is one constant; for run-time
+    /// data (an N-D slice of a larger table) the same elimination and back
+    /// substitution are emitted as straight-line MIR, linear in the data and so
+    /// differentiable, about ten instructions per knot. A natural end's moment
+    /// is zero; a degenerate system gives zero moments (the linear result).
+    fn cubic_spline_moments(
+        &mut self,
+        grid: &[f64],
+        vals: &[Value],
+        clamp_lo: bool,
+        clamp_hi: bool,
+    ) -> Vec<Value> {
+        let n = grid.len();
+        let mut moments = vec![F_ZERO; n];
+        let Some(sys) = cubic_spline_moment_system(grid, clamp_lo, clamp_hi) else {
+            return moments;
+        };
+        let m = sys.pivot.len();
+        let consts: Option<Vec<f64>> = vals
+            .iter()
+            .map(|&v| match self.ctx.dfg().value_def(v) {
+                ValueDef::Const(Const::Float(f)) => Some(f.into()),
+                _ => None,
+            })
+            .collect();
+        if let Some(y) = consts {
+            let mut rp = vec![0.0f64; m];
+            for k in 0..m {
+                let r: f64 = sys.rhs[k].iter().map(|&(w, j)| w * y[j]).sum();
+                rp[k] = if k == 0 {
+                    r / sys.pivot[0]
+                } else {
+                    (r - sys.sub[k] * rp[k - 1]) / sys.pivot[k]
+                };
+            }
+            let mut mk = vec![0.0f64; m];
+            for k in (0..m).rev() {
+                mk[k] = if k == m - 1 { rp[k] } else { rp[k] - sys.cprime[k] * mk[k + 1] };
+            }
+            for k in 0..m {
+                moments[sys.first + k] = self.ctx.fconst(mk[k]);
+            }
+            return moments;
+        }
+        let mut rp: Vec<Value> = Vec::with_capacity(m);
+        for k in 0..m {
+            let r = self.linear_combination(&sys.rhs[k], vals);
+            let num = if k == 0 {
+                r
+            } else {
+                let a = self.ctx.fconst(sys.sub[k]);
+                let t = self.ctx.ins().fmul(a, rp[k - 1]);
+                self.ctx.ins().fsub(r, t)
+            };
+            let p = self.ctx.fconst(sys.pivot[k]);
+            rp.push(self.ctx.ins().fdiv(num, p));
+        }
+        let mut mk: Vec<Value> = vec![F_ZERO; m];
+        for k in (0..m).rev() {
+            mk[k] = if k == m - 1 {
+                rp[k]
+            } else {
+                let c = self.ctx.fconst(sys.cprime[k]);
+                let t = self.ctx.ins().fmul(c, mk[k + 1]);
+                self.ctx.ins().fsub(rp[k], t)
+            };
+        }
+        for k in 0..m {
+            moments[sys.first + k] = mk[k];
+        }
+        moments
+    }
+
+    /// `Σ weight · vals[index]` over `terms`, a zero weight contributing nothing.
+    fn linear_combination(&mut self, terms: &[(f64, usize)], vals: &[Value]) -> Value {
         let mut acc: Option<Value> = None;
-        for (j, &wj) in w.iter().enumerate() {
-            if wj == 0.0 {
+        for &(w, j) in terms {
+            if w == 0.0 {
                 continue;
             }
-            let c = self.ctx.fconst(wj);
+            let c = self.ctx.fconst(w);
             let term = self.ctx.ins().fmul(c, vals[j]);
             acc = Some(match acc {
                 Some(a) => self.ctx.ins().fadd(a, term),
@@ -2560,8 +2631,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// One-dimensional **cubic spline** interpolation of runtime `vals` at `x`, built as a
     /// select chain over the grid intervals so it is differentiable (and C¹ — the smooth-derivative
     /// point of splines: `gm`/`gds` are continuous, unlike piecewise-linear). The per-point second
-    /// derivatives (moments) are `M = L·vals` with `L` precomputed from the (compile-time) grid, so
-    /// each moment is a constant-weighted sum of the runtime `vals` — no runtime linear solve.
+    /// derivatives (moments) come from the tridiagonal system on the (compile-time) grid, solved
+    /// by the Thomas algorithm -- in f64 for constant `vals`, as straight-line MIR for run-time
+    /// ones (Enhancement-710; it was a dense n × n operator before).
     /// Degenerates to `interp_1d_values` (linear) for fewer than 3 points. The end conditions
     /// are LRM 9.21.4's (Enhancement-704): natural where the end extrapolates linearly (or
     /// aborts, 'E'), a zero end derivative where it holds the endpoint value ('C'), so the
@@ -2581,10 +2653,10 @@ impl BodyLoweringCtx<'_, '_, '_> {
         }
         let clamp_lo = ctrl.lo == TblExtrap::Clamp;
         let clamp_hi = ctrl.hi == TblExtrap::Clamp;
-        let l = cubic_spline_moment_matrix(grid, clamp_lo, clamp_hi);
-        // moments M[i] (a natural end's is zero, a clamped end's is solved for)
-        let moments: Vec<Value> =
-            (0..n).map(|i| self.weighted_sum(&l[i], vals)).collect();
+        // moments M[i] (a natural end's is zero, a clamped end's is solved for);
+        // Enhancement-710: by the Thomas algorithm, O(n) -- constant data is
+        // solved here, run-time data as straight-line MIR
+        let moments = self.cubic_spline_moments(grid, vals, clamp_lo, clamp_hi);
 
         // cubic on interval i:  with a = grid[i+1]-x, b = x-grid[i], h = grid[i+1]-grid[i]:
         //   S = M[i]·a³/(6h) + M[i+1]·b³/(6h) + (vals[i]/h - M[i]·h/6)·a + (vals[i+1]/h - M[i+1]·h/6)·b

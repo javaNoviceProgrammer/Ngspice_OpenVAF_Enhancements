@@ -1,0 +1,15 @@
+// cubic_big.va -- Enhancement-710 (robustness campaign F2 of 2026-09-23): a
+// cubic-spline `$table_model` over a 10 000-row data file. The moments used to
+// come from a dense n x n operator (E-22's inverse of the tridiagonal system),
+// O(n^3) to build: 1 000 rows took 6.8 s, 2 000 rows 77 s, 4 000 rows did not
+// finish in 300 s. They are solved by the Thomas algorithm now, in O(n).
+// `verify_cubic_table.py` writes `_big3.dat` (x = i/1000, y = sin(x)) and
+// checks the value and the derivative against a natural spline computed in
+// Python on the same data.
+`include "disciplines.vams"
+
+module cubic_big(p, n);
+    inout p, n;
+    electrical p, n;
+    analog I(p, n) <+ $table_model(V(p, n), "_big3.dat", "3L");
+endmodule

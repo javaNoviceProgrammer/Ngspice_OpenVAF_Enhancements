@@ -31,11 +31,18 @@ pub(crate) struct Parser<'t> {
     pub(crate) expr_depth: Cell<u32>,
 }
 
-/// Enhancement-220: the number of `nth()` lookahead steps after which the parser
-/// assumes it is stuck in error recovery and bails to EOF (see `Parser::nth`).
-/// A valid file finishes well under this bound; it is a safety net, not a size
-/// limit.
-const PARSER_STEP_LIMIT: u32 = 10_000_000;
+/// Enhancement-220: the number of `nth()` lookahead steps WITHOUT CONSUMING A
+/// TOKEN after which the parser assumes it is stuck in error recovery and bails
+/// to EOF (see `Parser::nth`).
+///
+/// Enhancement-711 (robustness campaign F3 of 2026-09-23): the count used to run
+/// over the whole parse, so it was a size limit after all -- a legal file of
+/// about two million tokens (3.5 MB of ordinary statements, some five lookahead
+/// steps per token) reached it and was cut off in mid-file with "unexpected
+/// token EOF" at a line that has no syntax error. A parser that makes progress
+/// is not stuck, so `do_bump` resets the count: a legal file of any size parses,
+/// and a parser spinning on one token still winds down after this many steps.
+const PARSER_STALL_LIMIT: u32 = 10_000_000;
 
 impl<'t> Parser<'t> {
     pub(super) fn new(tokens: &'t [SyntaxKind]) -> Parser<'t> {
@@ -65,8 +72,9 @@ impl<'t> Parser<'t> {
         // down and reports the errors collected so far. Returning before the
         // increment freezes the counter, so the bail is sticky (no wrap/resume);
         // every grammar loop already terminates at EOF (it must, to end a valid
-        // file), so this is a clean, bounded stop.
-        if steps >= PARSER_STEP_LIMIT {
+        // file), so this is a clean, bounded stop. Enhancement-711: the count is
+        // the steps since the last consumed token (see `PARSER_STALL_LIMIT`).
+        if steps >= PARSER_STALL_LIMIT {
             return SyntaxKind::EOF;
         }
         self.steps.set(steps + 1);
@@ -207,6 +215,9 @@ impl<'t> Parser<'t> {
 
     fn do_bump(&mut self, kind: SyntaxKind) {
         self.pos += 1;
+        // Enhancement-711: consuming a token is progress; the stall guard
+        // counts lookahead steps from here
+        self.steps.set(0);
 
         self.push_event(Event::Token(kind));
     }

@@ -85,6 +85,11 @@ pub fn initialize_llvm() {
     });
 }
 
+/// Enhancement-710: the table size, in knots, above which the file is
+/// optimised without the SLP vectoriser (see `compile`). A 4 000-knot cubic
+/// table compiles in 1.4 s with it on; the cost climbs steeply from there.
+const SLP_TABLE_KNOTS_LIMIT: usize = 4096;
+
 pub fn compile<'a>(
     db: &'a CompilationDB,
     modules: &'a [ModuleInfo],
@@ -116,6 +121,20 @@ pub fn compile<'a>(
             mir
         })
         .collect();
+
+    // Enhancement-710 (robustness campaign F2 of 2026-09-23): a file with a
+    // $table_model of more than `SLP_TABLE_KNOTS_LIMIT` knots is optimised
+    // without LLVM's SLP vectoriser, whose gather CSE is quadratic in what it
+    // vectorises -- a 30 000-knot cubic table spent 27 of its 32 s there and a
+    // 100 000-knot one did not finish in 400 s. Every other file, the largest
+    // compact models included, is compiled exactly as before. Decided here,
+    // before the code-generation threads start, because the switch is
+    // process-wide and must precede the first pass pipeline.
+    if hir_lower::LARGEST_SELECT_TREE.load(std::sync::atomic::Ordering::Relaxed)
+        > SLP_TABLE_KNOTS_LIMIT
+    {
+        mir_llvm::disable_slp_vectorizer();
+    }
 
     let name = dst.file_stem().expect("destination is a file").to_owned();
 

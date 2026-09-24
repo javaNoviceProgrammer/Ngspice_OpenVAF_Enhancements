@@ -51,8 +51,8 @@ through.
 | # | finding | kind |
 |---|---|---|
 | [F1](#f1--a-table-file-of-100000-rows-overflows-the-compilers-stack) | *(fixed in [E-705](../../enhancements_doc/Enhancement-705.md): the interval search is a binary tree over the segment's parameters — branches above 64 knots, branchless selects below — the MIR post-order walk is iterative and the CFG simplifier no longer restarts at every block it removes; 100 000 rows compile in 14 s, 30 000 in 3 s)* a `$table_model` data file of 100 000 rows (1.3 MB) aborts the compiler with "thread 'main' has overflowed its stack" 4 s in, under linear interpolation, in the MIR optimiser (the unoptimised MIR dump completes, `--dry-run` exits 0); the same for a 2-D file of 100 000 isolines; 30 000 rows compile (in 189 s) | **crash** |
-| [F2](#f2--the-compile-time-cubic-spline-is-cubic-in-time-and-quadratic-in-memory-in-the-knot-count) | a cubic (`"3L"`) table of 1 000 knots compiles in 6.8 s, 2 000 in 77 s, 4 000 not in 300 s, and 200 000 fill 50 GB: the dense n × n moment matrix of E-22 and its Gauss–Jordan inverse, on data that is constant at compile time | pathological compile time and memory |
-| [F3](#f3--a-legal-source-of-about-two-million-tokens-is-cut-off-by-the-parsers-step-guard-and-reported-as-an-unexpected-end-of-file) | a legal file of about two million tokens (3.5 MB of ordinary statements) exhausts the parser's 10-million-step guard of E-220, which then returns `EOF` in mid-file: the error is "unexpected token EOF" at a line in the middle of the file, and nothing says the file was too big | refusal of legal input, misleading diagnostic |
+| [F2](#f2--the-compile-time-cubic-spline-is-cubic-in-time-and-quadratic-in-memory-in-the-knot-count) | *(fixed in [E-710](../../enhancements_doc/Enhancement-710.md): the moments by the Thomas algorithm, and no SLP vectoriser above 4 096 knots; 10 000 knots compile in 1.5 s, 200 000 in 41 s)* a cubic (`"3L"`) table of 1 000 knots compiles in 6.8 s, 2 000 in 77 s, 4 000 not in 300 s, and 200 000 fill 50 GB: the dense n × n moment matrix of E-22 and its Gauss–Jordan inverse, on data that is constant at compile time | pathological compile time and memory |
+| [F3](#f3--a-legal-source-of-about-two-million-tokens-is-cut-off-by-the-parsers-step-guard-and-reported-as-an-unexpected-end-of-file) | *(fixed in [E-711](../../enhancements_doc/Enhancement-711.md): the guard counts steps since the last consumed token; a legal file of any size parses, 400 000 statements in 144 s)* a legal file of about two million tokens (3.5 MB of ordinary statements) exhausts the parser's 10-million-step guard of E-220, which then returns `EOF` in mid-file: the error is "unexpected token EOF" at a line in the middle of the file, and nothing says the file was too big | refusal of legal input, misleading diagnostic |
 | [F4](#f4--a-poisson-draw-saturates-at-768-for-any-mean-above-745) | *(fixed in [E-709](../../enhancements_doc/Enhancement-709.md): Hörmann's transformed rejection above a mean of 10; a mean of 1 000 draws 979, 10⁶ draws 999 300)* `$dist_poisson` and `$rdist_poisson` return 768 for every mean above about 745 — mean 100 draws 113, 500 draws 508, 740 draws 763, and 750, 1 000, 10 000 and 10⁶ all draw 768 — in silence | wrong numbers, silent |
 | [F5](#f5--the-erlang-chi-square-and-t-generators-run-in-time-linear-in-their-degree) | *(fixed in [E-709](../../enhancements_doc/Enhancement-709.md): a Marsaglia–Tsang gamma variate above 256 degrees; 2³¹ − 1 degrees return in 0.2 s)* `$dist_erlang`, `$dist_chi_square` and `$dist_t` (and the `$rdist_` forms) cost time linear in the degree: 10⁸ takes 3.4, 7.9 and 8.0 s per evaluation, and 2³¹ − 1 — accepted at compile time, where only a degree ≤ 0 is refused — does not return in a minute; a card can set the degree | hang for a large argument |
 | [F6](#f6--a-nan-or-infinity-from-the-constant-folder-passes-every-constant-argument-check) | *(fixed in [E-706](../../enhancements_doc/Enhancement-706.md): `0.0/0.0` is a compile error, `1.0/0.0` folds to the infinity it is and the consumer that needs a finite number says so, `exp(1000.0)` and `pow(10.0, 400.0)` are refused as exceeding the largest double)* `0.0/0.0` and `1.0/0.0` fold to NaN and infinity without a word where `ln(0.0)`, `sqrt(-1.0)` and `pow(0.0, -1.0)` are compile errors; the NaN then passes every constant-argument check that refuses −1 (`absdelay`, `transition`, `slew`, `$bound_step`, `$limit`, the distributions, a parameter default or range bound), and at run time a NaN delay is a zero delay, a NaN `maxdelay` holds the output at 0 for the whole run, a NaN transition time is the default, a NaN slew rate is no limit and a NaN Laplace coefficient is refused as "zero" | diagnostic gap with silent wrong outputs |
@@ -158,6 +158,17 @@ one takes. Constant data: solve for the moments; run-time data (`interp_1d_splin
 **Kind.** Pathological compile time and memory, at sizes a model author writes; no
 wrong result. Not platform-specific.
 
+*Fixed in [E-710](../../enhancements_doc/Enhancement-710.md).* The moments are solved
+by the Thomas algorithm on the factored tridiagonal system — in f64 for constant data,
+as straight-line MIR for a run-time slice — and the dense operator is gone; that left
+a second wall at 30 000 knots (32 s) and 100 000 (not in 400 s), LLVM's SLP vectoriser
+CSE-ing the gathers it made of the cubic leaf's seven parallel select trees, quadratic
+in their number, so a file with a table above 4 096 knots is now optimised without the
+vectoriser (LLVM's own `-vectorize-slp=false`; the pass-builder option does nothing
+here, as E-705 found). Re-run: 1 000 / 2 000 / 4 000 / 10 000 / 30 000 / 100 000 /
+200 000 knots in 0.7 / 0.7 / 1.4 / 1.5 / 4.8 / 19.1 / 41.2 s, the last at 3.8 GB;
+`cubic_table_examples` pins a 10 000-row file against a Python Thomas solve.
+
 ## F3 — a legal source of about two million tokens is cut off by the parser's step guard and reported as an unexpected end of file
 
 **Observed.** One module whose analog block is `n` copies of `s = s + 1.0e-3 * V(p,n);`
@@ -195,6 +206,13 @@ refused as too large; a mid-file EOF is neither.
 
 **Kind.** Refusal of legal input with a misleading diagnostic; hostile-sized today,
 within reach of a concatenated library. Deterministic, not platform-specific.
+
+*Fixed in [E-711](../../enhancements_doc/Enhancement-711.md).* `do_bump` resets the
+step counter, so the guard counts lookahead steps since the last consumed token — the
+no-progress condition it was written for — with E-220's ten million kept as the
+limit. Re-run: 150 000 statements compile in 21.8 s, 400 000 (10 MB) in 144 s and
+5.6 GB, 340 000 of `s = s + 1.0;` in 1.6 s; `vafcrash2_examples` pins the last and
+E-220's keyword-salad stress.
 
 ## F4 — a Poisson draw saturates at 768 for any mean above 745
 
