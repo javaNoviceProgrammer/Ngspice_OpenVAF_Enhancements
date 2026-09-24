@@ -1453,7 +1453,13 @@ end
 
 `$random`, `$arandom`, and every `$dist_*`/`$rdist_*` (uniform, normal,
 exponential, poisson, chi-square, t, erlang), verified against
-closed-form moments. ⚠️ One deliberate semantic: draws are a
+closed-form moments — at large arguments too since
+[E-709](../../enhancements_doc/Enhancement-709.md): a Poisson mean above 10
+draws by Hörmann's transformed rejection (Knuth's multiplicative method
+returned a seed-dependent count near 750 for every mean above 745 (768 for the campaign's seed, 745 ± 28 over 2 000 seeds), where `exp(-mean)` is 0) and a
+chi-square, t or Erlang degree above 256 draws a Marsaglia–Tsang gamma
+variate (the sums cost one draw per degree at every evaluation, and 2³¹ − 1
+degrees never returned). ⚠️ One deliberate semantic: draws are a
 deterministic function of *(seed, call site)* with no in-place seed
 advance — the LRM 9.13.1 inout seed would return different values on
 every Newton iteration and destroy convergence. The seed VARIABLE is

@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 import sys
@@ -44,9 +45,11 @@ def compile_osdi():
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def draw_samples(dist, n=N, p1=0.0, p2=1.0, k=2, seed0=1):
+def draw_samples(dist, n=N, p1=0.0, p2=1.0, k=2, seed0=1, timeout=None):
     """Instantiate `n` rng_demo devices (seeds seed0..seed0+n-1) and return the
-    list of V(p,n) draws from a single .op."""
+    list of V(p,n) draws from a single .op. With `timeout` (seconds) a run that
+    does not finish returns no samples (Enhancement-709: a degree of 2^31 - 1
+    used to never return)."""
     inst = [f"n{i} o{i} 0 m{i}" for i in range(n)]
     mods = [f".model m{i} rng_demo(seed={seed0 + i} dist={dist} "
             f"p1={p1} p2={p2} k={k})" for i in range(n)]
@@ -57,8 +60,11 @@ def draw_samples(dist, n=N, p1=0.0, p2=1.0, k=2, seed0=1):
     deck_path = os.path.join(HERE, "_stats.cir")
     with open(deck_path, "w") as fh:
         fh.write(deck)
-    out = subprocess.run([NGSPICE, "-b", deck_path], cwd=HERE,
-                         capture_output=True, text=True).stdout
+    try:
+        out = subprocess.run([NGSPICE, "-b", deck_path], cwd=HERE,
+                             capture_output=True, text=True, timeout=timeout).stdout
+    except subprocess.TimeoutExpired:
+        return []
     vals = {}
     for line in out.splitlines():
         m = re.match(r"o(\d+)\s*=\s*([-+0-9.eE]+)\s*$", line.strip())
@@ -84,8 +90,9 @@ def check(label, got, exp, tol, results):
 
 def moment_test(name, dist, exp_mean, exp_std, results, **kw):
     xs = draw_samples(dist, **kw)
-    if len(xs) < 0.9 * N:
-        print(f"  {name}: only got {len(xs)}/{N} samples -- FAIL")
+    want = kw.get("n", N)
+    if len(xs) < 0.9 * want:
+        print(f"  {name}: only got {len(xs)}/{want} samples -- FAIL")
         results.append(False)
         return
     mu, sd = mean_std(xs)
@@ -124,6 +131,41 @@ def main():
     print(f"  student_t(5)  (n={len(xs)})")
     check("mean", mu, 0.0, 0.15, results)
     check("std", sd, math.sqrt(5.0 / 3.0), 0.5, results)
+
+    print("\nEnhancement-709 -- large arguments (robustness campaign F4/F5 of 2026-09-23):")
+    # Poisson: Knuth's product of uniforms saturated at 768 for every mean above
+    # 745 (exp(-mean) is 0 there); PTRS takes over at a mean of 10.
+    moment_test("poisson(1000)", POISSON, 1000.0, math.sqrt(1000.0), results,
+                p1=1000.0, n=2000)
+    moment_test("poisson(1e6)", POISSON, 1e6, 1e3, results, p1=1e6, n=1000)
+    # chi-square / Erlang / t: the term-by-term sums cost one draw per degree at
+    # every evaluation; above 256 degrees a Gamma variate (Marsaglia-Tsang)
+    # replaces them. Moments first, at 10^5 degrees.
+    moment_test("chi_square(100000)", CHI_SQUARE, 1e5, math.sqrt(2e5), results,
+                k=100000, n=1000)
+    moment_test("erlang(k=100000,mean=6)", ERLANG, 6.0, 6.0 / math.sqrt(1e5),
+                results, k=100000, p1=6.0, n=1000)
+    xs = draw_samples(STUDENT_T, k=100000, n=1000)
+    mu, sd = mean_std(xs)
+    print(f"  student_t(100000)  (n={len(xs)})")
+    check("mean", mu, 0.0, 0.15, results)
+    check("std", sd, 1.0, 0.15, results)
+    # ...and the wall: 2^31 - 1 degrees (the largest `integer`) and a Poisson
+    # mean of 10^9, four instances each, must return within 30 s with draws
+    # that sit where the distribution puts them.
+    print("  the largest integer degree / a 10^9 mean, four instances each:")
+    for label, dist, kw, centre, half in (
+            ("chi_square(2147483647)", CHI_SQUARE, dict(k=2147483647), 2147483647.0, 5e5),
+            ("t(2147483647)", STUDENT_T, dict(k=2147483647), 0.0, 6.0),
+            ("erlang(k=2147483647,mean=1)", ERLANG, dict(k=2147483647, p1=1.0), 1.0, 1e-3),
+            ("poisson(1e9)", POISSON, dict(p1=1e9), 1e9, 3e5)):
+        t0 = time.time()
+        xs = draw_samples(dist, n=4, timeout=30, **kw)
+        dt = time.time() - t0
+        ok = len(xs) == 4 and all(abs(x - centre) <= half for x in xs)
+        results.append(ok)
+        print(f"    {label:32s} {'PASS' if ok else 'FAIL'}  "
+              f"({dt:.1f} s, {len(xs)} draws{', ' + str(xs[0]) if xs else ''})")
 
     print("\n$random checks (signed 32-bit integers):")
     ri = draw_samples(RANDOM, n=2000)

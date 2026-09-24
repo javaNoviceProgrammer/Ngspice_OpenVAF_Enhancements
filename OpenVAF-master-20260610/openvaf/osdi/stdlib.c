@@ -486,14 +486,90 @@ double osdi_rng_exponential(int32_t seed, int32_t salt, double mean) {
   return -mean * log(u);
 }
 
-// $rdist_poisson / $dist_poisson: poisson count with the given mean, via
-// Knuth's multiplicative algorithm (adequate for the modest means used in
-// device models).
+// Enhancement-709 (robustness campaign F4/F5 of 2026-09-23): log Gamma(x), by
+// Stirling's series after shifting x up to 7 -- the one special function the
+// Poisson rejection test needs, kept here rather than declared from libm so the
+// standard library depends on nothing the hosts disagree about.
+static double osdi_loggam(double x) {
+  static const double a[10] = {
+      8.333333333333333e-02,  -2.777777777777778e-03, 7.936507936507937e-04,
+      -5.952380952380952e-04, 8.417508417508418e-04,  -1.917526917526918e-03,
+      6.410256410256410e-03,  -2.955065359477124e-02, 1.796443723688307e-01,
+      -1.39243221690590e+00};
+  if (x == 1.0 || x == 2.0) {
+    return 0.0;
+  }
+  double x0 = x;
+  long n = 0;
+  if (x <= 7.0) {
+    n = (long)(7.0 - x);
+    x0 = x + (double)n;
+  }
+  double x2 = 1.0 / (x0 * x0);
+  double gl0 = a[9];
+  for (int k = 8; k >= 0; k--) {
+    gl0 = gl0 * x2 + a[k];
+  }
+  double gl = gl0 / x0 + 0.5 * log(OSDI_TWO_PI) + (x0 - 0.5) * log(x0) - x0;
+  for (long k = 1; k <= n; k++) {
+    x0 -= 1.0;
+    gl -= log(x0);
+  }
+  return gl;
+}
+
+// Enhancement-709: the mean above which a Poisson draw takes the transformed
+// rejection route. Knuth's multiplicative method below it is exact and cheap,
+// and every draw a model made with a small mean is bit for bit what it was.
+#define OSDI_RNG_POISSON_PTRS_MIN 10.0
+
+// Enhancement-709: a Poisson count for a mean of 10 or more by Hormann's PTRS
+// (transformed rejection with squeeze, 1993): O(1) uniforms per draw at any
+// mean, exact. Knuth's product of uniforms compared exp(-mean) against a
+// product that reaches zero after some 768 factors, and above a mean of 745
+// (where exp(-mean) is 0) every draw was the loop count, 768 -- for a mean of
+// 1 000, 10^6 or 2^31 - 1, in silence.
+static double osdi_rng_poisson_ptrs(u64 *s, double mean) {
+  double slam = sqrt(mean);
+  double loglam = log(mean);
+  double b = 0.931 + 2.53 * slam;
+  double a = -0.059 + 0.02483 * b;
+  double invalpha = 1.1239 + 1.1328 / (b - 3.4);
+  double vr = 0.9277 - 3.6224 / (b - 2.0);
+  for (;;) {
+    double U = osdi_rng_unit(s) - 0.5;
+    double V = osdi_rng_unit(s);
+    double us = 0.5 - fabs(U);
+    double k = floor((2.0 * a / us + b) * U + mean + 0.43);
+    if (us >= 0.07 && V <= vr) {
+      return k;
+    }
+    if (k < 0.0 || (us < 0.013 && V > us)) {
+      continue;
+    }
+    if (V < 1e-300) {
+      V = 1e-300;
+    }
+    if (log(V) + log(invalpha) - log(a / (us * us) + b) <=
+        -mean + k * loglam - osdi_loggam(k + 1.0)) {
+      return k;
+    }
+  }
+}
+
+// $rdist_poisson / $dist_poisson: poisson count with the given mean. Knuth's
+// multiplicative algorithm below a mean of 10, PTRS above (Enhancement-709).
 double osdi_rng_poisson(int32_t seed, int32_t salt, double mean) {
   if (mean <= 0.0) {
     return 0.0;
   }
+  if (!(mean <= 1e300)) {
+    return mean; // an infinite mean is an infinite count; the caller's cast decides
+  }
   u64 s = osdi_rng_state(seed, salt);
+  if (mean >= OSDI_RNG_POISSON_PTRS_MIN) {
+    return osdi_rng_poisson_ptrs(&s, mean);
+  }
   double L = exp(-mean);
   double p = 1.0;
   long k = 0;
@@ -504,56 +580,119 @@ double osdi_rng_poisson(int32_t seed, int32_t salt, double mean) {
   return (double)(k - 1);
 }
 
-// $rdist_chi_square / $dist_chi_square: sum of `dof` squared standard normals.
-double osdi_rng_chi_square(int32_t seed, int32_t salt, double dof) {
-  u64 s = osdi_rng_state(seed, salt);
-  long k = (long)dof;
-  if (k < 1) {
-    k = 1;
-  }
-  double acc = 0.0;
-  for (long i = 0; i < k; i++) {
-    double z = osdi_rng_std_normal(&s);
-    acc += z * z;
-  }
-  return acc;
-}
+// Enhancement-709: the degree up to which chi-square, Student's t and Erlang
+// draw their sums term by term. Below it the sums are exact and cheap and
+// every draw is bit for bit what it was; above it the closed form takes over
+// -- the sums cost one draw per degree at every evaluation of the model, so
+// a degree of 10^8 cost 8 s per Newton iterate and 2^31 - 1 never returned.
+#define OSDI_RNG_DIRECT_SUM_MAX 256.0
 
-// $rdist_t / $dist_t: student-t with `dof` degrees of freedom,
-// z / sqrt(chi_square(dof) / dof).
-double osdi_rng_t(int32_t seed, int32_t salt, double dof) {
-  u64 s = osdi_rng_state(seed, salt);
-  long k = (long)dof;
-  if (k < 1) {
-    k = 1;
-  }
-  double z = osdi_rng_std_normal(&s);
-  double chi = 0.0;
-  for (long i = 0; i < k; i++) {
-    double n = osdi_rng_std_normal(&s);
-    chi += n * n;
-  }
-  return z / sqrt(chi / (double)k);
-}
-
-// $rdist_erlang / $dist_erlang: erlang with shape `k` and the given total mean
-// (sum of k exponentials, each with mean `mean/k`).
-double osdi_rng_erlang(int32_t seed, int32_t salt, double k_in, double mean) {
-  u64 s = osdi_rng_state(seed, salt);
-  long k = (long)k_in;
-  if (k < 1) {
-    k = 1;
-  }
-  double per = mean / (double)k;
-  double acc = 0.0;
-  for (long i = 0; i < k; i++) {
-    double u = osdi_rng_unit(&s);
+// Enhancement-709: a Gamma(shape, 1) variate by Marsaglia and Tsang's method
+// (2000): O(1) draws at any shape -- a normal and a uniform per attempt, with
+// the squeeze accepting almost every attempt for a large shape. A shape below
+// 1 is lifted by one and scaled by U^(1/shape).
+static double osdi_rng_gamma(u64 *s, double shape) {
+  double boost = 1.0;
+  if (shape < 1.0) {
+    double u = osdi_rng_unit(s);
     if (u < 1e-300) {
       u = 1e-300;
     }
-    acc += -per * log(u);
+    boost = exp(log(u) / shape);
+    shape += 1.0;
   }
-  return acc;
+  double d = shape - 1.0 / 3.0;
+  double c = 1.0 / sqrt(9.0 * d);
+  for (;;) {
+    double x, v;
+    do {
+      x = osdi_rng_std_normal(s);
+      v = 1.0 + c * x;
+    } while (v <= 0.0);
+    v = v * v * v;
+    double u = osdi_rng_unit(s);
+    double x2 = x * x;
+    if (u < 1.0 - 0.0331 * x2 * x2) {
+      return boost * d * v;
+    }
+    if (u < 1e-300) {
+      u = 1e-300;
+    }
+    if (log(u) < 0.5 * x2 + d * (1.0 - v + log(v))) {
+      return boost * d * v;
+    }
+  }
+}
+
+// $rdist_chi_square / $dist_chi_square: sum of `dof` squared standard normals,
+// or 2 * Gamma(dof / 2) above OSDI_RNG_DIRECT_SUM_MAX degrees (Enhancement-709).
+double osdi_rng_chi_square(int32_t seed, int32_t salt, double dof) {
+  u64 s = osdi_rng_state(seed, salt);
+  if (!(dof >= 1.0)) {
+    dof = 1.0; // below 1, and NaN
+  }
+  if (dof <= OSDI_RNG_DIRECT_SUM_MAX) {
+    long k = (long)dof;
+    double acc = 0.0;
+    for (long i = 0; i < k; i++) {
+      double z = osdi_rng_std_normal(&s);
+      acc += z * z;
+    }
+    return acc;
+  }
+  return 2.0 * osdi_rng_gamma(&s, floor(dof) / 2.0);
+}
+
+// $rdist_t / $dist_t: student-t with `dof` degrees of freedom,
+// z / sqrt(chi_square(dof) / dof) -- the chi-square by the closed form above
+// OSDI_RNG_DIRECT_SUM_MAX degrees, and the normal limit for a degree that is
+// not finite (Enhancement-709).
+double osdi_rng_t(int32_t seed, int32_t salt, double dof) {
+  u64 s = osdi_rng_state(seed, salt);
+  if (!(dof >= 1.0)) {
+    dof = 1.0;
+  }
+  double z = osdi_rng_std_normal(&s);
+  if (!(dof <= 1e300)) {
+    return z;
+  }
+  if (dof <= OSDI_RNG_DIRECT_SUM_MAX) {
+    long k = (long)dof;
+    double chi = 0.0;
+    for (long i = 0; i < k; i++) {
+      double n = osdi_rng_std_normal(&s);
+      chi += n * n;
+    }
+    return z / sqrt(chi / (double)k);
+  }
+  double k = floor(dof);
+  double chi = 2.0 * osdi_rng_gamma(&s, k / 2.0);
+  return z / sqrt(chi / k);
+}
+
+// $rdist_erlang / $dist_erlang: erlang with shape `k` and the given total mean
+// (sum of k exponentials, each with mean `mean/k`), or Gamma(k) * mean / k
+// above OSDI_RNG_DIRECT_SUM_MAX stages (Enhancement-709).
+double osdi_rng_erlang(int32_t seed, int32_t salt, double k_in, double mean) {
+  u64 s = osdi_rng_state(seed, salt);
+  if (!(k_in >= 1.0)) {
+    k_in = 1.0;
+  }
+  if (k_in <= OSDI_RNG_DIRECT_SUM_MAX) {
+    long k = (long)k_in;
+    double per = mean / (double)k;
+    double acc = 0.0;
+    for (long i = 0; i < k; i++) {
+      double u = osdi_rng_unit(&s);
+      if (u < 1e-300) {
+        u = 1e-300;
+      }
+      acc += -per * log(u);
+    }
+    return acc;
+  }
+  double k = floor(k_in);
+  return osdi_rng_gamma(&s, k) * (mean / k);
 }
 
 // ---------------------------------------------------------------------------

@@ -53,8 +53,8 @@ through.
 | [F1](#f1--a-table-file-of-100000-rows-overflows-the-compilers-stack) | *(fixed in [E-705](../../enhancements_doc/Enhancement-705.md): the interval search is a binary tree over the segment's parameters — branches above 64 knots, branchless selects below — the MIR post-order walk is iterative and the CFG simplifier no longer restarts at every block it removes; 100 000 rows compile in 14 s, 30 000 in 3 s)* a `$table_model` data file of 100 000 rows (1.3 MB) aborts the compiler with "thread 'main' has overflowed its stack" 4 s in, under linear interpolation, in the MIR optimiser (the unoptimised MIR dump completes, `--dry-run` exits 0); the same for a 2-D file of 100 000 isolines; 30 000 rows compile (in 189 s) | **crash** |
 | [F2](#f2--the-compile-time-cubic-spline-is-cubic-in-time-and-quadratic-in-memory-in-the-knot-count) | a cubic (`"3L"`) table of 1 000 knots compiles in 6.8 s, 2 000 in 77 s, 4 000 not in 300 s, and 200 000 fill 50 GB: the dense n × n moment matrix of E-22 and its Gauss–Jordan inverse, on data that is constant at compile time | pathological compile time and memory |
 | [F3](#f3--a-legal-source-of-about-two-million-tokens-is-cut-off-by-the-parsers-step-guard-and-reported-as-an-unexpected-end-of-file) | a legal file of about two million tokens (3.5 MB of ordinary statements) exhausts the parser's 10-million-step guard of E-220, which then returns `EOF` in mid-file: the error is "unexpected token EOF" at a line in the middle of the file, and nothing says the file was too big | refusal of legal input, misleading diagnostic |
-| [F4](#f4--a-poisson-draw-saturates-at-768-for-any-mean-above-745) | `$dist_poisson` and `$rdist_poisson` return 768 for every mean above about 745 — mean 100 draws 113, 500 draws 508, 740 draws 763, and 750, 1 000, 10 000 and 10⁶ all draw 768 — in silence | wrong numbers, silent |
-| [F5](#f5--the-erlang-chi-square-and-t-generators-run-in-time-linear-in-their-degree) | `$dist_erlang`, `$dist_chi_square` and `$dist_t` (and the `$rdist_` forms) cost time linear in the degree: 10⁸ takes 3.4, 7.9 and 8.0 s per evaluation, and 2³¹ − 1 — accepted at compile time, where only a degree ≤ 0 is refused — does not return in a minute; a card can set the degree | hang for a large argument |
+| [F4](#f4--a-poisson-draw-saturates-at-768-for-any-mean-above-745) | *(fixed in [E-709](../../enhancements_doc/Enhancement-709.md): Hörmann's transformed rejection above a mean of 10; a mean of 1 000 draws 979, 10⁶ draws 999 300)* `$dist_poisson` and `$rdist_poisson` return 768 for every mean above about 745 — mean 100 draws 113, 500 draws 508, 740 draws 763, and 750, 1 000, 10 000 and 10⁶ all draw 768 — in silence | wrong numbers, silent |
+| [F5](#f5--the-erlang-chi-square-and-t-generators-run-in-time-linear-in-their-degree) | *(fixed in [E-709](../../enhancements_doc/Enhancement-709.md): a Marsaglia–Tsang gamma variate above 256 degrees; 2³¹ − 1 degrees return in 0.2 s)* `$dist_erlang`, `$dist_chi_square` and `$dist_t` (and the `$rdist_` forms) cost time linear in the degree: 10⁸ takes 3.4, 7.9 and 8.0 s per evaluation, and 2³¹ − 1 — accepted at compile time, where only a degree ≤ 0 is refused — does not return in a minute; a card can set the degree | hang for a large argument |
 | [F6](#f6--a-nan-or-infinity-from-the-constant-folder-passes-every-constant-argument-check) | *(fixed in [E-706](../../enhancements_doc/Enhancement-706.md): `0.0/0.0` is a compile error, `1.0/0.0` folds to the infinity it is and the consumer that needs a finite number says so, `exp(1000.0)` and `pow(10.0, 400.0)` are refused as exceeding the largest double)* `0.0/0.0` and `1.0/0.0` fold to NaN and infinity without a word where `ln(0.0)`, `sqrt(-1.0)` and `pow(0.0, -1.0)` are compile errors; the NaN then passes every constant-argument check that refuses −1 (`absdelay`, `transition`, `slew`, `$bound_step`, `$limit`, the distributions, a parameter default or range bound), and at run time a NaN delay is a zero delay, a NaN `maxdelay` holds the output at 0 for the whole run, a NaN transition time is the default, a NaN slew rate is no limit and a NaN Laplace coefficient is refused as "zero" | diagnostic gap with silent wrong outputs |
 | [F7](#f7--compile-time-grows-quadratically-with-the-size-of-a-table-array-or-coefficient-list) | compile time is quadratic or worse in the size of an array or list: a `localparam` array of 20 000 values takes 15.5 s and 100 000 does not finish in 300 s; a loop that fills a 20 000-element array takes 107 s (40 000 does not finish in 400 s) and one that only reads a 10 000-element array 27 s; an inline `noise_table` of 5 000 pairs takes 58 s (100 000 pairs, 300 s, unfinished); a `laplace_nd` denominator of 1 000 coefficients 17 s (100 000, unfinished) | pathological compile time at realistic sizes |
 | [F8](#f8--a-file-of-1800-or-more-modules-fails-at-the-link-step-as-linker-not-found) | *(fixed in [E-707](../../enhancements_doc/Enhancement-707.md): a response file above 16 KiB of arguments, an `exec` failure names the program and the cause, a failed link removes its object files; 2 000 modules link in 14.4 s)* 1 700 modules in one file compile in 12 s and 1.7 GB; 1 800 fail after the same 12 s with "linker not found: Argument list too long (os error 7)" — one object file per module is passed on the linker's command line, and the message reports the `exec` error as a missing linker | wrong message, hard limit |
@@ -232,6 +232,13 @@ range instead of returning a constant.
 above 745 (a photon or electron count per step is a natural use). Not
 platform-specific.
 
+*Fixed in [E-709](../../enhancements_doc/Enhancement-709.md).* Above a mean of 10
+the draw is Hörmann's PTRS (transformed rejection with squeeze): two uniforms per
+attempt, exact, O(1) at any mean, the log Γ it needs by Stirling's series inside the
+standard library; below 10 Knuth's method stays and every small-mean draw is what it
+was. Re-run: a mean of 750 draws 732, 1 000 draws 979, 10 000 draws 9 931, 10⁶ draws
+999 300; `rng_examples` pins the moments at 1 000 and 10⁶ and a mean of 10⁹.
+
 ## F5 — the Erlang, chi-square and t generators run in time linear in their degree
 
 **Observed.** One operating point, one evaluation per Newton iterate
@@ -262,6 +269,15 @@ model must not be able to stall the simulator with one integer.
 
 **Kind.** Effectively a hang for a large argument; silent for a merely large one
 (10⁸ costs seconds per Newton iterate). Not platform-specific.
+
+*Fixed in [E-709](../../enhancements_doc/Enhancement-709.md).* Above 256 degrees the
+three take a Gamma variate by Marsaglia and Tsang's method — a normal and a uniform
+per attempt, O(1) at any shape: chi-square(k) is 2·Γ(k/2), Erlang(k, mean) is
+Γ(k)·mean/k, t(k) is z over √(chi-square(k)/k) — and the term-by-term sums stay below
+256, so every draw there is unchanged. Re-run: 10⁶, 10⁷, 10⁸ and 2³¹ − 1 degrees each
+0.2 s per operating point, `$rdist_erlang(s, 1e9, 1.0)` 0.2 s (31.6 s). No
+compile-time bound was added, since no degree can stall the simulator now;
+`rng_examples` pins the moments at 10⁵ degrees and the wall at 2³¹ − 1.
 
 ## F6 — a NaN or infinity from the constant folder passes every constant-argument check
 
