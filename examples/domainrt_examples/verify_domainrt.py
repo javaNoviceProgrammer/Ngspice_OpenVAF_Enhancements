@@ -202,5 +202,33 @@ check("a literal and a localparam are still refused at compile time", LD is None
 check("  ... and each one is still named", llog.count("outside the domain of") >= 3,
       f"{llog.count('outside the domain of')} named")
 
+# ---------------------------------------------------------------------------
+# 6. Enhancement-721 (correctness campaign 2, F2 of 2026-09-25): the caret label
+#    of every constant-argument diagnostic read "invalid the argument for sqrt",
+#    "invalid the maximum negative rate for slew". The one renderer put
+#    "invalid {what} for {builtin}" around a noun phrase the callers pass WITH
+#    its article, so that the headline "sqrt: the argument is -4, which is
+#    outside the domain of sqrt (values >= 0)" reads; the label drops the
+#    article now, and a warning -- a constant the LRM gives a defined meaning --
+#    is not called invalid: "the delay given to absdelay".
+# ---------------------------------------------------------------------------
+print("\n  Enhancement-721: the caret label reads 'invalid argument for sqrt'")
+
+AL, alog = build("arglabel.va", "al")
+check("arglabel.va is refused: three constant-argument errors and absdelay's warning",
+      AL is None and "outside the domain of sqrt" in alog and "must be less than zero" in alog
+      and "must hold (frequency, power) PAIRS" in alog and "warning: absdelay" in alog,
+      alog.strip()[-160:] if AL is not None else "")
+check("sqrt's label: 'invalid argument for sqrt' (was 'invalid the argument for sqrt')",
+      "invalid argument for sqrt" in alog)
+check("slew's label: 'invalid maximum negative rate for slew'",
+      "invalid maximum negative rate for slew" in alog)
+check("noise_table's label, a noun its caller passes without an article: 'invalid table "
+      "for noise_table'", "invalid table for noise_table" in alog)
+check("absdelay's WARNING is not called invalid: 'the delay given to absdelay'",
+      "the delay given to absdelay" in alog)
+check("no label carries the article: 'invalid the' nowhere in the output",
+      "invalid the " not in alog)
+
 print(f"\n  {passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

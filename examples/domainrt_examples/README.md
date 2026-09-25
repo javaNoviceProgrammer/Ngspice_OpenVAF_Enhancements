@@ -4,7 +4,8 @@
 python3 verify_domainrt.py
 ```
 
-28 checks, both linear solvers. 14 of them fail without the fix.
+34 checks, both linear solvers. 14 of them fail without the fix, and four of
+the six E-721 label checks on the E-719 binaries.
 
 ## What was wrong
 
@@ -62,3 +63,17 @@ deliberately — *"fall back to the UNWRAPPED integral, which is exactly what
 | `vtdiode.va` | the diode whose thermal voltage comes from the card |
 | `intrange.va` | an integer parameter with `from [0:2147483647]` and `from [0:100]` |
 | `litdom.va` | the compile-time half, which must stay refused |
+
+## Enhancement-721: the caret label reads "invalid argument for sqrt"
+
+Since [E-721](../../enhancements_doc/Enhancement-721.md) (correctness campaign 2,
+F2 of 2026-09-25) the caret label of every constant-argument diagnostic drops
+the article. The callers pass the offending thing as a noun phrase with its
+article so that the headline reads -- `sqrt: the argument is -4, which is
+outside the domain of sqrt (values >= 0)` -- and the one renderer wrapped the
+same phrase in "invalid {what} for {builtin}": `invalid the argument for sqrt`,
+`invalid the maximum negative rate for slew`, on every one of the checks E-396,
+E-509 and their successors added. The label is `invalid argument for sqrt` now,
+and a warning, which points at a constant the LRM gives a defined meaning,
+does not call it invalid: `the delay given to absdelay`. `arglabel.va` trips
+three errors and one warning from four builtins; six checks read the labels.

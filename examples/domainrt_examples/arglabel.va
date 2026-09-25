@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+// Enhancement-721 (correctness campaign 2, F2 of 2026-09-25): the caret label
+// of every constant-argument diagnostic read "invalid the argument for sqrt" --
+// the renderer wrote "invalid {what} for {builtin}" around a noun phrase the
+// callers give WITH its article, so that the headline "sqrt: the argument is
+// -4, which is outside the domain of sqrt (values >= 0)" reads. The label
+// drops the article now ("invalid argument for sqrt"), and a warning -- a
+// constant the LRM gives a defined meaning -- is not called invalid: "the
+// delay given to absdelay". Three errors and one warning, from four builtins.
+module arglabel(a, b);
+  inout a, b;
+  electrical a, b;
+  real x;
+  analog begin
+    x = sqrt(-4.0) + slew(V(a), 1e5, 1e5) + absdelay(V(a), 2e-6, 1e-6);
+    I(a, b) <+ x * 1e-12 + noise_table('{1.0, 2.0, 3.0});
+  end
+endmodule

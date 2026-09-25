@@ -62,6 +62,18 @@ The single most useful mental model for this toolchain:
   override-dependent typing cannot exist here. Write `parameter real`
   when real overrides are expected; ngspice warns when an override is
   rounded this way.
+- **A constant argument the LRM forbids is refused at compile time**, and
+  only a constant one: `sqrt(-4.0)`, a `slew` rate of the wrong sign, a
+  `noise_table` with an odd number of entries are errors naming the builtin,
+  the value and the domain — `sqrt: the argument is -4, which is outside
+  the domain of sqrt (values >= 0)`, caret label `invalid argument for
+  sqrt` — while the same value from a model card is a run-time matter
+  ([E-396](../../enhancements_doc/Enhancement-396.md),
+  [E-509](../../enhancements_doc/Enhancement-509.md); the label read
+  "invalid the argument for sqrt" until
+  [E-721](../../enhancements_doc/Enhancement-721.md)). A constant the LRM
+  gives a defined meaning draws a warning instead, whose label does not call
+  it invalid: `the delay given to absdelay`.
 
 ## 4.4 Documented design decisions
 

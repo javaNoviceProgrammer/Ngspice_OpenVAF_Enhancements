@@ -1826,13 +1826,26 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                 ref builtin, ref what, ref why, expr, warn,
             } => {
                 let FileSpan { range, file } = self.expr_src(expr);
+                // Enhancement-721 (correctness campaign 2, F2 of 2026-09-25): the
+                // callers write `what` as a noun phrase with its article so that
+                // the headline reads "sqrt: the argument is -1, ..."; the caret
+                // label drops the article ("invalid argument for sqrt" -- it read
+                // "invalid the argument for sqrt"), and a warning, which points
+                // at a constant the LRM gives a defined meaning, does not call
+                // it invalid ("the delay given to absdelay").
+                let noun = what.strip_prefix("the ").unwrap_or(what);
+                let label = if warn {
+                    format!("{what} given to {builtin}")
+                } else {
+                    format!("invalid {noun} for {builtin}")
+                };
                 if warn { Report::warning() } else { Report::error() }
                     .with_message(format!("{builtin}: {what} {why}"))
                     .with_labels(vec![Label {
                         style: LabelStyle::Primary,
                         file_id: file,
                         range: range.into(),
-                        message: format!("invalid {what} for {builtin}"),
+                        message: label,
                     }])
                     .with_notes(vec![
                         "checked only when the argument is written out as a constant; a \
