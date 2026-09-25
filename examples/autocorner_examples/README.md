@@ -18,4 +18,12 @@ its corner; `meas` reads the combined plot as its nominal's analysis;
 their accessor readable (`i(v1_ss)`, `@rm_ss[rsh]`); and the devices follow
 the `corner` variable when the loop ends.
 
-Run: `python3 verify_autocorner.py` (21 checks per solver, both solvers).
+Run: `python3 verify_autocorner.py` (23 checks per solver, both solvers).
+
+## Enhancement-724: batch `.meas` cards name their corner
+
+Since [E-724](../../enhancements_doc/Enhancement-724.md) (five-options dig, F8 of
+2026-09-25) a batch `.meas` under the option prints `autocorner: measures at corner
+<name>` once before each run's first result — the three corners' values printed in
+turn with nothing to tell them apart before. Check [16]: three headers, `tt`, `ss`,
+`ff`, each before its own values; a plain batch run prints none.

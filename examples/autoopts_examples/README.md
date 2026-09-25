@@ -28,3 +28,16 @@ spelling of an option pair wins — `.option autocorner noautocorner`, two cards
 `set noautocorner` after a deck's `.option autocorner`, `noosdimc` against
 `osdimc`/`automc`, `nosavemc` against `savemc` — where the `no` spelling used
 to be accepted and ignored beside the positive.
+
+## Enhancement-723: the control block and the parse-time options
+
+Since [E-723](../../enhancements_doc/Enhancement-723.md) (five-options dig, F7 of
+2026-09-25) the block's own `set saveused`, `set saveused=<value>`, `set nosaveused`
+and `unset saveused` lines decide the option — the later line wins, the block beats
+the cards — because `saveused` is decided from the block's text before the block
+runs; `set nosaveused` under `.option saveused` had saved `out` alone, `set saveused`
+with no card everything, in silence. `autobus` and `autoadapt` act while the deck is
+parsed and cannot be reached from the block: every `set`, `setcs` or `unset` of
+`autobus`, `noautobus`, `autoadapt`, `noautoadapt` or `adapter` there draws a note
+that it comes too late and that a deck card or `.spiceinit` decides. Eight checks;
+six fail on the E-722 binaries.

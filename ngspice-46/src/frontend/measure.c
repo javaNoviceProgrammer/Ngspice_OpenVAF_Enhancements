@@ -19,6 +19,7 @@
 #include "com_let.h"
 #include "com_commands.h"
 #include "com_display.h"
+#include "com_sweep.h"          /* Enhancement-724: autocorner_corner_now */
 
 
 static wordlist *measure_parse_line(char *line);
@@ -327,6 +328,12 @@ do_measure(
     wordlist    *measure_word_list;
     int         precision = measure_get_precision();
     FILE       *measout = NULL;
+    /* Enhancement-724 (five-options dig F8): under `.option autocorner` the
+       batch `.meas` cards run once per corner and printed each corner's
+       values in turn with nothing to tell them apart; the corner is named
+       once before the first result of each run. */
+    const char *ac_corner = chk_only ? NULL : autocorner_corner_now();
+    bool        ac_said = FALSE;
 
 #ifdef HAS_PROGREP
     if (!chk_only)
@@ -562,6 +569,10 @@ do_measure(
         if (strncmp(meastype, "param", 5) != 0 && strncmp(meastype, "expr", 4) != 0) {
 
             if (!chk_only) {
+                if (ac_corner && !ac_said) {
+                    fprintf(stdout, "autocorner: measures at corner %s\n", ac_corner);
+                    ac_said = TRUE;
+                }
                 fprintf(stdout, "%s", newcard->line);
                 if (measout)
                     fprintf(measout, "%s", newcard->line);
@@ -579,6 +590,10 @@ do_measure(
         }
 
         if (!chk_only) {
+            if (ac_corner && !ac_said) {
+                fprintf(stdout, "autocorner: measures at corner %s\n", ac_corner);
+                ac_said = TRUE;
+            }
             fprintf(stdout, "%-20s=", resname);
             if (measout)
                 fprintf(measout, "%-20s=", resname);

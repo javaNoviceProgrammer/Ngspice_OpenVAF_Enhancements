@@ -296,5 +296,22 @@ rsh = [float(m) for m in re.findall(r"^\s*rsh\s+([-+0-9.eE]+)", out, re.M)]
 check("[20] the devices follow the `corner` variable when the loop ends: nominal after the pass, the deck's corner when one holds, nominal after `corners`",
       rsh == [100.0, 115.0, 100.0], f"rsh={rsh}")
 
+# [16] Enhancement-724 (five-options dig F8): batch `.meas` cards under the
+# option ran once per corner and printed each corner's values in turn with
+# nothing to tell them apart; the corner is named once before each run's
+# first result.
+HEADM = ("* autocorner {tag}\n.control\npre_osdi cr.osdi\n.endc\n{opts}\nv1 in 0 dc 1\nn1 in out rm\nr2 out 0 1k\n.model rm cr rsh=100\n"
+         ".tran 1u 5u\n.meas tran vend find v(out) at=5u\n.meas tran vmax max v(out)\n.end\n")
+rc, out = run("", "a16", head=HEADM + "{cards}{body}")
+hdrs = re.findall(r"autocorner: measures at corner (\w+)", out)
+vend = re.findall(r"^vend\s*=\s*([-+0-9.eE]+)", out, re.M)
+check("[16] batch `.meas` cards under the option name their corner: one header per run (tt, ss, ff), each before its own values (E-724)",
+      hdrs == ["tt", "ss", "ff"] and len(vend) == 3 and len(set(vend)) == 3
+      and out.index("measures at corner tt") < out.index(vend[0]) < out.index("measures at corner ss") < out.index(vend[1])
+      < out.index("measures at corner ff") < out.index(vend[2]) and out.count("measures at corner") == 3,
+      f"headers={hdrs} vend={vend}")
+rc, out = run("", "a16b", head=HEADM.replace("{opts}", "") + "{cards}{body}")
+check("[16] ...and a plain batch run prints no header", "measures at corner" not in out and len(re.findall(r"^vend\s*=", out, re.M)) == 1, out[-120:].replace("\n", "|"))
+
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)

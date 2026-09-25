@@ -471,12 +471,66 @@ static int e469_user_saved(wordlist *controls)
     return 0;
 }
 
+/* Enhancement-723 (five-options dig F7 of 2026-09-25): the control block's
+ * own `set saveused`, `set nosaveused` and `unset saveused` count. The
+ * option is decided from the block's TEXT before the block runs -- its
+ * output commands are read the same way -- so a `set` inside it is not too
+ * late here, as it is for autobus and autoadapt (see inp.c); the later line
+ * wins, and the block is later than the cards. Returns 1 (on), 0 (off) or
+ * -1 (the block says nothing). `controls` arrives in reverse order (inp.c
+ * reverses it after this call), so the first match is the block's last
+ * such line; on one line the last word decides. */
+static int e469_off_word(const char *v)
+{
+    return cieq(v, "0") || cieq(v, "false") || cieq(v, "no") || cieq(v, "off");
+}
+
+static int e469_block_decision(wordlist *controls)
+{
+    wordlist *w;
+
+    for (w = controls; w; w = w->wl_next) {
+        char *l = w->wl_word, *c, *cmd, *arg;
+        int r = -1, is_set;
+        if (!l)
+            continue;
+        while (*l && isspace_c(*l))
+            l++;
+        c = l;
+        cmd = gettok(&c);
+        if (!cmd)
+            continue;
+        is_set = cieq(cmd, "set") || cieq(cmd, "setcs");
+        if (is_set || cieq(cmd, "unset")) {
+            while ((arg = gettok(&c)) != NULL) {
+                char *eqp = strchr(arg, '=');
+                if (eqp)
+                    *eqp = '\0';
+                if (cieq(arg, "saveused"))
+                    r = is_set ? ((eqp && e469_off_word(eqp + 1)) ? 0 : 1) : 0;
+                else if (cieq(arg, "nosaveused") && is_set)
+                    r = 0;                      /* `unset nosaveused` changes nothing */
+                tfree(arg);
+            }
+        }
+        tfree(cmd);
+        if (r >= 0)
+            return r;
+    }
+    return -1;
+}
+
 void ft_saveused(wordlist *controls)
 {
     wordlist *w, *saves = NULL;
-    int any_out = 0, saw_all = 0;
+    int any_out = 0, saw_all = 0, enabled;
 
-    if (!e469_enabled || !controls || !ft_curckt)
+    if (!controls || !ft_curckt)
+        return;
+    enabled = e469_block_decision(controls);          /* Enhancement-723 */
+    if (enabled < 0)
+        enabled = e469_enabled;
+    if (!enabled)
         return;
     if (e469_user_saved(controls))
         return;

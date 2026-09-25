@@ -1319,6 +1319,26 @@ static struct card *adapt_extra_line(struct card *deck, const char *tok,
     return NULL;
 }
 
+/* Enhancement-724: does any line of the deck begin with the instance name
+   `name` (whole token, case-folded)? The adapters injected earlier in this
+   pass are in the deck too, and the counter never returns to their numbers. */
+static bool adapt_name_taken(struct card *deck, const char *name)
+{
+    struct card *c;
+    size_t n = strlen(name);
+
+    for (c = deck; c; c = c->nextcard) {
+        const char *p = c->line;
+        if (!p)
+            continue;
+        while (*p && isspace_c(*p))
+            p++;
+        if (strncasecmp(p, name, n) == 0 && (p[n] == '\0' || isspace_c(p[n])))
+            return TRUE;
+    }
+    return FALSE;
+}
+
 /* Is `node` named on a `.adapt` card? Whole tokens only -- a substring test
    would make `.adapt bb` silently select `b`. A flattened node carries its
    subcircuit path (`x1.b`), so the trailing component is accepted too, letting
@@ -1470,6 +1490,7 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
 {
     static struct adapt_cand cand[ADAPT_MAXCAND];
     int ncand = 0, i, made = 0, adapt_width = 0;
+    char aname[32];                             /* Enhancement-724 */
     char amodel[128], *only = NULL;
     struct card *c;
     int verbose;
@@ -1762,7 +1783,15 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
                 ds_free(&nl);
             }
         }
-        aline = tprintf("n_adapt%d_ %s %s %s", ++made, nf, nr, amodel);
+        /* Enhancement-724 (five-options dig F8): the injected instance's
+         * name must be one the deck does not use -- a user's own `n_adapt1_`
+         * made the injection "device already exists, bail out", blaming the
+         * user's line. The counter skips a taken name. */
+        do {
+            ++made;
+            snprintf(aname, sizeof aname, "n_adapt%d_", made);
+        } while (adapt_name_taken(deck, aname));
+        aline = tprintf("%s %s %s %s", aname, nf, nr, amodel);
         adapt_note_split(k->node, nf, nr);      /* Enhancement-572 */
         insert_new_line(f->card, aline, 0, f->card->linenum_orig,
                         f->card->linesource);

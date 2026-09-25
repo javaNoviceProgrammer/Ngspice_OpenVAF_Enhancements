@@ -683,11 +683,19 @@ declared corner, and the `corner` variable is put back afterwards.
 `.option autocorner` takes priority over `.option osdimc` the same way, the option
 disabled for the corner pass and said once per circuit ([E-663](../../enhancements_doc/Enhancement-663.md)).
 `.option noautocorner`, or `set noautocorner` in the control block, turns the
-option off: the later spelling of an option pair wins, on one card, across
-cards and from the control block, for every registered pair — `noosdimc` and
-`noautomc` against `osdimc`/`automc`, `nosavemc`, `nosaveused`, `noautobus`,
-`noautoadapt`, `noosdicache`, `nodcpath`, `noreusesetup`
-([E-670](../../enhancements_doc/Enhancement-670.md)).
+option off: the later spelling of an option pair wins, on one card and across
+cards for every registered pair — `noosdimc` and `noautomc` against
+`osdimc`/`automc`, `nosavemc`, `nosaveused`, `noautobus`, `noautoadapt`,
+`noosdicache`, `nodcpath`, `noreusesetup`
+([E-670](../../enhancements_doc/Enhancement-670.md)) — and from the control
+block for the options read when a run starts (`autocorner`, `osdimc`/`automc`,
+`savemc` and the rest). Two of them act earlier
+([E-723](../../enhancements_doc/Enhancement-723.md)): `saveused` is decided from
+the block's *text* before the block runs, so a `set saveused`, `set nosaveused`
+or `unset saveused` anywhere in it counts, the later line winning over the
+cards; `autobus` and `autoadapt` act while the deck is parsed, before any
+control line, and a `set` of either in the block draws a note that it comes
+too late — a deck card or `.spiceinit` decides them.
 Since [E-666](../../enhancements_doc/Enhancement-666.md): a raw-file `run n5.raw`
 puts every corner's plot in the file, each named with its corner, and `load` reads
 them all; `meas tran` (`ac`, `dc`) reads the combined plot as its nominal's analysis;

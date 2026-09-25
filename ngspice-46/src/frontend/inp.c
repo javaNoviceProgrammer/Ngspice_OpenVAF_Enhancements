@@ -773,6 +773,55 @@ e454_value_is_off(const char *v)
 }
 
 
+/* Enhancement-723 (five-options dig F7 of 2026-09-25): `autobus` and
+ * `autoadapt` act while the deck is parsed (INP2N; INPadapt between pass 1
+ * and pass 2), so a `set`, `set no...` or `unset` of either inside the
+ * control block runs too late to reach this deck, in either direction, and
+ * used to say nothing: the deck kept whatever its cards (or .spiceinit)
+ * decided, and the line looked honoured. Every such line is named once,
+ * before the block runs. (`saveused` is decided from the block's text and
+ * honours the same lines, dotcards.c; `autocorner`, `osdimc` and the other
+ * options read when a run starts answer to the block as they always did.)
+ * `controls` is in reverse order here. */
+static void
+inp_note_parse_time_sets(wordlist *controls)
+{
+    wordlist *w;
+
+    for (w = controls; w; w = w->wl_next) {
+        char *l = w->wl_word, *c, *cmd, *arg;
+        if (!l)
+            continue;
+        while (*l && isspace_c(*l))
+            l++;
+        c = l;
+        cmd = gettok(&c);
+        if (!cmd)
+            continue;
+        if (cieq(cmd, "set") || cieq(cmd, "setcs") || cieq(cmd, "unset")) {
+            while ((arg = gettok(&c)) != NULL) {
+                char *eqp = strchr(arg, '=');
+                const char *opt = NULL;
+                if (eqp)
+                    *eqp = '\0';
+                if (cieq(arg, "autobus") || cieq(arg, "noautobus"))
+                    opt = "autobus";
+                else if (cieq(arg, "autoadapt") || cieq(arg, "noautoadapt") ||
+                         cieq(arg, "adapter"))
+                    opt = "autoadapt";
+                if (opt)
+                    fprintf(cp_err,
+                            "Note: `%s %s` in the control block comes too late for this deck: "
+                            "%s acts while the deck is parsed, before the block runs, and a deck "
+                            "card (.option %s, .option no%s) or .spiceinit decides it; the line "
+                            "changes nothing here\n", cmd, arg, opt, opt, opt);
+                tfree(arg);
+            }
+        }
+        tfree(cmd);
+    }
+}
+
 /* Enhancement-454: a `set autobus` from .spiceinit, in any spelling.
  *
  * The spelling decides the published TYPE -- `set autobus` is a BOOL,
@@ -2043,6 +2092,12 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
            Do this here before controls are run: .save is thus recognized even if
            .control is used */
         ft_dotsaves();
+
+        /* Enhancement-723 (five-options dig F7): a `set autobus` / `set
+           noautobus` / `set autoadapt` ... in the control block comes after
+           the deck was parsed -- INP2N and INPadapt have run -- and changed
+           nothing, in silence. Say so before the block runs. */
+        inp_note_parse_time_sets(controls);
 
         /* Enhancement-469: and, with `.option saveused`, the vectors the
            control block itself reads. Must follow ft_dotsaves() so that an

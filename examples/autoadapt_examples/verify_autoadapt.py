@@ -208,6 +208,18 @@ _rc, out = run(MULTI, "multi", ctl="op\nprint v(a[0]) v(d[3])",
 check("[E-463] two shared nodes give two adapters, uniquely named",
       out.count("split") == 2 and "n_adapt1_" in out and "n_adapt2_" in out, "")
 
+print("\na user instance already named n_adapt1_ (Enhancement-724, five-options dig F8)")
+USER = (f"{DRIVE}\n{LOAD}\nN1 a b mymodel1\nN2 b c mymodel2\nn_adapt1_ x y mymodel1\n"
+        + "\n".join(f"Rx{k} x[{k}] 0 1k\nRy{k} y[{k}] 0 1k" for k in range(4)))
+HAND = (f"{DRIVE}\n{LOAD}\nN1 a b_f mymodel1\nN2 b_r c mymodel2\nNA b_f b_r amod\nn_adapt1_ x y mymodel1\n"
+        + "\n".join(f"Rx{k} x[{k}] 0 1k\nRy{k} y[{k}] 0 1k" for k in range(4)))
+_rc, out = run(USER, "user1", opts=".option autobus\n" + AUTO)
+_rc2, ref = run(HAND, "user1ref", opts=".option autobus\n")
+check("[E-724] the injection skips a name the deck already uses: the adapter is n_adapt2_, the deck runs, the value is the hand-written one "
+      "(was 'device already exists, bail out' on the user's line)",
+      "already exists" not in out and "adapter n_adapt2_" in out and vals(out) == vals(ref) and len(vals(ref)) == 6,
+      out[-160:].replace("\n", "|"))
+
 print("\nwhat must not change")
 _rc, out = run(SHORT, "off")
 check("[E-463] with the option off the deck is untouched",

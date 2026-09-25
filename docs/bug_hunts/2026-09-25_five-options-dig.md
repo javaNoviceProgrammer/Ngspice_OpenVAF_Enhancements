@@ -73,8 +73,8 @@ session scratchpad (`h5/harnA.py` … `harnE.py`, `harnX.py`).
 | [F4](#f4--saveused-a-plot-qualified-bare-name-stops-every-analysis) | `saveused`: `print tran1.out` saves the name `tran1.out`; no analysis can match it, so the `op` *and* the `tran` before the line are "no data saved … analysis not run" — the whole deck's output gone for one cross-plot reference | the option's one promise broken |
 | [F5](#f5--saveused-the-scanner-does-not-see-a-bare-vector-in-an-expression-in-meas-or-behind-) | `saveused`: a bare vector inside an expression on an output command (`print v(in) mag(out)`: `out` lost), in `meas` (`meas tran m find out at=0.5u`: "no such vector as out") and as `$&mid` in `echo` or `if` ("no such variable") is invisible to the scan; `print out*2` alone works by accident, nothing collected | the scanner's vocabulary, the class of the second dig's F2 |
 | [F6](#f6--autocorner-a-corner-whose-transient-aborts-half-way-contributes-a-full-length-vector) | `autocorner`: a corner whose transient aborts at 4.86 µs of 10 keeps its 44-point plot, and the combined plot's `v(out_ss)` is resampled onto the nominal's 70 points with the last value held flat to the end; "corner ss: the run failed" is printed, the vector carries no mark | a phantom tail on the plot a host draws |
-| [F7](#f7--set-nosaveused-set-noautobus-and-set-noautoadapt-in-the-control-block-turn-nothing-off) | `set nosaveused`, `set noautobus` and `set noautoadapt` in the control block turn nothing off (nor do the positive spellings turn anything on): the three options act at parse time, before the block runs, while `autocorner` and `osdimc` answer to the block; E-670 and handbook §3.7 say the later spelling wins "from the control block … for every registered pair" and list the three | documentation contradicts behaviour, silently |
-| [F8](#f8--two-messages) | `autoadapt`: a user instance already named `n_adapt1_` makes the injection collide — "device already exists, bail out" on the *user's* line, the injected adapter unnamed; `autocorner`: batch `.meas` cards print each corner's value in turn with no corner label | two messages |
+| [F7](#f7--set-nosaveused-set-noautobus-and-set-noautoadapt-in-the-control-block-turn-nothing-off) | *(fixed in [E-723](../../enhancements_doc/Enhancement-723.md): the block's `saveused` lines count, the later winning; a `set` of `autobus` or `autoadapt` there is named as too late; the handbook says which pairs the block reaches)* `set nosaveused`, `set noautobus` and `set noautoadapt` in the control block turn nothing off (nor do the positive spellings turn anything on): the three options act at parse time, before the block runs, while `autocorner` and `osdimc` answer to the block; E-670 and handbook §3.7 say the later spelling wins "from the control block … for every registered pair" and list the three | documentation contradicts behaviour, silently |
+| [F8](#f8--two-messages) | *(fixed in [E-724](../../enhancements_doc/Enhancement-724.md): the injection skips a taken name; the batch measures name their corner)* `autoadapt`: a user instance already named `n_adapt1_` makes the injection collide — "device already exists, bail out" on the *user's* line, the injected adapter unnamed; `autocorner`: batch `.meas` cards print each corner's value in turn with no corner label | two messages |
 
 ## F1 — `autoadapt`: with the shared node at the same port index on both devices, deck order decides which side gets `_f`
 
@@ -300,6 +300,15 @@ draws a note that it comes too late.
 
 **Kind.** Documentation contradicts behaviour, in silence.
 
+*Fixed in [E-723](../../enhancements_doc/Enhancement-723.md).* `saveused` is decided from
+the block's text before the block runs, so its own `set saveused`, `set nosaveused` and
+`unset saveused` lines count now, the later line winning and the block beating the
+cards. `autobus` and `autoadapt` act while the deck is parsed and cannot be reached from
+the block; every `set`, `setcs` or `unset` of them there draws a note that it comes too
+late and where the option is decided. The handbook paragraph now says which pairs the
+control block reaches. `autoopts` section E-723, eight checks: 43 of 43 per solver, 37 of
+43 on the E-722 binaries.
+
 ## F8 — two messages
 
 **`autoadapt` and a user's `n_adapt1_`** (`harnB.py` [B4]): a deck that already holds an
@@ -326,6 +335,13 @@ vmax = 3.86997e-01 at= 2.00000e-05    vend = 3.86997e-01
 
 — one pair per corner, in pass order, none labelled. The `.print` cards name their plot
 (E-602); the measures could carry the corner the way `corners -output` does.
+
+*Fixed in [E-724](../../enhancements_doc/Enhancement-724.md).* The injected adapter takes
+the first `n_adapt<k>_` no line of the deck begins with (`n_adapt2_` beside a user's
+`n_adapt1_`, the hand-written values), and `do_measure` prints `autocorner: measures at
+corner <name>` once before each run's first result under the option, nothing on a plain
+run. `autoadapt` one check (27 of 27 per solver, 26 of 27 on the E-722 binaries),
+`autocorner` [16] two checks (23 of 23, 22 of 23).
 
 ## Observations, not findings
 

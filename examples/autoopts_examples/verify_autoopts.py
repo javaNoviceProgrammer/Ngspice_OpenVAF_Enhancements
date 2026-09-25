@@ -224,6 +224,44 @@ def main():
     out = ngspice(deck("savemc pair", MC, "pre_osdi smcres.osdi\nop\necho s=$?savemc n=$?nosavemc", ".option osdimc savemc=_e670.csv nosavemc\n"))
     check("`.option savemc=file nosavemc`: the file option is gone, no file", "s=0 n=1" in out and not os.path.exists(os.path.join(HERE, "_e670.csv")), out[-80:].replace("\n", "|"))
 
+    # Enhancement-723 (five-options dig F7 of 2026-09-25): `set saveused`,
+    # `set nosaveused`, `set autobus`, `set noautobus`, `set autoadapt` ... in
+    # the CONTROL BLOCK did nothing, in silence: the three options act before
+    # the block runs. `saveused` is decided from the block's text, so its
+    # lines count now (the later line wins, the block beats the cards);
+    # `autobus` and `autoadapt` act while the deck is parsed and cannot be
+    # reached from the block, and every such line is named as too late.
+    print("\n[E-723] the control block and the parse-time options (five-options dig F7)")
+    SU = "v1 in 0 dc 1\nr1 in mid 1k\nr2 mid out 1k"
+    ALL = ["in", "mid", "out", "v1#branch"]
+
+    def vecs(o):
+        return sorted(set(m.group(1) for m in re.finditer(r"^\s{2,}([\w#.\[\]]+)\s*:\s*\w+", o, re.M)))
+
+    out = ngspice(deck("set nosaveused", SU, "set nosaveused\nop\nprint v(out)\ndisplay", ".option saveused\n"))
+    check("`.option saveused` and `set nosaveused` in the block: everything saved (the block's line was ignored)", vecs(out) == ALL, str(vecs(out)))
+    out = ngspice(deck("set saveused", SU, "set saveused\nop\nprint v(out)\ndisplay"))
+    check("`set saveused` in the block, no card: `out` alone kept (was everything)", vecs(out) == ["out"], str(vecs(out)))
+    out = ngspice(deck("later wins", SU, "set nosaveused\nop\nset saveused\nprint v(out)\ndisplay", ".option saveused\n"))
+    check("`set nosaveused` then `set saveused`: the later line wins, `out` alone", vecs(out) == ["out"], str(vecs(out)))
+    out = ngspice(deck("unset", SU, "unset saveused\nop\nprint v(out)\ndisplay", ".option saveused\n"))
+    out2 = ngspice(deck("set off", SU, "set saveused=off\nop\nprint v(out)\ndisplay", ".option saveused\n"))
+    check("`unset saveused` and `set saveused=off` in the block each turn it off", vecs(out) == ALL and vecs(out2) == ALL, str(vecs(out)) + str(vecs(out2)))
+    NOTE = "in the control block comes too late for this deck"
+    body = "v0 a[0] 0 1\nn1 a b bus1\nrl b 0 1k\n.model bus1 bus1"
+    out = ngspice(deck("set noautobus", body, "set noautobus\npre_osdi bus1.osdi\nop\nprint v(b)", ".option autobus\n"))
+    check("`.option autobus` and `set noautobus` in the block: still expanded (0.5), and the line is named as too late",
+          near(scalars(out).get("v(b)"), 0.5) and "`set noautobus` " + NOTE in out and "autobus acts while the deck is parsed" in out, out[-260:].replace("\n", "|"))
+    out = ngspice(deck("set autobus", body, "set autobus\npre_osdi bus1.osdi\nop\nprint v(b)"))
+    check("`set autobus` in the block, no card: not expanded (0), and named as too late", near(scalars(out).get("v(b)"), 0.0, 1e-9) and "`set autobus` " + NOTE in out, out[-260:].replace("\n", "|"))
+    body = ("v0 a[0] 0 1\nv1 a[1] 0 1\nv2 a[2] 0 1\nv3 a[3] 0 1\nn1 a b chan\nn2 b c chan\n"
+            "r0 c[0] 0 1k\nr1 c[1] 0 1k\nr2 c[2] 0 1k\nr3 c[3] 0 1k\n.model chan chan r0=1k\n.model amod adapter ra=50")
+    out = ngspice(deck("set noautoadapt", body, "set noautoadapt\npre_osdi adapt.osdi\nop\nprint v(c[0])", ".option autobus autoadapt adapter=amod\n"))
+    check("`.option autoadapt adapter=amod` and `set noautoadapt` in the block: still adapted (0.3278689), named as too late",
+          near(scalars(out).get("v(c[0])"), 0.3278689, 1e-5) and "`set noautoadapt` " + NOTE in out and "autoadapt acts while the deck is parsed" in out, out[-260:].replace("\n", "|"))
+    out = ngspice(deck("no note", body, "pre_osdi adapt.osdi\nop\nprint v(c[0])", ".option autobus autoadapt adapter=amod\n"))
+    check("...and nothing is said when the block does not mention them; `set autocorner`-style run-time options are not named either", NOTE not in out and near(scalars(out).get("v(c[0])"), 0.3278689, 1e-5), "")
+
     for f in ("_o.cir", "bus1.osdi", "busdev.osdi", "adapt.osdi", "smcres.osdi", "cornr.va", "cornr.osdi", "_e670.csv"):
         try:
             os.remove(os.path.join(HERE, f))
