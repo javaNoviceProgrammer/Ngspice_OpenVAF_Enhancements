@@ -683,6 +683,7 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
     bool savenosub = FALSE;
     bool savenointernals = FALSE;
     bool any_applicable = FALSE;    /* Enhancement-603 */
+    bool all_inferred = TRUE;       /* Enhancement-726: every applicable save is saveused's */
     char *an_name;
     int initmem;
 
@@ -735,6 +736,8 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                     continue;
                 }
                 any_applicable = TRUE;      /* Enhancement-603 */
+                if (!saves[i].autosaved)
+                    all_inferred = FALSE;   /* Enhancement-726 */
 
                 /*  Check for ".save all" and new synonym ".save allv"  */
 
@@ -1032,11 +1035,17 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                             err = E_BADPARM;
                         }
                     }
-                    if (err == E_NODEV)
+                    /* Enhancement-725: neither for a name `.option saveused`
+                     * inferred -- E-496's rule, which E-600 applied to the
+                     * third message below and not to these two. The command
+                     * that named the device reports it itself ("no such
+                     * device or model name"), and the scan now derives names
+                     * the author never wrote (a corner copy's base). */
+                    if (err == E_NODEV && !saves[i].autosaved)
                         fprintf(cp_err,
                                 "Warning: save '%s': no such device, so this "
                                 "vector will stay empty.\n", saves[i].name);
-                    else if (err == E_BADPARM)
+                    else if (err == E_BADPARM && !saves[i].autosaved)
                         fprintf(cp_err,
                                 "Warning: save '%s': device has no parameter "
                                 "'%s', so this vector will stay empty.\n",
@@ -1105,6 +1114,8 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
             bool continuing = seq_job && seq_job == analysisPtr &&
                               follow == seq_left - 1;
             bool multi = follow > 0 || continuing;
+            bool held_nothing = (run->numData == 1 && run->refIndex != -1) ||
+                                (run->numData == 0 && run->refIndex == -1);
             wordlist *now_unmatched = NULL;
 
             if (circuitPtr)
@@ -1112,12 +1123,35 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
             if (!continuing)
                 seq_reset();
 
-            if (multi && any_applicable && numsaves &&
-                !saveall && !savenosub && !savenointernals &&
-                ((run->numData == 1 && run->refIndex != -1) ||
-                 (run->numData == 0 && run->refIndex == -1)))
-                save_every_name(run, refName, dataNames, numNames, dataType,
-                                numNames, FALSE, FALSE);
+            if (any_applicable && numsaves && held_nothing &&
+                !saveall && !savenosub && !savenointernals) {
+                if (multi)
+                    save_every_name(run, refName, dataNames, numNames, dataType,
+                                    numNames, FALSE, FALSE);
+                else if (all_inferred && numNames > 0) {
+                    /* Enhancement-726 (five-options dig F4 of 2026-09-25):
+                     * a save set that `.option saveused` INFERRED and that
+                     * matches nothing this analysis produces. The refusal
+                     * below is right for a hand-written save -- the author
+                     * asked for something the analysis has not got, and
+                     * E-493 names it -- but an inferred set is the scanner's
+                     * guess at the control block, and a guess that names
+                     * nothing of an analysis is a blind spot of the scan,
+                     * not a request to run the analysis for nothing: `print
+                     * tran1.out` (the plot-qualified spelling, taken whole)
+                     * turned the op and the transient off; `print pole(1)`
+                     * after a `pz` lost the pz, whose vectors no block ever
+                     * names by a form the scan reads. The option's one
+                     * promise is that the deck still works, so the analysis
+                     * keeps everything, and says so -- the memory the option
+                     * was set to save is what a reader would miss. */
+                    fprintf(cp_out, "saveused: nothing the control block names is in "
+                            "the %s; everything of it is kept\n",
+                            spice_analysis_get_description(analysisPtr->JOBtype));
+                    save_every_name(run, refName, dataNames, numNames, dataType,
+                                    numNames, FALSE, FALSE);
+                }
+            }
 
             if (numsaves) {
                 for (i = 0; i < numsaves; i++) {

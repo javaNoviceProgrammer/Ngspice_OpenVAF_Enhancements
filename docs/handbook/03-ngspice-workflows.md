@@ -704,6 +704,15 @@ puts it on that corner's `savemc` row; the copies keep their accessor readable �
 `i(v1_ss)`, `v1_ss#branch`, `@rm_ss[rsh]` — and when the pass or the `corners`
 command ends the devices follow the `corner` variable (the nominal when none
 holds), instead of staying at the last corner until the next run.
+`.option saveused` beside the option saves the base of a corner copy the block reads
+([E-725](../../enhancements_doc/Enhancement-725.md)): `print v(out_ss)` alone runs
+the pass and holds the copy, where the copy's name alone had refused every run. The
+same scan reads a vector named bare inside an expression on an output command, in a
+`meas`, behind `$&`, and keeps `x1.mid` whole
+([E-727](../../enhancements_doc/Enhancement-727.md)); a plot-qualified `tran1.out`
+saves `out` too, and a set the option inferred that names nothing an analysis produces
+keeps everything of that analysis, said once, instead of turning it off
+([E-726](../../enhancements_doc/Enhancement-726.md)).
 
 **A record of every corner run — `.option savecorner`.** The corner twin of
 `.option savemc` ([E-701](../../enhancements_doc/Enhancement-701.md);

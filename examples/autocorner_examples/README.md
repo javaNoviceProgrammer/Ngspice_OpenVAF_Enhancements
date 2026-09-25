@@ -18,7 +18,11 @@ its corner; `meas` reads the combined plot as its nominal's analysis;
 their accessor readable (`i(v1_ss)`, `@rm_ss[rsh]`); and the devices follow
 the `corner` variable when the loop ends.
 
-Run: `python3 verify_autocorner.py` (23 checks per solver, both solvers).
+Run: `python3 verify_autocorner.py` (26 checks per solver, both solvers).
+
+Since [E-725](../../enhancements_doc/Enhancement-725.md) (check [21]): `.option saveused`
+beside the option saves the base of a corner copy the block reads — `print v(out_ss)`
+alone runs the pass and holds `out_ss`, the option still pruning the rest.
 
 ## Enhancement-724: batch `.meas` cards name their corner
 

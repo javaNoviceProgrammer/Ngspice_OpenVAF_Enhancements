@@ -206,5 +206,85 @@ out = run(".option saveused", "let y = v(mid) + v(out)\nprint y", "f2v")
 check("[F2] ...and the v() spelling still works",
       "not available" not in out and "invalid" not in out, "")
 
+# ---------------------------------------------------------- E-726, E-727 ----
+# Five-options dig of 2026-09-25, F4 and F5: the scanner's vocabulary, and an
+# inferred set that matches nothing.
+print("\nEnhancement-727: names inside expressions, in `meas`, behind `$&`")
+
+# a bare vector inside an expression on an output command was skipped whole
+# ("the reference scan covers v()/i()"), so `out` went unsaved beside v(in)
+out = run(".option saveused", "print v(in) mag(out)", "e727a")
+check("[E-727] `print v(in) mag(out)`: the bare `out` inside the expression is kept",
+      kept(out)[1] == ["in", "out"] and "not available" not in out, f"{kept(out)[1]}")
+out = run(".option saveused", "print out*2", "e727b")
+check("[E-727] `print out*2` alone now restricts to `out` (it used to keep everything)",
+      kept(out)[1] == ["out"] and "not available" not in out, f"{kept(out)[1]}")
+out = run(".option saveused", "wrdata _su_e727.txt out*2\nprint v(mid)", "e727c")
+check("[E-727] `wrdata f out*2` beside a print keeps `out` and `mid`",
+      kept(out)[1] == ["mid", "out"], f"{kept(out)[1]}")
+# `meas` was kept out of the bare-word scan (E-496), so a vector named bare in
+# it was never seen: "no such vector as out"
+out = run(".option saveused", "meas dc m find out at=0.5\nprint v(in)", "e727d")
+check("[E-727] `meas dc m find out at=0.5`: the bare `out` is kept and the measure works",
+      "out" in kept(out)[1] and re.search(r"^m\s*=\s*1\.66", out, re.M) is not None
+      and "no such vector" not in out, f"{kept(out)[1]}")
+out = run(".option saveused", "meas dc m2 when mid=0.5\nprint v(in)", "e727e")
+check("[E-727] `meas dc m2 when mid=0.5`: the vector left of the `=` is kept, the measure reads 0.75",
+      "mid" in kept(out)[1] and re.search(r"^m2\s*=\s*7\.5", out, re.M) is not None
+      and "no such vector" not in out, f"{kept(out)[1]}")
+# `$&name` in an echo, an if, a set
+out = run(".option saveused", "op\nprint v(out)\necho mid is $&mid", "e727f")
+check("[E-727] `echo $&mid` beside print v(out) keeps `mid` and prints its value",
+      kept(out)[1] == ["mid", "out"] and re.search(r"^mid is 0\.66", out, re.M) is not None
+      and "no such variable" not in out, f"{kept(out)[1]}")
+out = run(".option saveused", "op\nprint v(out)\nif ($&mid > 0.4)\necho yes\nelse\necho no\nend", "e727g")
+check("[E-727] `if ($&mid > 0.4)` reads the saved `mid`",
+      re.search(r"^yes$", out, re.M) is not None and "no such variable" not in out
+      and "syntax error" not in out, out[-120:].replace("\n", "|"))
+out = run(".option saveused", "print v(out)\necho \"a=$&i(v1)\"", "e727h")
+check("[E-727] `$&i(v1)` stays the reference scan's: `v1#branch` kept, nothing else added",
+      kept(out)[1] == ["out", "v1#branch"], f"{kept(out)[1]}")
+# a subcircuit node read bare in a `let` was split at its dot
+SUB = ("v1 in 0 dc 1\nx1 in out div\n.subckt div a b\nr1 a mid 1k\nr2 mid b 1k\n.ends\nrl out 0 1k\n")
+deck = (f"saveused e727i\n{SUB}.option saveused\n.control\noption noacct\nset numdgt=8\n"
+        f"dc V1 0 1 0.5\nlet y = x1.mid*2\nprint y v(out)\ndisplay\n.endc\n.end\n")
+with open(os.path.join(HERE, "_su_e727i.cir"), "w") as f:
+    f.write(deck)
+out = subprocess.run([NGSPICE, "-b", "_su_e727i.cir"], cwd=HERE, capture_output=True, text=True,
+                     timeout=120, errors="replace").stdout
+check("[E-727] `let y = x1.mid*2`: the subcircuit node is kept whole, not split at its dot",
+      re.search(r"(?m)^\s+x1\.mid\s+:\s+voltage", out) is not None and kept(out)[1] == ["out"]
+      and re.search(r"1\.3333", out) is not None and "invalid" not in out and "not available" not in out,
+      out[-300:].replace("\n", "|"))
+
+print("\nEnhancement-726: a plot-qualified name, and a set that matches nothing")
+# `print tran1.out` went into the set whole; no analysis produces that name,
+# so every analysis was refused ("no data saved ...; analysis not run")
+out = run(".option saveused", "op\nprint dc1.out", "e726a")
+check("[E-726] `print dc1.out` (the plot-qualified spelling) keeps `out` and both analyses run",
+      kept(out)[1] == ["out"] and "analysis not run" not in out
+      and re.search(r"dc1\.out", out) is not None, f"{kept(out)[1]} {out[-100:].replace(chr(10), '|')}")
+# a set the scan inferred that matches nothing an analysis produces: the
+# analysis keeps everything and says so, instead of being refused. pz makes
+# `pole(1)`, which no block names by a form the scan reads
+# (the source carries `ac 1`: pz treats a dc-only source as a short of its input)
+deck = (f"saveused e726b\nv1 in 0 dc 1 ac 1\nr1 in mid 1k\nr2 mid out 1k\nc1 out 0 1n\n.option saveused\n"
+        f".control\noption noacct\nop\nprint v(mid)\npz in 0 out 0 vol pz\nprint pole(1)\n.endc\n.end\n")
+with open(os.path.join(HERE, "_su_e726b.cir"), "w") as f:
+    f.write(deck)
+out = subprocess.run([NGSPICE, "-b", "_su_e726b.cir"], cwd=HERE, capture_output=True, text=True,
+                     timeout=120, errors="replace")
+out = out.stdout + out.stderr
+check("[E-726] a `pz` beside `print v(mid)`: the inferred set names nothing of it, so it keeps everything, said once",
+      "analysis not run" not in out and re.search(r"^pole\(1\) = -", out, re.M) is not None
+      and out.count("saveused: nothing the control block names is in the pole-zero analysis; everything of it is kept") == 1,
+      out[-200:].replace("\n", "|"))
+check("[E-726] ...and the operating point, which the set does name, is not said",
+      "names is in the D.C." not in out and "names is in the Operating" not in out, "")
+# a HAND-WRITTEN save that matches nothing is still refused, as before
+out = run("", "op\nprint v(out)", "e726c", pre="save nosuch\n")
+check("[E-726] a hand-written `save nosuch` still refuses the analysis (only an inferred set is forgiven)",
+      "analysis not run" in out and "saveused:" not in out, out[-160:].replace("\n", "|"))
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

@@ -4,7 +4,7 @@
 python3 verify_saveused.py
 ```
 
-23 checks, both linear solvers. No model compile is needed — the whole suite
+44 checks, both linear solvers. No model compile is needed — the whole suite
 runs on a four-resistor divider, because what is being tested is *which vectors
 survive*, not what they contain.
 
@@ -63,3 +63,18 @@ All ten are pinned — `.option saveused`, `=1`, `=true`, `=yes`, `=on` and
 `set saveused` on; `=0`, `=false`, `=no`, `=off` and `nosaveused` off. This
 project has had to repair that same off-word defect four times (E-450, E-451,
 E-454, E-466), so a new boolean-ish option ships with its off-words tested.
+
+## The scan's vocabulary (E-726, E-727)
+
+Two findings of the [five-options dig of 2026-09-25](../../docs/bug_hunts/2026-09-25_five-options-dig.md),
+sections E-726 and E-727 of the suite. The scan reads a vector named bare inside an
+expression on an output command (`print v(in) mag(out)`, `wrdata f out*2`), in a
+`meas` (`find out`, `when mid=0.5`), behind `$&` (`echo $&mid`, `if ($&mid > 0.4)`),
+and keeps a subcircuit node whole (`let y = x1.mid*2`)
+([E-727](../../enhancements_doc/Enhancement-727.md)); a plot-qualified bare name
+(`print dc1.out`) saves the vector after the dot as well as the whole, and a set the
+option inferred that names nothing an analysis produces — a `pz` beside `print v(mid)`
+— keeps everything of that analysis, said once, instead of refusing it; a hand-written
+`save nosuch` is still refused ([E-726](../../enhancements_doc/Enhancement-726.md)).
+`print out*2` alone, which used to keep everything because nothing was collected, now
+prunes to `out`.

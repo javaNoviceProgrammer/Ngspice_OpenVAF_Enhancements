@@ -100,9 +100,13 @@ check("[4] .print ac vm(out) fills its table",
       re.search(r"(?m)^2\s+1\.0+e\+03\s+8\.46\d+e-01", out) is not None, "")
 
 # ------------------------------------------------------------- [5] ---
-out = run("ac lin 1 1k 1k\nprint vm(out)\nprint length(in)", "t5")
+# Enhancement-727: the probe used to be `print length(in)`, which since E-727
+# NAMES `in` (an expression on an output command is scanned) and so saved it;
+# `display` lists the plot's vectors without naming any.
+out = run("ac lin 1 1k 1k\nprint vm(out)\ndisplay", "t5")
 check("[5] a block using only vm(out) now restricts: `out` kept, `in` not",
-      value(out, "vm(out)") is not None and "vector in is not available" in out, out[-200:])
+      value(out, "vm(out)") is not None and re.search(r"(?m)^\s+out\s+:", out) is not None
+      and re.search(r"(?m)^\s+in\s+:", out) is None, out[-200:])
 
 # ------------------------------------------------------------- [6] ---
 out = run("ac lin 1 1k 1k\nprint vm(out)\necho \"R6a: $&i(v1) $&v(in,out)\"\ntran 10u 20u\nprint `@n1[ir]`[1]\nprint vm(out)[1]".replace("`", ""), "t6")
@@ -114,9 +118,9 @@ check("[6] `@n1[ir]` beside vm(out) is saved per point in the transient",
       mb is not None and abs(float(mb) - 4.995e-7) < 1e-9, mb or out[-200:])
 
 # ------------------------------------------------------------- [7] ---
-out = run("ac lin 1 1k 1k\nprint vdb(out)\nprint length(in)", "t7")
+out = run("ac lin 1 1k 1k\nprint vdb(out)\ndisplay", "t7")
 check("[7] a node nobody names is still not saved (the option's purpose)",
-      "vector in is not available" in out, out[-160:])
+      re.search(r"(?m)^\s+out\s+:", out) is not None and re.search(r"(?m)^\s+in\s+:", out) is None, out[-160:])
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

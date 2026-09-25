@@ -27,6 +27,8 @@ Modified: 2000 AlansFixes
 #include "com_asciiplot.h"
 #include "resource.h"
 #include "postcoms.h"
+#include "ngspice/cktdefs.h"
+#include "ngspice/osdiitf.h"      /* Enhancement-725: OSDImcCornerNames */
 
 /* Extract all the .save lines */
 
@@ -174,12 +176,20 @@ static const char *e469_implicit_all[] = { "write", NULL };
  * answer. */
 static const char *e469_expr_cmds[] = { "let", NULL };
 
-/* commands whose bare words are grammar rather than vectors. `meas` names its
- * analysis, its result and its function as bare words -- `meas tran m1 FIND
- * v(b) AT 50u` offered `tran`, `m1`, `find` and `at` -- while the vectors it
- * reads arrive as v(...)/i(...) and are already taken by the reference scan,
- * which runs over EVERY line whatever command it belongs to. */
-static const char *e469_no_bare[] = { "meas", "measure", NULL };
+/* commands whose FIRST TWO words are grammar rather than vectors. `meas`
+ * names its analysis, its result and its function as bare words -- `meas
+ * tran m1 FIND v(b) AT 50u` offered `tran`, `m1`, `find` and `at` -- and
+ * Enhancement-496 kept it out of the bare-word scan altogether, on the ground
+ * that the vectors it reads "arrive as v(...)/i(...)". They need not: a vector
+ * is named bare in a measure as anywhere else -- `meas tran m find out
+ * at=0.5u`, `when out=0.2` -- and that one was never seen, so the measure
+ * failed "no such vector as out" under the option (Enhancement-727,
+ * five-options dig F5 of 2026-09-25). The analysis and the result name are
+ * skipped; every other word, alone or either side of an `=`, is taken. A
+ * keyword taken as a name -- `find`, `at` -- is inferred, so it costs a slot
+ * and warns about nothing (E-496's marking), which is why no keyword list
+ * stands between the scan and a node that happens to be called `max`. */
+static const char *e469_meas_cmds[] = { "meas", "measure", NULL };
 
 /* commands that accept the plot grammar */
 static const char *e469_plot_cmds[] = { "plot", "pyplot", "gnuplot",
@@ -213,6 +223,27 @@ static void e469_add(wordlist **wl, const char *tok)
     *wl = wl_append(*wl, wl_cons(copy(tok), NULL));
 }
 
+/* Enhancement-726 (five-options dig F4 of 2026-09-25): a bare name with a dot
+ * in it. `print tran1.out` is ngspice's own cross-plot spelling -- the vector
+ * `out` of the plot `tran1` -- and went into the save set whole, a name no
+ * analysis produces; the set then matched nothing anywhere and EVERY analysis
+ * of the deck was refused, "no data saved for ...; analysis not run", under
+ * an option whose one promise is that the deck still works. The scan cannot
+ * tell a plot prefix from a subcircuit path (`x1.out` is a node, spelled the
+ * same way), so it registers both: the whole name, which is what a subcircuit
+ * node needs, and the part after the last dot, which is what the
+ * plot-qualified form needs. The one that matches nothing is inferred, so it
+ * costs a slot and warns about nothing. */
+static void e469_add_name(wordlist **wl, const char *tok)
+{
+    const char *dot;
+
+    e469_add(wl, tok);
+    dot = tok ? strrchr(tok, '.') : NULL;
+    if (dot && dot > tok && (isalpha_c(dot[1]) || dot[1] == '_'))
+        e469_add(wl, dot + 1);
+}
+
 /* Collect every v(...)/i(...)/@dev[param] reference in `line`. The scan is
    textual and bracket-counted, so `mag(v(a))`, `v(a)-v(b)` and `v(pin[2])`
    all yield the inner reference itself. */
@@ -221,6 +252,33 @@ static void e469_scan_refs(const char *line, wordlist **wl)
     const char *p = line;
 
     while (*p) {
+        /* Enhancement-727 (five-options dig F5): `$&name` -- the value of a
+         * vector in an `echo`, an `if`, a `set` -- names a vector as surely
+         * as v() does, and was neither a reference nor a bare word to this
+         * scan: `echo mid is $&mid` after `print v(out)` said "&mid: no such
+         * variable", and an `if ($&mid > 0.4)` the same and then a syntax
+         * error. The name after `$&` is taken (a dot in it under E-726's
+         * rule); an accessor there, `$&v(in,out)` or `$&i(v1)`, is left to
+         * the scan below, which already reads it. */
+        if (*p == '$' && p[1] == '&') {
+            const char *q = p + 2;
+            size_t n = 0;
+            while (q[n] && (isalnum_c(q[n]) || q[n] == '_' || q[n] == '#' || q[n] == '.'))
+                n++;
+            if (n > 0 && q[n] != '(') {
+                char buf[256];
+                while (n > 0 && q[n - 1] == '.')
+                    n--;
+                if (n > 0 && n < sizeof buf) {
+                    memcpy(buf, q, n);
+                    buf[n] = '\0';
+                    e469_add_name(wl, buf);
+                }
+                p = q + n;
+            } else
+                p = q;
+            continue;
+        }
         if (*p == '@') {
             const char *q = p + 1;
             while (*q && *q != '[' && !isspace_c(*q))
@@ -363,14 +421,19 @@ static void e469_add_expr_names(const char *tok, wordlist **wl)
         size_t n = 0;
         while (*p && !(isalpha_c(*p) || *p == '_'))
             p++;                                 /* skip operators and digits */
-        while (p[n] && (isalnum_c(p[n]) || p[n] == '_'))
+        /* Enhancement-727: a dot or a hash INSIDE a name is part of it --
+         * `x1.mid` is a subcircuit node, `v1#branch` a branch current --
+         * and splitting there had registered `x1` and `mid`, neither of
+         * them the vector `let y = x1.mid*2` reads ("RHS invalid"). */
+        while (p[n] && (isalnum_c(p[n]) || p[n] == '_' || p[n] == '#' ||
+                        (p[n] == '.' && (isalnum_c(p[n + 1]) || p[n + 1] == '_'))))
             n++;
         if (n == 0)
             break;
         if (n < sizeof buf) {
             memcpy(buf, p, n);
             buf[n] = '\0';
-            e469_add(wl, buf);
+            e469_add_name(wl, buf);              /* E-726: `tran1.out` gives `out` too */
         }
         p += n;
     }
@@ -384,7 +447,7 @@ static int e469_scan_bare(const char *line, wordlist **wl)
 {
     char *c = (char *) line, *tok;
     char cmd[64];
-    int argno = 0, filefirst, saw_all = 0, plotcmd, named = 0, exprcmd;
+    int argno = 0, filefirst, saw_all = 0, plotcmd, named = 0, meascmd, skip_next = 0;
 
     tok = gettok(&c);
     if (!tok)
@@ -394,27 +457,32 @@ static int e469_scan_bare(const char *line, wordlist **wl)
     tfree(tok);
     if (!e469_in_list(cmd, e469_out_cmds) && !e469_in_list(cmd, e469_expr_cmds))
         return 0;                            /* F2: `let` joins the scan */
-    if (e469_in_list(cmd, e469_no_bare))     /* Enhancement-496 */
-        return 0;
+    meascmd = e469_in_list(cmd, e469_meas_cmds);   /* Enhancement-727 */
     filefirst = e469_in_list(cmd, e469_file_first);
     plotcmd = e469_in_list(cmd, e469_plot_cmds);
-    exprcmd = e469_in_list(cmd, e469_expr_cmds);
 
     while ((tok = gettok(&c)) != NULL) {
         argno++;
+        if (skip_next) {                     /* Enhancement-727: the file a `>` names */
+            skip_next = 0;
+            tfree(tok);
+            continue;
+        }
         if (cieq(tok, "all")) {
             saw_all = 1;
             tfree(tok);
             break;
         }
         named++;                             /* F1: the line named something */
-        if (filefirst && argno == 1) {          /* the output file */
+        if ((filefirst && argno == 1) ||        /* the output file */
+            (meascmd && argno <= 2)) {          /* a measure's analysis and result */
             named--;                             /* not a vector */
             tfree(tok);
             continue;
         }
         if (tok[0] == '-' || tok[0] == '>' || tok[0] == '<') {
             named--;
+            skip_next = eq(tok, ">") || eq(tok, ">>");
             tfree(tok);
             continue;
         }
@@ -425,11 +493,20 @@ static int e469_scan_bare(const char *line, wordlist **wl)
         }
         if (strpbrk(tok, "()[]@=*/+-,'\"")) {
             /* F2: on an expression command the names are INSIDE the token,
-             * so pull them out; on an output command the reference scan
-             * already covers v()/i()/@dev[param] and splitting would only
-             * add noise. */
-            if (exprcmd)
-                e469_add_expr_names(tok, wl);
+             * so pull them out.
+             *
+             * Enhancement-727 (five-options dig F5 of 2026-09-25): on an
+             * output command too. F2 had left those tokens alone, on the
+             * ground that the reference scan covers v()/i()/@dev[param]
+             * there and splitting "would only add noise" -- but a vector is
+             * read bare inside an expression on an output command as readily
+             * as in a `let`: `print v(in) mag(out)` saved `in` alone and
+             * `out` was "not available"; `meas tran m find out at=0.5u`
+             * failed "no such vector as out"; a `wrdata f out*2` had worked
+             * only because nothing was collected and the option stood down.
+             * The noise is a function name or a keyword per token -- `mag`,
+             * `at` -- inferred, so it costs a slot and warns about nothing. */
+            e469_add_expr_names(tok, wl);
             tfree(tok);
             continue;
         }
@@ -438,7 +515,7 @@ static int e469_scan_bare(const char *line, wordlist **wl)
             tfree(tok);                          /* Enhancement-496: grammar */
             continue;
         }
-        e469_add(wl, tok);
+        e469_add_name(wl, tok);                  /* E-726: `tran1.out` gives `out` too */
         tfree(tok);
     }
     /* F1: an output command whose argument-less form means "everything", and
@@ -447,6 +524,79 @@ static int e469_scan_bare(const char *line, wordlist **wl)
     if (!named && !saw_all && e469_in_list(cmd, e469_implicit_all))
         saw_all = 1;
     return saw_all;
+}
+
+/* Enhancement-725 (five-options dig F3 of 2026-09-25): the corner copies of
+ * `.option autocorner` (E-656) and their base names.
+ *
+ * The combined plot the pass builds holds the nominal's vectors under their
+ * names and each corner's as `<name>_<corner>` -- `v(out_ss)`, `i(v1_ss)`,
+ * `@rm_ss[rsh]`, the option's documented idiom -- and a block that read only
+ * the copy (`op` / `print v(out_ss)`) had `out_ss` saved: a name no analysis
+ * produces. The set matched nothing, and every run of the pass was refused,
+ * "no data saved for D.C. Operating point analysis; analysis not run", three
+ * times over. The copies are built from the per-corner plots' own vectors,
+ * so `out` must be saved for `out_ss` to exist: every collected name whose
+ * node or device part ends in `_<corner>`, for a corner the loaded models
+ * declare, also registers its base. Not gated on the option: the suffix is
+ * a corner copy's only when a model declares that corner, and the extra
+ * name is inferred, so it costs a slot and warns about nothing. */
+#define E469_MAXCORNERS 256
+
+/* `name` with `_<corner>` taken off every identifier run that ends in it:
+ * `out_ss` -> `out`, `v(out_ss)` -> `v(out)` (each node of a two-node form),
+ * `v1_ss#branch` -> `v1#branch`, `@rm_ss[rsh]` -> `@rm[rsh]`, `x1.out_ss` ->
+ * `x1.out`; 0 when the name carries no such suffix */
+static int e469_strip_corner(const char *name, const char *corner, char *out,
+                             size_t cap)
+{
+    size_t clen = strlen(corner), used = 0;
+    const char *p = name;
+    int any = 0;
+
+    while (*p) {
+        if (isalnum_c(*p) || *p == '_' || *p == '.') {
+            size_t n = 0, keep;
+            while (p[n] && (isalnum_c(p[n]) || p[n] == '_' || p[n] == '.'))
+                n++;
+            keep = n;
+            if (n > clen + 1 && p[n - clen - 1] == '_' &&
+                strncasecmp(p + n - clen, corner, clen) == 0) {
+                keep = n - clen - 1;             /* the base before _<corner> */
+                any = 1;
+            }
+            if (used + keep >= cap)
+                return 0;
+            memcpy(out + used, p, keep);
+            used += keep;
+            p += n;
+        } else {
+            if (used + 1 >= cap)
+                return 0;
+            out[used++] = *p++;
+        }
+    }
+    out[used] = '\0';
+    return any;
+}
+
+static void e469_add_corner_bases(wordlist **saves)
+{
+    const char *corners[E469_MAXCORNERS];
+    wordlist *w;
+    char buf[256];
+    int nc, k, i, n;
+
+    if (!*saves || !ft_curckt || !ft_curckt->ci_ckt)
+        return;
+    nc = OSDImcCornerNames(ft_curckt->ci_ckt, corners, E469_MAXCORNERS);
+    if (nc <= 0)
+        return;
+    n = wl_length(*saves);      /* the names collected; a base appended is not rescanned */
+    for (w = *saves, i = 0; w && i < n; w = w->wl_next, i++)
+        for (k = 0; k < nc; k++)
+            if (e469_strip_corner(w->wl_word, corners[k], buf, sizeof buf))
+                e469_add(saves, buf);
 }
 
 /* TRUE when the deck already says what to save, in which case autosave keeps
@@ -587,6 +737,8 @@ void ft_saveused(wordlist *controls)
         wl_free(saves);
         return;
     }
+
+    e469_add_corner_bases(&saves);              /* Enhancement-725 */
 
     /* Enhancement-496: everything registered here was INFERRED from the
      * control block, not written by the user. Marking it keeps E-493's

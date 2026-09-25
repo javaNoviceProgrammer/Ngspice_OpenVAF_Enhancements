@@ -313,5 +313,25 @@ check("[16] batch `.meas` cards under the option name their corner: one header p
 rc, out = run("", "a16b", head=HEADM.replace("{opts}", "") + "{cards}{body}")
 check("[16] ...and a plain batch run prints no header", "measures at corner" not in out and len(re.findall(r"^vend\s*=", out, re.M)) == 1, out[-120:].replace("\n", "|"))
 
+# [21] Enhancement-725 (five-options dig F3): `.option saveused` beside the
+# option. A block that read only a corner copy -- `print v(out_ss)` -- had
+# `out_ss` saved, a name no analysis produces; the set matched nothing and
+# every run of the pass was refused ("no data saved for D.C. Operating point
+# analysis; analysis not run", three times). A name ending in `_<corner>` for
+# a declared corner now also saves its base, so the copy exists.
+rc, out = run("op\nprint v(out_ss)\ndisplay\n", "a21", opts=".option autocorner saveused")
+check("[21] `.option saveused` beside autocorner: `print v(out_ss)` alone runs the pass and prints the ss value",
+      near(val(out, "v(out_ss)"), 0.798085, 1e-5) and "analysis not run" not in out
+      and re.search(r"(?m)^\s+out_ss\s+:", out) is not None, out[-200:].replace("\n", "|"))
+check("[21] ...and only `out` was kept of the circuit (the option still prunes: no `in`)",
+      re.search(r"(?m)^\s+in\s+:", out) is None and re.search(r"(?m)^\s+out\s+:", out) is not None,
+      out[-300:].replace("\n", "|"))
+rc, out = run(f"op\nprint i(v1_ff) v1_ss#branch {A}rm_ss[rsh]\nlet z = out_ff*2\nprint z\ndisplay\n", "a21b", opts=".option autocorner saveused")
+check("[21] the other spellings of a copy: `i(v1_ff)`, `v1_ss#branch`, `@rm_ss[rsh]`, a bare `out_ff` in a `let`",
+      near(val(out, "i(v1_ff)"), -8.63260e-4, 1e-4) and near(val(out, "v1_ss#branch"), -7.98085e-4, 1e-4)
+      and near(val(out, A + "rm_ss[rsh]"), 115.0) and near(val(out, "z"), 2 * 0.863260, 1e-5)
+      and "not available" not in out and "invalid" not in out and "stay empty" not in out,
+      out[-300:].replace("\n", "|"))
+
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)

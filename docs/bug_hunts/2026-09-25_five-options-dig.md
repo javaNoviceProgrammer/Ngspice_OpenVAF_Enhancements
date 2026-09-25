@@ -69,9 +69,9 @@ session scratchpad (`h5/harnA.py` … `harnE.py`, `harnX.py`).
 |---|---|---|
 | [F1](#f1--autoadapt-with-the-shared-node-at-the-same-port-index-on-both-devices-deck-order-decides-which-side-gets-_f) | `autoadapt`: when the shared node sits at the same port index on both devices, deck order decides which side gets `_f` — with an asymmetric adapter `v(c[0])` is 0.28902 with `N1` first and 0.28818 with `N2` first — and the fallback is said only under `autoadapt=debug` | silent order dependence, against E-463's own rule |
 | [F2](#f2--autobus-a-bare-bus-token-on-an-under-connected-line-binds-as-a-scalar-node) | `autobus`: `N1 a busdev` (one token for two ports, the `$port_connected` shape) binds `a` as the scalar node `a` on terminal `a[0]`; the deck's `a[0]` drive reaches nothing (0 A) and E-402 reports `a[1]` … `a[4]` and `b` absent — E-572's one-bit fix covers the equal-count line only | silent wrong wiring |
-| [F3](#f3--saveused-beside-autocorner-refuses-every-run-when-the-block-reads-a-corner-copy) | `saveused` beside `autocorner`: a block that reads the combined plot's `v(out_ss)` alone puts `out_ss` in the save set, no analysis has such a node, and every run of the pass is "no data saved … analysis not run" | two options' documented idioms collide |
-| [F4](#f4--saveused-a-plot-qualified-bare-name-stops-every-analysis) | `saveused`: `print tran1.out` saves the name `tran1.out`; no analysis can match it, so the `op` *and* the `tran` before the line are "no data saved … analysis not run" — the whole deck's output gone for one cross-plot reference | the option's one promise broken |
-| [F5](#f5--saveused-the-scanner-does-not-see-a-bare-vector-in-an-expression-in-meas-or-behind-) | `saveused`: a bare vector inside an expression on an output command (`print v(in) mag(out)`: `out` lost), in `meas` (`meas tran m find out at=0.5u`: "no such vector as out") and as `$&mid` in `echo` or `if` ("no such variable") is invisible to the scan; `print out*2` alone works by accident, nothing collected | the scanner's vocabulary, the class of the second dig's F2 |
+| [F3](#f3--saveused-beside-autocorner-refuses-every-run-when-the-block-reads-a-corner-copy) | *(fixed in [E-725](../../enhancements_doc/Enhancement-725.md): a name ending in `_<corner>` for a declared corner also saves its base; an inferred name draws no save warning)* `saveused` beside `autocorner`: a block that reads the combined plot's `v(out_ss)` alone puts `out_ss` in the save set, no analysis has such a node, and every run of the pass is "no data saved … analysis not run" | two options' documented idioms collide |
+| [F4](#f4--saveused-a-plot-qualified-bare-name-stops-every-analysis) | *(fixed in [E-726](../../enhancements_doc/Enhancement-726.md): a dotted name saves both spellings; an inferred set that names nothing of an analysis keeps everything of it, said once)* `saveused`: `print tran1.out` saves the name `tran1.out`; no analysis can match it, so the `op` *and* the `tran` before the line are "no data saved … analysis not run" — the whole deck's output gone for one cross-plot reference | the option's one promise broken |
+| [F5](#f5--saveused-the-scanner-does-not-see-a-bare-vector-in-an-expression-in-meas-or-behind-) | *(fixed in [E-727](../../enhancements_doc/Enhancement-727.md): expression tokens on every command, the `meas` words, `$&name`, dotted and hashed names kept whole)* `saveused`: a bare vector inside an expression on an output command (`print v(in) mag(out)`: `out` lost), in `meas` (`meas tran m find out at=0.5u`: "no such vector as out") and as `$&mid` in `echo` or `if` ("no such variable") is invisible to the scan; `print out*2` alone works by accident, nothing collected | the scanner's vocabulary, the class of the second dig's F2 |
 | [F6](#f6--autocorner-a-corner-whose-transient-aborts-half-way-contributes-a-full-length-vector) | `autocorner`: a corner whose transient aborts at 4.86 µs of 10 keeps its 44-point plot, and the combined plot's `v(out_ss)` is resampled onto the nominal's 70 points with the last value held flat to the end; "corner ss: the run failed" is printed, the vector carries no mark | a phantom tail on the plot a host draws |
 | [F7](#f7--set-nosaveused-set-noautobus-and-set-noautoadapt-in-the-control-block-turn-nothing-off) | *(fixed in [E-723](../../enhancements_doc/Enhancement-723.md): the block's `saveused` lines count, the later winning; a `set` of `autobus` or `autoadapt` there is named as too late; the handbook says which pairs the block reaches)* `set nosaveused`, `set noautobus` and `set noautoadapt` in the control block turn nothing off (nor do the positive spellings turn anything on): the three options act at parse time, before the block runs, while `autocorner` and `osdimc` answer to the block; E-670 and handbook §3.7 say the later spelling wins "from the control block … for every registered pair" and list the three | documentation contradicts behaviour, silently |
 | [F8](#f8--two-messages) | *(fixed in [E-724](../../enhancements_doc/Enhancement-724.md): the injection skips a taken name; the batch measures name their corner)* `autoadapt`: a user instance already named `n_adapt1_` makes the injection collide — "device already exists, bail out" on the *user's* line, the injected adapter unnamed; `autocorner`: batch `.meas` cards print each corner's value in turn with no corner label | two messages |
@@ -179,6 +179,15 @@ options together must run the deck.
 
 **Kind.** Two options' documented idioms collide; the deck fails.
 
+*Fixed in [E-725](../../enhancements_doc/Enhancement-725.md).* When the loaded models
+declare corners, every collected name whose node or device part ends in `_<corner>`
+for one of them also registers its base — `out_ss` gives `out`, `v(out_ss)` gives
+`v(out)`, `v1_ss#branch` gives `v1#branch`, `@rm_ss[rsh]` gives `@rm[rsh]` — so the
+pass runs and the copy exists; not gated on the option, since only a declared corner
+makes the suffix a copy's. And a name the option inferred draws none of the save
+warnings (E-418's "no such device" and "no parameter" were still printed for one).
+`autocorner` [21], three checks: 26 of 26 per solver, 22 of 26 on the E-722 binaries.
+
 ## F4 — `saveused`: a plot-qualified bare name stops every analysis
 
 **Observed.** `harnD.py` [D3]: the RC divider, `.option saveused`, and
@@ -210,6 +219,17 @@ detected before the run rather than turning every analysis off.
 
 **Kind.** The option's one promise broken by one line.
 
+*Fixed in [E-726](../../enhancements_doc/Enhancement-726.md).* A bare name with a dot
+registers both spellings — the whole (`x1.out` is a subcircuit node, spelled the same
+way) and the part after the last dot — and an inferred set that names nothing an
+analysis produces no longer refuses it: when every applicable save is the option's own
+and none matched, the analysis keeps every vector and says so once ("saveused: nothing
+the control block names is in the pole-zero analysis; everything of it is kept"). A
+`pz` beside `print v(out)`, refused before because no block names `pole(1)` by a form
+the scan reads, runs. A hand-written save that matches nothing is refused as before.
+`saveused` section E-726, four checks: 44 of 44 per solver with E-727's, 34 of 44 on
+the E-722 binaries.
+
 ## F5 — `saveused`: the scanner does not see a bare vector in an expression, in `meas`, or behind `$&`
 
 **Observed.** `harnD.py` [D1], [D2], each with `.option saveused` on the RC divider:
@@ -236,6 +256,16 @@ argument); under-saving is the correctness bug the option must not have.
 
 **Kind.** The scanner's vocabulary, the class of the second dig's F2 (`vdb()` and
 friends, closed by E-591).
+
+*Fixed in [E-727](../../enhancements_doc/Enhancement-727.md).* A token with an operator
+character is split into its names on an output command as on a `let`; a measure's
+words after the analysis and the result name are taken, either side of an `=`;
+`$&name` registers `name` on any line; a dot followed by an identifier character and a
+hash stay inside a name, so `x1.mid` and `v1#branch` are kept whole (a `let y =
+x1.mid*2` had been "RHS invalid", a blind spot the dig had not listed); the file after
+a `>` is skipped. `print out*2` alone now prunes to `out`. `saveused` section E-727,
+nine checks (eight fail on the E-722 binaries); `saveforms` [5] and [7] re-pinned,
+their probe `print length(in)` having named the node they declared unnamed.
 
 ## F6 — `autocorner`: a corner whose transient aborts half way contributes a full-length vector
 
