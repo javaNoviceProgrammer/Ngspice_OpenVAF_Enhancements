@@ -72,7 +72,7 @@ session scratchpad (`h5/harnA.py` … `harnE.py`, `harnX.py`).
 | [F3](#f3--saveused-beside-autocorner-refuses-every-run-when-the-block-reads-a-corner-copy) | *(fixed in [E-725](../../enhancements_doc/Enhancement-725.md): a name ending in `_<corner>` for a declared corner also saves its base; an inferred name draws no save warning)* `saveused` beside `autocorner`: a block that reads the combined plot's `v(out_ss)` alone puts `out_ss` in the save set, no analysis has such a node, and every run of the pass is "no data saved … analysis not run" | two options' documented idioms collide |
 | [F4](#f4--saveused-a-plot-qualified-bare-name-stops-every-analysis) | *(fixed in [E-726](../../enhancements_doc/Enhancement-726.md): a dotted name saves both spellings; an inferred set that names nothing of an analysis keeps everything of it, said once)* `saveused`: `print tran1.out` saves the name `tran1.out`; no analysis can match it, so the `op` *and* the `tran` before the line are "no data saved … analysis not run" — the whole deck's output gone for one cross-plot reference | the option's one promise broken |
 | [F5](#f5--saveused-the-scanner-does-not-see-a-bare-vector-in-an-expression-in-meas-or-behind-) | *(fixed in [E-727](../../enhancements_doc/Enhancement-727.md): expression tokens on every command, the `meas` words, `$&name`, dotted and hashed names kept whole)* `saveused`: a bare vector inside an expression on an output command (`print v(in) mag(out)`: `out` lost), in `meas` (`meas tran m find out at=0.5u`: "no such vector as out") and as `$&mid` in `echo` or `if` ("no such variable") is invisible to the scan; `print out*2` alone works by accident, nothing collected | the scanner's vocabulary, the class of the second dig's F2 |
-| [F6](#f6--autocorner-a-corner-whose-transient-aborts-half-way-contributes-a-full-length-vector) | `autocorner`: a corner whose transient aborts at 4.86 µs of 10 keeps its 44-point plot, and the combined plot's `v(out_ss)` is resampled onto the nominal's 70 points with the last value held flat to the end; "corner ss: the run failed" is printed, the vector carries no mark | a phantom tail on the plot a host draws |
+| [F6](#f6--autocorner-a-corner-whose-transient-aborts-half-way-contributes-a-full-length-vector) | *(fixed in [E-728](../../enhancements_doc/Enhancement-728.md): a failed corner's copies end where its data ends, nan from there, said where; `$autocorner_failed` names it)* `autocorner`: a corner whose transient aborts at 4.86 µs of 10 keeps its 44-point plot, and the combined plot's `v(out_ss)` is resampled onto the nominal's 70 points with the last value held flat to the end; "corner ss: the run failed" is printed, the vector carries no mark | a phantom tail on the plot a host draws |
 | [F7](#f7--set-nosaveused-set-noautobus-and-set-noautoadapt-in-the-control-block-turn-nothing-off) | *(fixed in [E-723](../../enhancements_doc/Enhancement-723.md): the block's `saveused` lines count, the later winning; a `set` of `autobus` or `autoadapt` there is named as too late; the handbook says which pairs the block reaches)* `set nosaveused`, `set noautobus` and `set noautoadapt` in the control block turn nothing off (nor do the positive spellings turn anything on): the three options act at parse time, before the block runs, while `autocorner` and `osdimc` answer to the block; E-670 and handbook §3.7 say the later spelling wins "from the control block … for every registered pair" and list the three | documentation contradicts behaviour, silently |
 | [F8](#f8--two-messages) | *(fixed in [E-724](../../enhancements_doc/Enhancement-724.md): the injection skips a taken name; the batch measures name their corner)* `autoadapt`: a user instance already named `n_adapt1_` makes the injection collide — "device already exists, bail out" on the *user's* line, the injected adapter unnamed; `autocorner`: batch `.meas` cards print each corner's value in turn with no corner label | two messages |
 
@@ -298,6 +298,16 @@ a `$autocorner_failed` variable, say) or its copy ends where its data ends — `
 beyond the abort, which every consumer treats as missing — and the banner counts it.
 
 **Kind.** A phantom tail on the one plot a schematic host reads.
+
+*Fixed in [E-728](../../enhancements_doc/Enhancement-728.md).* The copies of a corner
+whose run failed, made no plot or was interrupted end where its data ends — nan (real,
+or nan + i·nan) for every point of the nominal's scale past the corner's last point —
+and one line per combined plot says where ("autocorner: corner ss: its tran2 ends at
+time = 4.86308e-06 of 1e-05, where the run stopped; its copies in 'autocorner1' are nan
+from there"); `$autocorner_failed` names the corners, unset when every corner ran. A
+`find v(out_ss) at=9u` now fails "out of interval" instead of reading 0.4651163; a
+corner that succeeded is resampled as before. `autocorner` [22], three checks, and one
+in [9]: 30 of 30 per solver, 28 of 30 on the E-727 binaries.
 
 ## F7 — `set nosaveused`, `set noautobus` and `set noautoadapt` in the control block turn nothing off
 

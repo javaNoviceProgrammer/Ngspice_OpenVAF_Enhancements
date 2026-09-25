@@ -677,7 +677,10 @@ under their own names and each corner's as `<name>_<corner>` — `v(out_ss)`,
 `i(v1_ff)`, `@rm_ff[rsh]` — resampled onto the nominal's scale, so a host that draws the
 current plot's vectors against its scale shows every corner side by side.
 `$autocorner_plot`, `$autocorner_plots`, `$autocorner_names` and
-`$autocorner_n` describe the run. The option is inert inside a loop command
+`$autocorner_n` describe the run; `$autocorner_failed` names the corners whose run
+failed, made no plot or was interrupted, unset when every corner ran, and such a
+corner's copies in the combined plot end where its data ends, nan from there, said
+where ([E-728](../../enhancements_doc/Enhancement-728.md)). The option is inert inside a loop command
 (`sweep`, `montecarlo`, `corners`, `optimize`, `wcd`, `highsigma`) and without a
 declared corner, and the `corner` variable is put back afterwards.
 `.option autocorner` takes priority over `.option osdimc` the same way, the option

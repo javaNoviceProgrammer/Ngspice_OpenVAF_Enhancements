@@ -6781,6 +6781,7 @@ static void ac_clear_results(void)
     cp_remvar("autocorner_names");
     cp_remvar("autocorner_plots");
     cp_remvar("autocorner_plot");
+    cp_remvar("autocorner_failed");         /* Enhancement-728 */
     ac_fam_n = 0;
 }
 
@@ -6843,13 +6844,35 @@ int autocorner_wanted(const char *what)
     return wanted;
 }
 
+/* Enhancement-728 (five-options dig F6 of 2026-09-25): a point of the
+ * combined vector that the corner's run never computed. A corner whose
+ * transient aborted half way keeps its partial plot, and the copy loop
+ * resampled that plot onto the nominal's scale with the last computed value
+ * held flat to the end -- a waveform on the one plot a schematic host draws
+ * that was never computed, with nothing in the plot to say so. Under
+ * `trunc` (the corner's run failed or was interrupted) a point beyond the
+ * source's last point is nan instead, which every consumer treats as
+ * missing; a corner whose run succeeded is resampled as before, its scale
+ * ending where the nominal's does. */
+static void ac_missing(struct dvec *dst, int j)
+{
+    if (isreal(dst))
+        dst->v_realdata[j] = NAN;
+    else {
+        dst->v_compdata[j].cx_real = NAN;
+        dst->v_compdata[j].cx_imag = NAN;
+    }
+}
+
 /* linear interpolation of a (possibly complex) vector `src`, whose own scale
- * is `sx[slen]`, onto `dx[dlen]`; a matching scale is copied outright */
+ * is `sx[slen]`, onto `dx[dlen]`; a matching scale is copied outright. Under
+ * `trunc` a point past the source's range is nan (Enhancement-728). */
 static void ac_resample(const struct dvec *src, const double *sx, int slen,
-                        struct dvec *dst, const double *dx, int dlen)
+                        struct dvec *dst, const double *dx, int dlen, int trunc)
 {
     int same = (slen == dlen);
     int j;
+    double sx_end = (sx && slen > 0) ? sx[slen - 1] + 1e-12 * fabs(sx[slen - 1]) : 0.0;
     if (same && sx && dx)
         for (j = 0; j < dlen; j++)
             if (fabs(sx[j] - dx[j]) > 1e-12 * (fabs(dx[j]) + 1e-300)) {
@@ -6859,6 +6882,10 @@ static void ac_resample(const struct dvec *src, const double *sx, int slen,
     if (same || !sx || !dx || slen < 2) {
         for (j = 0; j < dlen; j++) {
             int i = j < slen ? j : slen - 1;
+            if (trunc && j >= slen) {
+                ac_missing(dst, j);
+                continue;
+            }
             if (isreal(dst))
                 dst->v_realdata[j] = isreal(src) ? src->v_realdata[i]
                                                  : src->v_compdata[i].cx_real;
@@ -6872,7 +6899,12 @@ static void ac_resample(const struct dvec *src, const double *sx, int slen,
     }
     if (isreal(src)) {
         for (j = 0; j < dlen; j++) {
-            double y = sw_interp(sx, src->v_realdata, slen, dx[j]);
+            double y;
+            if (trunc && dx[j] > sx_end) {
+                ac_missing(dst, j);
+                continue;
+            }
+            y = sw_interp(sx, src->v_realdata, slen, dx[j]);
             if (isreal(dst))
                 dst->v_realdata[j] = y;
             else {
@@ -6887,8 +6919,13 @@ static void ac_resample(const struct dvec *src, const double *sx, int slen,
             im[j] = src->v_compdata[j].cx_imag;
         }
         for (j = 0; j < dlen; j++) {
-            double yr = sw_interp(sx, re, slen, dx[j]);
-            double yi = sw_interp(sx, im, slen, dx[j]);
+            double yr, yi;
+            if (trunc && dx[j] > sx_end) {
+                ac_missing(dst, j);
+                continue;
+            }
+            yr = sw_interp(sx, re, slen, dx[j]);
+            yi = sw_interp(sx, im, slen, dx[j]);
             if (isreal(dst))
                 dst->v_realdata[j] = hypot(yr, yi);
             else {
@@ -6930,8 +6967,10 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
     const char *set[CO_MAXCORNERS + 1];
     struct plot *before[CO_MAXCORNERS + 1];
     int nnew[CO_MAXCORNERS + 1];
+    int failed[CO_MAXCORNERS + 1];              /* Enhancement-728: the run failed, made no plot, or was interrupted */
     int nset = 0, ndecl, c, k, j, err = 0, any_err = 0, nfam = 0;
     char prev[256], names[4096], plots[4096];   /* E-669: 256 corners */
+    char failed_names[4096];                    /* Enhancement-728: $autocorner_failed */
     int had_prev;
     char *combined = NULL;
     /* Enhancement-666 (hunt F8): `run <file>` writes the plots to a raw file
@@ -6984,8 +7023,10 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
         autocorner_raw_append = 0;
         ac_corner_now = NULL;
         nnew[c] = ac_count_new(before[c]);
+        failed[c] = 0;
         if (err || (nnew[c] == 0 && !rawfile)) {
             any_err = 1;
+            failed[c] = 1;                      /* Enhancement-728 */
             fprintf(cp_err, "autocorner: corner %s: the run %s\n", set[c],
                     err ? "failed" : "made no plot");
         }
@@ -6999,11 +7040,25 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
         }
         if (ft_intrpt) {
             fprintf(cp_err, "autocorner: interrupted after %d of %d corners\n", c + 1, nset);
+            failed[c] = 1;                      /* Enhancement-728: its plot is partial too */
             nset = c + 1;
             break;
         }
     }
     ac_inside = 0;
+    /* Enhancement-728: $autocorner_failed names the corners whose run failed,
+     * made no plot or was interrupted -- a script's way to know which copies
+     * of the combined plot end early -- and is unset when every corner ran */
+    failed_names[0] = '\0';
+    for (c = 0; c < nset; c++) {
+        size_t used = strlen(failed_names);
+        if (failed[c] && used + strlen(set[c]) + 2 < sizeof failed_names)
+            snprintf(failed_names + used, sizeof failed_names - used, "%s%s", used ? " " : "", set[c]);
+    }
+    if (failed_names[0])
+        cp_vset("autocorner_failed", CP_STRING, failed_names);
+    else
+        cp_remvar("autocorner_failed");
     OSDImcCornerPriority(FALSE);                /* Enhancement-663 */
     if (had_prev)
         cp_vset("corner", CP_STRING, prev);
@@ -7076,6 +7131,27 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
             vec_new(xs);                            /* first permanent -> scale */
             dlen = xs->v_length;
         }
+        /* Enhancement-728 (five-options dig F6): a corner whose run failed
+         * part way through -- a transient aborted on a timestep too small --
+         * left a partial plot, and the copy loop below resampled it onto
+         * the nominal's scale with the last computed value held flat to the
+         * end: a waveform on the one plot a schematic host draws that was
+         * never computed, with nothing in the plot or the banner to say so.
+         * Its copies now end where its data ends, nan from there (the
+         * `trunc` of ac_resample), and this line says where. */
+        for (c = 1; c < nset; c++) {
+            struct plot *cp = k < nnew[c] ? ac_new_plot(before[c], k) : NULL;
+            const struct dvec *cs = cp ? cp->pl_scale : NULL;
+            double last;
+            if (!failed[c] || !cs || cs->v_length < 1 || dlen < 1 || scale_is_point)
+                continue;
+            last = isreal(cs) ? cs->v_realdata[cs->v_length - 1]
+                              : cs->v_compdata[cs->v_length - 1].cx_real;
+            fprintf(cp_out, "autocorner: corner %s: its %s ends at %s = %g of %g, where the "
+                            "run stopped; its copies in '%s' are nan from there\n",
+                    set[c], cp->pl_typename, xs ? xs->v_name : "index", last, dx[dlen - 1],
+                    pw->pl_typename);
+        }
         for (v = tt->pl_dvecs; v; v = v->v_next) {
             if (!v->v_name || v->v_length < 1)
                 continue;
@@ -7114,7 +7190,7 @@ int autocorner_run(char *what, wordlist *wl, int (*run)(char *, wordlist *))
                 nv = dvec_alloc(nm, (int) v->v_type,
                                 (short) ((isreal(v) ? VF_REAL : VF_COMPLEX) | VF_PERMANENT),
                                 len, NULL);
-                ac_resample(src, sx, slen, nv, dx, len);
+                ac_resample(src, sx, slen, nv, dx, len, c > 0 && failed[c]);   /* E-728 */
                 vec_new(nv);
                 nvec++;
                 tfree(sxbuf);

@@ -100,6 +100,14 @@ inout p, n; electrical p, n;
 analog I(p,n) <+ V(p,n)*z*1e-3;
 endmodule
 ''',
+    # Enhancement-728 (five-options dig F6): a corner whose transient aborts half way
+    "cz": '''`include "disciplines.vams"
+module cz(p, n);
+inout p, n; electrical p, n;
+(* corner="ss=115, ff=88" *) parameter real rsh = 100 from (0:inf);
+analog I(p,n) <+ V(p,n) / (rsh * ((rsh > 110 && $abstime > 5e-6) ? 0.0 : 1.0));
+endmodule
+''',
     # Enhancement-663 (hunt F7): a cornered parameter beside an uncornered statistical one
     "cq": '''`include "disciplines.vams"
 module cq(p, n);
@@ -205,10 +213,11 @@ check("[8] inside `corners`, `montecarlo`, `sweep` and `optimize` the option is 
 # [9] a failing corner
 HEADF = ("* autocorner {tag}\n.control\npre_osdi cr.osdi\npre_osdi cf.osdi\n.endc\n{opts}\nv1 in 0 dc 1\nn1 in out rm\nn2 out 0 fm\n"
          "r2 out 0 1k\n.model rm cr rsh=100\n.model fm cf\n{cards}\n.control\n{body}\n.endc\n.end\n")
-rc, out = run("op\nprint v(out) v(out_ss)\nprint v(out_bad)\necho \"plots=$autocorner_plots names=$autocorner_names\"\n", "a9", head=HEADF)
+rc, out = run("op\nprint v(out) v(out_ss)\nprint v(out_bad)\necho \"plots=$autocorner_plots names=$autocorner_names\"\necho \"failed=$autocorner_failed\"\n", "a9", head=HEADF)
 check("[9] a corner whose run fails: said (`the run failed` since E-666), no phantom vectors, the other corners intact",
       "autocorner: corner bad: the run failed" in out and val(out, "v(out_ss)") is not None and val(out, "v(out_bad)") is None
       and "plots=op1 op2 op3 names=tt ss ff bad" in out, out[-300:].replace("\n", "|"))
+check("[9] ...and $autocorner_failed names it (E-728)", "failed=bad" in out, out[-200:].replace("\n", "|"))
 
 # [10] no corners declared
 HEADN = ("* autocorner {tag}\n.control\npre_osdi cn.osdi\n.endc\n{opts}\nv1 in 0 dc 1\nn1 in 0 nm\n.model nm cn\n{cards}\n.control\n{body}\n.endc\n.end\n")
@@ -332,6 +341,32 @@ check("[21] the other spellings of a copy: `i(v1_ff)`, `v1_ss#branch`, `@rm_ss[r
       and near(val(out, A + "rm_ss[rsh]"), 115.0) and near(val(out, "z"), 2 * 0.863260, 1e-5)
       and "not available" not in out and "invalid" not in out and "stay empty" not in out,
       out[-300:].replace("\n", "|"))
+
+# [22] Enhancement-728 (five-options dig F6): a corner whose transient aborts
+# half way. Its partial plot was resampled onto the nominal's scale with the
+# last computed value held flat to the end -- a waveform never computed, on
+# the one plot a host draws, with nothing to say so. The copies now end where
+# the data ends, nan from there; the banner says where; $autocorner_failed
+# names the corner; a clean pass leaves the variable unset.
+HEADZ = ("* autocorner {tag}\n.control\npre_osdi cz.osdi\n.endc\n{opts}\nv1 in 0 dc 1 pulse(0 1 0 1n 1n 20u 40u)\nn1 in out zm\n"
+         "r2 out 0 100\n.model zm cz\n{cards}\n.control\n{body}\n.endc\n.end\n")
+rc, out = run("tran 1u 10u\necho \"failed=$autocorner_failed\"\nprint length(v(out)) length(v(out_ss)) length(v(out_ff))\n"
+              "print v(out_ss)[9] v(out_ss)[69] v(out_ff)[9] v(out_ff)[69]\nsetplot tran2\nprint length(v(out))\n", "a22", head=HEADZ)
+# the abort point is the solver's: Sparse stops at 4.863 us with 44 points in the
+# corner's own plot, KLU at 5 us with 81 (it takes smaller steps into the singularity)
+ends = re.search(r"autocorner: corner ss: its tran2 ends at time = ([0-9.e+-]+) of 1e-05, where the run stopped; its copies in 'autocorner1' are nan from there", out)
+lens = vals(out, "length(v(out))")
+check("[22] a corner whose transient aborts half way: said where its plot ends, and its copies are nan from there",
+      "autocorner: corner ss: the run failed" in out and ends is not None and 4e-6 <= float(ends.group(1)) <= 5.01e-6
+      and "failed=ss" in out and "v(out_ss)[69] = nan" in out and near(val(out, "v(out_ss)[9]"), 0.4651163, 1e-5),
+      out[-400:].replace("\n", "|"))
+check("[22] ...one scale still serves them all, the other corner intact, the corner's own plot untouched",
+      len(lens) == 2 and lens[0] == 70 and val(out, "length(v(out_ss))") == 70 and val(out, "length(v(out_ff))") == 70
+      and lens[1] > 10 and near(val(out, "v(out_ff)[69]"), 0.5319149, 1e-5) and near(val(out, "v(out_ff)[9]"), 0.5319149, 1e-5),
+      f"lens={lens} " + out[-200:].replace("\n", "|"))
+rc, out = run("tran 1u 10u\necho \"set=$?autocorner_failed\"\nprint v(out_ss)[69]\n", "a22b")
+check("[22] ...and a clean pass: no such line, $autocorner_failed unset, the ss copy computed to the end",
+      "nan from there" not in out and "set=0" in out and near(val(out, "v(out_ss)[69]"), 0.7980846, 1e-5), out[-200:].replace("\n", "|"))
 
 print(f"\n{passed} of {checks} checks passed")
 sys.exit(0 if passed == checks else 1)

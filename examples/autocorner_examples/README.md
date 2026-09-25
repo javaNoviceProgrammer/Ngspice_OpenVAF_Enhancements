@@ -18,7 +18,13 @@ its corner; `meas` reads the combined plot as its nominal's analysis;
 their accessor readable (`i(v1_ss)`, `@rm_ss[rsh]`); and the devices follow
 the `corner` variable when the loop ends.
 
-Run: `python3 verify_autocorner.py` (26 checks per solver, both solvers).
+Run: `python3 verify_autocorner.py` (30 checks per solver, both solvers).
+
+Since [E-728](../../enhancements_doc/Enhancement-728.md) (check [22], and one in [9]): a
+corner whose run stops part way through — a transient aborted on a timestep too small,
+an interrupt — contributes copies that end where its data ends, nan from there, with a
+line saying where; `$autocorner_failed` names the corners whose run failed, made no plot
+or was interrupted, and is unset when every corner ran.
 
 Since [E-725](../../enhancements_doc/Enhancement-725.md) (check [21]): `.option saveused`
 beside the option saves the base of a corner copy the block reads — `print v(out_ss)`
