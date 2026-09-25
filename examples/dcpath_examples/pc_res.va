@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+
+// Enhancement-719: the same open port, contributed to WITHOUT a guard -- a
+// resistor from a to c. The walk cannot tell this from the guarded shape (the
+// descriptor carries the same entries either way), so the node is held all the
+// same; the model's own path is 1e9 times the hold, and v(n1#c) follows v(a).
+module pc_res(a, b, c);
+    inout a, b, c;
+    electrical a, b, c;
+    analog begin
+        I(a, b) <+ 1e-3 * V(a, b);
+        I(a, c) <+ V(a, c) / 1e3;
+    end
+endmodule

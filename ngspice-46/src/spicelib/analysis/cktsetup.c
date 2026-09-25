@@ -111,6 +111,23 @@ CKTannounceSolver(int klu)
  *   .option dcpath=dc     hold at DC only, release in tran and ac   (default)
  *   .option dcpath=all    hold in every mode, Spectre's rule (E-575's form)
  *   .option dcpathall     the same, as a word of its own: `dcpath=1n dcpathall`
+ *
+ * Enhancement-719 (correctness campaign F5 of 2026-09-25) -- a terminal the
+ * instance line LEFT OUT. An OSDI terminal the line omits dangles (E-402):
+ * ngspice gives it a node of its own, `<inst>#<term>`, that nothing outside
+ * the instance touches, and `$port_connected()` reads 0 in the model, which
+ * is the idiom's cue to switch its contributions to that port off. The
+ * descriptor's entries for the port say nothing about that, and the node's
+ * name carries the '#' that marks a built-in device's internal node as
+ * reached -- so the walk passed it by, its row was all zero at every load,
+ * and it went "singular matrix: check node n1#c" down the whole ladder to the
+ * transient operating point, 277 iterations for a two-line deck. OSDIdcpathEdges
+ * now flags such a node and joins it to nothing; it is held in EVERY mode
+ * (nothing reactive can carry a node no element outside the instance reaches)
+ * with a message that says what it is, and `.option silentports` (E-481), which
+ * asked for no word about the omission, installs the hold without one.
+ * `.option silentports=ground` (E-482) binds the terminal to node 0 and no such
+ * node exists. dcpath=warn and dcpath=error treat it as any other node.
  */
 enum { DCPATH_OFF, DCPATH_WARN, DCPATH_HOLD, DCPATH_ERROR };
 enum { DCP_ALL, DCP_NONE, DCP_PAIR, DCP_NOGATE, DCP_ASRC };
@@ -265,6 +282,22 @@ static void dcpath_mif_edges(CKTcircuit *ckt, int type, struct dcpath_uf *uf)
 }
 #endif
 
+/* Enhancement-719: `.option silentports` in force with a word that silences
+ * the absent-terminal warning -- inp2n.c's words; a bad word falls back to
+ * "warn" there and to "say so" here. */
+static int dcpath_silentports(void)
+{
+    char s[64];
+    double d;
+
+    if (cp_getvar("silentports", CP_STRING, s, sizeof s))
+        return cieq(s, "ground") || cieq(s, "dangle") || cieq(s, "quiet") ||
+               cieq(s, "1") || cieq(s, "true") || cieq(s, "yes") || cieq(s, "on");
+    if (cp_getvar("silentports", CP_REAL, &d, 0))
+        return d != 0.0;
+    return cp_getvar("silentports", CP_BOOL, NULL, 0) != 0;
+}
+
 /* `.option dcpath`, read the way E-471 reads reusesetup: a number before a
  * string before a bool, because a bare `set` publishes a bool, `=1n` a number
  * and `=warn` a string. */
@@ -390,6 +423,8 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
     double g;
     int mode, i, root, rootr = 0, all, nfound = 0, nlisted = 0, nalways = 0;
     int *dconly = NULL, ndconly = 0;
+    unsigned char *absent;              /* Enhancement-719 */
+    int quietabs = 0;
 
     FREE(ckt->CKTdcpathNodes);
     ckt->CKTdcpathCount = 0;
@@ -403,11 +438,13 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
     uf.parent = TMALLOC(int, (size_t) nunk + 1);
     for (i = 0; i <= nunk; i++)
         uf.parent[i] = i;
+    absent = TMALLOC(unsigned char, (size_t) nunk + 1);
+    memset(absent, 0, (size_t) nunk + 1);
     for (i = 0; i < DEVmaxnum; i++) {
         if (!DEVices[i] || !ckt->CKThead[i])
             continue;
         if (DEVices[i]->DEVpublic.registry_entry) {
-            OSDIdcpathEdges(ckt, i, dcpath_join, &uf, 0);
+            OSDIdcpathEdges(ckt, i, dcpath_join, &uf, 0, absent);
             continue;
         }
 #ifdef XSPICE
@@ -434,7 +471,7 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
             if (!DEVices[i] || !ckt->CKThead[i])
                 continue;
             if (DEVices[i]->DEVpublic.registry_entry) {
-                OSDIdcpathEdges(ckt, i, dcpath_join, &ufr, 1);
+                OSDIdcpathEdges(ckt, i, dcpath_join, &ufr, 1, absent);
                 continue;
             }
 #ifdef XSPICE
@@ -464,13 +501,30 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
            the terminal table cannot see; it is taken as reached. One that
            touches nothing at all is still caught by the structural pass
            below. OSDI internal nodes carry no '#' and stay in the walk. */
-        if (name && strchr(name, '#'))
+        /* Enhancement-719: the node of a terminal the instance line left out
+           carries the '#' too, and is the one such node the walk must not
+           pass by. Under `.option silentports` its hold is installed without
+           a word, and it is not counted against the message cap. */
+        if (name && strchr(name, '#') && !absent[nd->number])
             continue;
+        if (absent[nd->number] && mode != DCPATH_ERROR && !quietabs)
+            quietabs = dcpath_silentports() ? 1 : -1;
+        if (absent[nd->number] && quietabs == 1) {
+            named[nd->number] = 1;
+            if (mode == DCPATH_HOLD) {
+                SMPmakeElt(matrix, nd->number, nd->number);
+                ckt->CKTdcpathNodes[nalways++] = nd->number;
+                nlisted++;
+            }
+            continue;
+        }
         nfound++;
         named[nd->number] = 1;
         if (mode == DCPATH_HOLD) {
-            /* Enhancement-595: carried by a reactive element in tran and ac? */
-            int released = ufr.parent && dcpath_find(&ufr, nd->number) == rootr;
+            /* Enhancement-595: carried by a reactive element in tran and ac?
+               Enhancement-719: an unconnected terminal's node, never. */
+            int released = ufr.parent && !absent[nd->number] &&
+                           dcpath_find(&ufr, nd->number) == rootr;
             SMPmakeElt(matrix, nd->number, nd->number);
             if (released)
                 dconly[ndconly++] = nd->number;
@@ -478,23 +532,27 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
                 ckt->CKTdcpathNodes[nalways++] = nd->number;
             nlisted++;
             if (nfound <= 5) {
+                const char *why = absent[nd->number]
+                    ? " -- the terminal is not connected" : "";
                 const char *dur = released
                     ? "; held at DC only -- tran and ac release it while a reactive path carries the node"
-                    : "";
+                    : absent[nd->number] ? ", in every mode" : "";
                 if (g == ckt->CKTgmin)
-                    fprintf(stderr, "Warning: no DC path from node '%s' to ground; "
-                                    "gmin (%g S) installed to provide one%s\n", name, g, dur);
+                    fprintf(stderr, "Warning: no DC path from node '%s' to ground%s; "
+                                    "gmin (%g S) installed to provide one%s\n", name, why, g, dur);
                 else
-                    fprintf(stderr, "Warning: no DC path from node '%s' to ground; "
-                                    "%g S installed to provide one (.option dcpath)%s\n", name, g, dur);
+                    fprintf(stderr, "Warning: no DC path from node '%s' to ground%s; "
+                                    "%g S installed to provide one (.option dcpath)%s\n", name, why, g, dur);
             }
         } else if (mode == DCPATH_WARN) {
             if (nfound <= 5)
-                fprintf(stderr, "Warning: no DC path from node '%s' to ground "
-                                "(.option dcpath=warn: nothing installed)\n", name);
+                fprintf(stderr, "Warning: no DC path from node '%s' to ground%s "
+                                "(.option dcpath=warn: nothing installed)\n", name,
+                        absent[nd->number] ? " -- the terminal is not connected" : "");
         } else {
-            fprintf(stderr, "Error: no DC path from node '%s' to ground "
-                            "(.option dcpath=error)\n", name);
+            fprintf(stderr, "Error: no DC path from node '%s' to ground%s "
+                            "(.option dcpath=error)\n", name,
+                    absent[nd->number] ? " -- the terminal is not connected" : "");
         }
     }
     if (nfound > 5 && mode != DCPATH_ERROR)
@@ -502,6 +560,7 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
                 nfound - 5);
     FREE(uf.parent);
     FREE(ufr.parent);
+    FREE(absent);
     if (mode == DCPATH_HOLD) {
         /* the always-held nodes first, then the ones released outside DC */
         for (i = 0; i < ndconly; i++)

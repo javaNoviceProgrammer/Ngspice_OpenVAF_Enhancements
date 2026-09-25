@@ -1,0 +1,21 @@
+`include "disciplines.vams"
+
+// Enhancement-719 (correctness campaign F5 of 2026-09-25): a port the module
+// contributes to only while it is connected -- the LRM's `$port_connected`
+// idiom for an optional pin (a thermal node, a substrate). With `c` left off
+// the instance line the guarded branch is absent, and the node ngspice makes
+// for the terminal, n1#c, has an all-zero row: nothing outside the instance
+// touches it. The `.option dcpath` walk holds it since E-719.
+module pc_gate(a, b, c);
+    inout a, b, c;
+    electrical a, b, c;
+    (* desc="cc" *) integer cc;
+    (* desc="it" *) real it;
+    analog begin
+        cc = $port_connected(c);
+        it = $simparam("iteration", -1.0);
+        I(a, b) <+ 1e-3 * V(a, b);
+        if ($port_connected(c))
+            I(c, b) <+ 1e-3 * V(c, b);
+    end
+endmodule

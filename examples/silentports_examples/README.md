@@ -57,6 +57,14 @@ The two model shapes are both compiled here:
 - `sp_gated.va` — branch gated on `$port_connected`, so the node floats and the
   singular matrix is unaffected by the option.
 
+Since [E-719](../../enhancements_doc/Enhancement-719.md) (correctness campaign F5
+of 2026-09-25) the floating node of an omitted terminal is held by the
+`.option dcpath` walk's installed gmin in every mode, named as an unconnected
+terminal — three iterations and no singular matrix where the ladder ran to the
+transient operating point. `silentports` installs that hold *without its line*
+and still changes nothing else; [7]–[9] pin the new shape (the table above is the
+E-481 measurement).
+
 ## No openvaf-r change
 
 The warning is entirely ngspice-side, raised in `INP2N` from

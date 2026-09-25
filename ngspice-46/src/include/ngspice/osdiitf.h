@@ -225,10 +225,13 @@ extern int OSDIuicSeed(CKTcircuit *ckt);   /* Enhancement-689: analysis("ic") in
 extern int OSDIanyCollapseChanged(CKTcircuit *ckt);   /* Enhancement-471 */
 /* Enhancement-575: call join(arg, a, b) for every pair of global node numbers
    an OSDI instance of `type` joins through a RESISTIVE Jacobian entry -- the
-   DC-connectivity edges the setup's `.option dcpath` walk needs. */
+   DC-connectivity edges the setup's `.option dcpath` walk needs.
+   Enhancement-719: `absent` (one flag per global node, or NULL) is set for the
+   node of every terminal an instance line left out; such a node joins nothing. */
 extern void OSDIdcpathEdges(CKTcircuit *ckt, int type,
                             void (*join)(void *, int, int), void *arg,
-                            int reactive);   /* Enhancement-595: REACT entries join too */
+                            int reactive,   /* Enhancement-595: REACT entries join too */
+                            unsigned char *absent);
 
 /* `.option osdimc` (alias `automc`) automatic Monte-Carlo: called by if_run
  * at the start of every run-class command (not `resume`). Advances the trial

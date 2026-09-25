@@ -110,7 +110,7 @@ The ground, and what held:
 | [F2](#f2--integer-division-by-a-card-supplied-zero-is-0-in-silence-the-modulus-by-the-same-zero-is-a-fatal) | *(fixed in [E-716](../../enhancements_doc/Enhancement-716.md): the integer division has the modulus' guard -- a parameter-derived zero divisor raises the fatal naming `/` at evaluation or at setup; a run-time zero keeps E-518's defined 0, the real quotient its infinity)* `pi / pz` with `pz=0` on the card evaluates to 0 without a message; `pi % pz` with the same zero is `OSDI(fatal) … the second operand (the modulus divisor) is zero, which LRM 4.2.4 makes an error`; a real `px / pz` is ±∞ | silent wrong number, inconsistent with the sibling operator |
 | [F3](#f3--the-derivative-of-a-quotient-is-formed-over-the-squared-denominator-and-is-nan-below-2e-162) | *(fixed in [E-717](../../enhancements_doc/Enhancement-717.md): the rule is (f' − (f/g)·g')/g, reusing the quotient, and its last division carries no fast-math flags so LLVM cannot re-form the square; both derivatives read 0)* the automatic derivative of `x / y` is `x'/y − x·y'/(y·y)`: for `V(a) / (V(b) + 1e-300)` at the V = 0 initial guess the value is 0 and ∂/∂V(b) is NaN (0/0, the square `1e-600` underflowing to 0), likewise `exp(−1/(x² + 1e-300))`; a guard of 1e-160 or larger is safe (its square is a denormal), the equivalent `(x/y)/y` form never underflows | NaN in a Jacobian at the operating-point guess |
 | [F4](#f4--a-flat-sum-or-product-of-a-thousand-terms-is-refused-as-nesting-too-deeply) | *(fixed in [E-718](../../enhancements_doc/Enhancement-718.md): the bound is 32 768 levels on a 512 MB front-end thread, the diagnostic says what it counts, and it stands alone)* `r = 1.0/1 + 1.0/2 + … + 1.0/999` is "expression nests too deeply": the E-148 parser guard (`MAX_EXPR_DEPTH = 1000`) counts a left-associative chain as nesting; 800 terms compile, 511 nested parentheses and 600 unary minuses compile, the same 1 500 terms in thirty parentheses compile | refusal of legal input, misleading diagnostic |
-| [F5](#f5--an-unconnected-port-guarded-by-port_connected-leaves-ngspice-a-floating-node) | a three-terminal module instantiated with two terminals, its third branch guarded by `if ($port_connected(c))` as the LRM's `$port_connected` intends, warns "1 of the 3 terminals … are not connected" and then "singular matrix: check node n1#c" twice, runs gmin stepping (277 iterations) and converges; the open port's node has nothing on it | simulator side: a floating node from the LRM's own idiom |
+| [F5](#f5--an-unconnected-port-guarded-by-port_connected-leaves-ngspice-a-floating-node) | *(fixed in [E-719](../../enhancements_doc/Enhancement-719.md): the dcpath walk flags the open terminal's node, holds it in every mode and names it — three iterations; silentports installs the hold without a word)* a three-terminal module instantiated with two terminals, its third branch guarded by `if ($port_connected(c))` as the LRM's `$port_connected` intends, warns "1 of the 3 terminals … are not connected" and then "singular matrix: check node n1#c" twice, runs gmin stepping (277 iterations) and converges; the open port's node has nothing on it | simulator side: a floating node from the LRM's own idiom |
 
 ## F1 — an array parameter's element is "not found in the current scope" in any constant context
 
@@ -275,3 +275,20 @@ rather than take the failed-op route to the same answer. The compiler's side is
 right; the cost is the warnings and the 277 iterations on every op.
 
 **Kind.** Simulator-side; a clean LRM idiom produces failure-path warnings.
+
+*Fixed in [E-719](../../enhancements_doc/Enhancement-719.md).* The node was E-575's
+to hold and the walk passed it by twice over: its OSDI edges come from the descriptor's
+Jacobian pattern, which carries the entry for the guarded branch whatever the guard
+says at run time, and the node's name carries the '#' that marks a built-in device's
+internal node as reached. The OSDI edge builder now flags the node of every terminal
+an instance line leaves out and joins it to nothing; the walk holds it with the
+installed gmin in every mode and names it as an unconnected terminal — three
+iterations, no singular report. `.option silentports` installs the hold without a
+word, `=ground` has no node to hold, `dcpath=off` keeps the old road. The terminal is
+still not grounded: an unguarded resistor to the open port sets the node itself.
+
+*Observed on the way, not changed:* a 0 V short onto the open terminal in the guard's
+else branch (`else V(c, a) <+ 0`) does not collapse the node onto `a` — a terminal
+short with an unconnected endpoint is dropped as redundant at setup (E-401), and no
+collapse replaces it — so the node stays its own, held at 0 V now where it was
+singular. A candidate finding.

@@ -53,7 +53,12 @@ not.
 - **[5]** its counterweight: the bare card must be indistinguishable from the
   warned default *except for the message* — which is what keeps E-481's contract
   intact. **[9]** makes the same point where it bites: on the gated shape the bare
-  card silences the warning and leaves the deck **just as singular**.
+  card silences the warning and leaves the deck **just as singular**. Since
+  [E-719](../../enhancements_doc/Enhancement-719.md) (correctness campaign F5 of
+  2026-09-25) that node is held by the `.option dcpath` walk's installed gmin in
+  every mode, named as an unconnected terminal, and the bare card quiets that line
+  too; [9] pins the new shape, and `=ground` is still the one state with no
+  private node. The measurements below are E-482's.
 
 **[14]** is the mirror of both: an instance that connects every terminal is
 untouched in either state.

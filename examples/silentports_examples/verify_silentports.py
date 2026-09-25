@@ -18,6 +18,13 @@ a singular matrix -- Enhancement-402's decided territory, where the answer is to
 write `0` for the pin. Measured on the BSIM-BULK reproducer: silencing removes
 five lines and leaves six `singular matrix: check node n1#t`.
 
+Enhancement-719 (correctness campaign F5 of 2026-09-25) moved the floating node
+itself: the `.option dcpath` walk (E-575) now flags the node of an omitted
+terminal and holds it with the installed gmin in every mode, named as an
+unconnected terminal -- three iterations and no singular report where the
+ladder ran to the transient operating point. `silentports` installs that hold
+WITHOUT its line, and still changes nothing else; [7]-[9] pin the new shape.
+
 The two shapes, both compiled here:
   * sp_rth.va   -- thermal network contributed unconditionally: well posed with
                    `t` absent, so silencing gives a completely clean run;
@@ -143,17 +150,19 @@ check("[6] ...and removing it brings the warning back", warn_lines(o) == 5,
       f"{warn_lines(o)} lines")
 
 # ------------------------------------- what the option deliberately does NOT do --
-print("\nit silences a warning -- it does not repair the circuit (E-402 stands)")
+print("\nit silences a warning -- the floating node is the dcpath walk's since E-719, and the option quiets its line too")
 GOMIT = "V1 a 0 dc 1\nN1 a 0 mm\n.model mm sp_gated()"
+HOLD = "no DC path from node 'n1#t' to ground -- the terminal is not connected"
 rc, o = run(GOMIT, "op\nprint i(v1)", "gated", OSDI_GATED)
-sing_default = len(re.findall(r"singular matrix", o, re.I))
-check("[7] the gated model's floating node is singular by default", sing_default > 0,
-      f"{sing_default} singular lines")
+check("[7] the gated model's floating node is held by the dcpath gmin by default (E-719): named as an unconnected terminal, no singular matrix",
+      HOLD in o and len(re.findall(r"singular matrix", o, re.I)) == 0 and val(o, "i(v1)") is not None,
+      f"{len(re.findall(r'singular matrix', o, re.I))} singular lines; hold line {HOLD in o}")
 rc, o2 = run(".option silentports\n" + GOMIT, "op\nprint i(v1)", "gated_silent", OSDI_GATED)
 check("[8] the warning is silenced there too", warn_lines(o2) == 0, f"{warn_lines(o2)} lines")
-check("[8] ...but the singular matrix is UNCHANGED -- write 0 for the pin",
-      len(re.findall(r"singular matrix", o2, re.I)) == sing_default,
-      f"{len(re.findall(r'singular matrix', o2, re.I))} vs {sing_default}")
+check("[8] ...and so is the hold's line -- the node is held all the same, no singular matrix, the same current",
+      "no DC path" not in o2 and len(re.findall(r"singular matrix", o2, re.I)) == 0
+      and val(o2, "i(v1)") == val(o, "i(v1)"),
+      f"{len(re.findall(r'singular matrix', o2, re.I))} singular; i(v1) {val(o2,'i(v1)')} vs {val(o,'i(v1)')}")
 GCONN = "V1 a 0 dc 1\nN1 a 0 0 mm\n.model mm sp_gated()"
 rc, o = run(GCONN, "op\nprint i(v1)", "gated_conn", OSDI_GATED)
 check("[9] ...and writing 0 for the pin is what fixes it",

@@ -62,7 +62,12 @@ The three shapes, all compiled here:
                    only by `=ground`. Note it does not always ABORT -- on a small
                    circuit the gmin/source-stepping ladder can limp to an answer
                    after the singular matrices, which is exactly why this needed
-                   a fix and not a louder message;
+                   a fix and not a louder message. Enhancement-719 (correctness
+                   campaign F5 of 2026-09-25): the dcpath walk now holds that
+                   node with its installed gmin in every mode, named as an
+                   unconnected terminal -- three iterations, no singular matrix,
+                   the hold silent under the bare card; [9] pins the new shape,
+                   and `=ground` is still the one state with no private node;
   * gp_two.va   -- two optional terminals, so a fix that grounded only the first
                    would be caught.
 """
@@ -229,24 +234,24 @@ check("[8] ...and the current proves the LAST one was grounded too",
       f"{txt(o2,'i(v1)')} vs {txt(o3,'i(v1)')}")
 
 # ------------------------------------- the shape a warning could never repair --
-print("\nthe gated shape -- only =ground repairs it, silence never does")
+print("\nthe gated shape -- held by the dcpath gmin since E-719; only =ground removes the node")
 GOMIT = "V1 a 0 dc 1\nN1 a 0 mm\n.model mm gp_gated()"
 GCONN = "V1 a 0 dc 1\nN1 a 0 0 mm\n.model mm gp_gated()"
 GPROBE = "op\nprint i(v1) @n1[pc]"
+HOLD = "no DC path from node 'n1#t' to ground -- the terminal is not connected"
 rc, o = run(GOMIT, GPROBE, "gated", OSDI_GATED)
-sing_default = singular(o)
-check("[9] the gated model's floating node is singular by default",
-      sing_default > 0, f"{sing_default} singular lines")
-check("[9] ...the branch was never built, so the model never saw the pin",
-      near(val(o, "@n1[pc]"), 0.0) and re.search(r"gmin stepping", o) is not None,
-      f"pc={val(o,'@n1[pc]')}, reached the gmin ladder")
+check("[9] the gated model's floating node is held by the dcpath gmin by default (E-719): named as an unconnected terminal, no singular matrix",
+      HOLD in o and singular(o) == 0, f"{singular(o)} singular lines; hold line {HOLD in o}")
+check("[9] ...the branch was never built, so the model never saw the pin -- and no ladder was needed",
+      near(val(o, "@n1[pc]"), 0.0) and re.search(r"gmin stepping", o) is None,
+      f"pc={val(o,'@n1[pc]')}, ladder {re.search(r'gmin stepping', o) is not None}")
 rc, o = run(".option silentports\n" + GOMIT, GPROBE, "gated_bare", OSDI_GATED)
-check("[9] the bare card silences the warning and leaves it JUST AS SINGULAR",
-      warn_lines(o) == 0 and singular(o) == sing_default,
-      f"{warn_lines(o)} lines, {singular(o)} vs {sing_default} singular")
+check("[9] the bare card silences the warning AND the hold's line; the node is held all the same, no singular matrix",
+      warn_lines(o) == 0 and "no DC path" not in o and singular(o) == 0,
+      f"{warn_lines(o)} lines, {singular(o)} singular, hold line {'no DC path' in o}")
 rc, o_g = run(".option silentports=ground\n" + GOMIT, GPROBE, "gated_ground", OSDI_GATED)
-check("[9] =ground makes the singular matrix GONE", singular(o_g) == 0,
-      f"{singular(o_g)} vs {sing_default}")
+check("[9] =ground: no private node, so nothing to hold -- no hold line, no singular matrix",
+      singular(o_g) == 0 and "no DC path" not in o_g, f"{singular(o_g)} singular, hold line {'no DC path' in o_g}")
 rc, o_gh = run(GCONN, GPROBE, "gated_hand", OSDI_GATED)
 check("[9] ...and it reaches the same operating point as writing 0 by hand",
       txt(o_g, "i(v1)") is not None and txt(o_g, "i(v1)") == txt(o_gh, "i(v1)"),

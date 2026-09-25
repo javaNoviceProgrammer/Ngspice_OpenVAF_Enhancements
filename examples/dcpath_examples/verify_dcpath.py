@@ -32,6 +32,17 @@ analysis, and the message names it.
      divider under the default and the gmin-bent value under `dcpath=all`, on both
      solvers (Sparse read only the real part of the AC row before this);
      `dcpathall` combines with a value; an unknown word is refused by name
+ 11. Enhancement-719 (correctness campaign F5 of 2026-09-25): an OSDI terminal the
+     instance line leaves out. Its node, n1#c, carries the '#' that marks a
+     built-in device's internal node as reached, and the descriptor's entries for
+     the port say nothing about the `$port_connected` guard that switches the
+     model's contributions off -- so the walk passed it by and it went "singular
+     matrix: check node n1#c" down the ladder to the transient operating point,
+     277 iterations. Now: flagged by OSDIdcpathEdges, joined to nothing, held in
+     every mode, named as an unconnected terminal, three iterations; the hold is
+     silent under `.option silentports` and there is no node under `=ground`;
+     dcpath=off, warn and error treat it as any node; an unguarded resistor to the
+     open port is held all the same and follows v(a)
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
@@ -46,7 +57,8 @@ sys.path.insert(0, os.path.dirname(HERE))          # the examples/ dir (holds _s
 from _setup import VAF as OPENVAF, NG as NGSPICE
 from _setup import check_both_solvers as _check_both_solvers; _check_both_solvers(__file__)  # verify under BOTH KLU and Sparse solvers
 
-MODELS = ("vprobe", "vddt", "vres", "vrc", "th_rth", "th_pwr", "vdiff", "zddt", "vdelay", "vdelay2")
+MODELS = ("vprobe", "vddt", "vres", "vrc", "th_rth", "th_pwr", "vdiff", "zddt", "vdelay", "vdelay2",
+          "pc_gate", "pc_res")   # Enhancement-719
 
 
 def compile_va(m):
@@ -342,6 +354,71 @@ def main():
                        opts=".option gshunt=1e-9\n"))
     check("with `.option gshunt` the walk stands down and the singular row is named the same way",
           SING in out and 'trouble with node "mid"' in out and "cause unrecorded" not in out, out[-200:].replace("\n", "|"))
+
+    print("[11] Enhancement-719: an OSDI terminal the instance line leaves out")
+    ABS = ("no DC path from node 'n1#c' to ground -- the terminal is not connected; "
+           "gmin (1e-12 S) installed to provide one, in every mode")
+    NC = "@n1" + "[cc]"
+    gate = "v1 a 0 1\nn1 a 0 gm\n.model gm pc_gate"
+    PRE = "pre_osdi pc_gate.osdi\n"
+    out = ngspice(deck("open port gated", gate, prints="v(n1#c) i(v1) " + NC, pre=PRE))
+    v = values(out)
+    check("a $port_connected-guarded port left off the line: n1#c named as an unconnected terminal and held, "
+          "no singular report, no ladder, 3 iterations, $port_connected reads 0, v(n1#c)=0, i(v1)=-1e-3",
+          ABS in out and SING not in out and "gmin stepping" not in out and near(v.get("v(n1#c)"), 0, 1e-9)
+          and near(v.get("i(v1)"), -1e-3) and v.get(NC) == 0 and iters(out) is not None and iters(out) <= 5,
+          f"v(n1#c)={v.get('v(n1#c)')} i(v1)={v.get('i(v1)')} cc={v.get(NC)} iterations={iters(out)}")
+    out = ngspice(deck("open port off", gate, prints="i(v1)", pre=PRE, opts=".option dcpath=off\n"))
+    v = values(out)
+    check("dcpath=off: the old road -- singular reports, the gmin ladder, the transient operating point, the same current after 100+ iterations",
+          SING in out and "gmin stepping" in out and near(v.get("i(v1)"), -1e-3) and (iters(out) or 0) > 100,
+          f"i(v1)={v.get('i(v1)')} iterations={iters(out)}")
+    out = ngspice(deck("open port quiet", gate, prints="v(n1#c) i(v1)", pre=PRE, opts=".option silentports\n"))
+    v = values(out)
+    check(".option silentports: the hold is installed without a word -- no absent-terminal warning, no 'no DC path' line, no singular report, the same op",
+          "not connected" not in out and "no DC path" not in out and SING not in out
+          and near(v.get("v(n1#c)"), 0, 1e-9) and near(v.get("i(v1)"), -1e-3) and iters(out) <= 5,
+          f"iterations={iters(out)} {out[:200]!r}")
+    out = ngspice(deck("open port ground", gate, prints="i(v1) " + NC, pre=PRE, opts=".option silentports=ground\n"))
+    v = values(out)
+    check(".option silentports=ground: the terminal is bound to 0, so there is no node to hold -- no 'no DC path' line, $port_connected reads 1",
+          "no DC path" not in out and SING not in out and v.get(NC) == 1 and near(v.get("i(v1)"), -1e-3),
+          f"cc={v.get(NC)} i(v1)={v.get('i(v1)')}")
+    out = ngspice(deck("open port tran", gate, ctl="tran 1u 5u\nmeas tran vc find v(n1#c) at=2.5u", prints="length(time)", pre=PRE))
+    v = values(out)
+    check("held in every mode: a transient runs with no singular report and v(n1#c) stays 0",
+          ABS in out and SING not in out and abs(v.get("vc", 1.0)) < 1e-9 and (v.get("length(time)") or 0) > 5,
+          f"vc={v.get('vc')} length={v.get('length(time)')}")
+    out = ngspice(deck("open port ac", "v1 a 0 dc 1 ac 1\nn1 a 0 gm\n.model gm pc_gate", ctl="ac lin 1 1k 1k", prints="vm(a)", pre=PRE))
+    v = values(out)
+    check("...and an ac analysis runs on it, no singular report", ABS in out and SING not in out and near(v.get("vm(a)"), 1.0), f"vm(a)={v.get('vm(a)')}")
+    out = ngspice(deck("open port warn", gate, prints="i(v1)", pre=PRE, opts=".option dcpath=warn\n"))
+    check("dcpath=warn: the message says the terminal is not connected and that nothing is installed; the singular report follows",
+          "no DC path from node 'n1#c' to ground -- the terminal is not connected (.option dcpath=warn: nothing installed)" in out
+          and SING in out, out[:200].replace("\n", "|"))
+    out = ngspice(deck("open port error", gate, prints="i(v1)", pre=PRE, opts=".option dcpath=error\n"))
+    check("dcpath=error: refused, naming n1#c as an unconnected terminal",
+          "Error: no DC path from node 'n1#c' to ground -- the terminal is not connected (.option dcpath=error)" in out
+          and "1 node with no DC path to ground" in out and values(out).get("i(v1)") is None, out[:200].replace("\n", "|"))
+    out = ngspice(deck("open port resistor", "v1 a 0 1\nn1 a 0 rm\n.model rm pc_res", prints="v(n1#c) i(v1)", pre="pre_osdi pc_res.osdi\n"))
+    v = values(out)
+    check("an unguarded resistor to the open port: held and named all the same (the walk cannot see the guard), "
+          "and the model's own path wins -- v(n1#c) = v(a) = 1, i(v1) = -1e-3, 3 iterations",
+          ABS in out and SING not in out and near(v.get("v(n1#c)"), 1.0, 1e-6) and near(v.get("i(v1)"), -1e-3) and iters(out) <= 5,
+          f"v(n1#c)={v.get('v(n1#c)')} i(v1)={v.get('i(v1)')} iterations={iters(out)}")
+    seven = "v1 a 0 1\n" + "".join(f"n{k} a 0 gm\n" for k in range(1, 8)) + ".model gm pc_gate"
+    out = ngspice(deck("seven open ports", seven, prints="i(v1)", pre=PRE))
+    check("seven instances with the port open: five named as unconnected terminals, then '... and 2 more', i(v1) = -7e-3",
+          out.count("the terminal is not connected") == 5 and "and 2 more nodes without a DC path" in out
+          and near(values(out).get("i(v1)"), -7e-3), "")
+    out = ngspice(deck("quiet beside a lone node", gate + "\ni1 0 x 1n", prints="v(x) i(v1)", pre=PRE, opts=".option silentports\n"))
+    v = values(out)
+    check("silentports quiets the open port's node only: a lone node x beside it is still named and held (v(x) = I/gmin)",
+          HELD.format("x") in out and "n1#c" not in out and near(v.get("v(x)"), 1e3) and SING not in out, f"v(x)={v.get('v(x)')}")
+    out = ngspice(deck("port connected", "v1 a 0 1\nn1 a 0 c gm\nra a c 1k\n.model gm pc_gate", prints="v(c) i(v1) " + NC, pre=PRE))
+    v = values(out)
+    check("(control) the port connected through 1k from a: no message, $port_connected reads 1, the guarded 1k branch is live -- v(c) = 0.5",
+          "no DC path" not in out and SING not in out and v.get(NC) == 1 and near(v.get("v(c)"), 0.5, 1e-6), f"v(c)={v.get('v(c)')} cc={v.get(NC)}")
 
     print("\nALL PASSED" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)

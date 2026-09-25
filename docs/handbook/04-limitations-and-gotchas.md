@@ -208,3 +208,15 @@ scripting ngspice:
   VBIC floating internal nodes at `RCX=0` — use `.option rshunt`, FBH-HBT
   needing `fb>0`). The triage lives in
   [E-56](../../enhancements_doc/Enhancement-56.md).
+- **An omitted OSDI terminal** dangles rather than grounding
+  ([E-402](../../enhancements_doc/Enhancement-402.md)): an instance line shorter
+  than the port list leaves the model reading `$port_connected() = 0` there and
+  gives the terminal a private node, `n1#c`. Since
+  [E-719](../../enhancements_doc/Enhancement-719.md) the `.option dcpath` walk
+  holds that node with its installed gmin in every mode and names it as an
+  unconnected terminal — three iterations where it went "singular matrix" down
+  the ladder. `.option silentports`
+  ([E-481](../../enhancements_doc/Enhancement-481.md)) installs the hold without
+  a word; `.option silentports=ground`
+  ([E-482](../../enhancements_doc/Enhancement-482.md)) grounds the terminal
+  instead.

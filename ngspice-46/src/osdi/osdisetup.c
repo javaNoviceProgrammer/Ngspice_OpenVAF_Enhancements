@@ -665,7 +665,8 @@ static int dcpath_pair_cmp(const void *a, const void *b) {
 }
 
 void OSDIdcpathEdges(CKTcircuit *ckt, int type,
-                     void (*join)(void *, int, int), void *arg, int reactive) {
+                     void (*join)(void *, int, int), void *arg, int reactive,
+                     unsigned char *absent) {
   /* Enhancement-595: with `reactive` set, an entry flagged REACT joins as
    * well as one flagged RESIST -- the walk that decides whether a node the
    * DC walk missed is carried by a capacitor in tran and ac. The symmetry
@@ -789,6 +790,42 @@ void OSDIdcpathEdges(CKTcircuit *ckt, int type,
       void *inst = osdi_instance_data(entry, gen_inst);
       uint32_t *node_mapping =
           (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+      /* Enhancement-719 (correctness campaign F5 of 2026-09-25): a terminal
+       * the instance line left out (E-402: it dangles, `$port_connected()`
+       * reads 0) has a node of its own, `<inst>#<term>`, that nothing outside
+       * the instance touches. Whether the model's own contributions to it
+       * are live is decided at run time -- the `$port_connected` guard that
+       * is the idiom for such a port switches them off -- so the entries the
+       * descriptor carries for it are no evidence of a path: the F5 model
+       * had (c, b) in its pattern and an all-zero row at every load, and the
+       * walk, taking the node for reached, left it to travel the ladder to the
+       * transient operating point, "singular matrix: check node n1#c" at
+       * every rung, 277 iterations. Such a node is flagged for the walk
+       * (held in every mode, its own message) and joins nothing. A group that
+       * holds a CONNECTED terminal is that terminal's circuit node and is
+       * never flagged, whatever else was collapsed onto it. */
+      if (absent) {
+        int *terms = (int *)(gen_inst + 1);
+        uint32_t connected = descr->num_terminals;
+        for (k = 0; k < descr->num_terminals; k++) {
+          if (terms[k] == -1) {
+            connected = k;
+            break;
+          }
+        }
+        for (k = connected; k < descr->num_terminals; k++) {
+          uint32_t g = node_mapping[k], t;
+          bool circuit = false;
+          if (g == UINT32_MAX || g == 0)
+            continue;
+          for (t = 0; t < connected; t++) {
+            if (node_mapping[t] == g)
+              circuit = true;
+          }
+          if (!circuit)
+            absent[g] = 1;
+        }
+      }
       for (i = 0; i < n; i++) {
         const OsdiJacobianEntry *e = &descr->jacobian_entries[i];
         uint32_t a, b;
@@ -798,10 +835,13 @@ void OSDIdcpathEdges(CKTcircuit *ckt, int type,
         b = node_mapping[e->nodes.node_2];
         if (a == UINT32_MAX || b == UINT32_MAX)
           continue;
+        if (absent && (absent[a] || absent[b]))
+          continue;                       /* Enhancement-719 */
         join(arg, (int)a, (int)b);
       }
       for (k = 0; k < descr->num_nodes; k++) {
-        if (toground[k] && node_mapping[k] != UINT32_MAX)
+        if (toground[k] && node_mapping[k] != UINT32_MAX &&
+            !(absent && absent[node_mapping[k]]))
           join(arg, (int)node_mapping[k], 0);
       }
     }
