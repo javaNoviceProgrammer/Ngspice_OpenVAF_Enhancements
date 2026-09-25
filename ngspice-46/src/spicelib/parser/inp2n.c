@@ -1005,13 +1005,30 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
        line has. Anything else means the written-out bits do not match the width
        the model declares, which no reading can repair -- refuse it there, where
        the port and both widths are still in hand to say so, rather than let the
-       old silent misbinding through. */
-    else if (np > 0 && np < numnodes && numnodes < *dev->terms) {
+       old silent misbinding through.
+
+       Enhancement-730 (five-options dig F2 of 2026-09-25): FEWER tokens than
+       ports as well. `N1 a busdev` for `inout [0:4] a; inout b` -- the
+       $port_connected shape with the bus port in shorthand -- matched neither
+       count and fell through to positional binding, where the bare `a` bound
+       as the scalar node `a` onto the terminal a[0]: the deck's `a[0]` drove
+       nothing the device touched, and E-402 reported four bits of the very
+       port the token names as absent. The same walk reads it: the tokens feed
+       the leading ports, and when they run out at a port boundary with no
+       multi-bit port written out before -- so that no token could have been
+       swallowed as a bit of one -- the rewrite is accepted for the terminals it
+       fed and the rest are absent, as on any short line; E-402 then names them.
+       A written-out multi-bit port followed by the tokens running out stays
+       the refusal: `N1 a b[0] b[1] c bmix` reads exactly like `N1 a b[0] b[1]
+       b[2] bmix` to the walk, and the first is the misbinding E-490 exists to
+       stop. */
+    else if (np > 0 && np != numnodes && numnodes < *dev->terms) {
       DS_CREATE(nl, 128);
       char *scan = line;
       char *tok = NULL;
       const char *shortport = NULL;
       int p, used = 0, emitted = 0, expanded = 0, shortbits = 0;
+      int written_multi = 0;            /* Enhancement-730: multi-bit ports written out */
       bool ranout = FALSE;
       bool kicad = INPbusKicadStyle();  /* Enhancement-462 */
 
@@ -1055,6 +1072,8 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
           tok = NULL;
         } else {
           /* written out: this port takes one token per bit */
+          if (pcnt[p] > 1)
+            written_multi++;            /* Enhancement-730 */
           for (k = 0; k < pcnt[p]; k++) {
             if (k) {
               if (used >= numnodes) {
@@ -1081,12 +1100,14 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
       }
       tfree(tok);
 
-      if (expanded > 0 && !ranout && used == numnodes) {
+      if (expanded > 0 && used == numnodes && (!ranout || written_multi == 0)) {
         ds_cat_char(&nl, ' ');
         ds_cat_str(&nl, scan);          /* the model name and any parameters */
         autobus_line = copy(ds_get_buf(&nl));
         line = autobus_line;
-        numnodes = *dev->terms;
+        /* Enhancement-730: the tokens ran out at a port boundary -- the
+           terminals fed are bound, the trailing ones are absent */
+        numnodes = ranout ? emitted : *dev->terms;
         ds_free(&nl);
       } else if (expanded > 0) {
         char msg[256], pbase[64];

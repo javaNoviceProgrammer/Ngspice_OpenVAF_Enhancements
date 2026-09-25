@@ -68,7 +68,7 @@ session scratchpad (`h5/harnA.py` … `harnE.py`, `harnX.py`).
 | # | Finding | Kind |
 |---|---|---|
 | [F1](#f1--autoadapt-with-the-shared-node-at-the-same-port-index-on-both-devices-deck-order-decides-which-side-gets-_f) | *(fixed in [E-729](../../enhancements_doc/Enhancement-729.md): a tie goes to the instance that sorts first by name, said in every mode; `.adapt b:n2` names the forward device)* `autoadapt`: when the shared node sits at the same port index on both devices, deck order decides which side gets `_f` — with an asymmetric adapter `v(c[0])` is 0.28902 with `N1` first and 0.28818 with `N2` first — and the fallback is said only under `autoadapt=debug` | silent order dependence, against E-463's own rule |
-| [F2](#f2--autobus-a-bare-bus-token-on-an-under-connected-line-binds-as-a-scalar-node) | `autobus`: `N1 a busdev` (one token for two ports, the `$port_connected` shape) binds `a` as the scalar node `a` on terminal `a[0]`; the deck's `a[0]` drive reaches nothing (0 A) and E-402 reports `a[1]` … `a[4]` and `b` absent — E-572's one-bit fix covers the equal-count line only | silent wrong wiring |
+| [F2](#f2--autobus-a-bare-bus-token-on-an-under-connected-line-binds-as-a-scalar-node) | *(fixed in [E-730](../../enhancements_doc/Enhancement-730.md): the port walk feeds the leading ports and leaves the trailing terminals absent; E-402 names them alone)* `autobus`: `N1 a busdev` (one token for two ports, the `$port_connected` shape) binds `a` as the scalar node `a` on terminal `a[0]`; the deck's `a[0]` drive reaches nothing (0 A) and E-402 reports `a[1]` … `a[4]` and `b` absent — E-572's one-bit fix covers the equal-count line only | silent wrong wiring |
 | [F3](#f3--saveused-beside-autocorner-refuses-every-run-when-the-block-reads-a-corner-copy) | *(fixed in [E-725](../../enhancements_doc/Enhancement-725.md): a name ending in `_<corner>` for a declared corner also saves its base; an inferred name draws no save warning)* `saveused` beside `autocorner`: a block that reads the combined plot's `v(out_ss)` alone puts `out_ss` in the save set, no analysis has such a node, and every run of the pass is "no data saved … analysis not run" | two options' documented idioms collide |
 | [F4](#f4--saveused-a-plot-qualified-bare-name-stops-every-analysis) | *(fixed in [E-726](../../enhancements_doc/Enhancement-726.md): a dotted name saves both spellings; an inferred set that names nothing of an analysis keeps everything of it, said once)* `saveused`: `print tran1.out` saves the name `tran1.out`; no analysis can match it, so the `op` *and* the `tran` before the line are "no data saved … analysis not run" — the whole deck's output gone for one cross-plot reference | the option's one promise broken |
 | [F5](#f5--saveused-the-scanner-does-not-see-a-bare-vector-in-an-expression-in-meas-or-behind-) | *(fixed in [E-727](../../enhancements_doc/Enhancement-727.md): expression tokens on every command, the `meas` words, `$&name`, dotted and hashed names kept whole)* `saveused`: a bare vector inside an expression on an output command (`print v(in) mag(out)`: `out` lost), in `meas` (`meas tran m find out at=0.5u`: "no such vector as out") and as `$&mid` in `echo` or `if` ("no such variable") is invisible to the scan; `print out*2` alone works by accident, nothing collected | the scanner's vocabulary, the class of the second dig's F2 |
@@ -157,6 +157,17 @@ names `b` alone. Or, if the shape is to stay unexpanded, a warning that says the
 was not indexed.
 
 **Kind.** Silent wrong wiring with a misleading warning.
+
+*Fixed in [E-730](../../enhancements_doc/Enhancement-730.md).* E-490's port walk runs
+for fewer tokens than ports too: the tokens feed the leading ports, a bare name on a bus
+port expanding to its bits, and when they run out at a port boundary with no multi-bit
+port written out before, the rewrite is accepted for the terminals it fed and the rest
+are absent — `N1 a busdev` is `a[0] … a[4]` with `b` absent, E-402 naming `b` alone,
+`silentports=ground` grounding it. A shorthand port, a written-out multi-bit port and
+then nothing stays E-490's refusal (it reads exactly like a swallowed token). The
+three-token `N1 a[0] a[1] b bustwo` is E-445's warned case and is unchanged.
+`autobus` section E-730, seven checks: 19 of 19 per solver, 15 of 19 on the E-728
+binaries.
 
 ## F3 — `saveused` beside `autocorner` refuses every run when the block reads a corner copy
 

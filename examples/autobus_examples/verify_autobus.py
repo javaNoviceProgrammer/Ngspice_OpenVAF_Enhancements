@@ -184,5 +184,53 @@ rc, out = run(LADDER + "\n" + FULL, "op", "unknownopt", "busdev",
 check("[E-444] ...and an unregistered name IS still flagged (control)",
       "unknown option 'notanoption'" in out, "")
 
+# ------------------------------------------ Enhancement-730: fewer tokens than ports
+# Five-options dig F2 of 2026-09-25. `N1 a busdev` for a[0:4], b -- the
+# $port_connected shape with the bus port in shorthand -- matched neither the
+# port count nor the terminal count and fell through to positional binding:
+# the bare `a` bound as the scalar node `a` onto a[0], the deck's a[0] drove
+# nothing the device touched, and E-402 reported four bits of the very port
+# the token names as absent. The port walk reads it now: the tokens feed the
+# leading ports, the trailing terminals are absent, E-402 names them alone.
+print("\nfewer tokens than ports: the trailing port absent, the bus in shorthand (Enhancement-730)")
+
+
+def cur(out, name="v1"):
+    m = re.search(r"i\(" + name + r"\)\s*=\s*(-?[\d.]+(?:e[-+]?\d+)?)", out, re.I)
+    return float(m.group(1)) if m else None
+
+
+DRV = "V1 a[0] 0 dc 1"
+G = ".option autobus silentports=ground\n.model busdev busdev r=1k"
+rc_s, out_s = run(DRV + "\nN1 a busdev", "op\nprint i(v1)", "u1short", "busdev", cards=G)
+rc_x, out_x = run(DRV + "\nN1 a[0] a[1] a[2] a[3] a[4] busdev", "op\nprint i(v1)", "u1full", "busdev", cards=G)
+check("[E-730] `N1 a busdev` (b absent, grounded by silentports) reads as the written-out a[0]..a[4]: i(v1) = -1e-3 (was 0, `a` bound as a scalar node)",
+      rc_s == 0 and cur(out_s) is not None and abs(cur(out_s) + 1e-3) < 1e-9 and cur(out_s) == cur(out_x), f"short={cur(out_s)} full={cur(out_x)}")
+rc, out = run(DRV + "\nN1 a busdev", "op\nprint i(v1)", "u2", "busdev", cards=".option autobus\n.model busdev busdev r=1k")
+check("[E-730] ...and without silentports E-402 names the one absent terminal, `b`, not the bits of `a`",
+      "1 of the 6 terminals" in out and "terminal 6 ('b') is absent" in out and "terminal 2 ('a[1]')" not in out
+      and "from node 'a' to ground" not in out, out[-300:].replace("\n", "|"))
+G2 = ".option autobus silentports=ground\n.model bustwo bustwo r=1k"
+rc_s, out_s = run(DRV + "\nN1 a b bustwo", "op\nprint i(v1)", "u3short", "bustwo", cards=G2)
+rc_x, out_x = run(DRV + "\nN1 a[0] a[1] b[0] b[1] b[2] bustwo", "op\nprint i(v1)", "u3full", "bustwo", cards=G2)
+check("[E-730] two bus ports in shorthand, the scalar `c` absent: `N1 a b bustwo` reads as the written-out five bits",
+      rc_s == 0 and cur(out_s) is not None and abs(cur(out_s) + 1e-3) < 1e-9 and cur(out_s) == cur(out_x), f"short={cur(out_s)} full={cur(out_x)}")
+rc, out = run(DRV + "\nN1 a b bustwo", "op\nprint i(v1)", "u3w", "bustwo", cards=".option autobus\n.model bustwo bustwo r=1k")
+check("[E-730] ...E-402 names `c` alone", "1 of the 6 terminals" in out and "terminal 6 ('c') is absent" in out
+      and "terminal 2 ('a[1]')" not in out, out[-300:].replace("\n", "|"))
+# a written-out multi-bit port and then the tokens running out stays the E-490
+# refusal: `N1 a b[0] b[1] b[2] bustwo` (c absent) reads exactly like
+# `N1 a b[0] b[1] c bustwo` to the walk, whose `c` is swallowed as b[2] -- the
+# misbinding E-490 exists to stop; write every bus port the same way
+rc, out = run(DRV + "\nN1 a b[0] b[1] b[2] bustwo", "op\nprint i(v1)", "u4", "bustwo", cards=".option autobus\n.model bustwo bustwo r=1k")
+check("[E-730] a shorthand port, a written-out port and then nothing is still refused (E-490: it reads like a swallowed token)",
+      rc != 0 and "runs out before every port is fed" in out, out[-200:].replace("\n", "|"))
+rc, out = run(DRV + "\nN1 a[0] a[1] bustwo", "op\nprint i(v1)", "u5", "bustwo", cards=".option autobus\n.model bustwo bustwo r=1k")
+check("[E-730] a short line with no shorthand is bound positionally as before, E-402 naming the four absent",
+      rc == 0 and "4 of the 6 terminals" in out and "terminal 3 ('b[0]') is absent" in out, out[-200:].replace("\n", "|"))
+rc, out = run(DRV + "\nN1 a busdev", "op\nprint i(v1)", "u6", "busdev", cards=".model busdev busdev r=1k")
+check("[E-730] with the option off `N1 a busdev` is the positional short line it always was (opt-in)",
+      "5 of the 6 terminals" in out and "terminal 2 ('a[1]') is absent" in out, out[-200:].replace("\n", "|"))
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

@@ -699,6 +699,9 @@ or `unset saveused` anywhere in it counts, the later line winning over the
 cards; `autobus` and `autoadapt` act while the deck is parsed, before any
 control line, and a `set` of either in the block draws a note that it comes
 too late — a deck card or `.spiceinit` decides them.
+`autobus` reads a line with fewer tokens than ports as the `$port_connected` shape
+with the bus in shorthand: `N1 a busdev` is `a[0] … a[4]` with `b` absent, named
+alone by the under-connection warning ([E-730](../../enhancements_doc/Enhancement-730.md)).
 `autoadapt` orients the adapter it injects by port index, the higher forward; when
 the shared node sits at the same port index on both devices the instance names
 decide, the one that sorts first forward, whatever the deck order, and a note says
