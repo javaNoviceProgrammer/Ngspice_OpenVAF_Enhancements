@@ -22,6 +22,19 @@ module adapter(p, q);
         I(p[k], q[k]) <+ V(p[k], q[k]) / ra;
 endmodule
 
+// Enhancement-729: an ASYMMETRIC adapter -- the series resistance plus a
+// shunt on its p side alone -- so which device sits on p is visible
+module adapt2(p, q);
+    inout [0:3] p; inout [0:3] q;
+    electrical [0:3] p; electrical [0:3] q;
+    parameter real ra = 50.0 from (0:inf);
+    genvar k;
+    analog for (k = 0; k <= 3; k = k + 1) begin
+        I(p[k], q[k]) <+ V(p[k], q[k]) / ra;
+        I(p[k]) <+ V(p[k]) * 2e-4;
+    end
+endmodule
+
 // two bits, for the width-mismatch check
 module chan2(a, b);
     inout [0:1] a; inout [0:1] b;

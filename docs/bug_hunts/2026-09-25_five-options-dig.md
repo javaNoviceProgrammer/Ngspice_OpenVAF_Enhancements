@@ -67,7 +67,7 @@ session scratchpad (`h5/harnA.py` … `harnE.py`, `harnX.py`).
 
 | # | Finding | Kind |
 |---|---|---|
-| [F1](#f1--autoadapt-with-the-shared-node-at-the-same-port-index-on-both-devices-deck-order-decides-which-side-gets-_f) | `autoadapt`: when the shared node sits at the same port index on both devices, deck order decides which side gets `_f` — with an asymmetric adapter `v(c[0])` is 0.28902 with `N1` first and 0.28818 with `N2` first — and the fallback is said only under `autoadapt=debug` | silent order dependence, against E-463's own rule |
+| [F1](#f1--autoadapt-with-the-shared-node-at-the-same-port-index-on-both-devices-deck-order-decides-which-side-gets-_f) | *(fixed in [E-729](../../enhancements_doc/Enhancement-729.md): a tie goes to the instance that sorts first by name, said in every mode; `.adapt b:n2` names the forward device)* `autoadapt`: when the shared node sits at the same port index on both devices, deck order decides which side gets `_f` — with an asymmetric adapter `v(c[0])` is 0.28902 with `N1` first and 0.28818 with `N2` first — and the fallback is said only under `autoadapt=debug` | silent order dependence, against E-463's own rule |
 | [F2](#f2--autobus-a-bare-bus-token-on-an-under-connected-line-binds-as-a-scalar-node) | `autobus`: `N1 a busdev` (one token for two ports, the `$port_connected` shape) binds `a` as the scalar node `a` on terminal `a[0]`; the deck's `a[0]` drive reaches nothing (0 A) and E-402 reports `a[1]` … `a[4]` and `b` absent — E-572's one-bit fix covers the equal-count line only | silent wrong wiring |
 | [F3](#f3--saveused-beside-autocorner-refuses-every-run-when-the-block-reads-a-corner-copy) | *(fixed in [E-725](../../enhancements_doc/Enhancement-725.md): a name ending in `_<corner>` for a declared corner also saves its base; an inferred name draws no save warning)* `saveused` beside `autocorner`: a block that reads the combined plot's `v(out_ss)` alone puts `out_ss` in the save set, no analysis has such a node, and every run of the pass is "no data saved … analysis not run" | two options' documented idioms collide |
 | [F4](#f4--saveused-a-plot-qualified-bare-name-stops-every-analysis) | *(fixed in [E-726](../../enhancements_doc/Enhancement-726.md): a dotted name saves both spellings; an inferred set that names nothing of an analysis keeps everything of it, said once)* `saveused`: `print tran1.out` saves the name `tran1.out`; no analysis can match it, so the `op` *and* the `tran` before the line are "no data saved … analysis not run" — the whole deck's output gone for one cross-plot reference | the option's one promise broken |
@@ -111,6 +111,17 @@ uses for every other ambiguity, naming both devices and asking for `b_f`/`b_r` b
 hand), and said in the default mode when it is taken.
 
 **Kind.** Silent order dependence, against the feature's stated design rule.
+
+*Fixed in [E-729](../../enhancements_doc/Enhancement-729.md).* A tie goes to the
+instance that sorts first by name, whatever the deck order, and is said in every mode
+("Note: autoadapt: node 'b' sits at port 0 on both n1 and n2, so the port rule cannot
+orient the adapter; n1 takes the forward side (b_f, the adapter's first port) by name
+order, whatever the deck order -- `.adapt b:n2` puts n2 there instead, or split the
+node by hand."); `.adapt b:n2` names the forward device outright, tie or no tie, and a
+device that is not one of the two is an error. A first cut refused the tie, and two
+existing suites showed the shape is the ordinary one for two instances of one model.
+`autoadapt` section E-729, nine checks: 36 of 36 per solver, 28 of 36 on the E-728
+binaries.
 
 ## F2 — `autobus`: a bare bus token on an under-connected line binds as a scalar node
 

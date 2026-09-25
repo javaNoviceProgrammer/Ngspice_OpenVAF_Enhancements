@@ -1343,6 +1343,18 @@ static bool adapt_name_taken(struct card *deck, const char *name)
    would make `.adapt bb` silently select `b`. A flattened node carries its
    subcircuit path (`x1.b`), so the trailing component is accepted too, letting
    one `.adapt b` cover the same local node in every instance of a subcircuit. */
+/* Enhancement-729 (five-options dig F1 of 2026-09-25): a `.adapt` member may
+ * carry the forward device after a colon, `.adapt b:n1`; the part before the
+ * colon is the node the member names. (Not `b=n1`: numparam reads a `name=value`
+ * on a dot card as a parameter assignment and rewrites it.) */
+static size_t adapt_member_name_len(const char *p, size_t n)
+{
+    size_t m = 0;
+    while (m < n && p[m] != ':')
+        m++;
+    return m;
+}
+
 static bool adapt_listed(const char *list, const char *node, bool *hit)
 {
     const char *p = list;
@@ -1356,8 +1368,9 @@ static bool adapt_listed(const char *list, const char *node, bool *hit)
         while (p[n] && !isspace_c(p[n]) && p[n] != ',')
             n++;
         if (n) {
-            if ((strlen(node) == n && strncmp(p, node, n) == 0) ||
-                (strlen(tail) == n && strncmp(p, tail, n) == 0)) {
+            size_t m = adapt_member_name_len(p, n);     /* Enhancement-729 */
+            if ((strlen(node) == m && strncmp(p, node, m) == 0) ||
+                (strlen(tail) == m && strncmp(p, tail, m) == 0)) {
                 if (hit)
                     *hit = TRUE;
                 return TRUE;
@@ -1366,6 +1379,40 @@ static bool adapt_listed(const char *list, const char *node, bool *hit)
         p += n;
     }
     return FALSE;
+}
+
+/* Enhancement-729: the device a `.adapt node:inst` member names as the
+ * forward side of `node` (a copy, the caller's to free), or NULL when no
+ * member says. The node is matched as adapt_listed matches it. */
+static char *adapt_forward_of(const char *list, const char *node)
+{
+    const char *p = list;
+    const char *tail = strrchr(node, '.');
+    tail = tail ? tail + 1 : node;
+
+    while (*p) {
+        size_t n = 0, m;
+        while (*p && (isspace_c(*p) || *p == ','))
+            p++;
+        while (p[n] && !isspace_c(p[n]) && p[n] != ',')
+            n++;
+        m = adapt_member_name_len(p, n);
+        if (n && m + 1 < n &&
+            ((strlen(node) == m && strncmp(p, node, m) == 0) ||
+             (strlen(tail) == m && strncmp(p, tail, m) == 0)))
+            return copy_substring(p + m + 1, p + n);
+        p += n;
+    }
+    return NULL;
+}
+
+/* Enhancement-729: is instance `inst` the one `name` means? Whole, or by its
+ * local name -- a flattened `x1.n1` answers to `n1`, as a node does above. */
+static bool adapt_inst_is(const char *inst, const char *name)
+{
+    const char *tail = strrchr(inst, '.');
+    tail = tail ? tail + 1 : inst;
+    return cieq(inst, name) || cieq(tail, name);
 }
 
 /* whole-word occurrences of `tok` among the NODE positions of instance lines */
@@ -1734,18 +1781,53 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
             }
             continue;
         }
-        /* the HIGHER port index is the forward side -- intrinsic, so that
-           reordering the deck cannot change the circuit */
-        if (k->use[0].port > k->use[1].port) {
-            f = &k->use[0]; rr = &k->use[1];
-        } else if (k->use[1].port > k->use[0].port) {
-            f = &k->use[1]; rr = &k->use[0];
-        } else {
-            f = &k->use[0]; rr = &k->use[1];
-            if (verbose)
-                fprintf(stderr, "Warning: autoadapt: node '%s' sits at port %d on "
-                    "both %s and %s; falling back to deck order for _f/_r.\n",
-                    k->node, f->port, f->inst, rr->inst);
+        /* Enhancement-729 (five-options dig F1 of 2026-09-25): the deck can
+         * name the forward device -- `.adapt b:n1` -- and that beats the port
+         * rule; otherwise the HIGHER port index is the forward side, intrinsic,
+         * so that reordering the deck cannot change the circuit; and when the
+         * two indices are EQUAL the instance NAMES decide, the one that sorts
+         * first forward -- as arbitrary as the port convention, but a property
+         * of the two lines and not of their order -- and the choice is said in
+         * every mode, with the way to make the other one. It used to fall back
+         * to deck order, in silence outside `=debug`: `N1 b a` / `N2 b c` and
+         * the same two lines the other way round put a different device on the
+         * adapter's p side -- 0.2890173 against 0.2881844 with an asymmetric
+         * adapter -- the one thing E-463 ruled out ("a SPICE deck is
+         * order-independent and must stay that way"). */
+        {
+            char *fw = only ? adapt_forward_of(only, k->node) : NULL;
+            if (fw) {
+                if (adapt_inst_is(k->use[0].inst, fw)) {
+                    f = &k->use[0]; rr = &k->use[1];
+                } else if (adapt_inst_is(k->use[1].inst, fw)) {
+                    f = &k->use[1]; rr = &k->use[0];
+                } else {
+                    fprintf(stderr, "Error: autoadapt: .adapt %s:%s names a device "
+                            "that is not one of the two sharing '%s' (%s and %s); "
+                            "not adapted.\n", k->node, fw, k->node,
+                            k->use[0].inst, k->use[1].inst);
+                    tfree(fw);
+                    continue;
+                }
+                tfree(fw);
+            } else if (k->use[0].port > k->use[1].port) {
+                f = &k->use[0]; rr = &k->use[1];
+            } else if (k->use[1].port > k->use[0].port) {
+                f = &k->use[1]; rr = &k->use[0];
+            } else {
+                if (strcasecmp(k->use[0].inst, k->use[1].inst) <= 0) {
+                    f = &k->use[0]; rr = &k->use[1];
+                } else {
+                    f = &k->use[1]; rr = &k->use[0];
+                }
+                fprintf(stdout, "Note: autoadapt: node '%s' sits at port %d on both "
+                        "%s and %s, so the port rule cannot orient the adapter; %s "
+                        "takes the forward side (%s_f, the adapter's first port) by "
+                        "name order, whatever the deck order -- `.adapt %s:%s` puts "
+                        "%s there instead, or split the node by hand.\n",
+                        k->node, f->port, f->inst, rr->inst, f->inst, k->node,
+                        k->node, rr->inst, rr->inst);
+            }
         }
         nf = tprintf("%s_f", k->node);
         nr = tprintf("%s_r", k->node);

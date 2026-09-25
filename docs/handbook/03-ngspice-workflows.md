@@ -699,6 +699,11 @@ or `unset saveused` anywhere in it counts, the later line winning over the
 cards; `autobus` and `autoadapt` act while the deck is parsed, before any
 control line, and a `set` of either in the block draws a note that it comes
 too late — a deck card or `.spiceinit` decides them.
+`autoadapt` orients the adapter it injects by port index, the higher forward; when
+the shared node sits at the same port index on both devices the instance names
+decide, the one that sorts first forward, whatever the deck order, and a note says
+so; `.adapt b:n2` names the forward device outright, tie or no tie
+([E-729](../../enhancements_doc/Enhancement-729.md)).
 Since [E-666](../../enhancements_doc/Enhancement-666.md): a raw-file `run n5.raw`
 puts every corner's plot in the file, each named with its corner, and `load` reads
 them all; `meas tran` (`ac`, `dc`) reads the combined plot as its nominal's analysis;

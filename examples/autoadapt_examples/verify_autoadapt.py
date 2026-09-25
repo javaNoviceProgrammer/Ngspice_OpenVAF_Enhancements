@@ -74,7 +74,7 @@ def check(label, ok, detail=""):
 
 
 MODELS = (".model mymodel1 chan r0=1k\n.model mymodel2 chan r0=2k\n"
-          ".model amod adapter ra=50\n.model m2 chan2 r0=1k\n"
+          ".model amod adapter ra=50\n.model amod2 adapt2 ra=50\n.model m2 chan2 r0=1k\n"
           ".model mx mixed r0=1k\n")
 DRIVE = "V1 in 0 dc 1\n" + "\n".join(f"Rs{k} in a[{k}] 1k" for k in range(4))
 LOAD = "\n".join(f"Rg{k} c[{k}] 0 100" for k in range(4))
@@ -219,6 +219,56 @@ check("[E-724] the injection skips a name the deck already uses: the adapter is 
       "(was 'device already exists, bail out' on the user's line)",
       "already exists" not in out and "adapter n_adapt2_" in out and vals(out) == vals(ref) and len(vals(ref)) == 6,
       out[-160:].replace("\n", "|"))
+
+print("\nthe tie: the shared node at the same port index on both devices (Enhancement-729, five-options dig F1)")
+# `b` at port 0 of n1 and of n2: the port rule has nothing to decide by. It
+# used to fall back to deck order, in silence outside =debug, so reversing
+# the two lines put the other device on the adapter's p side. Now the
+# instance names decide (the one that sorts first forward), whatever the deck
+# order, the choice is said in every mode, and `.adapt b:n2` names the other.
+# With the asymmetric adapter amod2 the two orientations read differently.
+AUTO2 = ".option autoadapt=debug adapter=amod2\n"
+TIE = f"{DRIVE}\n{LOAD}\nN1 b a mymodel1\nN2 b c mymodel2"
+TIE_REV = f"{DRIVE}\n{LOAD}\nN2 b c mymodel2\nN1 b a mymodel1"
+HAND_N1 = f"{DRIVE}\n{LOAD}\nN1 b_f a mymodel1\nN2 b_r c mymodel2\nn_a1_ b_f b_r amod2"
+HAND_N2 = f"{DRIVE}\n{LOAD}\nN1 b_r a mymodel1\nN2 b_f c mymodel2\nn_a1_ b_f b_r amod2"
+_rc, out_u = run(TIE, "tie_unadapted")
+_rc, out_h1 = run(HAND_N1, "tie_hand_n1")
+_rc, out_h2 = run(HAND_N2, "tie_hand_n2")
+vu, v1, v2 = vals(out_u), vals(out_h1), vals(out_h2)
+check("[E-729] the two hand-written orientations of the asymmetric adapter read differently (the control)",
+      len(v1) == 6 and len(v2) == 6 and v1 != v2 and vu != v1 and vu != v2, f"{v1[4:]} {v2[4:]} {vu[4:]}")
+NOTE = ("Note: autoadapt: node 'b' sits at port 0 on both n1 and n2, so the port rule cannot orient the adapter; "
+        "n1 takes the forward side (b_f, the adapter's first port) by name order, whatever the deck order -- "
+        "`.adapt b:n2` puts n2 there instead, or split the node by hand.")
+_rc, out = run(TIE, "tie_debug", opts=".option autobus\n" + AUTO2)
+check("[E-729] the tie goes to n1 by name order, said, with the way to make the other choice: the hand-written n1 answer",
+      NOTE in out and "b_f (n1 port 0)" in out and "falling back" not in out and vals(out) == v1, out[-300:].replace("\n", "|"))
+_rc, out = run(TIE_REV, "tie_rev", opts=".option autobus\n" + AUTO2)
+check("[E-729] ...and the two lines the other way round give the same n1 answer (deck order used to decide: 0.2890173 against 0.2881844)",
+      NOTE in out and "b_f (n1 port 0)" in out and vals(out) == v1, f"{vals(out)[4:]}")
+_rc, out = run(TIE_REV, "tie_quiet", opts=".option autobus\n.option autoadapt adapter=amod2\n")
+check("[E-729] ...said in the quiet default mode too", NOTE in out and vals(out) == v1, out[-300:].replace("\n", "|"))
+_rc, out = run(TIE + "\n.adapt b:n2", "tie_n2", opts=".option autobus\n" + AUTO2)
+check("[E-729] `.adapt b:n2` names n2 the forward device: the hand-written n2 answer, no note",
+      "b_f (n2 port 0)" in out and vals(out) == v2 and "Note: autoadapt" not in out, f"{vals(out)[4:]}")
+_rc, out = run(TIE_REV + "\n.adapt b:n2", "tie_n2_rev", opts=".option autobus\n" + AUTO2)
+check("[E-729] ...whatever the deck order", vals(out) == v2, f"{vals(out)[4:]}")
+_rc, out = run(TIE + "\n.adapt b:n9", "tie_n9", opts=".option autobus\n" + AUTO2)
+check("[E-729] `.adapt b:n9`, a device that is not one of the two: an error, not adapted",
+      "Error: autoadapt: .adapt b:n9 names a device that is not one of the two sharing 'b' (n1 and n2); not adapted" in out
+      and "b split" not in out and vals(out) == vu, out[-300:].replace("\n", "|"))
+# without a tie the port rule stands, and an explicit name beats it
+SHORT_N2 = f"{DRIVE}\n{LOAD}\nN1 a b_r mymodel1\nN2 b_f c mymodel2\nn_a1_ b_f b_r amod2"
+_rc, out_s = run(SHORT, "short_a2", opts=".option autobus\n" + AUTO2)
+_rc, out_s2 = run(SHORT + "\n.adapt b:n2", "short_n2", opts=".option autobus\n" + AUTO2)
+_rc, out_hs2 = run(SHORT_N2, "short_hand_n2")
+check("[E-729] no tie: the port rule puts n1 (port 1) forward with no note, and `.adapt b:n2` names n2 forward instead -- the hand-written n2 answer",
+      "b_f (n1 port 1)" in out_s and "Note: autoadapt" not in out_s and "b_f (n2 port 0)" in out_s2 and vals(out_s2) == vals(out_hs2)
+      and vals(out_s2) != vals(out_s) and len(vals(out_s2)) == 6, f"{vals(out_s)[4:]} {vals(out_s2)[4:]}")
+_rc, out = run(TIE + "\n.adapt b:n2, nosuch", "tie_n2_nosuch", opts=".option autobus\n" + AUTO2)
+check("[E-729] `.adapt b:n2, nosuch`: b adapted with n2 forward, the stray name reported (E-467), the colon form parsed as a member",
+      "b_f (n2 port 0)" in out and vals(out) == v2 and ".adapt names 'nosuch'" in out, out[-300:].replace("\n", "|"))
 
 print("\nwhat must not change")
 _rc, out = run(SHORT, "off")

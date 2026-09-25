@@ -80,8 +80,12 @@ def run(options, netlist, tag):
 
 def chatter(out):
     # E-572's "split node ... so its bits no longer exist" is the control block's
-    # own print v(x[0]) being answered after a split; it is not a refusal
-    return [l for l in out.splitlines() if "autoadapt" in l and "split node" not in l]
+    # own print v(x[0]) being answered after a split; it is not a refusal.
+    # E-729's "Note: autoadapt: node 'x' sits at port 0 on both n1 and n2 ..."
+    # says which device took the forward side of a tie (x is at port 0 of both
+    # instances here); it is a choice made and said, not a refusal.
+    return [l for l in out.splitlines() if "autoadapt" in l and "split node" not in l
+            and not l.startswith("Note: autoadapt: node")]
 
 
 BUS = "v0 s1 0 1\nN1 x s1 bm\nN2 x s2 bm\nr2 s2 0 1k\n"
