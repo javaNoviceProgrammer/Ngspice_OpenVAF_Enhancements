@@ -2455,6 +2455,46 @@ impl ExprValidator<'_, '_> {
                 return;
             }
 
+            // Enhancement-715 (correctness campaign F1 of 2026-09-25): an element of
+            // an array parameter read through a constant index (`pa[1]`, typed as
+            // the element parameter) or a dynamic one (`pa[pi]`, its elements in
+            // `dynamic_param_index_refs`) is a parameter read like any other for
+            // the declaration-order rule above. Before the inference resolved such
+            // a read in a parameter's own body it was "not found"; once it did, a
+            // forward reference (`parameter real pb = pa[1]; parameter real
+            // pa[0:2] = ...`) slipped past the `Path`-only check, reached the
+            // lowering and panicked there on an undefined value. The indices are
+            // expressions of their own and are walked below.
+            Expr::BitSelect { .. } => {
+                if let DefWithBodyId::ParamId(def) = self.parent.owner {
+                    let db = self.parent.db.upcast();
+                    let mut reads: Vec<ParamId> = Vec::new();
+                    if let Some(Ty::Param(_, param)) = self.parent.infer.expr_types.get(expr) {
+                        reads.push(*param);
+                    }
+                    if let Some(dyn_index) = self.parent.infer.dynamic_param_index_refs.get(&expr)
+                    {
+                        reads.extend(dyn_index.elems.iter().copied());
+                    }
+                    for param in reads {
+                        if def == param {
+                            self.report(BodyValidationDiagnostic::SelfReferentialParam {
+                                def,
+                                expr,
+                            });
+                            break;
+                        } else if def.lookup(db).id < param.lookup(db).id {
+                            self.report(BodyValidationDiagnostic::IllegalParamAccess {
+                                def,
+                                expr,
+                                param,
+                            });
+                            break;
+                        }
+                    }
+                }
+            }
+
             _ => (),
         }
 

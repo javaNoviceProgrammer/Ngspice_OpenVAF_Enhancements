@@ -1,0 +1,35 @@
+`include "disciplines.vams"
+
+// Enhancement-715 (correctness campaign F1 of 2026-09-25): an element of an
+// array-valued parameter read in every CONSTANT context -- another parameter's
+// default, a `localparam`, a range bound, another array parameter's literal --
+// where the compiler used to answer "'w' was not found in the current scope"
+// although the analog block read the same `w[k]` all along.
+//
+// A programmable-gain buffer again: V(out) = gain * V(in), with the gain
+// assembled from parameters that are DERIVED from the tap array `w`, so that an
+// override of one tap on the .model card must show up in every derivation.
+module array_const(in, out);
+    input in;
+    output out;
+    electrical in, out;
+
+    parameter real [0:3] w = '{0.1, 0.2, 0.3, 0.4};
+
+    // a default from two elements (0.5), overridable in its own right
+    parameter real gsum = w[1] + w[2];
+    // a localparam from an element (0.2)
+    localparam real gtwice = w[0] * 2.0;
+    // a range whose bounds are elements: 0.25 sits in [0.1:0.4]
+    parameter real glim = 0.25 from [w[0]:w[3]];
+    // an array parameter whose literal is built from another's elements
+    parameter real [0:1] q = '{w[3], w[0]};
+    // integer elements in an integer default (5)
+    parameter integer [0:1] n = '{2, 3};
+    parameter integer nsum = n[0] + n[1];
+
+    analog begin
+        // 0.5 + 0.2 + 0.25 + 0.4 + 0.1 + 0.05 = 1.5 with the defaults
+        V(out) <+ (gsum + gtwice + glim + q[0] + q[1] + nsum * 0.01) * V(in);
+    end
+endmodule

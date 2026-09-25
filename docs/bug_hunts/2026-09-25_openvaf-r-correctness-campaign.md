@@ -106,7 +106,7 @@ The ground, and what held:
 
 | # | finding | kind |
 |---|---|---|
-| [F1](#f1--an-array-parameters-element-is-not-found-in-the-current-scope-in-any-constant-context) | an array parameter's element — `pa[1]` — is "'pa' was not found in the current scope" in another parameter's default, in a range bound, in a `localparam` and in another array parameter's literal, while the analog block reads `pa[pi]` and `pa[2]` without a word | wrong refusal of legal code |
+| [F1](#f1--an-array-parameters-element-is-not-found-in-the-current-scope-in-any-constant-context) | *(fixed in [E-715](../../enhancements_doc/Enhancement-715.md): the inference finds the module's arrays through the body owner's scope, so a parameter's default, a range bound, a localparam and an array literal read `pa[k]`, with the card override and the range check following; a forward reference to an element is refused naming it, not crashed)* an array parameter's element — `pa[1]` — is "'pa' was not found in the current scope" in another parameter's default, in a range bound, in a `localparam` and in another array parameter's literal, while the analog block reads `pa[pi]` and `pa[2]` without a word | wrong refusal of legal code |
 | [F2](#f2--integer-division-by-a-card-supplied-zero-is-0-in-silence-the-modulus-by-the-same-zero-is-a-fatal) | `pi / pz` with `pz=0` on the card evaluates to 0 without a message; `pi % pz` with the same zero is `OSDI(fatal) … the second operand (the modulus divisor) is zero, which LRM 4.2.4 makes an error`; a real `px / pz` is ±∞ | silent wrong number, inconsistent with the sibling operator |
 | [F3](#f3--the-derivative-of-a-quotient-is-formed-over-the-squared-denominator-and-is-nan-below-2e-162) | the automatic derivative of `x / y` is `x'/y − x·y'/(y·y)`: for `V(a) / (V(b) + 1e-300)` at the V = 0 initial guess the value is 0 and ∂/∂V(b) is NaN (0/0, the square `1e-600` underflowing to 0), likewise `exp(−1/(x² + 1e-300))`; a guard of 1e-160 or larger is safe (its square is a denormal), the equivalent `(x/y)/y` form never underflows | NaN in a Jacobian at the operating-point guess |
 | [F4](#f4--a-flat-sum-or-product-of-a-thousand-terms-is-refused-as-nesting-too-deeply) | `r = 1.0/1 + 1.0/2 + … + 1.0/999` is "expression nests too deeply": the E-148 parser guard (`MAX_EXPR_DEPTH = 1000`) counts a left-associative chain as nesting; 800 terms compile, 511 nested parentheses and 600 unary minuses compile, the same 1 500 terms in thirty parentheses compile | refusal of legal input, misleading diagnostic |
@@ -146,6 +146,8 @@ parameter (`parameter real vth0 = vth[0];`) is legal and cannot be written today
 except by moving the derivation into the analog block.
 
 **Kind.** Wrong refusal of legal code; the workaround changes the model's structure.
+
+*Fixed in [E-715](../../enhancements_doc/Enhancement-715.md).* `find_param_array` answered only for the module's own body; it now finds the module through the body owner's scope, so every form of the table compiles and follows the card, and the declaration-order check covers element reads — a forward reference to `pa[1]`, which crashed the compiler once the element resolved, is refused like a scalar's.
 
 ## F2 — integer division by a card-supplied zero is 0 in silence; the modulus by the same zero is a fatal
 

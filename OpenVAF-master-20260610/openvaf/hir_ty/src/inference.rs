@@ -3469,35 +3469,67 @@ impl Ctx<'_> {
         true
     }
 
+    /// Enhancement-715 (correctness campaign F1 of 2026-09-25): the module whose
+    /// arrays this body may index. The analog block is the module's own body;
+    /// a parameter's default and range and a variable's initialiser are bodies
+    /// of their own, owned by the parameter or the variable, and they sit in
+    /// the module's scope (or in a block scope inside it). `find_param_array`
+    /// answered only for the module body, so `parameter real pb = pa[1];`,
+    /// `from [pa[0]:pa[2]]`, `localparam real lq = pa[0] * 2;` and
+    /// `'{pa[0], pa[1]}` fell through to a scalar lookup of `pa` -- which is
+    /// not an item, the elements are -- and were "'pa' was not found in the
+    /// current scope", while the analog block read `pa[pi]` all along. A
+    /// function-local parameter's scope is the function's; it sees no module
+    /// array, as before.
+    fn owner_module(&self) -> Option<hir_def::ModuleId> {
+        let db = self.db.upcast();
+        let scope = match self.owner {
+            DefWithBodyId::ModuleId { module, .. } => return Some(module),
+            DefWithBodyId::ParamId(id) => id.lookup(db).scope,
+            DefWithBodyId::VarId(id) => id.lookup(db).scope,
+            _ => return None,
+        };
+        let def_map = scope.def_map(db);
+        let mut local = Some(scope.local_scope);
+        while let Some(s) = local {
+            match def_map[s].origin {
+                hir_def::nameres::ScopeOrigin::Module(module) => return Some(module),
+                hir_def::nameres::ScopeOrigin::Block(_) => local = def_map[s].parent(),
+                _ => return None,
+            }
+        }
+        None
+    }
+
     fn find_var_array(&self, name: &Name) -> Option<BusDecl> {
         // Array variables live at module body scope and, since Enhancement-18, inside `analog
         // function` bodies (locals and array-typed arguments).
         match self.owner {
-            DefWithBodyId::ModuleId { module, .. } => {
-                let loc = module.lookup(self.db.upcast());
-                let tree = loc.item_tree(self.db.upcast());
-                tree[loc.id].var_arrays.iter().find(|arr| &arr.base_name == name).cloned()
-            }
             DefWithBodyId::FunctionId(function) => {
                 let loc = function.lookup(self.db.upcast());
                 let tree = loc.item_tree(self.db.upcast());
                 tree[loc.id].var_arrays.iter().find(|arr| &arr.base_name == name).cloned()
             }
-            _ => None,
+            _ => {
+                let module = self.owner_module()?;
+                let loc = module.lookup(self.db.upcast());
+                let tree = loc.item_tree(self.db.upcast());
+                tree[loc.id].var_arrays.iter().find(|arr| &arr.base_name == name).cloned()
+            }
         }
     }
 
     /// Like `find_var_array`, but for array-valued *parameters* (`parameter real [msb:lsb] c`).
     /// Enhancement-405: the `genvar` names declared by the enclosing module, if any.
     fn module_genvars(&self) -> Vec<Name> {
-        let DefWithBodyId::ModuleId { module, .. } = self.owner else { return Vec::new() };
+        let Some(module) = self.owner_module() else { return Vec::new() };
         let loc = module.lookup(self.db.upcast());
         let tree = loc.item_tree(self.db.upcast());
         tree[loc.id].genvars.clone()
     }
 
     fn find_param_array(&self, name: &Name) -> Option<BusDecl> {
-        let DefWithBodyId::ModuleId { module, .. } = self.owner else { return None };
+        let module = self.owner_module()?;
         let loc = module.lookup(self.db.upcast());
         let tree = loc.item_tree(self.db.upcast());
         tree[loc.id].param_arrays.iter().find(|arr| &arr.base_name == name).cloned()
