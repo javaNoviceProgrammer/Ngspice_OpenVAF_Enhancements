@@ -14,6 +14,7 @@
 mod attributes;
 mod call;
 mod expressions;
+pub use expressions::MAX_EXPR_DEPTH;
 mod items;
 mod paths;
 mod stmts;

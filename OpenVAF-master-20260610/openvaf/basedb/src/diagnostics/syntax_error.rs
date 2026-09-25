@@ -594,14 +594,16 @@ impl Diagnostic for SyntaxError {
                         style: LabelStyle::Primary,
                         file_id,
                         range: range.into(),
-                        message: "expression nests too deeply".to_owned(),
+                        message: format!("level {} is here", syntax::MAX_EXPR_DEPTH + 1),
                     }])
-                    .with_notes(vec![
-                        "help: openvaf limits expression nesting (and operator-chain \
-                         length) to 1000 to avoid overflowing the parser; split the \
-                         expression across intermediate variables"
-                            .to_owned(),
-                    ])
+                    .with_notes(vec![format!(
+                        "help: openvaf bounds the depth of an expression at {} levels so that \
+                         no legal file can overflow the compiler's stack: a chain `a + b + c + ...` \
+                         is as deep as it is long (one level per operator), and a parenthesis, a \
+                         call, a prefix operator or a `?:` adds one nesting level; split the \
+                         expression across intermediate variables or statements",
+                        syntax::MAX_EXPR_DEPTH
+                    )])
             }
             SyntaxError::IllegalInfToken { range } => {
                 let FileSpan { range, file: file_id } = parse.to_file_span(range, &sm);

@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 pub use ast::AstNode;
 pub use error::SyntaxError;
+pub use parser::MAX_EXPR_DEPTH;
 pub use preprocessor::diagnostics::PreprocessorDiagnostic;
 use preprocessor::sourcemap::{CtxSpan, FileSpan, SourceContext};
 pub use preprocessor::{preprocess, sourcemap, Preprocess, SourceProvider, PREDEFINED_MACROS};

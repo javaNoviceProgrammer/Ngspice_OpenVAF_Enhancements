@@ -109,7 +109,7 @@ The ground, and what held:
 | [F1](#f1--an-array-parameters-element-is-not-found-in-the-current-scope-in-any-constant-context) | *(fixed in [E-715](../../enhancements_doc/Enhancement-715.md): the inference finds the module's arrays through the body owner's scope, so a parameter's default, a range bound, a localparam and an array literal read `pa[k]`, with the card override and the range check following; a forward reference to an element is refused naming it, not crashed)* an array parameter's element — `pa[1]` — is "'pa' was not found in the current scope" in another parameter's default, in a range bound, in a `localparam` and in another array parameter's literal, while the analog block reads `pa[pi]` and `pa[2]` without a word | wrong refusal of legal code |
 | [F2](#f2--integer-division-by-a-card-supplied-zero-is-0-in-silence-the-modulus-by-the-same-zero-is-a-fatal) | *(fixed in [E-716](../../enhancements_doc/Enhancement-716.md): the integer division has the modulus' guard -- a parameter-derived zero divisor raises the fatal naming `/` at evaluation or at setup; a run-time zero keeps E-518's defined 0, the real quotient its infinity)* `pi / pz` with `pz=0` on the card evaluates to 0 without a message; `pi % pz` with the same zero is `OSDI(fatal) … the second operand (the modulus divisor) is zero, which LRM 4.2.4 makes an error`; a real `px / pz` is ±∞ | silent wrong number, inconsistent with the sibling operator |
 | [F3](#f3--the-derivative-of-a-quotient-is-formed-over-the-squared-denominator-and-is-nan-below-2e-162) | *(fixed in [E-717](../../enhancements_doc/Enhancement-717.md): the rule is (f' − (f/g)·g')/g, reusing the quotient, and its last division carries no fast-math flags so LLVM cannot re-form the square; both derivatives read 0)* the automatic derivative of `x / y` is `x'/y − x·y'/(y·y)`: for `V(a) / (V(b) + 1e-300)` at the V = 0 initial guess the value is 0 and ∂/∂V(b) is NaN (0/0, the square `1e-600` underflowing to 0), likewise `exp(−1/(x² + 1e-300))`; a guard of 1e-160 or larger is safe (its square is a denormal), the equivalent `(x/y)/y` form never underflows | NaN in a Jacobian at the operating-point guess |
-| [F4](#f4--a-flat-sum-or-product-of-a-thousand-terms-is-refused-as-nesting-too-deeply) | `r = 1.0/1 + 1.0/2 + … + 1.0/999` is "expression nests too deeply": the E-148 parser guard (`MAX_EXPR_DEPTH = 1000`) counts a left-associative chain as nesting; 800 terms compile, 511 nested parentheses and 600 unary minuses compile, the same 1 500 terms in thirty parentheses compile | refusal of legal input, misleading diagnostic |
+| [F4](#f4--a-flat-sum-or-product-of-a-thousand-terms-is-refused-as-nesting-too-deeply) | *(fixed in [E-718](../../enhancements_doc/Enhancement-718.md): the bound is 32 768 levels on a 512 MB front-end thread, the diagnostic says what it counts, and it stands alone)* `r = 1.0/1 + 1.0/2 + … + 1.0/999` is "expression nests too deeply": the E-148 parser guard (`MAX_EXPR_DEPTH = 1000`) counts a left-associative chain as nesting; 800 terms compile, 511 nested parentheses and 600 unary minuses compile, the same 1 500 terms in thirty parentheses compile | refusal of legal input, misleading diagnostic |
 | [F5](#f5--an-unconnected-port-guarded-by-port_connected-leaves-ngspice-a-floating-node) | a three-terminal module instantiated with two terminals, its third branch guarded by `if ($port_connected(c))` as the LRM's `$port_connected` intends, warns "1 of the 3 terminals … are not connected" and then "singular matrix: check node n1#c" twice, runs gmin stepping (277 iterations) and converges; the open port's node has nothing on it | simulator side: a floating node from the LRM's own idiom |
 
 ## F1 — an array parameter's element is "not found in the current scope" in any constant context
@@ -243,6 +243,16 @@ what happened ("an expression of more than 1 000 operators on one line; group it
 split it").
 
 **Kind.** Refusal of legal input with a misleading diagnostic.
+
+*Fixed in [E-718](../../enhancements_doc/Enhancement-718.md).* The parser read the chain
+iteratively all along; the bound guarded the passes after it, which recurse once per
+operator over the left-leaning tree, on the main thread's 8 MB stack (a 7 000-term chain
+overflowed it, and 4 000 nested calls). The front end now runs on a 512 MB thread, the
+bound is 32 768 levels — a 128 000-term chain compiles on a quarter of that — the
+diagnostic names the bound and what it counts, and an over-deep call argument no longer
+draws "invalid argument count" after it. The 999-, 1 000-, 1 200- and 1 500-term sums and
+products compile, and the 1 500-term sum evaluates through ngspice to Python's
+left-to-right value bit for bit.
 
 ## F5 — an unconnected port guarded by `$port_connected` leaves ngspice a floating node
 

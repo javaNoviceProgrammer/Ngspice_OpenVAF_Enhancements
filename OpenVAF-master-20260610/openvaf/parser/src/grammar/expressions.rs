@@ -69,9 +69,24 @@ fn current_op(p: &Parser) -> (u8, SyntaxKind) {
 /// Enhancement-148: bound expression-tree depth (recursive nesting *and*
 /// operator-chain length) so a pathologically deep expression is reported cleanly
 /// instead of overflowing the recursive-descent parser -- or a later recursive
-/// traversal of the resulting (deep, left-leaning) syntax tree. Real device models
-/// nest expressions only a few dozen deep; 1000 leaves generous headroom.
-const MAX_EXPR_DEPTH: u32 = 1000;
+/// traversal of the resulting (deep, left-leaning) syntax tree.
+///
+/// Enhancement-718 (correctness campaign F4 of 2026-09-25): the bound was 1000,
+/// and a flat sum of a thousand terms -- a generated polynomial, a table written
+/// out on one line -- was refused as "nesting too deeply", although the parser
+/// reads a chain iteratively and only the passes after it recurse over the
+/// left-leaning tree they get. Those passes now run on a 512 MB thread
+/// (`openvaf::compile`); on 256 MB a chain of 128 000 terms, 128 000 nested calls
+/// or ternaries, 64 000 levels of a Horner polynomial and 512 000 nested
+/// parentheses compile, and 256 000 of the chain and the calls overflow it. The
+/// bound sits a factor of four under the worst of them at 256 MB, eight at 512,
+/// as E-148's 1000 sat under the 8 MB main-thread stack's 4 000 to 7 000. The
+/// counter is one for both kinds -- an operator in a chain and a nesting level
+/// each cost the later passes one frame -- and the diagnostic says so. It is a
+/// lower bound on the tree's depth: the operators that wrap a nested operand are
+/// counted after that operand was parsed (a Horner polynomial of degree d passes
+/// with a tree 3d deep), which is what the stack is sized for.
+pub const MAX_EXPR_DEPTH: u32 = 32_768;
 
 /// Report an over-deep expression and recover to the next expression boundary.
 ///
@@ -80,7 +95,7 @@ const MAX_EXPR_DEPTH: u32 = 1000;
 /// "unexpected token identifier; expected '(', '{', ..." -- a complaint about a
 /// token that is perfectly valid, with no hint that a depth limit exists. It now
 /// reports `ExprTooDeep`, keeping the same recovery.
-fn expr_too_deep(p: &mut Parser) {
+fn expr_too_deep(p: &mut Parser) -> CompletedMarker {
     p.error(crate::SyntaxError::ExprTooDeep);
     // Enhancement-665 (hunt F15): the old recovery bumped one token and handed
     // the rest of the expression (`p997+p998)`) back to the statement parser,
@@ -88,6 +103,17 @@ fn expr_too_deep(p: &mut Parser) {
     // already declared". Skip to the end of the expression instead: the
     // closing bracket of the enclosing pair, or the `;` (or an end keyword)
     // at bracket depth zero.
+    //
+    // Enhancement-718: a `,` at bracket depth zero ends the expression too --
+    // Verilog-A has no comma expression (E-423), so the comma belongs to the
+    // enclosing argument list, declaration list or case item. Running past it
+    // swallowed the next argument of `pow(a + a + ..., 2.0)`, and "invalid
+    // argument count: expected 2 arguments but found 1" followed the depth
+    // error. And the ERROR node is handed back as the expression's node rather
+    // than `None`: an argument list, a declaration list or a parenthesis that
+    // sees `None` gives up on its own list, and the tokens the recovery stopped
+    // at (`, b)`) then fell to the enclosing call, which read them as
+    // arguments of its own -- "expected 1 arguments but found 2" for `sin`.
     let m = p.start();
     let mut depth: u32 = 0;
     loop {
@@ -100,12 +126,12 @@ fn expr_too_deep(p: &mut Parser) {
                 }
                 depth -= 1;
             }
-            T![;] | T![endmodule] | T![endfunction] | T![end] if depth == 0 => break,
+            T![;] | T![,] | T![endmodule] | T![endfunction] | T![end] if depth == 0 => break,
             _ => {}
         }
         p.bump_any();
     }
-    m.complete(p, ERROR);
+    m.complete(p, ERROR)
 }
 
 // Parses expression with binding power of at least bp.
@@ -131,8 +157,10 @@ fn expr_bp_inner(p: &mut Parser, bp: u8) -> Option<CompletedMarker> {
 
         p.expr_depth.set(p.expr_depth.get() + 1);
         if p.expr_depth.get() > MAX_EXPR_DEPTH {
+            // The chain so far is a complete expression; the ERROR node holding
+            // the rest follows it as a sibling (Enhancement-718).
             expr_too_deep(p);
-            return None;
+            return Some(lhs);
         }
 
         if op == T![?] {
@@ -175,8 +203,7 @@ fn atom_expr(p: &mut Parser) -> Option<CompletedMarker> {
     let depth = p.expr_depth.get() + 1;
     p.expr_depth.set(depth);
     let res = if depth > MAX_EXPR_DEPTH {
-        expr_too_deep(p);
-        None
+        Some(expr_too_deep(p))
     } else {
         atom_expr_inner(p)
     };

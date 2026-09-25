@@ -19,6 +19,7 @@ mod output;
 mod parser;
 
 pub use error::SyntaxError;
+pub use grammar::MAX_EXPR_DEPTH;
 use stdx::pretty;
 pub(crate) use token_set::TokenSet;
 //pub(crate) use token_set::TokenSet;

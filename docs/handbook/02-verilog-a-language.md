@@ -97,7 +97,7 @@ modules whose failure modes are numerically visible.
 | Real literal shape | LRM 2.6.2 wants a digit on each side of the decimal point: `1.` and, since E-650, `.5` (which was "unexpected token '.'") get the same sentence; `0.5`, `1.5e-3`, `2.5u` and dotted names are untouched. | [E-650](../../enhancements_doc/Enhancement-650.md) |
 | Integer `min`/`max`/`abs`, away-from-zero rounding | Verified integer-typed, per the LRM. | [E-59](../../enhancements_doc/Enhancement-59.md) |
 | Math functions & scale factors | `ln/log/exp/sqrt/pow/trig/hyperbolic/floor/ceil`, SI suffixes (`1k`, `1u`, …). | — |
-
+| Expression depth | An expression may be 32 768 levels deep: an operator chain counts one level per operator (the passes after the parser recurse over the left-leaning tree it builds), and a parenthesis, a call, a prefix operator or a `?:` one nesting level each. Past that, one located error names the bound and what it counts, and stands alone. The bound was 1000 on the 8 MB main-thread stack, and a flat sum of a thousand terms tripped it; the front end runs on a 512 MB thread since E-718. `examples/robustness_examples/` | [E-718](../../enhancements_doc/Enhancement-718.md) |
 ## 2.6 Analog operators (filters, integrators, delays)
 
 All analog operators produce correct **Jacobian contributions** via automatic

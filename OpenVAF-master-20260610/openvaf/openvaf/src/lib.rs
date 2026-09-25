@@ -205,7 +205,32 @@ pub fn expand(opts: &Opts) -> Result<CompilationTermination> {
     Ok(CompilationTermination::Compiled { lib_file: Utf8PathBuf::default() })
 }
 
+/// Enhancement-718 (correctness campaign F4 of 2026-09-25): the stack the front
+/// end runs on. The passes between the parser and the MIR -- `hir_def`'s body
+/// collection, `hir_ty`'s inference and validation, `hir_lower` -- recurse once
+/// per level of the expression tree, and an operator chain `a + b + c + ...` is
+/// a left-leaning tree as deep as it is long. On the 8 MB main-thread stack a
+/// chain of some 7 000 terms, or 4 000 nested calls, overflowed it; E-264 gave
+/// the codegen workers a 256 MB stack for the same kind of recursion, and the
+/// front end now runs on a 512 MB one, so the parser's depth guard
+/// (`parser::MAX_EXPR_DEPTH`, 32 768 levels) sits a factor of four or more under
+/// what the deepest shape it admits needs (see the guard's comment). A thread's
+/// stack is reserved, not committed: this costs no memory a run does not touch.
+const FRONTEND_STACK_SIZE: usize = 512 * 1024 * 1024;
+
 pub fn compile(opts: &Opts) -> Result<CompilationTermination> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("openvaf-frontend".to_owned())
+            .stack_size(FRONTEND_STACK_SIZE)
+            .spawn_scoped(scope, || compile_on_this_thread(opts))
+            .expect("failed to spawn the compiler's front-end thread")
+            .join()
+            .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+    })
+}
+
+fn compile_on_this_thread(opts: &Opts) -> Result<CompilationTermination> {
     let start = Instant::now();
 
     let input =

@@ -202,7 +202,7 @@ impl_display! {
     match SyntaxError{
         UnexpectedToken {expected,found,..} => "unexpected token {}; expected {}", found, expected;
         SurplusToken {found,..} => "unexpected token {}", found;
-        ExprTooDeep{..} => "expression nests too deeply";
+        ExprTooDeep{..} => "expression is deeper than {} levels: an operator chain counts one level per operator, and so does each nesting", crate::MAX_EXPR_DEPTH;
         CommaExpr{..} => "a parenthesised list is not an expression";
         IdentBeforeBlock{..} => "a bare identifier before `begin`: not an analog statement";
         AttrWithoutValue{..} => "the attribute has no value after '='";

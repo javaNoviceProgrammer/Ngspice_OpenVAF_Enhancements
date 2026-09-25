@@ -185,11 +185,38 @@ impl LowerCtx<'_> {
                     FunctionRef::SysFun(fun) => Some(Path::new_ident(fun.as_name())),
                 });
 
-                let args = if let Some(args) = call.arg_list().map(|list| list.args()) {
-                    args.map(|arg| self.collect_expr(arg)).collect()
-                } else {
-                    vec![]
-                };
+                // Enhancement-718 (correctness campaign F4 of 2026-09-25): an
+                // argument the parser gave up on -- an over-deep expression,
+                // E-148's guard with E-665's recovery, which leaves an ERROR
+                // node where the rest of the expression was -- is still an
+                // argument. Skipping it read `sin(sin(...))` as a call with no
+                // argument, and "invalid argument count: expected 1 arguments
+                // but found 0" followed the depth error. An ERROR node that
+                // directly follows an argument is that argument's tail, not a
+                // new one; one at the start of an argument (after `(` or `,`)
+                // stands for the argument and is recorded as missing.
+                let mut args = Vec::new();
+                if let Some(list) = call.arg_list() {
+                    let mut in_arg = false;
+                    for child in list.syntax().children_with_tokens() {
+                        match child {
+                            syntax::NodeOrToken::Node(node) => {
+                                if let Some(arg) = ast::Expr::cast(node.clone()) {
+                                    args.push(self.collect_expr(arg));
+                                    in_arg = true;
+                                } else if node.kind() == syntax::SyntaxKind::ERROR && !in_arg {
+                                    args.push(self.missing_expr());
+                                    in_arg = true;
+                                }
+                            }
+                            syntax::NodeOrToken::Token(token) => {
+                                if token.kind() == syntax::SyntaxKind::COMMA {
+                                    in_arg = false;
+                                }
+                            }
+                        }
+                    }
+                }
 
                 Expr::Call { fun, args }
             }

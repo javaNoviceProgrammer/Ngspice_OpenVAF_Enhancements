@@ -34,6 +34,12 @@
       what happened ("nests too deeply (a file that includes itself?)"); the
       parser now does too, with a help note naming the limit.
 
+      Enhancement-718 (correctness campaign F4 of 2026-09-25): the bound is
+      32 768 levels on a 512 MB front-end thread (it was 1000 on the 8 MB main
+      thread), so the 1 200-term chain this section used to refuse is legal and
+      reads 1.2; the diagnostic now says what it counts -- an operator chain one
+      level per operator, a nesting one each -- and the note names the bound.
+
 WHAT THE ACCEPT HALF IS REALLY GUARDING. [1] moves EVERY `-D` flag onto a new
 code path, and `STANDARD_FLAGS` -- `__OPENVAF__`, `__VAMS__`,
 `__VAMS_COMPACT_MODELING__` -- travel that same path. Compact models branch on
@@ -103,15 +109,23 @@ def main():
           got is not None and abs(got - 1.0) < 1e-12, "got %s" % got)
 
     # ---- [2] the depth diagnostic ------------------------------------------
+    # Enhancement-718: a 1 200-term chain is under the 32 768-level bound now
+    chain = (HDR + "module dut(p,n);\n inout p,n; electrical p,n;\n"
+             " parameter real k = 1.0;\n analog I(p,n) <+ 1e-6*(%s);\nendmodule\n"
+             % "\n   + ".join(["k"] * 1200))
+    d, rc, out = build(chain, "chain")
+    got = current(d) if rc == 0 else None
+    check("a 1 200-term chain compiles (E-718; it was the 1000-level bound) and reads 1.2",
+          got is not None and abs(got - 1.2) < 1e-9, "got %s" % got)
     deep = (HDR + "module dut(p,n);\n inout p,n; electrical p,n;\n"
             " parameter real k = 1.0;\n analog I(p,n) <+ 1e-6*(%s);\nendmodule\n"
-            % "\n   + ".join(["k"] * 1200))
+            % "\n   + ".join(["k"] * 40000))
     _, rc, out = build(deep, "deep")
-    check("an over-deep expression says it nests too deeply",
-          rc != 0 and "nests too deeply" in out,
+    check("an over-deep expression says how deep an expression may be, and what counts",
+          rc != 0 and "deeper than 32768 levels" in out and "one level per operator" in out,
           (out.strip().splitlines() or ["(no output)"])[0][:64])
-    check("...and the help note names the limit",
-          "1000" in out and "intermediate variables" in out)
+    check("...and the help note names the bound",
+          "32768" in out and "intermediate variables" in out)
 
     # ======================= ACCEPT HALF ====================================
     # STANDARD_FLAGS travel the same new path as the user's -D flags. A fix that

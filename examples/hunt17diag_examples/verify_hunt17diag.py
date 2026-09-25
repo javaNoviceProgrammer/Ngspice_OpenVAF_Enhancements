@@ -26,6 +26,8 @@ openvaf-r (and ngspice for the two run-time cases).
      a subtraction; L036 now names any character ngspice cannot read, not `$` only.
   k  a flat sum of 999 parameters tripped the nesting limit and then reported
      "'p997' was not found" and "'p998' was already declared"; one error now.
+     E-718 (correctness campaign F4 of 2026-09-25): the sum itself is legal --
+     the bound is 32 768 levels -- so the cascade check uses a chain past it.
   l  `absdelay(V, td)` with a parameter `td = -1e-9` and `$bound_step(bs)` with
      `bs = -1e-9` ran in silence; the deck-fixed value is now said once per
      accepted point (E-651's rule) and projected (0 delay; the bound ignored).
@@ -160,12 +162,19 @@ check("[j] `\\foo+bar` exports `foo+bar`: L036 names the `+`; `a$b` still names 
       ok and len(w) == 2 and any("'foo+bar' has a `+`" in x for x in w) and any("'a$b' has a `$`" in x for x in w), "; ".join(w))
 
 # ------------------------------------------------------------- [k] ---
+# Enhancement-718: the flat sum of 999 parameters is legal (the bound is 32 768
+# levels; it was 1000), and the cascade check moved to a chain past the bound.
 n = 999
-deep = H + "".join(f"parameter real p{i} = 1;\n" for i in range(n)) + "analog I(p,n) <+ V(p,n)*1e-3 + 0*(" + "+".join(f"p{i}" for i in range(n)) + ");\nendmodule\n"
+params = H + "".join(f"parameter real p{i} = 1;\n" for i in range(n))
+flat = params + "analog I(p,n) <+ V(p,n)*1e-3 + 0*(" + "+".join(f"p{i}" for i in range(n)) + ");\nendmodule\n"
+ok, msg = compile_src(flat, "flat")
+check("[k] a flat sum of 999 parameters compiles (E-718; it tripped the 1000-level bound)",
+      ok and not errors(msg), "; ".join(errors(msg)))
+deep = params + "analog I(p,n) <+ V(p,n)*1e-3 + 0*(" + "+".join(f"p{i % n}" for i in range(33000)) + ");\nendmodule\n"
 ok, msg = compile_src(deep, "deep")
 e = errors(msg)
-check("[k] a flat sum of 999 parameters: the nesting limit, once, and nothing about the parameters after it",
-      not ok and len(e) == 1 and "nests too deeply" in e[0] and "was not found" not in msg and "already declared" not in msg, "; ".join(e))
+check("[k] a chain past the bound: the depth error, once, and nothing about the parameters after it",
+      not ok and len(e) == 1 and "deeper than 32768 levels" in e[0] and "was not found" not in msg and "already declared" not in msg, "; ".join(e))
 
 # ------------------------------------------------------------- [l] ---
 ok1, _ = compile_src(H + "parameter real td = -1e-9;\nanalog I(p,n) <+ absdelay(V(p,n), td)*1e-3;\nendmodule\n", "adp")

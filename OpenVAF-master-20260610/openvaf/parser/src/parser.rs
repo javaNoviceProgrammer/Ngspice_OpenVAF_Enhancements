@@ -27,7 +27,8 @@ pub(crate) struct Parser<'t> {
     /// Enhancement-148: current expression-tree depth (recursion + operator-chain
     /// length). Bounded so a pathologically nested expression is reported cleanly
     /// instead of overflowing the recursive-descent parser -- or a later recursive
-    /// tree traversal.
+    /// tree traversal. Enhancement-718 raised the bound to `MAX_EXPR_DEPTH` levels
+    /// on a wide front-end stack.
     pub(crate) expr_depth: Cell<u32>,
 }
 

@@ -25,6 +25,16 @@ argument collector spin on that token forever (it emitted an error without
 advancing), hanging the compiler. The collector now always makes forward
 progress, so such input errors cleanly instead.
 
+Enhancement-718 (correctness campaign F4 of 2026-09-25) raises the expression
+bound from 1000 to 32 768 levels. A flat sum of a thousand terms -- a generated
+polynomial on one line -- tripped the old one as "nesting too deeply": the parser
+reads a chain iteratively, but the passes after it recurse over the left-leaning
+tree they get, one frame per operator. The front end now runs on a 512 MB thread
+(as the codegen has since E-264), where a chain of 128 000 terms compiles, and the
+bound sits a factor of four under what the deepest admitted shape needs. The
+diagnostic names the bound and what it counts, and stands alone: an over-deep
+call argument no longer draws "invalid argument count" after it.
+
 Each check confirms the pathological input now produces a NONZERO exit quickly
 (a clean error, not a crash or a hang), and that valid deep-but-reasonable input
 still compiles. It also spot-checks the diagnostic text.
@@ -33,7 +43,7 @@ import os, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from _setup import VAF as OPENVAF
+from _setup import VAF as OPENVAF, NG as NGSPICE
 
 checks = passed = 0
 def check(label, ok, detail=""):
@@ -76,6 +86,18 @@ for name, expr in [("deep unary  (-…)", "-" * 40000 + "V(a,b)"),
     v, o, dt = run(wr("p.va", modexpr(expr)))
     check(f"parser: {name} -> clean error, no crash/hang  [{v} {dt:.1f}s]", v == "ERROR",
           f"{v}")
+    # Enhancement-718: the one error names the bound and what it counts, and no
+    # knock-on follows it (E-665's recovery, extended to a call argument).
+    nerr = sum(1 for l in o.splitlines() if l.startswith("error"))
+    check(f"parser: {name} -> the one error names the 32768-level bound (E-718)",
+          "deeper than 32768 levels" in o and nerr == 2, f"{nerr} error lines; {o[:160]!r}")
+
+# --- Enhancement-718: the bound's edge, one term either side ---
+v, o, dt = run(wr("edge.va", modexpr("V(a,b)" + "+1.0" * 32800)))
+check(f"parser: chain of 32800 terms, past the bound -> the depth error  [{v} {dt:.1f}s]",
+      v == "ERROR" and "deeper than 32768 levels" in o, f"{v} {o[:160]!r}")
+v, o, dt = run(wr("edge_ok.va", modexpr("V(a,b)" + "+1.0" * 32700)))
+check(f"valid: chain of 32700 terms, under the bound, compiles  [{v} {dt:.1f}s]", v == "OK", f"{v} {o[:160]!r}")
 
 # --- include self-recursion ---
 v, o, dt = run(wr("self.va", '`include "self.va"\n' + HDR + "module m(a); electrical a; endmodule\n"))
@@ -130,10 +152,20 @@ def nest_tern(n):
     for i in range(n):
         e = f"(V(a,b)>{i}?{i}*V(a,b):{e})"
     return e
+def horner(n):
+    e = "1e-3"
+    for i in range(n):
+        e = f"({e}*V(a,b) + {i}e-6)"
+    return e
 valid = {
     "nested ternary depth 30": modexpr(nest_tern(30)),
     "parenthesised depth 100": modexpr("(" * 100 + "V(a,b)" + ")" * 100),
     "sum of 100 terms": modexpr("V(a,b)" + "+1.0" * 100),
+    # Enhancement-718: the shapes the 1000-level bound refused
+    "sum of 5000 terms (E-718; the bound was 1000)": modexpr("V(a,b)" + "+1.0" * 5000),
+    "nested ternary depth 2000 (E-718)": modexpr(nest_tern(2000)),
+    "nested calls sin() depth 2000 (E-718)": modexpr("sin(" * 2000 + "V(a,b)" + ")" * 2000),
+    "Horner polynomial of degree 2000 (E-718)": modexpr(horner(2000)),
     "small array x[0:15]": HDR + "module m(a,b); inout a,b; electrical a,b; real x[0:15]; analog begin x[3]=V(a,b); I(a,b)<+x[3]; end endmodule\n",
     "instance array s[0:7]": HDR + "module sub(p); inout p; electrical p; endmodule\nmodule m(a,b); inout a,b; electrical a,b; sub s[0:7](a); analog I(a,b)<+V(a,b); endmodule\n",
     # Enhancement-219: a genuine macro call with parenthesised (even nested) args
@@ -145,6 +177,25 @@ valid = {
 for name, src in valid.items():
     v, o, dt = run(wr("ok.va", src))
     check(f"valid: {name} still compiles", v == "OK", f"{v} {o[:150]}")
+
+# --- Enhancement-718: the campaign's F4 shape end to end -- a 1 500-term sum evaluates,
+# left to right, to the value Python's left-to-right sum gives ---
+N = 1500
+src = (HDR + 'module m(a,b); inout a,b; electrical a,b; (* desc="r" *) real r;\nanalog begin r = '
+       + " + ".join(f"1.0/{k}" for k in range(1, N + 1)) + "; I(a,b) <+ 1e-3*r; end\nendmodule\n")
+v, o, dt = run(wr("sum1500.va", src))
+check(f"valid: a flat sum of {N} terms compiles (E-718; was 'nests too deeply')  [{v} {dt:.1f}s]", v == "OK", f"{v} {o[:150]}")
+rfile = os.path.join(D, "r.txt")
+if os.path.exists(rfile):
+    os.remove(rfile)
+deck = ("* E-718\nn1 a 0 mm\nv1 a 0 dc 1\n.model mm m\n.control\npre_osdi " + os.path.join(D, "out.osdi")
+        + "\nop\nset numdgt=17\nwrdata " + rfile + " @n1" + "[r]\n.endc\n.end\n")
+subprocess.run([NGSPICE, "-b", wr("sum1500.cir", deck)], capture_output=True, text=True, timeout=60, cwd=D)
+expect = 0.0
+for k in range(1, N + 1):
+    expect += 1.0 / k
+got = float(open(rfile).read().split()[-1]) if os.path.exists(rfile) else float("nan")
+check(f"valid: ... and evaluates to the left-to-right sum {expect!r}, bit for bit", got == expect, f"got {got!r}")
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)
