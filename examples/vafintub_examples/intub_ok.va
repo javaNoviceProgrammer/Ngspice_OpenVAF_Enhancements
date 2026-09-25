@@ -6,6 +6,8 @@
 // constants. A parameter or localparam is a RUNTIME value, never becomes a
 // constant operand in the IR, and is therefore not undefined behaviour -- so it
 // must keep compiling. Legal shift distances and ordinary arithmetic likewise.
+// (Enhancement-716: dividing by the parameter zero at RUN time is a $fatal now,
+// as the modulus has been since E-518; the suite simulates with `pzero=1`.)
 module intub_ok(a, b);
     inout a, b;
     electrical a, b;

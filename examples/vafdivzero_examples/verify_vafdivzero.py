@@ -17,8 +17,12 @@ to, so a literal zero divisor is now rejected.
   [2] the diagnostic names the defect, points at the zero, and says what is still allowed
   [3] `%` by a literal zero is rejected the same way
   [4] a zero divisor via parameter / localparam / derived constant is STILL accepted
-      and simulates -- the check is literal-only on purpose
-  [5] ordinary integer division and IEEE float division by zero are untouched
+      -- the check is literal-only on purpose -- and [5] the module simulates with a
+      nonzero card value for the parameter (ordinary integer division and IEEE float
+      division by zero untouched)
+  [6] Enhancement-716 (correctness campaign F2 of 2026-09-25): the parameter's DEFAULT
+      zero, a deck-level value, is the run-time $fatal naming `/` that the modulus has
+      had since Enhancement-518; it read 0 in silence before
 """
 import os
 import re
@@ -87,7 +91,7 @@ def main():
     if rc_ok == 0:
         deck = os.path.join(HERE, "_dz.cir")
         with open(deck, "w") as f:
-            f.write("divzero ok\nV1 a 0 dc 1\nN1 a 0 m\n.model m divzero_ok\n"
+            f.write("divzero ok\nV1 a 0 dc 1\nN1 a 0 m\n.model m divzero_ok pzero=1\n"
                     ".control\npre_osdi divzero_ok.osdi\nop\nprint i(v1)\n.endc\n.end\n")
         try:
             r = subprocess.run([NGSPICE, "-b", os.path.basename(deck)], cwd=HERE,
@@ -95,15 +99,30 @@ def main():
             o = r.stdout + r.stderr
             sig = r.returncode
         finally:
-            for p in (deck, os.path.join(HERE, "divzero_ok.osdi")):
-                if os.path.exists(p):
-                    os.remove(p)
+            if os.path.exists(deck):
+                os.remove(deck)
         m = re.search(r"i\(v1\)\s*=\s*([-\d.eE+]+)", o)
         got = float(m.group(1)) if m else None
         # 1 kOhm resistor; every other term is multiplied by 0.0
-        check("and they SIMULATE without trapping (I = V/1k, no signal)",
+        check("and they SIMULATE without trapping with pzero=1 on the card (I = V/1k, no signal)",
               sig >= 0 and got is not None and abs(got - (-1e-3)) < 1e-9,
               f"rc={sig} i(v1)={got}")
+        # [6] Enhancement-716: the parameter's default zero is a deck-level value and
+        # takes the modulus' route -- a run-time $fatal naming the operator
+        with open(deck, "w") as f:
+            f.write("divzero default\nV1 a 0 dc 1\nN1 a 0 m\n.model m divzero_ok\n"
+                    ".control\npre_osdi divzero_ok.osdi\nop\nprint i(v1)\n.endc\n.end\n")
+        try:
+            r = subprocess.run([NGSPICE, "-b", os.path.basename(deck)], cwd=HERE,
+                               capture_output=True, text=True, timeout=120)
+            o = r.stdout + r.stderr
+        finally:
+            for p in (deck, os.path.join(HERE, "divzero_ok.osdi")):
+                if os.path.exists(p):
+                    os.remove(p)
+        check("the parameter's default zero is Enhancement-716's $fatal naming / (it read 0 in silence)",
+              "/: the second operand (the divisor) is zero" in o and "OSDI(fatal)" in o,
+              "no fatal" if "OSDI(fatal)" not in o else "")
 
     print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
     sys.exit(0 if passed == checks else 1)

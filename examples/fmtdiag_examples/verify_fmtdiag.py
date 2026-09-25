@@ -172,6 +172,30 @@ check("... and the parameter zero is still the run-time $fatal naming LRM 4.2.4"
       "modulus divisor" in out and "LRM 4.2.4" in out and "raised $fatal" in out, "")
 
 # ---------------------------------------------------------------------------
+print("[5] an integer division by a deck-supplied zero is the same run-time $fatal as the modulus (Enhancement-716)")
+DIV = "parameter integer pz = 1;\nreal q;"
+rc, log = compile_va("divrt", module("divrt", DIV, "  q = 7 / pz;"))
+out = ngspice_op("divrt", "divrt pz=0") if rc == 0 else ""
+check("7 / pz with pz=0 on the card: $fatal naming '/' and LRM 4.2.4",
+      "/: the second operand (the divisor) is zero" in out and "LRM 4.2.4" in out and "raised $fatal" in out,
+      "" if "raised $fatal" in out else "no fatal (the E-714 binaries read 0 in silence)")
+out = ngspice_op("divrt", "divrt pz=2") if rc == 0 else ""
+check("... and 7 / pz with pz=2 is an ordinary run", rc == 0 and "raised $fatal" not in out and "Transient" not in out and "singular" not in out)
+rc, log = compile_va("divdef", module("divdef", "parameter integer pi = 7; parameter integer pz = 1; parameter integer pq = pi / pz;\nreal q;", "  q = pq;"))
+out = ngspice_op("divdef", "divdef pz=0") if rc == 0 else ""
+check("a parameter default pi / pz with pz=0 raises it at setup too",
+      "/: the second operand (the divisor) is zero" in out and "$fatal" in out and "setup" in out, "")
+rc, log = compile_va("divreal", module("divreal", "parameter real rz = 1.0;\nreal q;", "  q = 7.5 / rz;"))
+out = ngspice_op("divreal", "divreal rz=0") if rc == 0 else ""
+check("a REAL quotient by a card zero stays the IEEE infinity, no fatal", rc == 0 and "raised $fatal" not in out, "")
+rc, log = compile_va("divrun", module("divrun", "real q;", "  q = 7 / $rtoi(V(p,n));"))
+out = ngspice_op("divrun", "divrun") if rc == 0 else ""
+check("a run-time (voltage-derived) zero divisor keeps Enhancement-518's defined 0, no fatal",
+      rc == 0 and "raised $fatal" not in out, "")
+rc, log = compile_va("divlit", module("divlit", "real q;", "  q = 7 / 0;"))
+check("the literal form keeps Enhancement-333's compile error", rc != 0 and "division by zero" in log.lower() or "by zero" in log, first_error(log))
+
+# ---------------------------------------------------------------------------
 for f in os.listdir(HERE):
     if f.endswith((".osdi", ".va")) and not f.startswith("keep_") or f == "_o.cir":
         try:

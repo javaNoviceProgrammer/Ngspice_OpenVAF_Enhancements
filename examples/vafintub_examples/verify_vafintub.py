@@ -20,6 +20,9 @@ Both are now clean compile errors.
       shift folds to its defined value)
   [4] legal shifts, runtime distances and parameter/localparam operands STILL
       compile and simulate -- the guard is constant-operand-only on purpose
+      (the simulation gives `pzero=1` on the card: since Enhancement-716 a
+      parameter-zero divisor, default or card, is the modulus' run-time $fatal --
+      the module must still COMPILE, which is what this suite pins)
 
 Enhancement-392 UPDATE: `-2147483648` written directly used to exceed i32::MAX and
 promote to REAL, so the integer overflow was only reachable as `(-2147483647 - 1)`.
@@ -92,7 +95,7 @@ def main():
     if rc_ok == 0:
         deck = os.path.join(HERE, "_iu.cir")
         with open(deck, "w") as f:
-            f.write("intub ok\nV1 a 0 dc 1\nN1 a 0 m\n.model m intub_ok\n"
+            f.write("intub ok\nV1 a 0 dc 1\nN1 a 0 m\n.model m intub_ok pzero=1\n"
                     ".control\npre_osdi intub_ok.osdi\nop\nprint i(v1)\n.endc\n.end\n")
         try:
             r = subprocess.run([NGSPICE, "-b", os.path.basename(deck)], cwd=HERE,
@@ -105,7 +108,7 @@ def main():
                     os.remove(p)
         m = re.search(r"i\(v1\)\s*=\s*([-\d.eE+]+)", o)
         got = float(m.group(1)) if m else None
-        check("and they SIMULATE without trapping (I = V/1k, no signal)",
+        check("and they SIMULATE without trapping, pzero=1 on the card (I = V/1k, no signal)",
               sig >= 0 and got is not None and abs(got - (-1e-3)) < 1e-9,
               f"rc={sig} i(v1)={got}")
 

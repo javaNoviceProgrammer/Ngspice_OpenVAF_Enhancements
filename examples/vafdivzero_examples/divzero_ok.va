@@ -7,6 +7,12 @@
 // undefined behaviour. Rejecting these would break working models, so the check
 // is deliberately literal-only.
 //
+// Enhancement-716: the PARAMETER zero is a deck-level value, and dividing by it at
+// run time is now the same $fatal the modulus has raised since Enhancement-518 (it
+// read 0 in silence). The suite therefore simulates this module with `pzero=1` on the
+// card, and checks the default zero for the fatal. The localparam and the derived
+// constant still fold to the defined 0.
+//
 // Also exercises ordinary division/remainder and IEEE float division by zero,
 // none of which this change may disturb.
 module divzero_ok(a, b);
@@ -18,7 +24,7 @@ module divzero_ok(a, b);
     integer q, r, s, big;
     real f;
     analog begin
-        q = 5 / pzero;              // parameter zero  -- runtime, accepted
+        q = 5 / pzero;              // parameter zero  -- compiles; a card/default zero is E-716's fatal
         r = 5 % lzero;              // localparam zero -- runtime, accepted
         s = (7 / 2) + (7 % 3);      // ordinary integer division: 3 + 1 = 4
         f = 1.0 / 0.0;              // IEEE float division: NOT integer, untouched

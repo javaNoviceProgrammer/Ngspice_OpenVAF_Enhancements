@@ -2,8 +2,8 @@
 
 Three findings of the 2026-09-07 compiler hunt
 ([write-up](../../docs/bug_hunts/2026-09-07_openvaf-r-language-semantics.md), F5, F6
-and F7), fixed by Enhancement-578. Run `python3 verify_fmtdiag.py`; 40 checks, 16 of
-which pass against the shipped compiler.
+and F7), fixed by Enhancement-578. Run `python3 verify_fmtdiag.py`; 46 checks, 16 of
+which pass against the shipped compiler (section [5] is Enhancement-716's, 44 of 46 on the E-714 binaries).
 
 | check | what it pins |
 |---|---|
@@ -16,3 +16,13 @@ The compile-time rule for [4] matches every other domain check in the body valid
 only a constant the compiler can see is judged (`const_num` folds literals and
 `localparam`s, never a `parameter`), so a deck-supplied zero remains the model's own
 business and reaches the run-time guard with the same LRM reference.
+
+## Enhancement-716: an integer division by a card-supplied zero (correctness campaign F2)
+
+Section [5] of `verify_fmtdiag.py` (6 checks) pins the follow-up to E-518 in
+[E-716](../../enhancements_doc/Enhancement-716.md): `7 / pz` with `pz=0` on the card is
+the run-time `$fatal` naming `/` and LRM 4.2.4 (the E-714 compiler read 0 in silence,
+E-518's LLVM-level guard for a genuinely run-time zero answering for the card value),
+and with `pz=2` an ordinary run; a parameter default `pi / pz` with `pz=0` raises it at
+setup; a real quotient by a card zero stays the IEEE infinity; a voltage-derived zero
+divisor keeps the defined 0; the literal form keeps Enhancement-333's compile error.

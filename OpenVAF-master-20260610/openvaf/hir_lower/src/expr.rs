@@ -1037,6 +1037,22 @@ impl BodyLoweringCtx<'_, '_, '_> {
             BinaryOp::Multiplication => {
                 match_signature!(signature: INT_OP => Opcode::Imul, REAL_OP => Opcode::Fmul)
             }
+            // Enhancement-716 (correctness campaign F2 of 2026-09-25): an INTEGER
+            // division by a deck-supplied zero was the one silent case of the
+            // three-route policy: a literal zero is a compile error (E-333), the
+            // modulus by a card zero a run-time fatal (E-518), and the integer
+            // quotient by the same card zero read 0 without a word -- E-518's
+            // LLVM-level guard, which exists to keep a genuinely run-time zero
+            // divisor defined instead of a trap, answered for the card value
+            // too. The card value now takes the modulus' route: a fatal naming
+            // the operator. A REAL quotient by a card zero stays the infinity
+            // IEEE gives it (E-706 folds the literal form to the same).
+            BinaryOp::Division if signature == INT_OP => {
+                let lhs_ = self.lower_expr(lhs);
+                let rhs_ = self.lower_expr(rhs);
+                let rhs_ = self.guard_div_divisor(rhs, rhs_);
+                return self.ctx.ins().binary1(Opcode::Idiv, lhs_, rhs_);
+            }
             BinaryOp::Division => {
                 match_signature!(signature: INT_OP => Opcode::Idiv, REAL_OP => Opcode::Fdiv)
             }
@@ -4838,6 +4854,29 @@ impl BodyLoweringCtx<'_, '_, '_> {
         } else {
             (self.ctx.ins().fne(val, F_ZERO), F_ONE)
         };
+        self.ctx.make_select(ok, |ctx, branch| {
+            if branch {
+                val
+            } else {
+                ctx.runtime_fatal(msg, None);
+                safe
+            }
+        })
+    }
+
+    /// Enhancement-716: the integer-division twin of `guard_rem_divisor` -- a
+    /// deck-supplied zero divisor is a run-time fatal naming the operator; a
+    /// genuinely run-time zero keeps E-518's defined quotient (0), as the
+    /// modulus keeps its remainder.
+    fn guard_div_divisor(&mut self, rhs: ExprId, val: Value) -> Value {
+        if !self.is_param_derived(rhs) {
+            return val;
+        }
+        let msg = "/: the second operand (the divisor) is zero, so the integer quotient has \
+                   no value (LRM 4.2.4 makes the modulus by it an error)";
+        let zero = self.ctx.iconst(0);
+        let ok = self.ctx.ins().ine(val, zero);
+        let safe = self.ctx.iconst(1);
         self.ctx.make_select(ok, |ctx, branch| {
             if branch {
                 val

@@ -17,7 +17,7 @@ module lrmexpr(a, b);
   (* desc="10%9 (normal modulus untouched)"    *)  integer m1;
   (* desc="10/9 (normal division untouched)"   *)  integer d1;
   (* desc="INT_MIN/-1 wraps, no SIGFPE"        *)  integer d2;
-  (* desc="7/(param-derived 0) defined -> 0"   *)  integer d3;
+  (* desc="7/(runtime 0) defined -> 0"         *)  integer d3;
   (* desc="7%(runtime 0) defined -> 0"         *)  integer m3;
 
   analog begin
@@ -31,7 +31,8 @@ module lrmexpr(a, b);
     m1 = 10 % z9;
     d1 = 10 / z9;
     d2 = (-2147483647 - 1) / zm;
-    d3 = 7 / (z9 - 9);
+    d3 = 7 / $rtoi(V(a,b) - V(a,b));       // genuinely runtime zero divisor (Enhancement-716:
+                                           // a PARAMETER-derived zero is a fatal now, see verify [12])
     m3 = 7 % $rtoi(V(a,b) - V(a,b));       // genuinely runtime zero divisor
     I(a,b) <+ 1e-3*V(a,b);
   end

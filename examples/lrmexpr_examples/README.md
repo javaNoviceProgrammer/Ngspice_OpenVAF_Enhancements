@@ -19,4 +19,7 @@ deviations, and a latent undefined-behavior hazard. This suite pins the fixes:
 - **Case (in)equality** (4.2.6): `===`/`!==` lex and evaluate as 2-state
   `==`/`!=` (they died with a parse error that never named the operator).
 
-Run `python3 verify_lrmexpr.py` — 22 checks, both solvers.
+Run `python3 verify_lrmexpr.py` — 25 checks, both solvers (24 of 25 on the E-714 binaries:
+[12]–[14] are [E-716](../../enhancements_doc/Enhancement-716.md)'s, an integer division by a
+deck-supplied zero being the same run-time fatal as the modulus; `d3` of [4] now divides by a
+genuinely run-time zero, which stays the defined 0).

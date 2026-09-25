@@ -125,7 +125,7 @@ if rc == 0:
         ("m1", 1, "10%9 untouched"),
         ("d1", 1, "10/9 untouched"),
         ("d2", -2147483648, "INT_MIN/-1 wraps (no UB, no SIGFPE)"),
-        ("d3", 0, "7/(param-derived 0) is the defined 0"),
+        ("d3", 0, "7/(runtime 0) is the defined 0 (a param-derived 0 is E-716's fatal, [12])"),
         ("m3", 0, "7%(runtime 0) is the defined 0, not a fatal"),
     ]:
         got = opvar(sim, name)
@@ -200,6 +200,24 @@ if rc == 0:
     check("[11] a nonzero override runs (10%3 = 1 V on o5)",
           re.search(r"v\(o5\)\s*=\s*1\b", sim) is not None
           and "OSDI(fatal)" not in sim)
+
+# ---- integer division by a deck-supplied zero (Enhancement-716) ----------
+print("\ninteger division by a deck-supplied zero (Enhancement-716):")
+rc, out, osdi = compile_src(HDR + """
+module divz(o7); inout o7; electrical o7;
+  parameter integer z = 0;
+  analog V(o7) <+ 10 / z;
+endmodule
+""", "divz")
+check("[12] a parameter-zero divisor still compiles (value is deck-overridable)", rc == 0,
+      out.strip().splitlines()[-1] if rc else "")
+if rc == 0:
+    sim = run("N1 o7 mm\n.model mm divz", "op\nprint v(o7)", "divz", osdi)
+    check("[13] deck-supplied zero aborts with a fatal naming / (E-518 read 0 in silence)",
+          "/: the second operand (the divisor) is zero" in sim and "OSDI(fatal)" in sim)
+    sim = run("N1 o7 mm\n.model mm divz(z=3)", "op\nprint v(o7)", "divok", osdi)
+    check("[14] a nonzero override runs (10/3 = 3 V on o7)",
+          re.search(r"v\(o7\)\s*=\s*3\b", sim) is not None and "OSDI(fatal)" not in sim)
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)
