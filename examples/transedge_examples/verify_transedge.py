@@ -307,5 +307,61 @@ check("a sine through transition (a continuous input, LRM: 'may run slowly') com
       "follows: 0.5 +- 0.1 at 2.5 ms (it bred a breakpoint per timepoint and never finished)",
       "vend" in v and abs(v["vend"] - 0.5) < 0.1, f"vend={v.get('vend')}")
 
+# ---------------------------------------------------------------------------
+# 6. Enhancement-720 (correctness campaign 2, F3 of 2026-09-25): a source's
+#    edge fed straight into transition() -- a PULSE with a 1 ns rise, which
+#    the integrator resolves with a dozen accepted points -- is a dozen
+#    CHANGES of the input, and the reversal rule of LRM 4.5.8 (Figure 4-7)
+#    took the interrupted ramp's destination, which by then was the input's
+#    value at the last point on the near side of the output (0.683 of a 1 V
+#    edge, wherever the timepoint fell): the readjusted slope was 0.68/tf,
+#    set by the step and by the delay path, where the comparator form above
+#    gives (v3 - v2)/tf = 1/tf. Every change after an edge's first readjusts
+#    against the ramp the first change found, and the edge's ramp gets its
+#    trailing corner breakpoint once the input holds still.
+# ---------------------------------------------------------------------------
+print("\n  Enhancement-720: a source edge fed straight in is one change, whatever its width")
+
+INTR = "V1 a 0 PULSE(0 1 1m {e} {e} 50u 10m)"
+LINES = ("meas tran vi FIND v(o) AT={ti}\nmeas tran vh FIND v(o) AT={th}\n"
+         "meas tran vz FIND v(o) AT={tz}\nmeas tran tz WHEN v(o)=0.01 FALL=1")
+
+
+def intr(card, tag, td=0.0, edge="1n", opts=""):
+    return meas(card, INTR.format(e=edge), "1.3m", "1u", tag,
+                LINES.format(ti=1.05e-3 + td, th=1.075e-3 + td, tz=1.1005e-3 + td), opts)
+
+
+def intr_ok(v, td=0.0):
+    return (abs(v.get("vi", 9) - 0.5) < 1e-3 and abs(v.get("vh", 9) - 0.25) < 1e-3
+            and abs(v.get("vz", 9)) < 1e-9 and abs(v.get("tz", 9) - (1.099e-3 + td)) < 1e-6)
+
+
+def intr_got(v):
+    return " ".join(f"{k}={v[k]:.6g}" for k in ("vi", "vh", "vz", "tz") if k in v)
+
+
+v = intr("tr=100u tf=100u sel=2", "e720")
+check("the 1 ns edge of a source through transition(V(a), 0, 100u, 100u), reversed at 0.5: "
+      "falls at (0 - 1)/tf as the comparator does -- 0.25 at +25 us, 0 by +50 us, y = 0.01 at "
+      "1.099 ms (was 0.68/tf: 0.01 at 1.120 ms)", intr_ok(v), intr_got(v))
+
+v = intr("tr=100u tf=100u td=10u sel=2", "e720d", td=10e-6)
+check("the same behind a 10 us delay (the edge's points come due as a burst): 0.25 at "
+      "1.085 ms, y = 0.01 at 1.109 ms (was 0.01 at 1.130 ms)", intr_ok(v, 10e-6), intr_got(v))
+
+v = intr("tr=100u tf=100u sel=2", "e720r", edge="1p", opts=".options reltol=1e-6")
+check("a 1 ps edge under reltol=1e-6 (other timepoints inside the edge): the same slope -- "
+      "the reversal's reference is the edge's level, not where a timepoint fell",
+      intr_ok(v), intr_got(v))
+
+v = meas("tr=1u tf=1u sel=2", PULSE, "6m", "10u", "e720u",
+         "meas tran vmid FIND v(o) AT=1.0005m\nmeas tran vtop FIND v(o) AT=1.0011m\n"
+         "meas tran vfmid FIND v(o) AT=3.0005m\nmeas tran vlow FIND v(o) AT=3.0011m")
+check("an uninterrupted source edge is as it was: half way at 0.5 us, done at 1 us, both edges",
+      abs(v.get("vmid", 9) - 0.5) < 0.02 and abs(v.get("vtop", 9) - 1) < 1e-9
+      and abs(v.get("vfmid", 9) - 0.5) < 0.02 and abs(v.get("vlow", 9)) < 1e-9,
+      " ".join(f"{k}={v[k]:.6g}" for k in ("vmid", "vtop", "vfmid", "vlow") if k in v))
+
 print(f"\n  {passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

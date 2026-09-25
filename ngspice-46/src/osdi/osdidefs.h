@@ -109,6 +109,8 @@ typedef struct OsdiTransitionPending {
     double target;    /* the input's new value */
     double trise;     /* the times the operator held at the change */
     double tfall;
+    bool churn;       /* Enhancement-720: the change followed a change -- one
+                       * of the points the integrator put inside an input edge */
 } OsdiTransitionPending;
 
 /* Enhancement-698: the state of one transition slot on the ACCEPTED timeline.
@@ -128,6 +130,20 @@ typedef struct OsdiTransitionState {
     double t_dest;     /* and its destination (t2, v2); the output holds v_dest     */
     double v_dest;     /* from t_dest on                                            */
     double slope;
+    /* Enhancement-720: the ramp the current input EDGE interrupted, as it
+     * stood before the edge's first accepted change. An edge the integrator
+     * resolves with several points (a source's 1 ns rise) is several changes;
+     * each one after the first readjusts against this ramp, so that the
+     * reference level of LRM 4.5.8's slope rule is the edge's own level and
+     * not the input's value at whatever point the step control put inside
+     * the edge. Idle before the edge: each such change is a fresh ramp. */
+    bool ref_active;
+    bool ref_rising;
+    double ref_v_orig;
+    double ref_v_dest;
+    bool corner_pending; /* E-720: the ramp was (re)started inside an input
+                          * edge, without breakpoints; its trailing corner is
+                          * placed once the input holds still */
     OsdiTransitionPending *pending;  /* scheduled transitions, ascending t_due */
     uint32_t n_pending;
     uint32_t cap_pending;

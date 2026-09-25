@@ -449,6 +449,10 @@ static void transition_stamp(CKTcircuit *ckt, void *inst,
         s->armed = true;
         s->active = false;
         s->changed_prev = false;
+        s->ref_active = false; /* E-720: no ramp for an edge to interrupt */
+        s->ref_rising = false;
+        s->ref_v_orig = s->ref_v_dest = 0.0;
+        s->corner_pending = false;
         s->n_pending = 0;
         s->x_last = ckt->CKTrhsOld ? ckt->CKTrhsOld[y_mapped] : 0.0;
         s->v_out = s->x_last;

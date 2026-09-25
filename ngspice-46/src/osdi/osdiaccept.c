@@ -204,11 +204,28 @@ static void transition_break_now(CKTcircuit *ckt) {
  * `brk`: place the corner breakpoints (not for an input that churns). */
 static void transition_start(CKTcircuit *ckt, OsdiTransitionState *s,
                              double t0, double target, double trise,
-                             double tfall, bool brk) {
+                             double tfall, bool brk, bool churn) {
   double vi = s->v_out;
+  /* Enhancement-720: the ramp this change interrupts. A change that follows
+   * a change is one of the points the integrator put inside an input edge
+   * (a source's 1 ns rise is a dozen accepted points), or an input that is
+   * not piecewise constant: it readjusts against the ramp the edge's FIRST
+   * change found, not against what the previous point of the same edge made
+   * of it. The reversal rule takes the interrupted ramp's destination, and
+   * that had become the input's value at the last point on the near side of
+   * the output -- 0.683 of a 1 V edge, wherever the timepoint fell -- so the
+   * slope was set by the step and by the delay path, not by the two levels
+   * LRM 4.5.8 names. */
+  if (!churn) {
+    s->ref_active = s->active;
+    s->ref_rising = s->slope > 0.0;
+    s->ref_v_orig = s->v_orig;
+    s->ref_v_dest = s->v_dest;
+  }
   if (target == vi) {
     /* the input came back to where the output is: nothing to move */
     s->active = false;
+    s->corner_pending = false;
     return;
   }
   bool rising = target > vi;
@@ -218,15 +235,15 @@ static void transition_start(CKTcircuit *ckt, OsdiTransitionState *s,
   if (negligible)
     tt = eps;
 
-  if (s->active && !negligible) {
+  if (s->ref_active && !negligible) {
     /* readjustment: the slope from the interrupted ramp's origin (same
      * direction) or destination (reversal) over the NEW time, applied from
      * the point of interruption */
-    bool was_rising = s->slope > 0.0;
-    double v_ref = (rising == was_rising) ? s->v_orig : s->v_dest;
+    double v_ref = (rising == s->ref_rising) ? s->ref_v_orig : s->ref_v_dest;
     double slope = (target - v_ref) / tt;
     if (slope != 0.0 && (target - vi) / slope > 0.0) {
       double t3 = t0 + (target - vi) / slope;
+      s->active = true;
       s->slope = slope;
       s->t_from = t0;
       s->v_from = vi;
@@ -234,6 +251,7 @@ static void transition_start(CKTcircuit *ckt, OsdiTransitionState *s,
       s->v_dest = target;
       s->v_orig = v_ref;
       s->t_orig = t3 - tt;
+      s->corner_pending = !brk;
       if (brk) {
         transition_break_now(ckt);
         transition_set_break(ckt, t3);
@@ -250,6 +268,7 @@ static void transition_start(CKTcircuit *ckt, OsdiTransitionState *s,
   s->v_orig = vi;
   s->t_dest = t0 + tt;
   s->v_dest = target;
+  s->corner_pending = !brk && !negligible;
   if (brk) {
     transition_break_now(ckt);
     if (!negligible)
@@ -262,7 +281,12 @@ static void transition_accept_slot(CKTcircuit *ckt, OsdiTransitionState *s,
                                    double tfall) {
   double t = ckt->CKTtime;
   bool changed = x != s->x_last;
-  bool brk = !(changed && s->changed_prev); /* a churning input: no breakpoints */
+  /* a change following a change: a point inside an input edge, or an input
+   * that is not piecewise constant -- no breakpoints for it, and it
+   * readjusts against the ramp the edge's first change found (E-720) */
+  bool churn = changed && s->changed_prev;
+  bool brk = !churn;
+  bool edge_over = !changed && s->changed_prev; /* the input holds still again */
   s->changed_prev = changed;
 
   /* 1. advance the active ramp to this point */
@@ -282,7 +306,7 @@ static void transition_accept_slot(CKTcircuit *ckt, OsdiTransitionState *s,
     s->n_pending--;
     if (s->n_pending > 0)
       memmove(&s->pending[0], &s->pending[1], s->n_pending * sizeof p);
-    transition_start(ckt, s, t, p.target, p.trise, p.tfall, brk);
+    transition_start(ckt, s, t, p.target, p.trise, p.tfall, brk, p.churn);
   }
 
   /* 3. a change of the accepted input creates a transition */
@@ -290,7 +314,7 @@ static void transition_accept_slot(CKTcircuit *ckt, OsdiTransitionState *s,
     s->x_last = x;
     if (!(td > 0.0)) { /* 0, negative (projected by the compiler), NaN */
       s->n_pending = 0;
-      transition_start(ckt, s, t, x, trise, tfall, brk);
+      transition_start(ckt, s, t, x, trise, tfall, brk, churn);
     } else {
       double t_due = t + td;
       while (s->n_pending > 0 && s->pending[s->n_pending - 1].t_due >= t_due)
@@ -303,10 +327,27 @@ static void transition_accept_slot(CKTcircuit *ckt, OsdiTransitionState *s,
       s->pending[s->n_pending].target = x;
       s->pending[s->n_pending].trise = trise;
       s->pending[s->n_pending].tfall = tfall;
+      s->pending[s->n_pending].churn = churn;
       s->n_pending++;
       if (brk)
         transition_set_break(ckt, t_due);
     }
+  }
+
+  /* 4. the input holds still after a run of changes: the edge is over. Its
+   *    ramp gets the trailing corner breakpoint the run's changes did not
+   *    place ("time points at both corners"), and when the edge was queued
+   *    behind a delay its final value's due time gets one, so that the ramp
+   *    the edge ends in starts there and not at whatever accepted point
+   *    first passes it -- one breakpoint each per edge, none for an input
+   *    that never holds still (E-720) */
+  if (edge_over) {
+    if (s->active && s->corner_pending) {
+      transition_set_break(ckt, s->t_dest);
+      s->corner_pending = false;
+    }
+    if (s->n_pending > 0 && s->pending[s->n_pending - 1].churn)
+      transition_set_break(ckt, s->pending[s->n_pending - 1].t_due);
   }
 }
 

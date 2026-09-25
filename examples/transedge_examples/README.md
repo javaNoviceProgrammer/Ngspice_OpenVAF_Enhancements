@@ -4,7 +4,7 @@
 python3 verify_transedge.py
 ```
 
-26 checks, both linear solvers, spanning five decades of rise time.
+30 checks, both linear solvers, spanning five decades of rise time.
 
 ## What was wrong
 
@@ -80,3 +80,21 @@ half the fall time; and a sine through `transition` finishing (it used to
 breed a breakpoint per timepoint). The E-512 and E-697 checks above are
 unchanged, and still pass: the endpoint is exact at every speed and a rate
 at or above 1e12 V/s is simply a rate the limiter never has to enforce.
+
+## Enhancement-720: a source's edge is one change, whatever its width
+
+Since [E-720](../../enhancements_doc/Enhancement-720.md) (correctness campaign 2,
+F3 of 2026-09-25) a source's edge fed straight into `transition` — a `PULSE`
+with a 1 ns rise, which the integrator resolves with a dozen accepted points —
+readjusts an interrupted ramp as the comparator form does. Each of those points
+was a change of the input, and LRM 4.5.8's reversal rule took the interrupted
+ramp's destination, which by then was the input's value at the last point on
+the near side of the output (0.683 of a 1 V edge, wherever the timepoint fell):
+the readjusted ramp ran at 0.68/tf, or 0.63/tf behind a delay, where the
+comparator gave the LRM's 1/tf. Every change after an edge's first now
+readjusts against the ramp the first change found, and the edge's ramp gets
+its trailing corner breakpoint — and, behind a delay, its final due time — once
+the input holds still. Four checks: the 1 ns edge reversed at 0.5 falls at
+(0 − 1)/tf (0.25 at +25 µs, y = 0.01 at 1.099 ms, 1.120 ms before), the same
+behind a 10 µs delay (1.109 ms, 1.130 ms before), a 1 ps edge under
+`reltol=1e-6` with the same slope, and an uninterrupted source edge as it was.
