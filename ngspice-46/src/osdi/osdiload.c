@@ -1784,6 +1784,25 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
      * calculation" keeps. */
     if (sim_info.flags & (ANALYSIS_AC | ANALYSIS_NOISE)) {
       sim_info.flags &= ~(uint32_t)ANALYSIS_DC;
+      /* Enhancement-722 (correctness campaign 2, F1 of 2026-09-25): the
+       * MODEINITSMSIG evaluation of an AC or NOISE job is not its operating
+       * point but its linearisation -- the one evaluation whose resistive
+       * and reactive Jacobians the whole sweep uses (OSDIacLoad, the noise
+       * load) -- and it runs with MODEDCOP set, so it carried the AC-OP
+       * column's flags (static 1) where Table 4-22's AC and NOISE columns
+       * have static 0. The compiler lowers idt(x, ic, analysis("static")),
+       * the idiom of LRM 4.5.5's own example, as a select between ic and
+       * the integrator, and a topology switched on analysis("static") the
+       * same way: with the static bit on, the linearisation had no reactive
+       * part for them -- a 1 nF integrator read as a short in .ac (1/R
+       * where 6.28e-6 A was due), its dual as an open. The sweep's own
+       * evaluation carries the sweep's flags; the operating point keeps
+       * the AC-OP column (static 1, its name), as do the final step and
+       * the events. The plain op, and the jobs E-684 gives no small-signal
+       * name (PSS's passes), keep the equilibrium flags. */
+      if (is_init_smsig) {
+        sim_info.flags &= ~(uint32_t)ANALYSIS_STATIC;
+      }
     }
   }
 

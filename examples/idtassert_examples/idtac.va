@@ -1,0 +1,33 @@
+`include "disciplines.vams"
+// Enhancement-722 (correctness campaign 2, F1 of 2026-09-25): an idt asserted
+// on analysis("static") -- LRM 4.5.5's own idiom for an integrator pinned at
+// the operating point -- had no integrator in .ac and .noise. ngspice's
+// small-signal linearisation pass (MODEINITSMSIG, the one evaluation whose
+// Jacobians the whole sweep uses) ran with the operating point's flags, static
+// = 1, so the compiler's select between ic and the integrator state took ic:
+// a 1 nF integrator read as a short (1/R) in .ac, its dual as an open, and a
+// topology switched on analysis("static") linearised its static branch. The
+// same modules asserted on "ic" or "dc" were right all along, and every
+// transient matched ngspice's own capacitor.
+module i_static(a, b);   // a 1 nF capacitor as an integrator, asserted on "static"
+  inout a, b;
+  electrical a, b;
+  analog V(a, b) <+ idt(I(a, b), 0.0, analysis("static")) / 1e-9;
+endmodule
+module i_ic(a, b);       // the same asserted on "ic", the reference
+  inout a, b;
+  electrical a, b;
+  analog V(a, b) <+ idt(I(a, b), 0.0, analysis("ic")) / 1e-9;
+endmodule
+module g_static(a, b);   // the dual: I = 1e-3 * idt(V), an inductor of 1 kH
+  inout a, b;
+  electrical a, b;
+  analog I(a, b) <+ 1e-3 * idt(V(a, b), 0.0, analysis("static"));
+endmodule
+module sw_static(a, b);  // a topology switched on "static": 0 V at the op, 1 nF otherwise
+  inout a, b;
+  electrical a, b;
+  analog begin
+    if (analysis("static")) V(a, b) <+ 0.0; else I(a, b) <+ ddt(1e-9 * V(a, b));
+  end
+endmodule

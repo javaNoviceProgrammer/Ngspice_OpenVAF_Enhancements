@@ -39,3 +39,19 @@ exactly 1 s; and, since E-678, the same reset at the microsecond scale
 the reset's time constant follows the transient's print step instead of
 a fixed 10 µs, and its gain is capped at 2/h so the onset step cannot flip
 the trapezoidal rule.
+
+## Enhancement-722: an idt asserted on analysis("static") in .ac and .noise
+
+Since [E-722](../../enhancements_doc/Enhancement-722.md) (correctness campaign 2,
+F1 of 2026-09-25) an integrator asserted on `analysis("static")` -- LRM 4.5.5's
+own idiom for one pinned at the operating point -- is an integrator in `.ac`
+and `.noise`. ngspice's small-signal linearisation pass, the one evaluation
+whose Jacobians the whole sweep uses, ran with the operating point's flags
+(`static` 1) where LRM Table 4-22's AC and NOISE columns have `static` 0, so
+the compiler's select between `ic` and the integrator state took `ic`: a 1 nF
+integrator behind 1 kΩ read 1/R = 1 mA in `.ac` where 6.283e-6 A was due, its
+dual (`I <+ g·idt(V)`) read 0 where 1.59e-7 A was due, and a topology switched
+on `"static"` linearised its static branch, a short. The same modules asserted
+on `"ic"` were right all along, and every transient matched. `idtac.va` holds
+the four modules; section 5's six checks read the `.ac` magnitude and phase,
+the `.noise` output spectrum against the `"ic"` form, and the transient.

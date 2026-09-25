@@ -127,6 +127,64 @@ def main():
         check(f"{label}: resumed from ic: 0.9985 at 3.5 us (was 1.82)", v.get("r35"), 0.9985, 1e-3)
         check(f"{label}: 2.4985 at 5 us (was 3.32)", v.get("r50"), 2.4985, 1e-3)
 
+    # -----------------------------------------------------------------------
+    # 5. Enhancement-722 (correctness campaign 2, F1 of 2026-09-25): an idt
+    #    asserted on analysis("static") -- LRM 4.5.5's own idiom -- had no
+    #    integrator in .ac and .noise: the small-signal linearisation pass
+    #    carried the operating point's flags (static 1) where Table 4-22's AC
+    #    and NOISE columns have static 0, and the select between ic and the
+    #    integrator took ic. A 1 nF integrator behind 1 kOhm read 1/R = 1 mA in
+    #    .ac (6.283e-6 A due), its dual 0 (1.59e-7 due), a topology switched on
+    #    "static" a short; the same asserted on "ic" was right all along.
+    # -----------------------------------------------------------------------
+    print()
+    print("Enhancement-722: an idt asserted on analysis(\"static\") in .ac and .noise")
+    subprocess.run([OPENVAF, "idtac.va", "-o", "idtac.osdi"], cwd=HERE, check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def small(module, ctl, tag):
+        deck = (f"* idtac {tag}\n.options reltol=1e-6 abstol=1e-15 vntol=1e-9\n"
+                f"V1 in 0 dc 0 ac 1\nR1 in x 1k\nN1 x 0 mm\n.model mm {module}\n"
+                f".control\nset noinit\nset numdgt=12\npre_osdi idtac.osdi\n{ctl}\n.endc\n.end\n")
+        with open(os.path.join(HERE, "_i.cir"), "w") as fh:
+            fh.write(deck)
+        out = subprocess.run([NGSPICE, "-b", "_i.cir"], cwd=HERE, capture_output=True,
+                             text=True, timeout=180).stdout
+        vals = {}
+        for line in out.splitlines():
+            if "=" in line and not line.lstrip().startswith("*"):
+                k, _, v = line.partition("=")
+                try:
+                    vals[k.strip()] = float(v.split()[0])
+                except (ValueError, IndexError):
+                    pass
+        return vals
+
+    AC = "ac lin 1 1k 1k\nprint mag(i(v1)) ph(i(v1))"
+    NOISE = "noise v(x) v1 lin 1 1k 1k\nsetplot noise1\nprint onoise_spectrum"
+    TRAN = "tran 0.01u 1u\nmeas tran vx find v(x) at=1u"
+    ref = small("i_ic", AC, "ic")
+    v = small("i_static", AC, "static")
+    check("i_static in .ac: |i| = 6.283e-6 A, the 1 nF integrator (was 1e-3, a short)",
+          v.get("mag(i(v1))"), 6.28306e-6, 1e-9)
+    check("  ... and its phase is the RC's, as asserted on \"ic\"", v.get("ph(i(v1))"),
+          ref.get("ph(i(v1))", 9), 1e-6)
+    v = small("g_static", AC, "gstatic")
+    check("g_static in .ac: |i| = 1.5915e-7 A, the 1 kH inductor (was 0, an open)",
+          v.get("mag(i(v1))"), 1.59155e-7, 1e-10)
+    v = small("sw_static", AC, "sw")
+    check("a topology switched on analysis(\"static\") linearises its dynamic branch: "
+          "6.283e-6 A (was 1e-3)", v.get("mag(i(v1))"), 6.28306e-6, 1e-9)
+    ref = small("i_ic", NOISE, "icn")
+    v = small("i_static", NOISE, "staticn")
+    check("i_static in .noise: the output noise at 1 kHz is the RC's 4.07e-9 V/sqrt(Hz), as "
+          "asserted on \"ic\" (was 0: the node pinned)", v.get("onoise_spectrum"),
+          ref.get("onoise_spectrum", 9), 1e-15)
+    ref = small("i_ic", TRAN.replace("dc 0 ac 1", "dc 0 ac 1"), "ict")
+    v = small("i_static", TRAN, "statict")
+    check("i_static in tran: unchanged, equal to \"ic\" at 1 us", v.get("vx"),
+          ref.get("vx", 9), 1e-9)
+
     print()
     print("ALL PASS" if ok else "SOME CHECKS FAILED")
     return 0 if ok else 1

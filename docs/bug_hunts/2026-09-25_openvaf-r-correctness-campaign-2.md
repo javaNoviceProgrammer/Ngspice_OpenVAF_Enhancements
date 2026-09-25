@@ -79,7 +79,7 @@ The ground, and what held:
 
 | # | finding | kind |
 |---|---|---|
-| [F1](#f1--an-idt-asserted-on-analysisstatic-has-no-integrator-in-the-small-signal-analyses) | `V(a,b) <+ idt(I(a,b), 0, analysis("static"))/C` — the LRM's own idiom for an integrator that must be pinned at the operating point — is a **short** in `.ac` (\|i\| = 1/R, 158× off) and `I <+ k·idt(V, 0, analysis("static"))` an **open**; `if (analysis("static")) V <+ v0; else I <+ ddt(C·V)` is a short in `.ac` too; the same with `analysis("dc")`, `analysis("ic")` or no assert is right. ngspice's small-signal linearisation pass (`MODEINITSMSIG`) carries `ANALYSIS_STATIC`, so the model sees the LRM's AC-OP column where the sweep needs the AC column (static 0) | simulator side: a wrong small-signal model from a legal idiom |
+| [F1](#f1--an-idt-asserted-on-analysisstatic-has-no-integrator-in-the-small-signal-analyses) | *(fixed in [E-722](../../enhancements_doc/Enhancement-722.md): the linearisation pass of an `.ac`/`.noise` job carries the sweep's flags, static 0, and the integrator is 1/(jω))* `V(a,b) <+ idt(I(a,b), 0, analysis("static"))/C` — the LRM's own idiom for an integrator that must be pinned at the operating point — is a **short** in `.ac` (\|i\| = 1/R, 158× off) and `I <+ k·idt(V, 0, analysis("static"))` an **open**; `if (analysis("static")) V <+ v0; else I <+ ddt(C·V)` is a short in `.ac` too; the same with `analysis("dc")`, `analysis("ic")` or no assert is right. ngspice's small-signal linearisation pass (`MODEINITSMSIG`) carries `ANALYSIS_STATIC`, so the model sees the LRM's AC-OP column where the sweep needs the AC column (static 0) | simulator side: a wrong small-signal model from a legal idiom |
 | [F2](#f2--the-caret-label-of-every-argument-diagnostic-reads-invalid-the-argument-for-sqrt) | *(fixed in [E-721](../../enhancements_doc/Enhancement-721.md): the renderer drops the article, "invalid argument for sqrt", and a warning's label does not call the constant invalid)* the caret label of every constant-argument diagnostic reads "invalid the argument for sqrt", "invalid the maximum negative rate for slew", "invalid the denominator for …": `format!("invalid {what} for {builtin}")` with a `what` that carries its own article, at 63 call sites | diagnostic wording |
 | [F3](#f3--an-interrupted-transition-ramps-at-068-of-the-full-swing-rate) | *(fixed in [E-720](../../enhancements_doc/Enhancement-720.md): the source's 1 ns edge was a dozen accepted points, each a change, and the reversal took an intermediate value as the interrupted ramp's destination; every change after an edge's first now readjusts against the ramp the first found, and the edge's ramp gets its corners)* a `transition` interrupted half-way (rise 20 µs, a fall requested at 0.5) ramps down at 2.28e4 V/s and reaches 0 after 22.0 µs — neither the LRM's full time from the current value (30 µs) nor the full-swing rate (15 µs); with fall 20 µs, 14.67 µs: the same fraction 0.733 of the fall time either way | operator semantics at a corner the suites do not pin |
 
@@ -126,6 +126,17 @@ flags (`lrmnoise`, `lrmfuncs`, `analyses`, `finalstep`, `evtnoise`) pin op and t
 phases, not this pass.
 
 **Kind.** Simulator side; a wrong small-signal model from a legal idiom, silent.
+
+*Fixed in [E-722](../../enhancements_doc/Enhancement-722.md).* One line in `OSDIload`: when
+the owning job's name is `ac` or `noise`, the `MODEINITSMSIG` evaluation — the sweep's
+own, not its operating point — drops `ANALYSIS_STATIC` as it already dropped
+`ANALYSIS_DC`. Every row of the table above now reads 6.283e-6 A (the dual 1.59e-7 A),
+`$strobe` prints `static=0 dc=0 ac=1` for `.ac` and `static=0 noise=1` for `.noise`, and
+the operating point, the op variables (E-412's bias restore) and the step events keep
+the AC-OP column. `idtassert` section 5 (six checks) and `lrmnoise`'s three column
+checks pin it; `analyses`, `analysis`, `lrmfuncs`, `finalstep`, `evtnoise`, `opvarac`,
+`idtic`, `dcstate` and `rfanalyses` are unchanged. The PSS family's linearisation passes,
+which E-684 gives no small-signal name, keep the equilibrium flags.
 
 ## F2 — the caret label of every argument diagnostic reads "invalid the argument for sqrt"
 

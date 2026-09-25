@@ -114,6 +114,21 @@ if rc == 0:
     check("...and every t > 0 evaluation reports ic=0 static=0",
           bool(later) and all("ic=0" in l and "static=0" in l for l in later),
           f"{len(later)} timepoint evals")
+    # Enhancement-722 (correctness campaign 2, F1 of 2026-09-25): the AC and
+    # NOISE columns. The small-signal linearisation pass -- the one evaluation
+    # whose Jacobians the whole sweep uses, and the one $strobe reports for the
+    # job -- carried the operating point's flags (static 1); Table 4-22's AC
+    # and NOISE columns have static 0, dc 0 and the sweep's own name 1.
+    for ctl, tag, want, what in (
+            ("ac lin 1 1k 1k", "ac", "dc=0 ac=1 noise=0 ic=0 static=0", "the sweep's evaluation reports"),
+            ("noise v(in) V1 lin 1 1k 1k", "noise", "dc=0 ac=0 noise=1 ic=0 static=0", "the sweep's evaluation reports"),
+            ("op", "dc", "dc=1 ac=0 noise=0 ic=0 static=1", "the operating point still reports")):
+        sim = run(body.replace("DC 1.0", "DC 1.0 ac 1"), ctl, f"col_{tag}", osdi)
+        lines = [l for l in sim.splitlines() if "FLAGS t=0 " in l]
+        check(f"the {tag.upper()} column: {what} {want}"
+              + (" (static was 1)" if tag != "dc" else ""),
+              bool(lines) and all(w in lines[-1] for w in want.split()),
+              lines[-1][lines[-1].find("dc="):][:48] if lines else "no FLAGS line")
 
 rc, out, osdi = compile_file("nsl.va")
 check("nsl.va (nodeset latch) compiles", rc == 0)

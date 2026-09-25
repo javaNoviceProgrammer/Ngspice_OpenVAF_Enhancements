@@ -9,7 +9,13 @@ fixes:
   `analysis("static")` are 1 at the t = 0 operating point (with `tran` 1
   and `dc` 0) and 0 at every timepoint — the bits used to ride ngspice's
   *first accepted timestep*, so the 4.6.1 initial-condition idiom fired
-  mid-transient.
+  mid-transient. Since [E-722](../../enhancements_doc/Enhancement-722.md)
+  the **AC and NOISE columns** hold too: the sweep's own evaluation — the
+  linearisation whose Jacobians the whole sweep uses, the one `$strobe`
+  reports for the job — carries `static` 0, `dc` 0 and the sweep's name,
+  where it carried the operating point's `static` 1 (an `idt` asserted on
+  `"static"` had no integrator in `.ac`); the operating point itself keeps
+  the DC column. Three checks.
 - **`analysis("nodeset")`** is 1 exactly while `.nodeset` values are
   enforced (the flag existed in the header and was never set).
 - **`ac_stim` matches the running small-signal analysis** (4.6.3): an
