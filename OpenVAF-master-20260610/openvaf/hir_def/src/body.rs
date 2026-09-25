@@ -217,10 +217,15 @@ impl Body {
                     // the whole aggregate against the element's scalar type once per element.
                     match tree[item_tree].array_index {
                         Some(pos) => {
-                            // Enhancement-457: expands replication elements too
-                            let elem = crate::item_tree::flatten_pattern(expr)
-                                .into_iter()
-                                .nth(pos as usize);
+                            // Enhancement-457: expands replication elements too;
+                            // Enhancement-713: through the memoised leaf table
+                            let elem = crate::item_tree::array_literal_leaf(
+                                db,
+                                root_file,
+                                ast.syntax(),
+                                &expr,
+                                pos as u32,
+                            );
                             ctx.collect_opt_expr(elem)
                         }
                         None => ctx.collect_expr(expr),
@@ -338,10 +343,9 @@ impl Body {
             // element's default is picked below; the item tree has already checked
             // that the literal has one leaf per element.
             let val = match tree[item_tree].array_index {
-                Some(pos) => ov
-                    .val()
-                    .map(crate::item_tree::flatten_pattern)
-                    .and_then(|f| f.into_iter().nth(pos as usize)),
+                Some(pos) => ov.val().and_then(|lit| {
+                    crate::item_tree::array_literal_leaf(db, root_file, file.syntax(), &lit, pos)
+                }),
                 None => ov.val(),
             };
             let default = ctx.collect_opt_expr(val);
@@ -354,7 +358,8 @@ impl Body {
             );
         }
 
-        let ast = ast_id_map.get(ast_id).to_node(ast.syntax());
+        let root = ast;
+        let ast = ast_id_map.get(ast_id).to_node(root.syntax());
 
         // An element of an array-valued parameter takes its default from the corresponding leaf of
         // the shared `'{...}` array literal (flat declaration-order position `array_index`). The
@@ -362,11 +367,11 @@ impl Body {
         // flattened row-major before indexing.
         let default = match tree[item_tree].array_index {
             Some(pos) => {
-                // Enhancement-457: expands replication elements too
-                let elem = ast
-                    .default()
-                    .map(crate::item_tree::flatten_pattern)
-                    .and_then(|f| f.into_iter().nth(pos as usize));
+                // Enhancement-457: expands replication elements too;
+                // Enhancement-713: through the memoised leaf table
+                let elem = ast.default().and_then(|lit| {
+                    crate::item_tree::array_literal_leaf(db, root_file, root.syntax(), &lit, pos)
+                });
                 ctx.collect_opt_expr(elem)
             }
             None => ctx.collect_opt_expr(ast.default()),

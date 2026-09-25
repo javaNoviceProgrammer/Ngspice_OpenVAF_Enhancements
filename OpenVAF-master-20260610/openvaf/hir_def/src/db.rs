@@ -71,6 +71,16 @@ pub trait HirDefDB: InternDB + Upcast<dyn BaseDB> {
     #[salsa::invoke(Body::body_with_sourcemap_query)]
     fn body_with_sourcemap(&self, id: DefWithBodyId) -> (Arc<Body>, Arc<BodySourceMap>);
 
+    /// Enhancement-713: the leaves of an array literal (`'{...}`, replications
+    /// expanded), flattened once per literal and shared by the bodies of the
+    /// array's elements. See `array_literal_leaves_query`.
+    #[salsa::invoke(crate::item_tree::array_literal_leaves_query)]
+    fn array_literal_leaves(
+        &self,
+        root_file: FileId,
+        literal: syntax::SyntaxNodePtr,
+    ) -> Arc<[syntax::SyntaxNodePtr]>;
+
     #[salsa::invoke(Body::param_body_with_sourcemap_query)]
     fn param_body_with_sourcemap(&self, id: ParamId)
         -> (Arc<Body>, Arc<BodySourceMap>, ParamExprs);

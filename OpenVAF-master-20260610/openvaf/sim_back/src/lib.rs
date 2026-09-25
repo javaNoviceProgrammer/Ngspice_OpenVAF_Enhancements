@@ -56,6 +56,10 @@ pub struct CompiledModule<'a> {
     /// so the simulator can drop the branch current when the netlist already ties those
     /// terminals to one node -- otherwise the redundant equation makes the system singular.
     pub terminal_shorts: Vec<BranchWrite>,
+    /// Enhancement-713: the instruction count of the eval function's largest
+    /// basic block, what LLVM's straight-line passes will be handed (see
+    /// `osdi`'s `EVAL_FAST_CODEGEN_BLOCK`).
+    pub largest_block: usize,
 }
 
 pub fn print_module(
@@ -355,7 +359,15 @@ impl<'a> CompiledModule<'a> {
             println!();
         }
 
+        let largest_block = cx
+            .func
+            .layout
+            .blocks()
+            .map(|bb| cx.func.layout.block_insts(bb).count())
+            .max()
+            .unwrap_or(0);
         CompiledModule {
+            largest_block,
             eval: cx.func,
             intern: cx.intern,
             info: module,

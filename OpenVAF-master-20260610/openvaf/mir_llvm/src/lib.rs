@@ -194,6 +194,29 @@ impl<'t> LLVMBackend<'t> {
         ModuleLlvm::new(name, self.target, &self.target_cpu, &self.features, opt_lvl)
     }
 
+    /// Enhancement-713: give `llmod` a target machine at `level` for its object
+    /// emission, after its middle-end passes ran at the level it was created
+    /// with. The osdi driver uses it to emit an eval function with a giant
+    /// basic block through the fast instruction selector (see `EVAL_FAST_CODEGEN_BLOCK`).
+    pub fn set_codegen_level(
+        &self,
+        llmod: &ModuleLlvm,
+        level: LLVMCodeGenOptLevel,
+    ) -> Result<(), LLVMString> {
+        let tm = unsafe {
+            create_target(
+                &self.target.llvm_target,
+                &self.target_cpu,
+                &self.features,
+                level,
+                llvm_sys::target_machine::LLVMRelocMode::LLVMRelocPIC,
+                llvm_sys::target_machine::LLVMCodeModel::LLVMCodeModelDefault,
+            )?
+        };
+        llmod.replace_target_machine(tm);
+        Ok(())
+    }
+
     /// Enhancement-453: does this binary actually have a code generator for the
     /// configured target?
     ///
@@ -489,7 +512,9 @@ pub unsafe fn target_machine_emit_to_file(
 pub struct ModuleLlvm {
     llcx: llvm_sys::prelude::LLVMContextRef,
     llmod_raw: llvm_sys::prelude::LLVMModuleRef,
-    tm: llvm_sys::target_machine::LLVMTargetMachineRef,
+    /// Enhancement-713: replaceable, so the object emission can run at another
+    /// level than the middle-end passes did (`LLVMBackend::set_codegen_level`).
+    tm: std::cell::Cell<llvm_sys::target_machine::LLVMTargetMachineRef>,
     opt_lvl: llvm_sys::target_machine::LLVMCodeGenOptLevel,
 }
 
@@ -527,7 +552,60 @@ impl ModuleLlvm {
             llvm_sys::target_machine::LLVMCodeModel::LLVMCodeModelDefault,
         )?;
 
-        Ok(ModuleLlvm { llcx, llmod_raw: llmod, tm, opt_lvl })
+        Ok(ModuleLlvm { llcx, llmod_raw: llmod, tm: std::cell::Cell::new(tm), opt_lvl })
+    }
+
+    /// Enhancement-713: the module's largest basic block as `(instructions,
+    /// estimate)`, the estimate being the size of the SelectionDAG the block
+    /// builds -- the quantity LLVM's list scheduler is quadratic in. An
+    /// instruction that produces or consumes an `i1` counts four: the
+    /// comparisons and boolean selects of an event or a table search expand
+    /// to several nodes each in legalisation (a 3 900-instruction block of 300
+    /// `@(cross)` events scheduled nine times longer than BSIM4's 2 600 of
+    /// arithmetic), a floating-point operation counts one.
+    pub fn largest_block(&self) -> (usize, usize) {
+        let mut best = (0, 0);
+        unsafe {
+            let is_i1 = |ty: llvm_sys::prelude::LLVMTypeRef| {
+                llvm_sys::core::LLVMGetTypeKind(ty) == llvm_sys::LLVMTypeKind::LLVMIntegerTypeKind
+                    && llvm_sys::core::LLVMGetIntTypeWidth(ty) == 1
+            };
+            let mut f = llvm_sys::core::LLVMGetFirstFunction(self.llmod_raw);
+            while !f.is_null() {
+                let mut bb = llvm_sys::core::LLVMGetFirstBasicBlock(f);
+                while !bb.is_null() {
+                    let mut n = 0;
+                    let mut est = 0;
+                    let mut inst = llvm_sys::core::LLVMGetFirstInstruction(bb);
+                    while !inst.is_null() {
+                        n += 1;
+                        let mut bool_op = is_i1(llvm_sys::core::LLVMTypeOf(inst));
+                        let num_ops = llvm_sys::core::LLVMGetNumOperands(inst);
+                        let mut k = 0;
+                        while !bool_op && k < num_ops {
+                            let op = llvm_sys::core::LLVMGetOperand(inst, k as u32);
+                            bool_op = !op.is_null() && is_i1(llvm_sys::core::LLVMTypeOf(op));
+                            k += 1;
+                        }
+                        est += if bool_op { 4 } else { 1 };
+                        inst = llvm_sys::core::LLVMGetNextInstruction(inst);
+                    }
+                    if est > best.1 {
+                        best = (n, est);
+                    }
+                    bb = llvm_sys::core::LLVMGetNextBasicBlock(bb);
+                }
+                f = llvm_sys::core::LLVMGetNextFunction(f);
+            }
+        }
+        best
+    }
+
+    /// Enhancement-713: swap in another target machine (see
+    /// `LLVMBackend::set_codegen_level`); the old one is disposed.
+    pub fn replace_target_machine(&self, tm: llvm_sys::target_machine::LLVMTargetMachineRef) {
+        let old = self.tm.replace(tm);
+        unsafe { llvm_sys::target_machine::LLVMDisposeTargetMachine(old) };
     }
 
     pub fn to_str(&self) -> LLVMString {
@@ -572,7 +650,7 @@ impl ModuleLlvm {
                 let llmod_ptr = NonNull::from(llmod).as_ptr();
 
                 // Run passes while values are guaranteed to be alive
-                LLVMRunPasses(llmod_ptr, opt_level_ptr, self.tm, options)
+                LLVMRunPasses(llmod_ptr, opt_level_ptr, self.tm.get(), options)
             };
             // Check for errors
             if !error.is_null() {
@@ -637,7 +715,7 @@ impl ModuleLlvm {
             // REVIEW: Why does LLVM need a mutable ptr to path...?
 
             llvm_sys::target_machine::LLVMTargetMachineEmitToFile(
-                self.tm,
+                self.tm.get(),
                 NonNull::from(self.llmod()).as_ptr(),
                 path.as_ptr(),
                 llvm_sys::target_machine::LLVMCodeGenFileType::LLVMObjectFile,
@@ -658,62 +736,27 @@ impl ModuleLlvm {
 impl Drop for ModuleLlvm {
     fn drop(&mut self) {
         unsafe {
-            llvm_sys::target_machine::LLVMDisposeTargetMachine(&mut *(self.tm as *mut _));
+            llvm_sys::target_machine::LLVMDisposeTargetMachine(self.tm.get());
             llvm_sys::core::LLVMContextDispose(&mut *(self.llcx as *mut _));
         }
     }
 }
 
-/// Enhancement-710 (robustness campaign F2 of 2026-09-23): turn LLVM's SLP
-/// vectoriser off for the rest of this process.
-///
-/// The vectoriser packs the parallel select trees of a large table's leaves
-/// into vector lanes and then runs `optimizeGatherSequence`, a CSE over every
-/// gather it created in the function that is quadratic in their number: a
-/// 30 000-knot cubic table spent 27 of its 32 s there and a 100 000-knot one
-/// did not finish in 400 s. `osdi::compile` calls this for a file with a
-/// table above its knot limit and for nothing else, so ordinary models --
-/// the largest compact models included -- are compiled exactly as before.
-/// `LLVMPassBuilderOptionsSetSLPVectorization` has no effect on the
-/// `default<O3>` pipeline in this LLVM build (Enhancement-705 tried it, and so
-/// did this), so the switch is LLVM's own command-line option, parsed once; it
-/// must run before the first pass pipeline is built, which `osdi::compile`
-/// guarantees by deciding before it spawns the code-generation threads.
 /// Enhancement-712: whitespace-separated LLVM `cl::opt` settings (as `llc` and
-/// `opt` take them) handed to LLVM's command-line parser once, before the first
-/// pass pipeline. The driver feeds it the `OPENVAF_LLVM_ARGS` environment
-/// variable, a diagnostic aid for reading LLVM's own pass timings and dumps.
+/// `opt` take them) handed to LLVM's command-line parser, before the first pass
+/// pipeline. The osdi driver makes ONE call per process with everything it
+/// needs -- the `OPENVAF_LLVM_ARGS` environment variable (a diagnostic aid for
+/// reading LLVM's own pass timings and dumps), E-710's SLP switch and E-713's
+/// `-global-isel=false` -- since the parser is meant to run once.
 pub fn parse_llvm_args(args: &str) {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let mut owned = vec![CString::new("openvaf-r").unwrap()];
-        owned.extend(args.split_whitespace().map(|a| CString::new(a).unwrap()));
-        let ptrs: Vec<*const std::os::raw::c_char> = owned.iter().map(|a| a.as_ptr()).collect();
-        unsafe {
-            llvm_sys::support::LLVMParseCommandLineOptions(
-                ptrs.len() as std::os::raw::c_int,
-                ptrs.as_ptr(),
-                std::ptr::null(),
-            );
-        }
-    });
+    let mut owned = vec![CString::new("openvaf-r").unwrap()];
+    owned.extend(args.split_whitespace().map(|a| CString::new(a).unwrap()));
+    let ptrs: Vec<*const std::os::raw::c_char> = owned.iter().map(|a| a.as_ptr()).collect();
+    unsafe {
+        llvm_sys::support::LLVMParseCommandLineOptions(
+            ptrs.len() as std::os::raw::c_int,
+            ptrs.as_ptr(),
+            std::ptr::null(),
+        );
+    }
 }
-
-pub fn disable_slp_vectorizer() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let args = [
-            CString::new("openvaf-r").unwrap(),
-            CString::new("-vectorize-slp=false").unwrap(),
-        ];
-        let ptrs: Vec<*const std::os::raw::c_char> = args.iter().map(|a| a.as_ptr()).collect();
-        unsafe {
-            llvm_sys::support::LLVMParseCommandLineOptions(
-                ptrs.len() as std::os::raw::c_int,
-                ptrs.as_ptr(),
-                std::ptr::null(),
-            );
-        }
-    });
-}
-

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-verify_arrayscale.py -- two compiler findings of the 2026-09-07 bug hunt
+verify_arrayscale.py -- two compiler findings of the 2026-09-07 bug hunt, and (section [5])
+F7 of the 2026-09-23 robustness campaign (Enhancement-713)
 (docs/bug_hunts/2026-09-07_openvaf-r-language-semantics.md, F3 and F4), fixed by
 Enhancement-579.
 
@@ -238,6 +239,42 @@ rc, log, _ = compile_va("selderiv", module("selderiv", "parameter real g[0:2] = 
 out = ngspice("* selderiv\n.model m selderiv\nV1 p1 0 dc 0.5 ac 1\nN1 p1 0 m sel=2\n.control\npre_osdi selderiv.osdi\nop\nac lin 1 1k 1k\nlet mg = mag(i(v1))\nprint mg\nquit\n.endc\n.end\n")
 m = re.search(r"^mg = (\S+)", out, re.M)
 check("a select feeding a contribution differentiates correctly (AC conductance = g[2] + 1e-3)", m and abs(float(m.group(1)) - 5e-3) < 1e-9, m.group(1) if m else out[-200:])
+
+# ---------------------------------------------------------------------------
+print("[5] Enhancement-713 (robustness campaign F7 of 2026-09-23): the rest of the array-size rows")
+# Every element of an array literal re-flattened the whole literal in the front
+# end (a 20 000-element localparam array: 15 s); the descriptor's given-flag
+# functions were a switch with a case per parameter (79 000 IR lines for
+# 10 000); a noise table was a chain of selects that LLVM's instruction
+# combiner took a minute over at 5 000 pairs; every @(cross) event opened seven
+# branch diamonds; and an eval whose straight-line code is one giant block paid
+# three quadratic LLVM backend passes (500 events: 111 s). The bounds are loose
+# (the sweep runs eight suites at once); before the fix each was far outside.
+N713 = 20000
+rc, log, t713 = compile_va("lp713", module("lp713", f"localparam real t[0:{N713 - 1}] = '{{{','.join(['1.0'] * N713)}}};", f"  I(p,n) <+ V(p,n)*t[{N713 - 1}];"))
+check(f"a {N713}-element localparam array literal compiles in under 8 s (was 15.5 s)", rc == 0 and t713 < 8.0, f"{t713:.1f} s")
+check("the descriptor's given-flag functions are under 40 IR lines for 2000 parameters (was 8 per parameter)",
+      0 < sz.get("given_flag_model_0", 10**9) < 40 and 0 < sz.get("given_flag_instance_0", 10**9) < 40, (sz.get("given_flag_model_0"), sz.get("given_flag_instance_0")))
+check("... and the same size for a two-parameter module (a bitfield read, not a switch)",
+      sz2.get("given_flag_model_0") == sz.get("given_flag_model_0") and sz2.get("given_flag_instance_0") == sz.get("given_flag_instance_0"), (sz2.get("given_flag_model_0"), sz2.get("given_flag_instance_0")))
+NT = 2000
+rc, log, _ = compile_va("nt713", module("nt713", "", "  I(p,n) <+ noise_table('{%s});" % ",".join("%d.0, 1e-12" % i for i in range(1, NT + 1))), "--dump-unopt-ir")
+szn = ir_function_sizes(log)
+rc2, log2, _ = compile_va("nt5", module("nt5", "", "  I(p,n) <+ noise_table('{1.0, 1e-12, 2.0, 2e-12, 3.0, 3e-12, 4.0, 4e-12, 5.0, 5e-12});"), "--dump-unopt-ir")
+szn5 = ir_function_sizes(log2)
+check(f"a {NT}-pair noise_table loads through a loop of under 80 IR lines (was two lines per pair)", rc == 0 and 0 < szn.get("load_noise_0", 10**9) < 80, szn.get("load_noise_0"))
+check("... the same size as a five-pair table (the table is data, the search a loop)", rc2 == 0 and szn5.get("load_noise_0") == szn.get("load_noise_0"), (szn5.get("load_noise_0"), szn.get("load_noise_0")))
+NC = 300
+rc, log, tc = compile_va("cr713", module("cr713", "real x;", "\n".join(f"  @(cross(V(p,n) - {i}.0e-3)) x = {i};" for i in range(NC)) + "\n  I(p,n) <+ V(p,n)*x;"), "--dump-mir")
+bc = blocks_per_function(log)
+check(f"{NC} @(cross) events: the evaluation function has at most three blocks per event (was ten)", rc == 0 and 0 < bc.get("evaluation", 10**9) <= 3 * NC + 8, bc.get("evaluation"))
+check(f"... and compiles in under 10 s (was 17 s: LLVM's list scheduler on one block)", rc == 0 and tc < 10.0, f"{tc:.1f} s")
+NV = 50000
+rc, log, tv = compile_va("vars713", module("vars713", "real s; real " + ", ".join(f"v{i}" for i in range(NV)) + ";", "\n".join(f"  v{i} = V(p,n)*{i}.0;" for i in range(NV)) + "\n  s = 0.0;\n" + "\n".join(f"  s = s + v{i};" for i in range(NV)) + "\n  I(p,n) <+ s;"))
+check(f"{NV} real variables compile in under 20 s (was 47 s: a linear scan per item lookup)", rc == 0 and tv < 20.0, f"{tv:.1f} s")
+NF = 10000
+rc, log, tf = compile_va("fill713", module("fill713", f"real a[0:{NF - 1}]; integer k;", f"  for (k=0;k<{NF};k=k+1) a[k]=k*1.0; I(p,n) <+ V(p,n)*a[{NF - 1}];"))
+check(f"a {NF}-element array filled in a loop compiles in under 40 s (was 25 s; the eval goes through the fast instruction selector)", rc == 0 and tf < 40.0, f"{tf:.1f} s")
 
 cleanup()
 print(f"\n{'ALL PASS' if ok_all else 'SOME FAILED'}: {n_pass}/{n_total} checks passed")

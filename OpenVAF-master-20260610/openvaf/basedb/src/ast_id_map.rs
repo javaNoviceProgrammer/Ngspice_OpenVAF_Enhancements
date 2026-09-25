@@ -92,6 +92,11 @@ pub type ErasedAstId = Idx<MapEntry>;
 pub struct AstIdMap {
     arena: Arena<MapEntry>,
     parents: ArenaMap<MapEntry, Option<ErasedAstId>>,
+    /// Enhancement-713: the id of each node, so a lookup is a hash probe. It was
+    /// a linear scan of the arena, once per item lookup -- a module of 50 000
+    /// variables spent 30 s of its 32 s compile there and in `alloc`'s attribute
+    /// walk.
+    index: ahash::AHashMap<SyntaxNodePtr, ErasedAstId>,
 }
 
 pub(crate) fn has_id_map_entry(kind: SyntaxKind) -> bool {
@@ -127,7 +132,13 @@ impl AstIdMap {
         // resolution
         // TODO does this hurt caching in any way. Probably not:
         // if the parent changes then something before changed as well and the item is moved anyway)
-        bdfs(node, |it, parent| has_id_map_entry(it.kind()).then(|| res.alloc(it, parent)));
+        // Enhancement-713: `real v0, v1, ..., v49999;` is one declaration whose
+        // attributes every one of its variables reads through `alloc`; the walk
+        // over the declaration's children is done once per declaration here.
+        let mut decl_attrs: ahash::AHashMap<SyntaxNodePtr, Box<[Name]>> = ahash::AHashMap::new();
+        bdfs(node, |it, parent| {
+            has_id_map_entry(it.kind()).then(|| res.alloc(it, parent, &mut decl_attrs))
+        });
         res
     }
 
@@ -142,13 +153,9 @@ impl AstIdMap {
     }
 
     pub(crate) fn erased_ast_id_of_ptr(&self, ptr: SyntaxNodePtr) -> ErasedAstId {
-        match self.arena.iter_enumerated().find(|(_id, i)| i.syntax == ptr) {
-            Some((it, _)) => it,
-            None => panic!(
-                "Can't find {:?} in AstIdMap",
-                ptr,
-                // self.arena.iter_enumerated().map(|(_id, i)| i).collect::<Vec<_>>(),
-            ),
+        match self.index.get(&ptr) {
+            Some(&it) => it,
+            None => panic!("Can't find {:?} in AstIdMap", ptr),
         }
     }
 
@@ -204,19 +211,26 @@ impl AstIdMap {
         self.parents[id]
     }
 
-    fn alloc(&mut self, item: &SyntaxNode, parent: Option<ErasedAstId>) -> ErasedAstId {
+    fn alloc(
+        &mut self,
+        item: &SyntaxNode,
+        parent: Option<ErasedAstId>,
+        decl_attrs: &mut ahash::AHashMap<SyntaxNodePtr, Box<[Name]>>,
+    ) -> ErasedAstId {
         let id1 = self.parents.push_and_get_key(parent);
-        let attrs = if ast::Param::can_cast(item.kind()) || ast::Var::can_cast(item.kind()) {
-            ast::attrs(&item.parent().unwrap())
-        } else {
-            ast::attrs(item)
+        let attr_names = |node: &SyntaxNode| -> Box<[Name]> {
+            ast::attrs(node).filter_map(|attr| Some(attr.name()?.as_name())).collect()
         };
-        let attrs = attrs.filter_map(|attr| Some(attr.name()?.as_name()));
-        let id2 = self.arena.push_and_get_key(MapEntry {
-            syntax: SyntaxNodePtr::new(item),
-            attrs: attrs.collect(),
-        });
+        let attrs = if ast::Param::can_cast(item.kind()) || ast::Var::can_cast(item.kind()) {
+            let decl = item.parent().unwrap();
+            decl_attrs.entry(SyntaxNodePtr::new(&decl)).or_insert_with(|| attr_names(&decl)).clone()
+        } else {
+            attr_names(item)
+        };
+        let syntax = SyntaxNodePtr::new(item);
+        let id2 = self.arena.push_and_get_key(MapEntry { syntax, attrs });
         debug_assert_eq!(id1, id2);
+        self.index.insert(syntax, id2);
         id2
     }
 }

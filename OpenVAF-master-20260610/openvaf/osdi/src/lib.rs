@@ -34,6 +34,14 @@ const SETUP_FAST_CODEGEN_PARAMS: usize = 1024;
 /// `load_spice_rhs_*` and `write_jacobian_array_*` helpers -- is generated at
 /// -O0. See the comment at the descriptor module creation.
 const MAIN_FAST_CODEGEN_ENTRIES: usize = 256;
+
+/// Enhancement-713: size of a basic block (`ModuleLlvm::largest_block`'s
+/// SelectionDAG estimate for the LLVM side, MIR instructions for the SLP switch)
+/// above which an eval module's object code is emitted through LLVM's fast
+/// instruction selector (a -O0 target machine) after its middle-end passes ran
+/// at the requested level, and its middle end runs without the SLP vectoriser.
+/// See the comments at the eval module's emission and at the LLVM option call.
+const EVAL_FAST_CODEGEN_BLOCK: usize = 12288;
 use mir_llvm::{CodegenCx, LLVMBackend};
 use ndatable::nda_arrays;
 use salsa::ParallelDatabase;
@@ -136,19 +144,38 @@ pub fn compile<'a>(
     // compact models included, is compiled exactly as before. Decided here,
     // before the code-generation threads start, because the switch is
     // process-wide and must precede the first pass pipeline.
-    // Enhancement-712: `OPENVAF_LLVM_ARGS` hands LLVM command-line options to
-    // the process -- `-time-passes`, `-print-after=codegenprepare
-    // -print-module-scope`, `-enable-misched=false` -- which is how the
-    // descriptor module was found and measured. A diagnostic aid; the switch
-    // below and every other setting are decided by the compiler itself.
-    if let Ok(args) = std::env::var("OPENVAF_LLVM_ARGS") {
-        mir_llvm::parse_llvm_args(&args);
-    }
+    // One call to LLVM's option parser per process, before any pass pipeline:
+    //
+    // - Enhancement-713: `-global-isel=false`. At -O0 the AArch64 backend selects
+    //   through GlobalISel, whose legaliser is quadratic in a block (an 80 000-
+    //   instruction block took 12.8 s); with it off the -O0 modules -- E-579's
+    //   setup functions, E-712's descriptor helpers and the giant-block evals of
+    //   EVAL_FAST_CODEGEN_BLOCK -- go through FastISel, which is linear (3.5 s).
+    //   The -O3 modules never use either.
+    // - Enhancement-710 (robustness campaign F2 of 2026-09-23): a file with a
+    //   $table_model of more than `SLP_TABLE_KNOTS_LIMIT` knots is optimised
+    //   without LLVM's SLP vectoriser, whose gather CSE is quadratic in what it
+    //   vectorises -- a 30 000-knot cubic table spent 27 of its 32 s there and a
+    //   100 000-knot one did not finish in 400 s. Enhancement-713 keys the same
+    //   switch on the eval's largest MIR block: the vectoriser's store-chain
+    //   search took 10 of the 19 s of a loop that fills a 10 000-element array.
+    //   Every other file, the largest compact models included, is compiled
+    //   exactly as before.
+    // - Enhancement-712: `OPENVAF_LLVM_ARGS`, a diagnostic aid (`-time-passes`,
+    //   `-print-after=codegenprepare -print-module-scope`), appended last.
+    let largest_mir_block = modules.iter().map(|m| m.largest_block).max().unwrap_or(0);
+    let mut llvm_args = String::from("-global-isel=false");
     if hir_lower::LARGEST_SELECT_TREE.load(std::sync::atomic::Ordering::Relaxed)
         > SLP_TABLE_KNOTS_LIMIT
+        || largest_mir_block > EVAL_FAST_CODEGEN_BLOCK
     {
-        mir_llvm::disable_slp_vectorizer();
+        llvm_args.push_str(" -vectorize-slp=false");
     }
+    if let Ok(args) = std::env::var("OPENVAF_LLVM_ARGS") {
+        llvm_args.push(' ');
+        llvm_args.push_str(&args);
+    }
+    mir_llvm::parse_llvm_args(&llvm_args);
 
     let name = dst.file_stem().expect("destination is a file").to_owned();
 
@@ -376,9 +403,38 @@ pub fn compile<'a>(
                     let _pt = std::time::Instant::now();
                     llmod.optimize();
                     let _po = _pt.elapsed();
+                    // Enhancement-713 (robustness campaign F7 of 2026-09-23): three
+                    // of LLVM's backend passes are quadratic in the length of one
+                    // basic block -- the SelectionDAG list scheduler's queue (500
+                    // `@(cross)` events: 111 s), the machine scheduler's candidate
+                    // pick (a 5 000-element array read in a loop: 9 s) and the
+                    // greedy register allocator's local splitting (500 calls of a
+                    // ten-point table: 9 s) -- and an eval whose straight-line
+                    // code is one block of that size pays all three. Above
+                    // EVAL_FAST_CODEGEN_BLOCK instructions in a block the object
+                    // code is emitted through the fast instruction selector,
+                    // which is linear; the middle-end passes have already run at
+                    // the requested level, so the block's arithmetic is as
+                    // simplified as ever and only the scheduling and register
+                    // assignment of its machine code are the simpler ones. No
+                    // compact model has a block a tenth of that size.
+                    let (largest, estimate) = llmod.largest_block();
+                    let fast = estimate > EVAL_FAST_CODEGEN_BLOCK;
+                    if fast {
+                        back.set_codegen_level(&llmod, LLVMCodeGenOptLevel::LLVMCodeGenLevelNone)
+                            .expect("a target machine for the fast instruction selector");
+                    }
                     assert_eq!(llmod.emit_object(path.as_ref()), Ok(()));
                     if std::env::var("PHASE_PROF").is_ok() {
-                        eprintln!("PHASE llvm {} optimize {:?} emit {:?}", name1, _po, _pt.elapsed() - _po);
+                        eprintln!(
+                            "PHASE llvm {} optimize {:?} emit {:?} largest_block={} estimate={}{}",
+                            name1,
+                            _po,
+                            _pt.elapsed() - _po,
+                            largest,
+                            estimate,
+                            if fast { " (fast isel)" } else { "" }
+                        );
                     }
                 }
 
@@ -1022,6 +1078,16 @@ pub fn compile<'a>(
 
         debug_assert!(llmod.verify_and_print());
 
+        // Enhancement-713: the descriptor module -- the load_*, given_flag_* and
+        // write_jacobian_array_* helpers of every module in the file -- is part
+        // of the IR dumps too, as "osdi_descriptors"; it was the one module
+        // `--dump-ir` did not show, and the one that held F7's noise table and
+        // given-flag switches.
+        if dump_unopt_ir {
+            let mut unoptirs = unoptirs.lock().unwrap();
+            unoptirs.insert((0, "osdi_descriptors".to_owned()), llmod.to_str().to_string());
+        }
+
         if emit {
             // println!("{}", llmod.to_str());
             let _pt = std::time::Instant::now();
@@ -1035,6 +1101,11 @@ pub fn compile<'a>(
                 });
                 eprintln!("PHASE llvm main optimize {:?} emit {:?} jacobian={} unknowns={}", _po, _pt.elapsed() - _po, _j, _u);
             }
+        }
+
+        if dump_ir {
+            let mut irs = irs.lock().unwrap();
+            irs.insert((0, "osdi_descriptors".to_owned()), llmod.to_str().to_string());
         }
     });
 

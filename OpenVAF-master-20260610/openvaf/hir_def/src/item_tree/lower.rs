@@ -362,6 +362,8 @@ impl Ctx {
             })
             .collect();
         let mut bound_names: Vec<Name> = Vec::new();
+        let mut flat_overrides: ahash::AHashMap<ErasedAstId, Vec<ast::Expr>> =
+            ahash::AHashMap::new();
         for &item in &target.items {
             match item {
                 ModuleItem::Parameter(pid) => {
@@ -430,13 +432,22 @@ impl Ctx {
                                 .into()
                             {
                                 let pa: ast::Param = pa;
-                                self.check_paramset_range(
-                                    &orig.name,
-                                    &pa,
-                                    &ov_node,
-                                    ov,
-                                    orig.array_index,
-                                );
+                                // Enhancement-713: one flattening per override literal,
+                                // shared by every element of the array it overrides
+                                let val_expr = match orig.array_index {
+                                    Some(i) => flat_overrides
+                                        .entry(ov.into())
+                                        .or_insert_with(|| {
+                                            ov_node
+                                                .val()
+                                                .map(super::flatten_pattern)
+                                                .unwrap_or_default()
+                                        })
+                                        .get(i as usize)
+                                        .cloned(),
+                                    None => ov_node.val(),
+                                };
+                                self.check_paramset_range(&orig.name, &pa, ov, val_expr);
                             }
                             bound.is_local = true;
                             bound.override_expr = Some(ov);
@@ -778,16 +789,13 @@ impl Ctx {
         &mut self,
         name: &Name,
         param_ast: &ast::Param,
-        ov_node: &ast::ParamsetOverride,
         ov_id: AstId<ast::ParamsetOverride>,
-        // Enhancement-645: for an element of an array parameter, the position of
-        // its leaf in the override's `'{...}` literal; `None` judges the whole value.
-        elem: Option<u32>,
+        // Enhancement-645: for an element of an array parameter, its leaf of the
+        // override's `'{...}` literal; for a scalar the whole value.
+        // Enhancement-713: the caller flattens the literal once per override and
+        // passes the leaf, instead of this flattening it once per element.
+        val_expr: Option<ast::Expr>,
     ) {
-        let val_expr = ov_node.val().and_then(|e| match elem {
-            Some(i) => super::flatten_pattern(e).into_iter().nth(i as usize),
-            None => Some(e),
-        });
         let Some(val) = val_expr.and_then(|e| Self::const_num(&e)) else { return };
 
         for c in param_ast.constraints() {

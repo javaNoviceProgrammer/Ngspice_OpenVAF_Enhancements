@@ -433,7 +433,14 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let current = self.lower_expr(expr);
         let (raw_prev, idx) = self.new_event_state();
         let is_initial = self.ctx.use_param(ParamKind::IsInitialStep);
-        let prev = self.ctx.make_select(is_initial, |_, branch| if branch { current } else { raw_prev });
+        // Enhancement-713 (robustness campaign F7 of 2026-09-23): every
+        // conjunction below was a `make_select` -- a branch, two arms and a
+        // merge block -- so one event opened seven diamonds and 500 events
+        // 3 500, all folded to selects by LLVM a moment later. The operands are
+        // pure comparisons, so the selects are emitted directly.
+        let prev = self.ctx.ins().select(is_initial, current, raw_prev);
+        let and = |ctx: &mut LoweringCtx, a: Value, b: Value| ctx.ins().select(a, b, FALSE);
+        let or = |ctx: &mut LoweringCtx, a: Value, b: Value| ctx.ins().select(a, TRUE, b);
 
         // Enhancement-587: strict on the previous side, inclusive on the
         // current side -- see `lower_above`. An expression that starts exactly
@@ -441,27 +448,27 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // from the other side is, once.
         let prev_lt = self.ctx.ins().flt(prev, F_ZERO);
         let cur_ge = self.ctx.ins().fge(current, F_ZERO);
-        let rising = bool_and(self.ctx, prev_lt, cur_ge);
+        let rising = and(self.ctx, prev_lt, cur_ge);
 
         let prev_gt = self.ctx.ins().fgt(prev, F_ZERO);
         let cur_le = self.ctx.ins().fle(current, F_ZERO);
-        let falling = bool_and(self.ctx, prev_gt, cur_le);
+        let falling = and(self.ctx, prev_gt, cur_le);
 
-        let either = bool_or(self.ctx, rising, falling);
+        let either = or(self.ctx, rising, falling);
 
         let fired = if let Some(dir) = dir {
             let dir = self.lower_expr(dir);
             let dir = self.guard_event_direction("@(cross)", dir);
             let dir_pos = self.ctx.ins().fgt(dir, F_ZERO);
             let dir_neg = self.ctx.ins().flt(dir, F_ZERO);
-            let fired_pos = bool_and(self.ctx, dir_pos, rising);
-            let fired_neg = bool_and(self.ctx, dir_neg, falling);
+            let fired_pos = and(self.ctx, dir_pos, rising);
+            let fired_neg = and(self.ctx, dir_neg, falling);
             let dir_le = self.ctx.ins().fle(dir, F_ZERO);
             let dir_ge = self.ctx.ins().fge(dir, F_ZERO);
-            let dir_is_zero = bool_and(self.ctx, dir_le, dir_ge);
-            let fired_either = bool_and(self.ctx, dir_is_zero, either);
-            let fired_pos_or_neg = bool_or(self.ctx, fired_pos, fired_neg);
-            bool_or(self.ctx, fired_pos_or_neg, fired_either)
+            let dir_is_zero = and(self.ctx, dir_le, dir_ge);
+            let fired_either = and(self.ctx, dir_is_zero, either);
+            let fired_pos_or_neg = or(self.ctx, fired_pos, fired_neg);
+            or(self.ctx, fired_pos_or_neg, fired_either)
         } else {
             either
         };
@@ -481,8 +488,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let is_tran = self.ctx.ins().ine(tran_hit, zero);
         let abstime = self.ctx.use_param(ParamKind::Abstime);
         let t_pos = self.ctx.ins().fgt(abstime, F_ZERO);
-        let gate = bool_and(self.ctx, is_tran, t_pos);
-        let fired = bool_and(self.ctx, fired, gate);
+        let gate = and(self.ctx, is_tran, t_pos);
+        let fired = and(self.ctx, fired, gate);
 
         self.ctx.def_place(PlaceKind::EventState(idx), current);
         fired

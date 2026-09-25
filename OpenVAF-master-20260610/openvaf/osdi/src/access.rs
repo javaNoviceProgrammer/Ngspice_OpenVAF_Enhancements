@@ -1,6 +1,7 @@
 use core::ptr::NonNull;
 
 use llvm_sys::core::{
+    LLVMAddIncoming, LLVMBuildPhi, LLVMBuildZExt,
     LLVMAddCase, LLVMAppendBasicBlockInContext, LLVMBuildAdd, LLVMBuildAnd, LLVMBuildBr,
     LLVMBuildCondBr, LLVMBuildGEP2, LLVMBuildICmp, LLVMBuildLShr, LLVMBuildLoad2, LLVMBuildOr,
     LLVMBuildRet, LLVMBuildSelect, LLVMBuildShl, LLVMBuildStore, LLVMBuildStructGEP2,
@@ -226,197 +227,151 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
         llfunc
     }
 
+    /// Enhancement-713 (robustness campaign F7 of 2026-09-23): `given_flag_instance`
+    /// and `given_flag_model` were a `switch` with one case per parameter, each
+    /// case reading its own bit -- 20 000 cases for a 20 000-element array
+    /// parameter, and LLVM's switch lowering took 5.9 s of the descriptor module.
+    /// The given bits are a flat bitfield indexed by parameter position (E-555
+    /// made `param_given` read it arithmetically), so both are one bounds check,
+    /// one shift and one load now, whatever the parameter count.
     pub fn given_flag_instance(&self) -> &'ll llvm_sys::LLVMValue {
-        let cx = &self.cx;
-        let void_ptr = cx.ty_ptr();
-        let uint32_t = cx.ty_int();
-        let fun_ty = cx.ty_func(&[void_ptr, uint32_t], uint32_t);
+        let OsdiCompilationUnit { inst_data, cx, .. } = &self;
+        let fun_ty = cx.ty_func(&[cx.ty_ptr(), cx.ty_int()], cx.ty_int());
         let name = &format!("given_flag_instance_{}", &self.module.sym);
         let llfunc = cx.declare_int_c_fn(name, fun_ty);
-
-        let OsdiCompilationUnit { inst_data, cx, .. } = &self;
+        let n_inst = inst_data.params.len() as u32;
 
         unsafe {
-            let zero = cx.const_int(0);
-            let one = cx.const_int(1);
-
-            let entry = LLVMAppendBasicBlockInContext(
-                NonNull::from(cx.llcx).as_ptr(),
-                NonNull::from(llfunc).as_ptr(),
-                UNNAMED,
-            );
-            let not_found = LLVMAppendBasicBlockInContext(
-                NonNull::from(cx.llcx).as_ptr(),
-                NonNull::from(llfunc).as_ptr(),
-                UNNAMED,
-            );
-            let llbuilder = LLVMCreateBuilderInContext(NonNull::from(cx.llcx).as_ptr());
+            let llcx = NonNull::from(cx.llcx).as_ptr();
+            let f = NonNull::from(llfunc).as_ptr();
+            let entry = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+            let found = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+            let not_found = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+            let llbuilder = LLVMCreateBuilderInContext(llcx);
 
             LLVMPositionBuilderAtEnd(llbuilder, entry);
+            let ptr = LLVMGetParam(f, 0);
+            let param_id = LLVMGetParam(f, 1);
+            let in_range = LLVMBuildICmp(
+                llbuilder,
+                LLVMIntULT,
+                param_id,
+                NonNull::from(cx.const_unsigned_int(n_inst)).as_ptr(),
+                UNNAMED,
+            );
+            LLVMBuildCondBr(llbuilder, in_range, found, not_found);
 
-            // get params
-            let ptr = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 0);
-            let param_id = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 1);
+            LLVMPositionBuilderAtEnd(llbuilder, found);
+            let arr = LLVMBuildStructGEP2(
+                llbuilder,
+                NonNull::from(inst_data.ty).as_ptr(),
+                ptr,
+                INST_PARAM_GIVEN,
+                UNNAMED,
+            );
+            let bit = given_bit(cx, llbuilder, arr, param_id);
+            LLVMBuildRet(llbuilder, bit);
 
-            //
-            // start building function body
-
-            // create switch statement, based on param_id, default block is opvar_bb
-            // number of cases obtained from inst_data
-            let switch_inst =
-                LLVMBuildSwitch(llbuilder, param_id, not_found, inst_data.params.len() as u32);
-
-            // build cases, one for each instance parameter
-            // assumes osdi ids of instance parameters are 0..inst_data.params.len()
-            for param_idx in 0..inst_data.params.len() {
-                // create building block bb
-                let bb = LLVMAppendBasicBlockInContext(
-                    NonNull::from(cx.llcx).as_ptr(),
-                    NonNull::from(llfunc).as_ptr(),
-                    UNNAMED,
-                );
-                LLVMPositionBuilderAtEnd(llbuilder, bb);
-                // construct case constant, add case with building block bb
-                let case = cx.const_unsigned_int(param_idx as u32);
-                LLVMAddCase(switch_inst, NonNull::from(case).as_ptr(), bb);
-
-                // Build code for checking the parameter given flag
-                let is_given =
-                    inst_data.is_nth_param_given(cx, param_idx as u32, &*ptr, &*llbuilder);
-                let is_given = LLVMBuildSelect(
-                    llbuilder,
-                    NonNull::from(is_given).as_ptr(),
-                    NonNull::from(one).as_ptr(),
-                    NonNull::from(zero).as_ptr(),
-                    UNNAMED,
-                );
-
-                // Return value
-                LLVMBuildRet(llbuilder, is_given);
-            }
-
-            // build not_found block
             LLVMPositionBuilderAtEnd(llbuilder, not_found);
-
-            // Return 0
-            LLVMBuildRet(llbuilder, NonNull::from(zero).as_ptr());
-
-            //Do we have to dispose this?
-            //LLVMDisposeBuilder(llbuilder);
+            LLVMBuildRet(llbuilder, NonNull::from(cx.const_int(0)).as_ptr());
+            LLVMDisposeBuilder(llbuilder);
         }
 
         llfunc
     }
 
+    /// See `given_flag_instance`. The model struct's bitfield holds the model
+    /// parameters at their own positions and the instance parameters' copies
+    /// after them, as `is_nth_inst_param_given` reads them.
     pub fn given_flag_model(&self) -> &'ll llvm_sys::LLVMValue {
         let OsdiCompilationUnit { inst_data, model_data, cx, .. } = &self;
-        let args_ = [cx.ty_ptr(), cx.ty_int()];
-        let fun_ty = cx.ty_func(&args_, cx.ty_int());
+        let fun_ty = cx.ty_func(&[cx.ty_ptr(), cx.ty_int()], cx.ty_int());
         let name = &format!("given_flag_model_{}", self.module.sym);
         let llfunc = cx.declare_int_c_fn(name, fun_ty);
+        let n_inst = inst_data.params.len() as u32;
+        let n_model = model_data.params.len() as u32;
 
         unsafe {
-            let zero = cx.const_int(0);
-            let one = cx.const_int(1);
-
-            let entry = LLVMAppendBasicBlockInContext(
-                NonNull::from(cx.llcx).as_ptr(),
-                NonNull::from(llfunc).as_ptr(),
-                UNNAMED,
-            );
-            let not_found = LLVMAppendBasicBlockInContext(
-                NonNull::from(cx.llcx).as_ptr(),
-                NonNull::from(llfunc).as_ptr(),
-                UNNAMED,
-            );
-            let llbuilder = LLVMCreateBuilderInContext(NonNull::from(cx.llcx).as_ptr());
+            let llcx = NonNull::from(cx.llcx).as_ptr();
+            let f = NonNull::from(llfunc).as_ptr();
+            let entry = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+            let inst_side = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+            let model_chk = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+            let model_side = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+            let common = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+            let not_found = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+            let llbuilder = LLVMCreateBuilderInContext(llcx);
+            let ty_int = NonNull::from(cx.ty_int()).as_ptr();
+            let c_n_inst = NonNull::from(cx.const_unsigned_int(n_inst)).as_ptr();
+            let c_n_model = NonNull::from(cx.const_unsigned_int(n_model)).as_ptr();
 
             LLVMPositionBuilderAtEnd(llbuilder, entry);
+            let ptr = LLVMGetParam(f, 0);
+            let param_id = LLVMGetParam(f, 1);
+            let is_inst = LLVMBuildICmp(llbuilder, LLVMIntULT, param_id, c_n_inst, UNNAMED);
+            LLVMBuildCondBr(llbuilder, is_inst, inst_side, model_chk);
 
-            // get params
-            let ptr = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 0);
-            let param_id = LLVMGetParam(NonNull::from(llfunc).as_ptr(), 1);
+            // an instance parameter's copy sits after the model parameters
+            LLVMPositionBuilderAtEnd(llbuilder, inst_side);
+            let pos_inst = LLVMBuildAdd(llbuilder, param_id, c_n_model, UNNAMED);
+            LLVMBuildBr(llbuilder, common);
 
-            //
-            // start building function body
+            LLVMPositionBuilderAtEnd(llbuilder, model_chk);
+            let pos_model = LLVMBuildSub(llbuilder, param_id, c_n_inst, UNNAMED);
+            let in_range = LLVMBuildICmp(llbuilder, LLVMIntULT, pos_model, c_n_model, UNNAMED);
+            LLVMBuildCondBr(llbuilder, in_range, model_side, not_found);
 
-            // create switch statement, based on param_id, default block is opvar_bb
-            // number of cases obtained from inst_data
-            let switch_inst = LLVMBuildSwitch(
+            LLVMPositionBuilderAtEnd(llbuilder, model_side);
+            LLVMBuildBr(llbuilder, common);
+
+            LLVMPositionBuilderAtEnd(llbuilder, common);
+            let pos = LLVMBuildPhi(llbuilder, ty_int, UNNAMED);
+            let mut pos_vals = [pos_inst, pos_model];
+            let mut pos_bbs = [inst_side, model_side];
+            LLVMAddIncoming(pos, pos_vals.as_mut_ptr(), pos_bbs.as_mut_ptr(), 2);
+            let arr = LLVMBuildStructGEP2(
                 llbuilder,
-                param_id,
-                not_found,
-                (model_data.params.len() + inst_data.params.len()) as u32,
+                NonNull::from(model_data.ty).as_ptr(),
+                ptr,
+                MODEL_PARAM_GIVEN,
+                UNNAMED,
             );
+            let bit = given_bit(cx, llbuilder, arr, pos);
+            LLVMBuildRet(llbuilder, bit);
 
-            // build cases, one for each instance parameter
-            // assumes osdi ids of instance parameters are 0..inst_data.params.len()
-            for param_idx in 0..inst_data.params.len() {
-                // create building block bb
-                let bb = LLVMAppendBasicBlockInContext(
-                    NonNull::from(cx.llcx).as_ptr(),
-                    NonNull::from(llfunc).as_ptr(),
-                    UNNAMED,
-                );
-                LLVMPositionBuilderAtEnd(llbuilder, bb);
-                // construct case constant, add case with building block bb
-                let case = cx.const_unsigned_int(param_idx as u32);
-                LLVMAddCase(switch_inst, NonNull::from(case).as_ptr(), bb);
-
-                // Build code for checking the parameter given flag
-                let is_given =
-                    model_data.is_nth_inst_param_given(cx, param_idx as u32, &*ptr, &*llbuilder);
-                let is_given = LLVMBuildSelect(
-                    llbuilder,
-                    NonNull::from(is_given).as_ptr(),
-                    NonNull::from(one).as_ptr(),
-                    NonNull::from(zero).as_ptr(),
-                    UNNAMED,
-                );
-
-                // Return value
-                LLVMBuildRet(llbuilder, is_given);
-            }
-
-            // build cases, one for each model parameter
-            // assumes osdi ids of model parameters start with inst_data.params.len()
-            for param_idx in 0..model_data.params.len() {
-                // create building block bb
-                let bb = LLVMAppendBasicBlockInContext(
-                    NonNull::from(cx.llcx).as_ptr(),
-                    NonNull::from(llfunc).as_ptr(),
-                    UNNAMED,
-                );
-                LLVMPositionBuilderAtEnd(llbuilder, bb);
-                // construct case constant, add case with building block bb
-                let case = cx.const_unsigned_int((inst_data.params.len() + param_idx) as u32);
-                LLVMAddCase(switch_inst, NonNull::from(case).as_ptr(), bb);
-
-                // Build code for checking the parameter given flag
-                let is_given =
-                    model_data.is_nth_param_given(cx, param_idx as u32, &*ptr, &*llbuilder);
-                let is_given = LLVMBuildSelect(
-                    llbuilder,
-                    NonNull::from(is_given).as_ptr(),
-                    NonNull::from(one).as_ptr(),
-                    NonNull::from(zero).as_ptr(),
-                    UNNAMED,
-                );
-
-                // Return value
-                LLVMBuildRet(llbuilder, is_given);
-            }
-
-            // build not_found block
             LLVMPositionBuilderAtEnd(llbuilder, not_found);
-
-            // Return 0
-            LLVMBuildRet(llbuilder, NonNull::from(zero).as_ptr());
-
-            //Do we have to dispose this?
-            //LLVMDisposeBuilder(llbuilder);
+            LLVMBuildRet(llbuilder, NonNull::from(cx.const_int(0)).as_ptr());
+            LLVMDisposeBuilder(llbuilder);
         }
 
         llfunc
     }
+}
+
+/// Enhancement-713: bit `pos` of the given bitfield at `arr` (word `pos / 32`,
+/// bit `pos % 32`, the layout `bitfield` writes), as a 0/1 `i32`.
+unsafe fn given_bit(
+    cx: &mir_llvm::CodegenCx<'_, '_>,
+    llbuilder: llvm_sys::prelude::LLVMBuilderRef,
+    arr: llvm_sys::prelude::LLVMValueRef,
+    pos: llvm_sys::prelude::LLVMValueRef,
+) -> llvm_sys::prelude::LLVMValueRef {
+    let ty_int = NonNull::from(cx.ty_int()).as_ptr();
+    let word_idx =
+        LLVMBuildLShr(llbuilder, pos, NonNull::from(cx.const_unsigned_int(5)).as_ptr(), UNNAMED);
+    let bit = LLVMBuildAnd(llbuilder, pos, NonNull::from(cx.const_unsigned_int(31)).as_ptr(), UNNAMED);
+    let mask = LLVMBuildShl(llbuilder, NonNull::from(cx.const_unsigned_int(1)).as_ptr(), bit, UNNAMED);
+    let mut w = [word_idx];
+    let word_ptr = LLVMBuildGEP2(llbuilder, ty_int, arr, w.as_mut_ptr(), 1, UNNAMED);
+    let word = LLVMBuildLoad2(llbuilder, ty_int, word_ptr, UNNAMED);
+    let is_set = LLVMBuildAnd(llbuilder, word, mask, UNNAMED);
+    let bit_set = LLVMBuildICmp(
+        llbuilder,
+        LLVMIntNE,
+        is_set,
+        NonNull::from(cx.const_unsigned_int(0)).as_ptr(),
+        UNNAMED,
+    );
+    LLVMBuildZExt(llbuilder, bit_set, ty_int, UNNAMED)
+
 }

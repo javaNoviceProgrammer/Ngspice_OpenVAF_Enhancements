@@ -2,10 +2,13 @@ use core::ffi::c_uint;
 use std::ptr::NonNull;
 
 use llvm_sys::core::{
+    LLVMAddIncoming, LLVMBuildAdd, LLVMBuildBr, LLVMBuildCondBr, LLVMBuildICmp, LLVMBuildLoad2,
+    LLVMBuildPhi, LLVMGetBasicBlockParent, LLVMGetInsertBlock,
     LLVMAppendBasicBlockInContext, LLVMBuildCall2, LLVMBuildFAdd, LLVMBuildFCmp, LLVMBuildFDiv,
     LLVMBuildFMul, LLVMBuildFSub, LLVMBuildGEP2, LLVMBuildRetVoid, LLVMBuildSelect, LLVMBuildStore,
     LLVMCreateBuilderInContext, LLVMDisposeBuilder, LLVMGetParam, LLVMPositionBuilderAtEnd,
 };
+use llvm_sys::LLVMIntPredicate::LLVMIntULT;
 use llvm_sys::LLVMRealPredicate;
 use mir_llvm::UNNAMED;
 use sim_back::dae::NoiseSourceKind;
@@ -100,37 +103,84 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
             freq
         };
 
-        // Default (lx >= x[n-1]): clamp to the last point.
-        let mut result = NonNull::from(cx.const_real(y[n - 1])).as_ptr();
-
-        // Walk the segments from the top down. After the loop, the surviving
-        // `select` is the one for the lowest segment whose upper bound exceeds
-        // `lx`, i.e. exactly the bracketing segment.
-        for i in (0..n - 1).rev() {
+        // Enhancement-713 (robustness campaign F7 of 2026-09-23): the segment
+        // search was a chain of n selects emitted straight into the function --
+        // 2 000 pairs made 4 000 lines that LLVM's instruction combiner took 9 s
+        // over, 5 000 pairs a minute. The table is three constant arrays now
+        // (upper bound, slope and intercept per segment) and the search a loop
+        // over them: the first segment whose upper bound exceeds `lx`, the last
+        // point when none does -- exactly the chain's answer for any data,
+        // sorted or not, NaN included -- in constant code.
+        let ty_double = cx.ty_double();
+        let ty_int = cx.ty_int();
+        let mut hi_vals = Vec::with_capacity(n - 1);
+        let mut slope_vals = Vec::with_capacity(n - 1);
+        let mut icpt_vals = Vec::with_capacity(n - 1);
+        for i in 0..n - 1 {
             let slope = (y[i + 1] - y[i]) / (x[i + 1] - x[i]);
             let intercept = y[i] - slope * x[i];
-            // seg = slope * lx + intercept
-            let seg = LLVMBuildFMul(
-                llbuilder,
-                NonNull::from(cx.const_real(slope)).as_ptr(),
-                lx,
-                UNNAMED,
-            );
-            let seg = LLVMBuildFAdd(
-                llbuilder,
-                seg,
-                NonNull::from(cx.const_real(intercept)).as_ptr(),
-                UNNAMED,
-            );
-            let cond = LLVMBuildFCmp(
-                llbuilder,
-                LLVMRealPredicate::LLVMRealOLT,
-                lx,
-                NonNull::from(cx.const_real(x[i + 1])).as_ptr(),
-                UNNAMED,
-            );
-            result = LLVMBuildSelect(llbuilder, cond, seg, result, UNNAMED);
+            hi_vals.push(cx.const_real(x[i + 1]));
+            slope_vals.push(cx.const_real(slope));
+            icpt_vals.push(cx.const_real(intercept));
         }
+        let hi_arr = NonNull::from(cx.const_arr_ptr(ty_double, &hi_vals)).as_ptr();
+        let slope_arr = NonNull::from(cx.const_arr_ptr(ty_double, &slope_vals)).as_ptr();
+        let icpt_arr = NonNull::from(cx.const_arr_ptr(ty_double, &icpt_vals)).as_ptr();
+
+        let llcx = NonNull::from(cx.llcx).as_ptr();
+        let cur_bb = LLVMGetInsertBlock(llbuilder);
+        let f = LLVMGetBasicBlockParent(cur_bb);
+        let hdr = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+        let chk = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+        let next = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+        let found = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+        let merge = LLVMAppendBasicBlockInContext(llcx, f, UNNAMED);
+        let ty_int_p = NonNull::from(ty_int).as_ptr();
+        let ty_double_p = NonNull::from(ty_double).as_ptr();
+        let c0 = NonNull::from(cx.const_unsigned_int(0)).as_ptr();
+        let c1 = NonNull::from(cx.const_unsigned_int(1)).as_ptr();
+        let c_segs = NonNull::from(cx.const_unsigned_int((n - 1) as u32)).as_ptr();
+        let y_last = NonNull::from(cx.const_real(y[n - 1])).as_ptr();
+
+        LLVMBuildBr(llbuilder, hdr);
+
+        // for (i = 0; i < n - 1; i++) if (lx < hi[i]) break;
+        LLVMPositionBuilderAtEnd(llbuilder, hdr);
+        let i = LLVMBuildPhi(llbuilder, ty_int_p, UNNAMED);
+        let in_range = LLVMBuildICmp(llbuilder, LLVMIntULT, i, c_segs, UNNAMED);
+        LLVMBuildCondBr(llbuilder, in_range, chk, merge);
+
+        LLVMPositionBuilderAtEnd(llbuilder, chk);
+        let mut idx = [i];
+        let hi_ptr = LLVMBuildGEP2(llbuilder, ty_double_p, hi_arr, idx.as_mut_ptr(), 1, UNNAMED);
+        let hi = LLVMBuildLoad2(llbuilder, ty_double_p, hi_ptr, UNNAMED);
+        let below = LLVMBuildFCmp(llbuilder, LLVMRealPredicate::LLVMRealOLT, lx, hi, UNNAMED);
+        LLVMBuildCondBr(llbuilder, below, found, next);
+
+        LLVMPositionBuilderAtEnd(llbuilder, next);
+        let i1 = LLVMBuildAdd(llbuilder, i, c1, UNNAMED);
+        LLVMBuildBr(llbuilder, hdr);
+        let mut i_vals = [c0, i1];
+        let mut i_bbs = [cur_bb, next];
+        LLVMAddIncoming(i, i_vals.as_mut_ptr(), i_bbs.as_mut_ptr(), 2);
+
+        // seg = slope[i] * lx + intercept[i]
+        LLVMPositionBuilderAtEnd(llbuilder, found);
+        let slope_ptr =
+            LLVMBuildGEP2(llbuilder, ty_double_p, slope_arr, idx.as_mut_ptr(), 1, UNNAMED);
+        let slope = LLVMBuildLoad2(llbuilder, ty_double_p, slope_ptr, UNNAMED);
+        let icpt_ptr = LLVMBuildGEP2(llbuilder, ty_double_p, icpt_arr, idx.as_mut_ptr(), 1, UNNAMED);
+        let icpt = LLVMBuildLoad2(llbuilder, ty_double_p, icpt_ptr, UNNAMED);
+        let seg = LLVMBuildFMul(llbuilder, slope, lx, UNNAMED);
+        let seg = LLVMBuildFAdd(llbuilder, seg, icpt, UNNAMED);
+        LLVMBuildBr(llbuilder, merge);
+
+        // no segment: clamp to the last point
+        LLVMPositionBuilderAtEnd(llbuilder, merge);
+        let mut result = LLVMBuildPhi(llbuilder, ty_double_p, UNNAMED);
+        let mut r_vals = [seg, y_last];
+        let mut r_bbs = [found, hdr];
+        LLVMAddIncoming(result, r_vals.as_mut_ptr(), r_bbs.as_mut_ptr(), 2);
 
         // Clamp below x[0] to the first point (otherwise segment 0 would
         // extrapolate below the table).

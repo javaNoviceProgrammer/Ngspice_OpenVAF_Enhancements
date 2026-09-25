@@ -36,6 +36,40 @@ use ordered_float::OrderedFloat;
 /// A count that will not fold, is negative, or is implausibly large leaves the
 /// element unexpanded: it then reads as one leaf and the ordinary
 /// length-mismatch diagnostic reports it, rather than a silently mis-sized array.
+/// Enhancement-713 (robustness campaign F7 of 2026-09-23): the flattened leaves of
+/// one array literal, as a memoised query. Every element of an array variable or
+/// parameter is its own item with its own body, and each body used to call
+/// `flatten_pattern` on the whole `'{...}` literal to pick its one leaf -- a walk
+/// over n syntax nodes, n times, so a 20 000-element `localparam` array spent
+/// 15 s in the front end and 100 000 elements did not finish in 300 s. The literal
+/// is flattened once here, keyed by its position in the file, and the bodies pick
+/// their leaf by index; the pointers resolve against any parse of the file.
+pub(crate) fn array_literal_leaves_query(
+    db: &dyn HirDefDB,
+    root_file: FileId,
+    literal: syntax::SyntaxNodePtr,
+) -> Arc<[syntax::SyntaxNodePtr]> {
+    let root = db.parse(root_file).tree();
+    let Some(expr) = syntax::ast::Expr::cast(literal.to_node(root.syntax())) else {
+        return Arc::from(Vec::new());
+    };
+    flatten_pattern(expr).iter().map(|e| syntax::SyntaxNodePtr::new(e.syntax())).collect()
+}
+
+/// Enhancement-713: leaf `pos` of the array literal `literal`, through the memoised
+/// leaf table; `None` when the literal has fewer leaves.
+pub(crate) fn array_literal_leaf(
+    db: &dyn HirDefDB,
+    root_file: FileId,
+    root: &syntax::SyntaxNode,
+    literal: &syntax::ast::Expr,
+    pos: u32,
+) -> Option<syntax::ast::Expr> {
+    let leaves = db.array_literal_leaves(root_file, syntax::SyntaxNodePtr::new(literal.syntax()));
+    let ptr = leaves.get(pos as usize)?;
+    syntax::ast::Expr::cast(ptr.to_node(root))
+}
+
 pub(crate) fn flatten_pattern(expr: syntax::ast::Expr) -> Vec<syntax::ast::Expr> {
     use syntax::ast;
 

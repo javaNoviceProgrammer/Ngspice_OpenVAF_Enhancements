@@ -183,6 +183,7 @@ impl<'a> OsdiModule<'a> {
             model_param_intern,
             node_collapse,
             terminal_shorts,
+            largest_block: _,
         } = module;
         OsdiModule {
             sym,
