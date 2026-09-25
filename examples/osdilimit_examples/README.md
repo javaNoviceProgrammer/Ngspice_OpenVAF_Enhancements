@@ -31,3 +31,11 @@ python3 verify_osdilimit.py    # 12 checks, both solvers
 
 The models are compiled from the VA-Models corpus on each run (BSIM4, PSP103,
 HiCUM L2, MEXTRAM; about five seconds).
+
+Since [E-717](../../enhancements_doc/Enhancement-717.md) the second check of [2] — the
+un-limited path reaching the limited operating point — is asserted only when the legacy
+path converges. On the 100-stage chain under KLU that path sits on a knife edge: a
+nanovolt at the input, or the last bit of a conductance (E-717 changed BSIM4's Jacobian
+by one unit in the last place), decides between convergence in 139 iterations and a
+7e54 V blow-up, on either compiler. A divergence is printed as the legacy path's own
+failure mode; the limited path converges in 8 iterations throughout.

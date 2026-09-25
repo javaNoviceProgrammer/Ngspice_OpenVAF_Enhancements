@@ -409,6 +409,22 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
         val
     }
 
+    /// Enhancement-717: emit the instruction that defines `val` without the
+    /// derivative fast-math flags. `mir_llvm` flags an instruction by the sign
+    /// of its source location -- negative for the derivative code this builder
+    /// inserts (`Partial`: reassociation, reciprocals, no NaNs), non-negative
+    /// for the model's own code (no flags) -- so the instruction gets the
+    /// location's magnitude, which keeps the diagnostics' file position and
+    /// tells the code generator to leave its arithmetic alone.
+    fn keep_exact(&mut self, val: Value) -> Value {
+        let inst = self.func.dfg.value_def(val).unwrap_inst();
+        let loc = self.func.srclocs.get(inst).copied().unwrap_or_default();
+        if loc.0 < 0 {
+            self.func.srclocs[inst] = SourceLoc(-loc.0);
+        }
+        val
+    }
+
     fn insert_derivative(&mut self, original: Value, unknown: Unknown, val: Value) {
         if val == F_ZERO {
             return;
@@ -441,7 +457,9 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             //     let val = self.ins().imul(arg1, arg1);
             //     self.ins().ifcast(val)
             // }
-            Opcode::Fdiv => self.ins().fmul(arg1, arg1),
+            // Enhancement-717: a division caches nothing -- its derivative is
+            // formed over the divisor itself, not its square (see
+            // `gen_div_derivative`).
 
             // Technically not required but makes code look nicer..
             // exp(x) -> exp(x)
@@ -684,7 +702,18 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
                 sel.ins().fadd(sum1, sum2)
             };
 
-        // (f/g)' -> (f'*g - g' *f) / g^2 = f'/g - g'*f/g^2
+        // (f/g)' = (f' - (f/g)*g') / g
+        //
+        // Enhancement-717 (correctness campaign F3 of 2026-09-25): the textbook
+        // form f'/g - f*g'/g^2 squares the divisor, and for a divisor below the
+        // smallest denormal's square root (about 2.2e-162) g^2 underflows to 0:
+        // `V(a) / (V(b) + 1e-300)` at the V = 0 operating-point guess had the
+        // right value and a NaN derivative (0 * 1 / 0), and so did
+        // `exp(-1/(x*x + 1e-300))`. Reusing the quotient itself -- `res`, which
+        // the instruction has computed already -- keeps every intermediate at
+        // the scale of the quotient and divides by g once; the arithmetic is the
+        // same derivative to rounding. A divisor that is constant in the unknown
+        // is the plain f'/g, as before.
         let gen_div_derivative =
             |sel: &mut DerivativeBuilder, mut lhs: Value, mut rhs: Value, cast: bool| {
                 let dlhs = arg_derivative(sel, 0);
@@ -697,32 +726,31 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
                     res
                 };
 
-                // f'/g
-                let sum1 = if dlhs == F_ZERO {
-                    F_ZERO
-                } else if dlhs == lhs {
-                    res
-                } else {
-                    sel.ins().fdiv(dlhs, rhs)
-                };
+                // g constant in the unknown: f'/g
+                if drhs == F_ZERO {
+                    return if dlhs == F_ZERO {
+                        F_ZERO
+                    } else if dlhs == lhs {
+                        res
+                    } else {
+                        sel.ins().fdiv(dlhs, rhs)
+                    };
+                }
 
-                // f*g'/g^2
-                let top = if drhs == F_ZERO {
-                    return sum1;
-                } else if drhs == F_ONE {
-                    lhs
-                } else if drhs == rhs {
-                    if sum1 == res {
-                        return F_ZERO;
-                    }
-                    res
+                // (f/g) * g'
+                let scaled = if drhs == F_ONE { res } else { sel.ins().fmul(res, drhs) };
+                // f' - (f/g) * g'
+                let num = if dlhs == F_ZERO {
+                    sel.ins().fneg(scaled)
                 } else {
-                    sel.ins().fmul(drhs, lhs)
+                    sel.ins().fsub(dlhs, scaled)
                 };
-                let bot = cache[0].unwrap_unchecked();
-                let sum2 = sel.ins().fdiv(top, bot);
-
-                sel.ins().fsub(sum1, sum2)
+                // The last division is emitted WITHOUT the derivative fast-math
+                // flags: with `reassoc` and `arcp` on it LLVM's instruction
+                // combiner rewrites (x/g)/g back into x/(g*g), the square this
+                // form exists to avoid (it did, and the NaN came back).
+                let val = sel.ins().fdiv(num, rhs);
+                sel.keep_exact(val)
             };
 
         let val = match op {

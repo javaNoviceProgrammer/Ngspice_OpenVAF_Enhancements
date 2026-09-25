@@ -1,14 +1,14 @@
-function %(v16, v17, v18, v19, v20, v22, v25, v28, v24, v42, v45, v47) {
+function %(v16, v17, v18, v19, v20, v22, v25, v28, v24, v41, v44, v46) {
                                 block2:
 @0010                               v26 = fdiv v16, v24
-                                    v38 = fmul v28, v26
-                                    v29 = optbarrier v38
+                                    v37 = fmul v28, v26
+                                    v29 = optbarrier v37
                                     v30 = fneg v26
-                                    v35 = optbarrier v42
-                                    v37 = optbarrier v45
-                                    v40 = fmul v28, v30
-                                    v39 = optbarrier v40
-                                    v41 = optbarrier v28
-                                    v43 = optbarrier v45
-                                    v46 = optbarrier v47
+                                    v34 = optbarrier v41
+                                    v36 = optbarrier v44
+                                    v39 = fmul v28, v30
+                                    v38 = optbarrier v39
+                                    v40 = optbarrier v28
+                                    v42 = optbarrier v44
+                                    v45 = optbarrier v46
 }

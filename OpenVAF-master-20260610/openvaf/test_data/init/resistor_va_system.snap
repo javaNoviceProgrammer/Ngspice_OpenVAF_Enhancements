@@ -1,8 +1,8 @@
 {
-    v36: cslot0,
-    v37: cslot1,
-    v38: cslot2,
-    v39: cslot3,
+    v35: cslot0,
+    v36: cslot1,
+    v37: cslot2,
+    v38: cslot3,
 }
 {
     cslot0: (
@@ -14,21 +14,21 @@
     ),
     cslot1: (
         (
-            Some(ClassId(9)),
+            Some(ClassId(8)),
             0,
         ),
         Real,
     ),
     cslot2: (
         (
-            Some(ClassId(11)),
+            Some(ClassId(10)),
             0,
         ),
         Real,
     ),
     cslot3: (
         (
-            Some(ClassId(13)),
+            Some(ClassId(12)),
             0,
         ),
         Real,

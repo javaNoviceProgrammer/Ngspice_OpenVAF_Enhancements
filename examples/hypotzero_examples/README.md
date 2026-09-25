@@ -2,8 +2,9 @@
 
 The 2026-09-07 compiler hunt's F1
 ([write-up](../../docs/bug_hunts/2026-09-07_openvaf-r-language-semantics.md)), fixed by
-Enhancement-580. Run `python3 verify_hypotzero.py`; 15 checks per solver, 11 of them
-passing against the shipped compiler.
+Enhancement-580. Run `python3 verify_hypotzero.py`; 21 checks per solver, 11 of the first
+15 passing against the shipped compiler (section [4] is Enhancement-717's, 17 of 21 on the
+E-714 binaries).
 
 `hypot(x, y)` was differentiated as `(x·x' + y·y') / hypot(x, y)`, which is 0/0 at the
 origin, and `atan2(y, x)` as `(x'·y − y'·x) / (x² + y²)`, which is 0·∞ there. V = 0 is
@@ -23,3 +24,16 @@ smooth |x|), and below the ULP for any radius above 1e-9 and 1e-10 respectively.
 A constant zero argument never showed the atan2 half: `atan2(V, 0.0)` folds the
 constant away before the chain rule runs, which is why the hunt's probe with a
 literal 0 passed while two node voltages fail.
+
+## Enhancement-717: a quotient whose divisor's square underflows (correctness campaign F3)
+
+Section [4] (6 checks) pins [E-717](../../enhancements_doc/Enhancement-717.md): the
+automatic derivative of `f/g` was formed as `f'/g − f·g'/g²`, and for a divisor below
+about 2.2e-162 the square is 0, so `x*y/(y*y + 1e-300)` and `exp(-1/(x*x + 1e-300))`
+had a NaN Jacobian entry at the V = 0 guess while their values were 0 — the op failed
+as `hypot`'s did before E-580. The rule is `(f' − (f/g)·g')/g` now, its last division
+emitted without the derivative fast-math flags (LLVM had re-formed the square from the
+new shape under `reassoc` and `arcp`). The checks: both forms solve at the origin with a
+zero conductance and a zero dI/dV(b), a transient through the origin runs, and an
+ordinary quotient `(x+0.3)/(y+0.7)` keeps its analytic derivatives through the
+rewritten rule (1e-3/1.1 and −1e-3·0.6/1.21 at (0.3, 0.4)).

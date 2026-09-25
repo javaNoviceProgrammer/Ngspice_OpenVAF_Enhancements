@@ -80,6 +80,11 @@ analog begin
     5: f = abs(x);
     6: f = sqrt(x*x);
     7: f = sqrt(x);
+    // Enhancement-717 (correctness campaign F3 of 2026-09-25): quotients whose
+    // divisor's SQUARE underflows -- the derivative used to be formed over g*g
+    8: f = x * y / (y * y + 1e-300);
+    9: f = exp(-1.0 / (x * x + 1e-300));
+    10: f = (x + 0.3) / (y + 0.7);
     default: f = x + y;
   endcase
   I(a,n) <+ f * 1e-3;
@@ -90,11 +95,13 @@ rc, log = compile_va("two", MOD)
 check("two.va compiles", rc == 0, log.strip().splitlines()[0] if rc else "")
 
 
-def run(sel, x, y, tran=False):
+def run(sel, x, y, tran=False, acb=False):
+    """acb: the unit ac source on Vb instead of Va, so ga reads dI(a)/dV(b)."""
     ctl = ("tran 10n 2u\nlet np = length(time)\nprint np\n" if tran else
            "op\nac lin 1 1k 1k\nlet ga = mag(i(va))\nlet pa = 180/pi*ph(i(va))\nprint ga pa\n")
-    src = "pulse(-0.5 0.5 0.5u 10n 10n 1u 2u)" if tran else f"dc {x} ac 1"
-    out = ngspice(f"* hypotzero\n.model m two\nVa a 0 {src}\nVb b 0 dc {y}\nN1 a b 0 m sel={sel}\n"
+    src = "pulse(-0.5 0.5 0.5u 10n 10n 1u 2u)" if tran else (f"dc {x}" if acb else f"dc {x} ac 1")
+    srcb = f"dc {y} ac 1" if acb else f"dc {y}"
+    out = ngspice(f"* hypotzero\n.model m two\nVa a 0 {src}\nVb b 0 {srcb}\nN1 a b 0 m sel={sel}\n"
                   f".control\nset numdgt=10\npre_osdi two.osdi\n{ctl}quit\n.endc\n.end\n")
     return ("could not be simulated" in out or "timestep too small" in out), lets(out)
 
@@ -130,6 +137,25 @@ failed, v = run(2, 0, 0, tran=True)
 check("a transient of hypot(Va, Vb) sweeping Va through the origin runs", not failed and v.get("np", 0) > 100, v)
 failed, v = run(4, 0, 0, tran=True)
 check("...and one of hypot + atan2", not failed and v.get("np", 0) > 100, v)
+
+print("[4] Enhancement-717: a quotient whose divisor's square underflows (correctness campaign F3)")
+# x*y/(y*y + 1e-300): value 0 at the origin, every derivative 0 -- the old quotient rule
+# formed x*y * g' / g^2 with g^2 = 1e-600 = 0, a 0/0 NaN in the Jacobian
+failed, v = run(8, 0, 0)
+check("x*y/(y*y + 1e-300) solves at (0, 0) with a zero small-signal conductance (was a NaN Jacobian entry)",
+      not failed and v.get("ga") == 0.0, "op failed" if failed else v)
+failed, v = run(8, 0, 0, acb=True)
+check("... and a zero dI/dV(b) (the entry that was NaN)", not failed and v.get("ga") == 0.0, "op failed" if failed else v)
+failed, v = run(9, 0, 0)
+check("exp(-1/(x*x + 1e-300)) solves at 0 with a zero conductance (was NaN)",
+      not failed and v.get("ga") == 0.0, "op failed" if failed else v)
+# an ordinary quotient keeps its analytic derivatives through the rewritten rule
+failed, v = run(10, 0.3, 0.4)
+check("(x+0.3)/(y+0.7) at (0.3,0.4): dI/dV(a) = 1e-3/1.1", not failed and abs(v.get("ga", 0) - 1e-3 / 1.1) < tol and abs(v.get("pa", 0) - 180) < 1e-6, v)
+failed, v = run(10, 0.3, 0.4, acb=True)
+check("... and dI/dV(b) = -1e-3*0.6/1.21", not failed and abs(v.get("ga", 0) - 1e-3 * 0.6 / 1.21) < tol and abs(v.get("pa", 0)) < 1e-6, v)
+failed, v = run(8, 0, 0, tran=True)
+check("a transient of x*y/(y*y + 1e-300) sweeping Va through the origin runs", not failed and v.get("np", 0) > 100, v)
 
 for f in ("two.va", "two.osdi", "_o.cir"):
     try:
