@@ -31,9 +31,15 @@ const SETUP_FAST_CODEGEN_PARAMS: usize = 1024;
 
 /// Enhancement-712: Jacobian entry count (summed over the file's modules) above
 /// which the descriptor module -- the `load_jacobian_*`, `load_residual_*`,
-/// `load_spice_rhs_*` and `write_jacobian_array_*` helpers -- is generated at
-/// -O0. See the comment at the descriptor module creation.
+/// `load_spice_rhs_*` and `write_jacobian_array_*` helpers -- is emitted
+/// through LLVM's fast instruction selector after the MAIN_FAST_PIPELINE
+/// middle end (Enhancement-714; E-712 built the whole module at -O0).
+/// See the comment at the descriptor module creation.
 const MAIN_FAST_CODEGEN_ENTRIES: usize = 256;
+
+/// Enhancement-714: the middle-end pipeline of a descriptor module above
+/// MAIN_FAST_CODEGEN_ENTRIES (see the comment at the descriptor module creation).
+const MAIN_FAST_PIPELINE: &str = "default<O1>";
 
 /// Enhancement-713: size of a basic block (`ModuleLlvm::largest_block`'s
 /// SelectionDAG estimate for the LLVM side, MIR instructions for the SLP switch)
@@ -456,20 +462,31 @@ pub fn compile<'a>(
         // pointers. At 2 000 entries the descriptor module alone took 24 s of a
         // 24 s compile, and 2 480 (40 twenty-pole filters) 14 s; the eval
         // function of the same modules took half a second. Above
-        // MAIN_FAST_CODEGEN_ENTRIES Jacobian entries the descriptor module is
-        // built at -O0 (FastISel and no middle-end passes), which is linear:
-        // the helpers are memory-bound copies whose code quality does not
-        // change with the optimisation level. Every compact model keeps the
-        // requested level (the largest CMC models have about a hundred
-        // entries); the eval, access and setup modules are unaffected either
-        // way.
+        // MAIN_FAST_CODEGEN_ENTRIES Jacobian entries the descriptor module's
+        // object code is emitted through the fast instruction selector, which
+        // is linear. Every compact model keeps the requested level (the largest
+        // CMC models have about a hundred entries); the eval, access and setup
+        // modules are unaffected either way.
+        //
+        // Enhancement-714: E-712 built the whole module at -O0 -- no middle-end
+        // passes either -- on the reasoning that the helpers are memory-bound
+        // copies. But the address chains and repeated loads the -O3 pipeline
+        // had folded then stayed (a 511-entry transmission line's
+        // load_spice_rhs_tran: 6 016 instructions and 2 645 address
+        // computations against 4 567 and 1 071), and the simulator calls the
+        // helpers on every Newton iteration: the line's transients ran 2 %
+        // slower than on the -O3 descriptor. The module is now created at the
+        // requested level, runs the MAIN_FAST_PIPELINE middle end (-O1: linear,
+        // 67 ms for 511 entries, 0.75 s for 6 200, hidden behind the parallel
+        // eval build; the requested -O3 pipeline's SLP vectoriser is
+        // superlinear here, 17 s at 6 200 entries) and only then has its target
+        // machine swapped for the emission, as E-713 does for an eval with a
+        // giant block: the transient is within 0.4 % of the -O3 descriptor's,
+        // and its results agree with that descriptor's to the last printed
+        // digit or one unit of it.
         let main_entries: usize = osdi_modules.iter().map(|m| m.dae_system.jacobian.len()).sum();
-        let main_lvl = if main_entries > MAIN_FAST_CODEGEN_ENTRIES {
-            LLVMCodeGenOptLevel::LLVMCodeGenLevelNone
-        } else {
-            opt_lvl
-        };
-        let llmod = unsafe { back.new_module(&name, main_lvl).unwrap() };
+        let main_fast = main_entries > MAIN_FAST_CODEGEN_ENTRIES;
+        let llmod = unsafe { back.new_module(&name, opt_lvl).unwrap() };
         let cx = new_codegen(back, &llmod, &literals);
         let tys = OsdiTys::new(&cx, NonNull::from(target_data).as_ptr());
 
@@ -1089,17 +1106,38 @@ pub fn compile<'a>(
         }
 
         if emit {
-            // println!("{}", llmod.to_str());
             let _pt = std::time::Instant::now();
-            llmod.optimize();
+            if main_fast {
+                // Enhancement-714: the middle end of a large descriptor module is
+                // MAIN_FAST_PIPELINE, not the requested level's pipeline: the -O3
+                // pipeline's SLP vectoriser is superlinear in the straight-line
+                // helpers (3.5 of 4.4 s at 5 000 entries, 17 s at 6 200).
+                let pipeline = std::env::var("OPENVAF_MAIN_PIPELINE")
+                    .unwrap_or_else(|_| MAIN_FAST_PIPELINE.to_owned());
+                llmod.run_passes(&pipeline);
+            } else {
+                llmod.optimize();
+            }
             let _po = _pt.elapsed();
-            // println!("{}", llmod.to_str());
+            // Enhancement-714: the fast instruction selector for the emission
+            // only (see MAIN_FAST_CODEGEN_ENTRIES).
+            if main_fast {
+                back.set_codegen_level(&llmod, LLVMCodeGenOptLevel::LLVMCodeGenLevelNone)
+                    .expect("a target machine for the fast instruction selector");
+            }
             assert_eq!(llmod.emit_object(main_file.as_ref()), Ok(()));
             if std::env::var("PHASE_PROF").is_ok() {
                 let (_j, _u): (usize, usize) = osdi_modules.iter().fold((0, 0), |(j, u), m| {
                     (j + m.dae_system.jacobian.len(), u + m.dae_system.unknowns.len())
                 });
-                eprintln!("PHASE llvm main optimize {:?} emit {:?} jacobian={} unknowns={}", _po, _pt.elapsed() - _po, _j, _u);
+                eprintln!(
+                    "PHASE llvm main optimize {:?} emit {:?} jacobian={} unknowns={}{}",
+                    _po,
+                    _pt.elapsed() - _po,
+                    _j,
+                    _u,
+                    if main_fast { " (fast isel)" } else { "" }
+                );
             }
         }
 

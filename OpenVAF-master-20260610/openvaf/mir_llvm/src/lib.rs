@@ -620,31 +620,33 @@ impl ModuleLlvm {
         unsafe { &*self.llmod_raw }
     }
     pub fn optimize(&self) {
+        // Set optimization level
+        let opt_level = match self.opt_lvl {
+            llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelNone => "default<O0>",
+            llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelLess => "default<O1>",
+            llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelDefault => "default<O2>",
+            llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelAggressive => {
+                "default<O3>"
+            }
+        };
+        self.run_passes(opt_level)
+    }
+
+    /// Enhancement-714: run the middle-end pipeline `pipeline` (a pass
+    /// pipeline string as `opt -passes=` takes it, `default<O1>` for the
+    /// level pipelines) over the module. `optimize` is the module's own level
+    /// through this; the osdi driver runs a large descriptor module through a
+    /// pipeline of its own (see `MAIN_FAST_PIPELINE` there).
+    pub fn run_passes(&self, pipeline: &str) {
         let llmod = self.llmod();
 
         unsafe {
             // Create PassBuilderOptions
             let options = LLVMCreatePassBuilderOptions(); //this is opaque LLVMPassBuilderOptionsRef
 
-            // Set optimization level
-            let opt_level = match self.opt_lvl {
-                llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelNone => {
-                    "default<O0>"
-                }
-                llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelLess => {
-                    "default<O1>"
-                }
-                llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelDefault => {
-                    "default<O2>"
-                }
-                llvm_sys::target_machine::LLVMCodeGenOptLevel::LLVMCodeGenLevelAggressive => {
-                    "default<O3>"
-                }
-            };
-
             let error = {
                 // Create variables in inner scope
-                let opt_level_cstring = CString::new(opt_level).unwrap();
+                let opt_level_cstring = CString::new(pipeline).unwrap();
                 let opt_level_ptr = opt_level_cstring.as_ptr();
 
                 let llmod_ptr = NonNull::from(llmod).as_ptr();

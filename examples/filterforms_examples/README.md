@@ -101,3 +101,27 @@ quadratic LLVM backend passes. The checks:
 ```
 OPENVAF_BIN=/path/to/E-711/openvaf-r python3 verify_filterforms.py   # 93/95, exit 1
 ```
+
+## Enhancement-714: the descriptor's middle end above 256 entries
+
+Section "Enhancement-714" of `verify_filterforms.py` (5 checks, 100 in all) guards
+the follow-up to E-712 in [E-714](../../enhancements_doc/Enhancement-714.md): the
+descriptor module of a file above 256 Jacobian entries runs LLVM's -O1 middle end and
+is then emitted through the fast instruction selector. E-712 had built it at -O0
+outright, and on a 2 mm photonic transmission line (511 entries) the simulator paid
+2 % of a transient's time for the unfolded helper code; the -O3 middle end would have
+cost 17 s on the 100-filter module (its SLP vectoriser is superlinear in the
+straight-line helpers), the -O1 one is linear and hidden behind the parallel eval
+build. The checks:
+
+- the 300-node ladder (904 entries) reports the fast instruction selector in its
+  `PHASE_PROF=1` line, and its `load_jacobian_resist` has one address computation per
+  entry after the middle end (907; 2 712 on the E-713 binaries);
+- `OPENVAF_MAIN_PIPELINE=default<O0>` leaves them unfolded (2 712), so the hook selects
+  the pipeline;
+- a 60-node ladder (184 entries) keeps the requested level end to end, no fast
+  selector, and draws 0.61 V over 61 kΩ to eleven digits.
+
+```
+OPENVAF_BIN=/path/to/E-713/openvaf-r python3 verify_filterforms.py   # 97/100, exit 1
+```

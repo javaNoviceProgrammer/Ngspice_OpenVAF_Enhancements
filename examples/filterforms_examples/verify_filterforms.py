@@ -194,6 +194,7 @@ def main():
         check(f"{fam}: four transient waveforms identical", same and base is not None)
 
     e712_checks()
+    e714_checks()
 
     print(f"\n{passed}/{checks} checks passed")
     return 0 if passed == checks else 1
@@ -335,6 +336,78 @@ def e712_checks():
         got = float(m[0]) if m else None
         # 301 resistors of 1 kOhm in series: 3.01 V / 301 kOhm = 10 uA
         check(f"  its dc current is 3.01 V over 301 kOhm: {got}",
+              got is not None and abs(got + 1e-5) < 1e-11)
+
+
+# ------------------------------------------------- Enhancement-714
+def e714_compile(name, src, env=None, args=()):
+    """Compile `src` with extra environment and arguments; returns (ok, log)."""
+    path = os.path.join(tempfile.gettempdir(), f"ff_{name}.va")
+    with open(path, "w") as fh:
+        fh.write(src)
+    try:
+        os.remove(E712_OSDI)
+    except OSError:
+        pass
+    r = subprocess.run([OPENVAF, path, "-o", E712_OSDI, *args], capture_output=True, text=True,
+                       timeout=600, env={**os.environ, **(env or {})})
+    return r.returncode == 0 and os.path.exists(E712_OSDI), r.stdout + r.stderr
+
+
+def e714_ladder(nodes):
+    return ('`include "disciplines.vams"\nmodule ladder(p, n);\ninout p, n; electrical p, n;\n'
+            + " ".join("electrical x%d;" % i for i in range(nodes))
+            + "\nanalog begin\nI(p, x0) <+ V(p, x0)*1e-3;\n"
+            + "\n".join("I(x%d, x%d) <+ V(x%d, x%d)*1e-3;" % (i, i + 1, i, i + 1) for i in range(nodes - 1))
+            + "\nI(x%d, n) <+ V(x%d, n)*1e-3;\nend\nendmodule\n" % (nodes - 1, nodes - 1))
+
+
+def e714_geps(log, func):
+    """getelementptr count of `func` in the dumped descriptor module, or None."""
+    m = re.search(r"^Optimized LLVM IR for osdi_descriptors in .*?\n(.*?)(?=^Optimized LLVM IR for |\Z)",
+                  log, re.M | re.S)
+    if not m:
+        return None
+    f = re.search(r"^define [^\n]*@%s\([^\n]*\{\n(.*?)^\}" % func, m.group(1), re.M | re.S)
+    return len(re.findall(r"getelementptr", f.group(1))) if f else None
+
+
+def e714_checks():
+    """Enhancement-714: the descriptor module of a file above 256 Jacobian
+    entries runs LLVM's -O1 middle end and is emitted through the fast
+    instruction selector; E-712 had built it at -O0 outright, and a 2 mm
+    transmission line's transient (511 entries) ran 2 % slower on it than on
+    the -O3 descriptor. Below the threshold the module keeps the requested
+    level end to end.
+    """
+    print("\nEnhancement-714: the descriptor's middle end above 256 entries")
+    # the 300-node ladder of E-712 (904 entries): the fast path
+    ok, log = e714_compile("ladder300b", e714_ladder(300), env={"PHASE_PROF": "1"}, args=("--dump-ir",))
+    line = next((l for l in log.splitlines() if l.startswith("PHASE llvm main")), "")
+    check("904 entries: the descriptor's object is emitted through the fast instruction selector",
+          ok and "(fast isel)" in line, line.split("main ", 1)[-1])
+    g = e714_geps(log, "load_jacobian_resist_0")
+    # 904 entries: one address computation per entry after -O1 (904), two and a
+    # half without a middle end (2 260 on the E-713 binaries)
+    check(f"  ... after the -O1 middle end: {g} address computations in load_jacobian_resist for 904 entries",
+          g is not None and g <= 1.5 * 904)
+    # the same module with the middle end switched off through the hook
+    ok2, log2 = e714_compile("ladder300c", e714_ladder(300), env={"OPENVAF_MAIN_PIPELINE": "default<O0>"},
+                             args=("--dump-ir",))
+    g2 = e714_geps(log2, "load_jacobian_resist_0")
+    check(f"  ... OPENVAF_MAIN_PIPELINE=default<O0> leaves them unfolded ({g2})",
+          ok2 and g2 is not None and g is not None and g2 > 2 * g)
+    # a 60-node ladder (184 entries) stays below the threshold: the requested
+    # level end to end, and the right current
+    ok, log = e714_compile("ladder60", e714_ladder(60), env={"PHASE_PROF": "1"})
+    line = next((l for l in log.splitlines() if l.startswith("PHASE llvm main")), "")
+    check("184 entries: the descriptor keeps the requested level (no fast isel)",
+          ok and "jacobian=184" in line and "(fast isel)" not in line, line.split("main ", 1)[-1])
+    if ok:
+        out = e712_run("ladder60", "v1 a 0 dc 0.61\nn1 a 0 mm\n.model mm ladder()", "op\nprint i(v1)")
+        m = re.findall(r"i\(v1\)\s*=\s*(-?[\d.eE+-]+)", out)
+        got = float(m[0]) if m else None
+        check(f"  its dc current is 0.61 V over 61 kOhm: {got}",
               got is not None and abs(got + 1e-5) < 1e-11)
 
 
