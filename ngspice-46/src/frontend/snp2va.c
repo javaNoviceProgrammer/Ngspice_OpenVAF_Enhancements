@@ -146,24 +146,132 @@ static int poly_roots(const cplx *cin, int deg, cplx *roots)
 
 /* ============================ Touchstone I/O ============================ */
 
-typedef struct { double *freqs; cplx *S; int nf; int N; double z0; char ptype; } TS;
+typedef struct {
+    double *freqs; cplx *S; int nf; int N;
+    double z0;        /* the option line's R (v1: the normalization of Y and Z) */
+    double *zref;     /* per-port reference impedance, length N (v2 [Reference], else z0) */
+    char ptype;
+    int version;      /* 1, or 2 when the file carries Touchstone 2 keywords */
+} TS;
 
-static void ts_free(TS *t) { free(t->freqs); free(t->S); }
+static void ts_free(TS *t) { free(t->freqs); free(t->S); free(t->zref); }
 
-/* returns 0 on ok */
+/* Enhancement-741: a bracketed Touchstone 2 keyword, lower-cased with its inner
+ * whitespace collapsed, so "[Number  of Ports]" and "[number of ports]" compare
+ * equal. Returns the text after the ']' or NULL when the bracket is unclosed. */
+static const char *ts_keyword(const char *p, char *kw, size_t kwlen)
+{
+    const char *rb = strchr(p, ']');
+    size_t n = 0;
+    int sp = 0;
+    if (!rb) return NULL;
+    for (p++; p < rb; p++) {
+        if (isspace((unsigned char) *p)) { sp = 1; continue; }
+        if (sp && n && n + 1 < kwlen) kw[n++] = ' ';
+        sp = 0;
+        if (n + 1 < kwlen) kw[n++] = (char) tolower((unsigned char) *p);
+    }
+    kw[n] = '\0';
+    return rb + 1;
+}
+
+/* append every number on `p` to nums; returns the count appended */
+static long ts_numbers(char *p, double **nums, long *ncap, long *nn, int limit)
+{
+    long added = 0;
+    char *tok = strtok(p, " \t\r\n");
+    while (tok && (limit < 0 || added < limit)) {
+        char *end; double v = strtod(tok, &end);
+        if (end != tok) {
+            if (*nn >= *ncap) { *ncap = *ncap ? *ncap*2 : 1024; *nums = (double*) realloc(*nums, (size_t) *ncap*sizeof(double)); }
+            (*nums)[(*nn)++] = v;
+            added++;
+        }
+        tok = strtok(NULL, " \t\r\n");
+    }
+    return added;
+}
+
+/* returns 0 on ok.
+ *
+ * Enhancement-741 (Touchstone-import hunt F1, F10, F11): the parser reads
+ * Touchstone 2 as well as 1. Before, a bracketed keyword line was treated as
+ * data -- the numbers on `[Version] 2.0`, `[Number of Ports] 2`, `[Number of
+ * Frequencies] 21` and `[Reference] 50 50` entered the number stream, every
+ * frame was misaligned, the frame count `nn / rec` dropped the remainder in
+ * silence and the vector fit was run on garbage (16 poles, rms error 6e-2 and
+ * an S21 of -66.7 for a file whose v1 form fits to 4e-4). Now: the v2
+ * keywords are read ([Version], [Number of Ports], [Two-Port Data Order],
+ * [Number of Frequencies], [Number of Noise Frequencies], [Reference],
+ * [Matrix Format] Full/Lower/Upper, [Network Data], [Noise Data], [End],
+ * [Begin Information]..[End Information]); [Mixed-Mode Order], the G and H
+ * parameter types and an unknown keyword are refused by name; a number count
+ * that is not a whole number of frames is refused with the count, the frame
+ * size and the two things it usually means (a wrong port count, or v1
+ * noise-parameter rows after the network data); [Number of Frequencies] is
+ * checked against the frames read. A v1 file's Y and Z data are normalized to
+ * R (Y*R, Z/R -- what `wrsnp` writes and `rdsnp` undoes) and are de-normalized
+ * here; a v2 file's are absolute, as its specification says. A per-port
+ * [Reference] is carried into the S-to-Y conversion. The port count is taken
+ * from [Number of Ports] in v2 and from a `.sNp`, `.yNp` or `.zNp` extension
+ * in v1 (only `.sNp` counted before, so `wrsnp`'s own `.y2p` fell to the
+ * divisor fallback, which answers 1 for every two-port frame of 9 numbers). */
 static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
 {
     FILE *f = fopen(fn, "r");
     if (!f) { snprintf(msg, (size_t) msglen, "cannot open '%s'", fn); return 1; }
     double fmul = 1e9, z0 = 50.0; char ptype = 'S'; char fmt[3] = "MA";
+    int version = 1, kw_nports = 0, kw_nfreq = -1;
+    int order = 0;          /* two-port data order: 0 unset, 1 = 21_12 (v1), 2 = 12_21 */
+    int mformat = 0;        /* 0 full, 1 lower, 2 upper */
+    int in_info = 0, in_data = 1, want_zref = 0, lineno = 0;
+    double *zref = NULL; long zcap = 0, nzref = 0;
     /* collect all numeric tokens after the '#' options line(s) */
     double *nums = NULL; long ncap = 0, nn = 0;
     char line[4096];
     while (fgets(line, sizeof line, f)) {
+        lineno++;
         char *h = strchr(line, '!'); if (h) *h = '\0';
         char *p = line;
         while (*p && isspace((unsigned char)*p)) p++;
         if (*p == '\0') continue;
+        if (*p == '[') {
+            char kw[64];
+            const char *rest = ts_keyword(p, kw, sizeof kw);
+            if (!rest) { snprintf(msg,(size_t)msglen,"line %d: unclosed '[' keyword", lineno); goto bad; }
+            if (in_info) { if (!strcmp(kw, "end information")) in_info = 0; continue; }
+            if (version == 1) { version = 2; in_data = 0; }
+            want_zref = 0;
+            if (!strcmp(kw, "version")) { /* 2.0, 2.1: the same layout for what is read here */ }
+            else if (!strcmp(kw, "number of ports")) { kw_nports = atoi(rest); if (kw_nports <= 0 || kw_nports > 512) { snprintf(msg,(size_t)msglen,"line %d: [Number of Ports] %s is not a port count between 1 and 512", lineno, rest[0] ? rest : "(empty)"); goto bad; } }
+            else if (!strcmp(kw, "two-port data order")) {
+                if (strstr(rest, "12_21")) order = 2;
+                else if (strstr(rest, "21_12")) order = 1;
+                else { snprintf(msg,(size_t)msglen,"line %d: [Two-Port Data Order] must be 12_21 or 21_12", lineno); goto bad; }
+            }
+            else if (!strcmp(kw, "number of frequencies")) kw_nfreq = atoi(rest);
+            else if (!strcmp(kw, "number of noise frequencies")) { /* the noise block is not read */ }
+            else if (!strcmp(kw, "reference")) {
+                if (kw_nports <= 0) { snprintf(msg,(size_t)msglen,"line %d: [Reference] before [Number of Ports]", lineno); goto bad; }
+                want_zref = 1;
+                { char tmp[4096]; snprintf(tmp, sizeof tmp, "%s", rest); ts_numbers(tmp, &zref, &zcap, &nzref, (int)(kw_nports - nzref)); }
+                if (nzref >= kw_nports) want_zref = 0;
+            }
+            else if (!strcmp(kw, "matrix format")) {
+                char *t = (char*) rest; while (*t && isspace((unsigned char)*t)) t++;
+                if (!strncasecmp(t, "full", 4)) mformat = 0;
+                else if (!strncasecmp(t, "lower", 5)) mformat = 1;
+                else if (!strncasecmp(t, "upper", 5)) mformat = 2;
+                else { snprintf(msg,(size_t)msglen,"line %d: [Matrix Format] must be Full, Lower or Upper", lineno); goto bad; }
+            }
+            else if (!strcmp(kw, "network data")) in_data = 1;
+            else if (!strcmp(kw, "noise data") || !strcmp(kw, "end")) break;
+            else if (!strcmp(kw, "begin information")) in_info = 1;
+            else if (!strcmp(kw, "mixed-mode order")) { snprintf(msg,(size_t)msglen,"line %d: [Mixed-Mode Order] -- mixed-mode S-parameters are not supported; convert the file to single-ended (standard) order first", lineno); goto bad; }
+            else { snprintf(msg,(size_t)msglen,"line %d: unknown Touchstone keyword [%s]", lineno, kw); goto bad; }
+            continue;
+        }
+        if (in_info) continue;
         if (*p == '#') {
             char *tok = strtok(p+1, " \t\r\n");
             while (tok) {
@@ -171,92 +279,130 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
                 else if (!strcasecmp(tok,"KHZ")) fmul=1e3;
                 else if (!strcasecmp(tok,"MHZ")) fmul=1e6;
                 else if (!strcasecmp(tok,"GHZ")) fmul=1e9;
-                else if (!strcasecmp(tok,"S")||!strcasecmp(tok,"Y")||!strcasecmp(tok,"Z")) ptype=toupper((unsigned char)tok[0]);
-                else if (!strcasecmp(tok,"MA")||!strcasecmp(tok,"DB")||!strcasecmp(tok,"RI")) { fmt[0]=toupper((unsigned char)tok[0]); fmt[1]=toupper((unsigned char)tok[1]); }
+                else if (!strcasecmp(tok,"S")||!strcasecmp(tok,"Y")||!strcasecmp(tok,"Z")) ptype=(char) toupper((unsigned char)tok[0]);
+                else if (!strcasecmp(tok,"G")||!strcasecmp(tok,"H")) { snprintf(msg,(size_t)msglen,"line %d: option line parameter type %s (hybrid parameters) is not supported; use S, Y or Z", lineno, tok); goto bad; }
+                else if (!strcasecmp(tok,"MA")||!strcasecmp(tok,"DB")||!strcasecmp(tok,"RI")) { fmt[0]=(char) toupper((unsigned char)tok[0]); fmt[1]=(char) toupper((unsigned char)tok[1]); }
                 else if (!strcasecmp(tok,"R")) { char *z=strtok(NULL," \t\r\n"); if (z) z0=atof(z); }
                 tok = strtok(NULL, " \t\r\n");
             }
             continue;
         }
-        /* numeric data line */
-        char *tok = strtok(p, " \t\r\n");
-        while (tok) {
-            char *end; double v = strtod(tok, &end);
-            if (end != tok) {
-                if (nn >= ncap) { ncap = ncap ? ncap*2 : 1024; nums = (double*) realloc(nums, (size_t) ncap*sizeof(double)); }
-                nums[nn++] = v;
-            }
-            tok = strtok(NULL, " \t\r\n");
+        if (want_zref) {        /* [Reference] values continued on the following line(s) */
+            ts_numbers(p, &zref, &zcap, &nzref, (int)(kw_nports - nzref));
+            if (nzref >= kw_nports) want_zref = 0;
+            continue;
         }
+        if (!in_data) { snprintf(msg,(size_t)msglen,"line %d: data before [Network Data]", lineno); goto bad; }
+        /* numeric data line */
+        ts_numbers(p, &nums, &ncap, &nn, -1);
     }
     fclose(f);
-    /* infer port count N: try the file extension .sNp, else brute force */
-    int N = 0;
+    f = NULL;
+
+    /* port count N: v2 from [Number of Ports]; v1 from the .sNp/.yNp/.zNp
+     * extension, else brute force (Enhancement-227 caps it at 512) */
+    int N = 0, extN = 0;
     const char *dot = strrchr(fn, '.');
-    if (dot && (dot[1]=='s'||dot[1]=='S') && (fn[strlen(fn)-1]=='p'||fn[strlen(fn)-1]=='P')) {
-        N = atoi(dot+2);
-        /* Enhancement-227: reject an implausible port count from the filename
-         * (e.g. `.s2147483647p`). N is stored in out->N and used to size the
-         * downstream N x N vector fit; a huge N over-allocates / overflows and
-         * corrupts the heap. Real Touchstone files have few ports -- above the
-         * brute-force limit, drop back to inferring N from the data. */
-        if (N > 512)
-            N = 0;
+    if (dot && strchr("sSyYzZ", dot[1]) && dot[1] && (fn[strlen(fn)-1]=='p'||fn[strlen(fn)-1]=='P')) {
+        extN = atoi(dot+2);
+        if (extN > 512) extN = 0;
     }
-    if (N <= 0) {
-        int c;
-        for (c = 1; c <= 512; c++) if (nn % (1 + 2*c*c) == 0) { N = c; break; }
+    if (version == 2) {
+        if (kw_nports <= 0) { snprintf(msg,(size_t)msglen,"a Touchstone 2 file without [Number of Ports]"); goto bad; }
+        if (extN > 0 && extN != kw_nports) { snprintf(msg,(size_t)msglen,"[Number of Ports] %d disagrees with the file's extension (%d ports)", kw_nports, extN); goto bad; }
+        N = kw_nports;
+        if (N == 2 && mformat == 0 && order == 0) { snprintf(msg,(size_t)msglen,"a Touchstone 2 two-port file without [Two-Port Data Order]"); goto bad; }
+        if (nzref > 0 && nzref < N) { snprintf(msg,(size_t)msglen,"[Reference] gives %ld impedances for %d ports", nzref, N); goto bad; }
+    } else {
+        N = extN;
+        if (N <= 0) {
+            int c;
+            for (c = 1; c <= 512; c++) if (nn % (1 + 2*c*c) == 0) { N = c; break; }
+        }
+        order = 1;
     }
-    if (N <= 0) { free(nums); snprintf(msg,(size_t)msglen,"cannot determine port count"); return 1; }
-    int rec = 1 + 2*N*N;
+    if (N <= 0) { snprintf(msg,(size_t)msglen,"cannot determine port count"); goto bad; }
+    int npairs = (mformat == 0) ? N*N : N*(N+1)/2;
+    int rec = 1 + 2*npairs;
+    if (nn == 0 || nn % rec != 0) {
+        snprintf(msg,(size_t)msglen,"%ld numbers of network data, not a whole number of %d-port frames of %d (frequency + %d pairs): a wrong port count, or Touchstone 1 noise-parameter rows after the network data, which are not read -- remove them", nn, N, rec, npairs);
+        goto bad;
+    }
     int nf = (int)(nn / rec);
-    if (nf < 2) { free(nums); snprintf(msg,(size_t)msglen,"too few frequency points (%d)", nf); return 1; }
+    if (kw_nfreq >= 0 && nf != kw_nfreq) { snprintf(msg,(size_t)msglen,"[Number of Frequencies] says %d, the file holds %d frames", kw_nfreq, nf); goto bad; }
+    if (nf < 2) { snprintf(msg,(size_t)msglen,"too few frequency points (%d)", nf); goto bad; }
     out->freqs = (double*) malloc((size_t) nf*sizeof(double));
     out->S = (cplx*) malloc((size_t) nf*N*N*sizeof(cplx));
-    out->nf = nf; out->N = N; out->z0 = z0; out->ptype = ptype;
-    cplx *pv = (cplx*) malloc((size_t) N*N*sizeof(cplx));   /* heap: N may be large */
-    int r, kk;
+    out->zref = (double*) malloc((size_t) N*sizeof(double));
+    out->nf = nf; out->N = N; out->z0 = z0; out->ptype = ptype; out->version = version;
+    {
+        int i;
+        for (i = 0; i < N; i++) out->zref[i] = (version == 2 && nzref == N) ? zref[i] : z0;
+    }
+    cplx *pv = (cplx*) malloc((size_t) npairs*sizeof(cplx));   /* heap: N may be large */
+    int r, kk, i, j;
     for (r = 0; r < nf; r++) {
         double *chunk = nums + (long) r*rec;
         out->freqs[r] = chunk[0]*fmul;
         double *vals = chunk+1;
-        for (kk = 0; kk < N*N; kk++) {
+        for (kk = 0; kk < npairs; kk++) {
             double a = vals[2*kk], b = vals[2*kk+1];
             if (!strcmp(fmt,"MA")) pv[kk] = a*cexp(I*b*M_PI/180.0);
             else if (!strcmp(fmt,"DB")) pv[kk] = pow(10.0,a/20.0)*cexp(I*b*M_PI/180.0);
             else pv[kk] = a + I*b;
         }
-        /* Touchstone: N=2 order is S11 S21 S12 S22; general is row-major */
         cplx *M = out->S + (long) r*N*N;
-        if (N == 2) { M[0]=pv[0]; M[2]=pv[1]; M[1]=pv[2]; M[3]=pv[3]; }
-        else for (kk = 0; kk < N*N; kk++) M[kk] = pv[kk];
+        if (mformat == 0) {
+            /* Touchstone 1 (and v2 21_12): the two-port order is S11 S21 S12 S22;
+             * v2 12_21 and every other port count are row-major */
+            if (N == 2 && order == 1) { M[0]=pv[0]; M[2]=pv[1]; M[1]=pv[2]; M[3]=pv[3]; }
+            else for (kk = 0; kk < N*N; kk++) M[kk] = pv[kk];
+        } else if (mformat == 1) {      /* lower triangle, row-major, mirrored */
+            kk = 0;
+            for (i = 0; i < N; i++) for (j = 0; j <= i; j++) { M[i*N+j] = M[j*N+i] = pv[kk++]; }
+        } else {                        /* upper triangle, row-major, mirrored */
+            kk = 0;
+            for (i = 0; i < N; i++) for (j = i; j < N; j++) { M[i*N+j] = M[j*N+i] = pv[kk++]; }
+        }
     }
-    free(pv); free(nums);
+    free(pv); free(nums); free(zref);
     return 0;
+bad:
+    if (f) fclose(f);
+    free(nums); free(zref);
+    return 1;
 }
 
-/* S/Y/Z -> Y (row-major per frequency), Yout must hold nf*N*N. */
+/* S/Y/Z -> Y (row-major per frequency), Yout must hold nf*N*N.
+ * Enhancement-741: a v1 file's Y and Z are normalized to R (Y*R, Z/R) and are
+ * de-normalized here; v2 stores them absolute. S converts with the per-port
+ * references z_i:  S'_ij = S_ij*sqrt(z_i/z_j),  Y = G^-1 (I - S')(I + S')^-1
+ * with G = diag(z_i), which is (1/z0)(I - S)(I + S)^-1 when every port is z0. */
 static int to_Y(const TS *t, cplx *Yout)
 {
     int N = t->N, r, i, j;
     cplx *tmp = (cplx*) malloc((size_t) N*N*sizeof(cplx));
+    cplx *Sp  = (cplx*) malloc((size_t) N*N*sizeof(cplx));
+    double yscale = (t->version == 1) ? 1.0/t->z0 : 1.0;
+    double zscale = (t->version == 1) ? t->z0 : 1.0;
     for (r = 0; r < t->nf; r++) {
         const cplx *M = t->S + (long) r*N*N;
         cplx *Y = Yout + (long) r*N*N;
-        if (t->ptype == 'Y') { for (i=0;i<N*N;i++) Y[i]=M[i]; }
-        else if (t->ptype == 'Z') { for (i=0;i<N*N;i++) Y[i]=M[i]; if (mat_inv_c(Y,N)) { free(tmp); return 1; } }
-        else { /* S -> Y = (1/z0)(I-S)(I+S)^-1 */
+        if (t->ptype == 'Y') { for (i=0;i<N*N;i++) Y[i]=M[i]*yscale; }
+        else if (t->ptype == 'Z') { for (i=0;i<N*N;i++) Y[i]=M[i]*zscale; if (mat_inv_c(Y,N)) { free(tmp); free(Sp); return 1; } }
+        else {
             cplx *IpS = tmp;
-            for (i=0;i<N;i++) for (j=0;j<N;j++) IpS[i*N+j] = ((i==j)?1.0:0.0) + M[i*N+j];
-            if (mat_inv_c(IpS,N)) { free(tmp); return 1; }
+            for (i=0;i<N;i++) for (j=0;j<N;j++) Sp[i*N+j] = M[i*N+j]*sqrt(t->zref[i]/t->zref[j]);
+            for (i=0;i<N;i++) for (j=0;j<N;j++) IpS[i*N+j] = ((i==j)?1.0:0.0) + Sp[i*N+j];
+            if (mat_inv_c(IpS,N)) { free(tmp); free(Sp); return 1; }
             for (i=0;i<N;i++) for (j=0;j<N;j++) {
                 cplx acc = 0.0; int k;
-                for (k=0;k<N;k++) acc += (((i==k)?1.0:0.0) - M[i*N+k]) * IpS[k*N+j];
-                Y[i*N+j] = acc / t->z0;
+                for (k=0;k<N;k++) acc += (((i==k)?1.0:0.0) - Sp[i*N+k]) * IpS[k*N+j];
+                Y[i*N+j] = acc / t->zref[i];
             }
         }
     }
-    free(tmp);
+    free(tmp); free(Sp);
     return 0;
 }
 

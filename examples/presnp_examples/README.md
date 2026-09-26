@@ -81,3 +81,37 @@ spectral content), and pure-delay / distributed blocks take many poles and ring 
 sharp edges (use a `T`/`LTRA` line for a clean delay). Lumped/rational blocks —
 filters, resonators, notches, couplers, packages — fit to near machine precision in
 both AC and transient. See `../nport_examples/` for the underlying converter's details.
+
+## Round 4 (Enhancement-741) — Touchstone 2, and the v1 Y/Z forms
+
+F1, F10 and F11 of the 2026-09-26 Touchstone-import hunt. The parser behind
+`pre_snp` (both backends share it) treated a Touchstone 2 keyword line as
+data: the numbers on `[Version] 2.0`, `[Number of Ports] 2`, `[Number of
+Frequencies] 21` and `[Reference] 50 50` entered the number stream, every
+frame was misaligned, the frame count dropped its remainder in silence and the
+vector fit ran on garbage — 16 poles, rms error 6e-2 and an S21 of −66.7 for
+a file whose v1 form fits to 2 poles and 4e-4. A `.y2p` or `.z2p` written by
+`wrsnp` was read as a 1-port (only an `.sNp` extension counted the ports, and
+the divisor fallback answers 1 for every two-port frame of 9 numbers), and a
+v1 Y or Z file's data, which the specification normalizes to R, was taken as
+absolute.
+
+Now `pre_snp` reads Touchstone 2 — `[Version]`, `[Number of Ports]`,
+`[Two-Port Data Order]`, `[Number of Frequencies]`, a per-port `[Reference]`
+continued over lines, `[Matrix Format] Full/Lower/Upper`, an information
+block, `[Network Data]`, `[Noise Data]` (skipped), `[End]` — refuses
+`[Mixed-Mode Order]`, the G/H parameter types, an unknown keyword and a number
+count that is not a whole number of frames by name (a v1 file's
+noise-parameter rows are named as the usual cause), counts ports from a
+`.yNp`/`.zNp` extension, de-normalizes v1 Y and Z and takes v2's as absolute,
+and carries a per-port reference into the S-to-Y conversion.
+
+The ten `[E-741]` checks use `pre_snp -native` (no compiler) and compare each
+block against the original network's AC response: a v2 two-port in `12_21`
+order with a split `[Reference]` and an information block; a per-port
+`[Reference] 50 75`; the 3-port star as a `.ts` file in `Lower` format; a
+`21_12` file with a `[Noise Data]` section; a v1 file with noise rows refused
+by name with nothing written; a `.y2p` and a `.z2p` as `wrsnp` writes them; a
+v2 Y file; and the three refusals (`[Mixed-Mode Order]`, a two-port without
+its data order, a `[Number of Frequencies]` that disagrees with the frames).
+19 checks in all; 9 of 19 on the E-739 binary.

@@ -266,6 +266,19 @@ out through `wrsnp`. Pinned round-trip accuracy: 4×10⁻⁸ (the file's own
 6-digit precision is the limit). See
 [`examples/touchstone_examples/`](../../examples/touchstone_examples/).
 
+**As a device** — `pre_snp file.sNp` ([E-200](../../enhancements_doc/Enhancement-200.md))
+and `pre_snp -native file.sNp` ([E-242](../../enhancements_doc/Enhancement-242.md))
+vector-fit the file into an n-port block for DC, AC and transient. Since
+[E-741](../../enhancements_doc/Enhancement-741.md) their parser reads
+Touchstone 2 as well as 1: the bracketed keywords, a per-port `[Reference]`,
+`[Matrix Format] Lower`/`Upper`, an information block, and a `[Noise Data]`
+section (skipped); `[Mixed-Mode Order]` and the G/H parameter types are
+refused by name, as is a file whose numbers are not a whole number of frames
+(a v1 file with noise-parameter rows after its network data says so). The v1
+`.yNp`/`.zNp` forms `wrsnp` writes are read with their port count and their
+Y·R, Z/R normalization undone; v2 Y and Z are absolute. `rdsnp` itself is
+still a v1 reader.
+
 ## 3.6 Monte Carlo
 
 Both standard ngspice MC idioms reach OSDI parameters

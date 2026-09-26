@@ -25,11 +25,26 @@ let `pre_snp` do the whole convert+compile+load inside ngspice, and confirm the
 resulting device matches the ORIGINAL network in AC and transient. One check runs
 with `pre_osdi` listed BEFORE `pre_snp` to prove the ordering guarantee.
 
+Enhancement-741 (Touchstone-import hunt F1, F10, F11): the converter's parser
+reads Touchstone 2 -- [Version], [Number of Ports], [Two-Port Data Order],
+[Number of Frequencies], a per-port [Reference] (continued over lines), [Matrix
+Format] Lower/Upper, [Begin Information]..[End Information], [Network Data],
+[Noise Data], [End] -- where before the numbers on the keyword lines entered the
+data stream and the fit ran on misaligned frames in silence. A number count that
+is not a whole number of frames is refused (a v1 file's noise-parameter rows say
+so by name), [Mixed-Mode Order] and a two-port without its data order are refused
+by name, a v1 `.yNp`/`.zNp` file counts its ports from the extension (it fell to
+the divisor fallback, which answers 1 for every two-port frame) and its Y*R, Z/R
+normalization is undone, while a v2 file's Y and Z are absolute. The [E-741]
+checks use `pre_snp -native` (the parser is shared with -osdi) and compare each
+block against the original network's AC response.
+
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
 import os
 import sys
 import math
+import cmath
 import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -126,6 +141,13 @@ for _b, _e in (("_resonator", "s2p"), ("_star", "s3p"),
                ("_ladder4", "s4p"), ("_ladder8", "s8p")):
     GENERATED += [f"{_b}.{_e}", f"{_b}.va", f"{_b}.osdi", f"{_b}.o"]
     GENERATED += [f"{_b}.o{_i}" for _i in range(1, 9)]
+
+
+for _b, _e in (("_v2ord", "s2p"), ("_v2ref", "s2p"), ("_v2low", "ts"),
+               ("_v2noise", "s2p"), ("_v1noise", "s2p"), ("_v1y", "y2p"),
+               ("_v1z", "z2p"), ("_v2y", "s2p"), ("_mm", "s2p"),
+               ("_noord", "s2p"), ("_nfreq", "s2p")):        # E-741
+    GENERATED += [f"{_b}.{_e}", f"{_b}.nport", f"{_b}.va", f"{_b}.osdi"]
 
 
 def tidy_all():
@@ -481,6 +503,224 @@ if made8 and a8 and n8:
           f"(max rel err {e8:.2e})")
 else:
     check("[scalability] the 8-port shared-realization device matches in AC", False)
+
+
+# ================= Enhancement-741: Touchstone 2, and the v1 Y/Z forms ===========
+# Touchstone-import hunt (2026-09-26) F1, F10, F11. Every file here describes one
+# of the networks above, so the block it yields must match `ra` (the resonator's
+# own AC rows) or `a3` (the star's) to the fit tolerance the earlier checks use.
+# `pre_snp -native` needs no compiler and shares the parser with `-osdi`.
+
+def s_of_y(Y, z):
+    """S from Y with real per-port references z[i] (Kurokawa, real z):
+    S' = (I - G Y)(I + G Y)^-1 with G = diag(z), S_ij = S'_ij * sqrt(z_j / z_i)."""
+    N = len(Y)
+    I = [[1.0 if i == j else 0j for j in range(N)] for i in range(N)]
+    GY = [[z[i] * Y[i][j] for j in range(N)] for i in range(N)]
+    Sp = matmul([[I[i][j] - GY[i][j] for j in range(N)] for i in range(N)],
+                mat_inv([[I[i][j] + GY[i][j] for j in range(N)] for i in range(N)]))
+    return [[Sp[i][j] * math.sqrt(z[j] / z[i]) for j in range(N)] for i in range(N)]
+
+
+def ma_pair(c):
+    return f"{abs(c):.9e} {math.degrees(cmath.phase(c)):.7f}"
+
+
+def write_v2(fn, freqs, Yof, N, zref=None, order="12_21", mform="Full", ptype="S",
+             noise=False, info=True, nfreq_kw=None, with_order=True, extra=None):
+    """A Touchstone 2 file (MA format) of the network Yof: keywords per the
+    specification, [Reference] split over two lines, an information block,
+    optionally a [Noise Data] section after the network data."""
+    z = zref or [Z0] * N
+    lines = ["[Version] 2.0", f"# Hz {ptype} MA" + ("" if zref else " R 50"),
+             f"[Number of Ports] {N}"]
+    if N == 2 and with_order:
+        lines.append(f"[Two-Port Data Order] {order}")
+    lines.append(f"[Number of Frequencies] {len(freqs) if nfreq_kw is None else nfreq_kw}")
+    if noise:
+        lines.append("[Number of Noise Frequencies] 2")
+    if zref:
+        lines.append(f"[Reference] {zref[0]}")
+        lines.append("   " + " ".join(str(v) for v in zref[1:]))
+    if mform != "Full":
+        lines.append(f"[Matrix Format] {mform}")
+    if extra:
+        lines += extra
+    if info:
+        lines += ["[Begin Information]", "  1.5 2.5 3.5  numbers that are not data",
+                  "[End Information]"]
+    lines.append("[Network Data]")
+    if mform == "Full":
+        idx = [(i, j) for i in range(N) for j in range(N)]
+        if N == 2 and order == "21_12":
+            idx = [(0, 0), (1, 0), (0, 1), (1, 1)]
+    elif mform == "Lower":
+        idx = [(i, j) for i in range(N) for j in range(i + 1)]
+    else:
+        idx = [(i, j) for i in range(N) for j in range(i, N)]
+    for fr in freqs:
+        Y = Yof(fr)
+        M = s_of_y(Y, z) if ptype == "S" else Y          # v2: Y is absolute
+        lines.append(f"{fr:.7e} " + " ".join(ma_pair(M[i][j]) for i, j in idx))
+    if noise:
+        lines += ["[Noise Data]", "1e6 2.0 0.30 20 0.5", "2e6 2.5 0.35 40 0.6"]
+    lines.append("[End]")
+    open(fn, "w").write("\n".join(lines) + "\n")
+
+
+def write_v1_yz(fn, freqs, Yof, N, kind):
+    """A Touchstone 1 Y or Z file as `wrsnp` writes it: RI, normalized to R
+    (Y*R, Z/R), the two-port in the 11 21 12 22 column order."""
+    idx = [(0, 0), (1, 0), (0, 1), (1, 1)] if N == 2 else \
+        [(i, j) for i in range(N) for j in range(N)]
+    with open(fn, "w") as f:
+        f.write(f"# Hz {kind} RI R 50\n")
+        for fr in freqs:
+            Y = Yof(fr)
+            if kind == "Y":
+                M = [[Y[i][j] * Z0 for j in range(N)] for i in range(N)]
+            else:
+                Zm = mat_inv(Y)
+                M = [[Zm[i][j] / Z0 for j in range(N)] for i in range(N)]
+            f.write(f"{fr:.7e} " + " ".join(f"{M[i][j].real:.9e} {M[i][j].imag:.9e}"
+                                             for i, j in idx) + "\n")
+
+
+def native2(fn):
+    base = os.path.splitext(fn)[0]
+    return run(f"""* 2-port AC, native block from {fn}
+Vs in 0 dc 0 ac 1
+Rs in p1 50
+N1 p1 p2 0 mm
+.model mm nport(file="{base}.nport")
+Rl p2 0 50
+.control
+pre_snp -native {fn}
+ac dec 40 1e5 1e9
+wrdata _o.dat v(p2)
+.endc
+.end
+""")
+
+
+def native3(fn):
+    base = os.path.splitext(fn)[0]
+    return run(f"""* 3-port AC, native block from {fn}
+Vs in 0 dc 0 ac 1
+Rs in p1 50
+N1 p1 p2 p3 0 ms
+.model ms nport(file="{base}.nport")
+Rl2 p2 0 50
+Rl3 p3 0 50
+.control
+pre_snp -native {fn}
+ac dec 30 1meg 1g
+wrdata _o.dat v(p2) v(p3)
+.endc
+.end
+""")
+
+
+def refusal(fn):
+    _, out = run(f"""* pre_snp refusal of {fn}
+R1 a 0 1
+V1 a 0 1
+.control
+pre_snp -native {fn}
+.endc
+.end
+""")
+    return out
+
+
+def err2(rows, out, label):
+    if ra and rows:
+        e = relerr(ra, rows)
+        check(label, e < 2e-3, f"(max rel err {e:.2e})")
+    else:
+        check(label, False, out[-300:])
+
+
+# [E-741a] v2, 12_21 order, [Reference] over two lines, an information block
+write_v2(os.path.join(HERE, "_v2ord.s2p"), freqs2, Y2, 2, zref=[50.0, 50.0])
+r, o = native2("_v2ord.s2p")
+err2(r, o, "[E-741a] a Touchstone 2 two-port ([Version], [Number of Ports], "
+     "[Two-Port Data Order] 12_21, [Reference] over two lines, an information "
+     "block) matches the original resonator in AC")
+
+# [E-741b] per-port [Reference] 50 75: the S-matrix changes, the block must not
+write_v2(os.path.join(HERE, "_v2ref.s2p"), freqs2, Y2, 2, zref=[50.0, 75.0])
+r, o = native2("_v2ref.s2p")
+err2(r, o, "[E-741b] a per-port [Reference] 50 75 is carried into the S-to-Y "
+     "conversion: the block matches the resonator although its S-matrix differs")
+
+# [E-741c] the 3-port star as a .ts file in Lower matrix format
+write_v2(os.path.join(HERE, "_v2low.ts"), freqs3, Y3, 3, mform="Lower")
+r3, o3 = native3("_v2low.ts")
+if a3 and r3:
+    m = min(len(a3), len(r3))
+    e2 = max(abs(complex(r3[k][1], r3[k][2]) - complex(a3[k][1], a3[k][2]))
+             / (abs(complex(a3[k][1], a3[k][2])) + 1e-30) for k in range(m))
+    e3 = max(abs(complex(r3[k][4], r3[k][5]) - complex(a3[k][4], a3[k][5]))
+             / (abs(complex(a3[k][4], a3[k][5])) + 1e-30) for k in range(m))
+    check("[E-741c] a 3-port .ts file in [Matrix Format] Lower (the port count from "
+          "[Number of Ports], the triangle mirrored) matches the star on both outputs",
+          e2 < 2e-3 and e3 < 2e-3, f"(v(p2) {e2:.2e}, v(p3) {e3:.2e})")
+else:
+    check("[E-741c] a 3-port .ts file in Lower format matches the star", False, o3[-300:])
+
+# [E-741d] 21_12 order and a [Noise Data] section after the network data
+write_v2(os.path.join(HERE, "_v2noise.s2p"), freqs2, Y2, 2, order="21_12", noise=True)
+r, o = native2("_v2noise.s2p")
+err2(r, o, "[E-741d] a v2 file in 21_12 order with a [Noise Data] section after the "
+     "network data: the network is read, the noise rows are not, the block matches")
+
+# [E-741e] a v1 file with noise-parameter rows is refused by name, nothing written
+src = open(os.path.join(HERE, "_resonator.s2p")).read()
+open(os.path.join(HERE, "_v1noise.s2p"), "w").write(
+    src + "! noise parameters\n1e6 2.0 0.30 20 0.5\n2e6 2.5 0.35 40 0.6\n3e6 3.0 0.40 60 0.7\n")
+o = refusal("_v1noise.s2p")
+check("[E-741e] a v1 .s2p with noise-parameter rows after the network data is refused "
+      "with the count, the frame size and the rows named, and no .nport is written",
+      "noise-parameter rows" in o and "frames of 9" in o
+      and not os.path.exists(os.path.join(HERE, "_v1noise.nport")),
+      "" if "noise-parameter rows" in o else o[-300:])
+
+# [E-741f, g] the v1 Y and Z forms `wrsnp` writes: port count from .y2p/.z2p,
+# the Y*R / Z/R normalization undone
+write_v1_yz(os.path.join(HERE, "_v1y.y2p"), freqs2, Y2, 2, "Y")
+r, o = native2("_v1y.y2p")
+err2(r, o, "[E-741f] a v1 .y2p (Y*R as wrsnp writes it) is read as a 2-port and "
+     "de-normalized: the block matches the resonator")
+check("[E-741f] ... and pre_snp reports it as a 2-port (the deck's title says 2-port too, "
+      "so the test is on the converter's own report)", "(2-port," in o,
+      o[-200:] if "(2-port," not in o else "")
+write_v1_yz(os.path.join(HERE, "_v1z.z2p"), freqs2, Y2, 2, "Z")
+r, o = native2("_v1z.z2p")
+err2(r, o, "[E-741g] a v1 .z2p (Z/R) is read as a 2-port and de-normalized: the "
+     "block matches the resonator")
+
+# [E-741h] a v2 Y file: absolute admittances, no normalization
+write_v2(os.path.join(HERE, "_v2y.s2p"), freqs2, Y2, 2, ptype="Y")
+r, o = native2("_v2y.s2p")
+err2(r, o, "[E-741h] a v2 Y file (absolute, as the v2 specification stores it) matches "
+     "the resonator")
+
+# [E-741i] refusals by name: mixed-mode order, a two-port without its data order,
+# a [Number of Frequencies] that disagrees with the frames
+write_v2(os.path.join(HERE, "_mm.s2p"), freqs2, Y2, 2, extra=["[Mixed-Mode Order] D1,2 C1,2"])
+o_mm = refusal("_mm.s2p")
+write_v2(os.path.join(HERE, "_noord.s2p"), freqs2, Y2, 2, with_order=False)
+o_no = refusal("_noord.s2p")
+write_v2(os.path.join(HERE, "_nfreq.s2p"), freqs2, Y2, 2, nfreq_kw=999)
+o_nf = refusal("_nfreq.s2p")
+ok_i = ("Mixed-Mode Order" in o_mm and "[Two-Port Data Order]" in o_no
+        and "says 999" in o_nf
+        and not any(os.path.exists(os.path.join(HERE, f"{b}.nport"))
+                    for b in ("_mm", "_noord", "_nfreq")))
+check("[E-741i] [Mixed-Mode Order], a v2 two-port without [Two-Port Data Order], and a "
+      "[Number of Frequencies] that disagrees with the frames are each refused by name",
+      ok_i, "" if ok_i else (o_mm[-150:] + o_no[-150:] + o_nf[-150:]))
 
 
 # tidy -- see tidy_all() above; the atexit hook makes this idempotent.
