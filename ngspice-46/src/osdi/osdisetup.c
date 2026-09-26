@@ -946,6 +946,20 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
 
   OsdiRegistryEntry *entry = osdi_reg_entry_model(inModel);
   const OsdiDescriptor *descr = entry->descriptor;
+  /* Enhancement-740 (options-and-convergence hunt N1): `.option bypass` is the
+   * built-in devices' skip of an instance whose terminal voltages have not
+   * moved; a compiled device is evaluated at every iteration whatever the
+   * option says, and a deck carrying `bypass=1` from a built-in flow heard
+   * nothing. Said once per circuit. */
+  {
+    static const CKTcircuit *bypass_noted;
+    if (ckt->CKTbypass && bypass_noted != ckt) {
+      bypass_noted = ckt;
+      fprintf(stdout, "Note: .option bypass has no effect on compiled (OSDI) "
+                      "devices such as %s; they are evaluated at every Newton "
+                      "iteration.\n", descr->name);
+    }
+  }
   OsdiSimParas sim_params_ = get_simparams(ckt);
   OsdiSimParas *sim_params = &sim_params_;
 

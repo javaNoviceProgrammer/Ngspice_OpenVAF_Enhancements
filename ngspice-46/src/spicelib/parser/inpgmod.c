@@ -428,6 +428,17 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                         device->name,
                         device->registry_entry
                             ? " (or as `_mfactor` on the model card)" : "");
+            /* Enhancement-740 (options-and-convergence hunt N1): `level=` on
+             * the card of a compiled model is consumed here like any card's
+             * and selects nothing -- the module is chosen by the type name --
+             * so a card ported from a built-in flow (`level=54`) kept it in
+             * silence. Said, once per card. */
+            if (strcmp(parm, "level") == 0 && device->registry_entry)
+                fprintf(stderr,
+                        "Warning: %s: `level=` on the .model card of a compiled "
+                        "model (module %s) has no meaning -- the module is chosen "
+                        "by the model's type name -- and is ignored.\n",
+                        modtmp->INPmodName, device->name);
             NG_IGNORE(thrown);
         
         } else {

@@ -471,10 +471,29 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
                         is_model = 1;
                         break;
                     }
+                /* Enhancement-740 (options-and-convergence hunt N1): the two
+                 * keywords every built-in instance line may carry, `ic=` and
+                 * `off`, and a model-owned `m` -- the case a diode's grading
+                 * coefficient makes -- got the generic line. Name what they
+                 * are and the route that exists. */
                 if (is_model)
                     errbuf = tprintf("  unknown parameter (%s): it is a model parameter of this "
                                      "device -- set it on the .model card, not on the instance "
-                                     "line\n", parm);
+                                     "line%s\n", parm,
+                                     (device->registry_entry && cieq(parm, "m"))
+                                         ? "; the instance MULTIPLIER of a compiled device is "
+                                           "spelled `_mfactor=`"
+                                         : "");
+                else if (device->registry_entry && cieq(parm, "ic"))
+                    errbuf = tprintf("  unknown parameter (ic): `ic=` is the built-in devices' "
+                                     "initial-condition list; a compiled device has no such "
+                                     "keyword -- use `.ic v(<node>)=<value>` on its terminals or "
+                                     "internal nodes\n");
+                else if (device->registry_entry && cieq(parm, "off"))
+                    errbuf = tprintf("  unknown parameter (off): `off` is the built-in devices' "
+                                     "start-off flag; a compiled device has no such keyword -- "
+                                     "remove it, or give the model an `off` parameter of its "
+                                     "own\n");
                 else
                     errbuf = tprintf("  unknown parameter (%s) \n", parm);
             }

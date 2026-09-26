@@ -6,6 +6,9 @@ Author: 1985 Thomas L. Quarles
 #include "ngspice/ngspice.h"
 #include "ngspice/iferrmsg.h"
 #include "ngspice/inpmacs.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-740: osdi_devtype_is_osdi */
+#endif
 
 #include "inppas2.h"
 #include "inpxx.h"
@@ -25,6 +28,90 @@ char* Sourcefile;
 
 /* pass 2 - Scan through the lines.  ".model" cards have processed in
  *  pass1 and are ignored here.  */
+
+#ifdef OSDI
+/* Enhancement-740 (options-and-convergence hunt N1): a line whose device letter
+ * is not `n` but which names a compiled (OSDI) model failed with the letter's
+ * own message and nothing more -- `y1 a 0 dva` gave "model name is not found",
+ * a Y line having taken `dva` for a node -- so the one fact that explains the
+ * failure, that the model exists under another letter, was never said. The
+ * tokens after the first are looked up BEFORE the letter's parser runs (some
+ * parsers consume the card's line as they read it); if the line then fails,
+ * the token that names a compiled model is said, with the prefix that reaches
+ * it. Returns the token, malloc'd, or NULL. */
+/* The other half: the card's model may already be GONE. inp_rem_unused_models
+ * comments out a `.model` card that no line refers to in its model position,
+ * and a wrongly prefixed line (`y1 a 0 dva`, `t1 a 0 b 0 dva`) refers to it as
+ * a node or a parameter, so by pass 2 the card reads `*model dva vadiode(...)`
+ * and no lookup finds it. When the failing line's token is the name of such a
+ * card, say so, and whether its type is a compiled module. Returns a malloc'd
+ * hint or NULL. */
+static char *
+INPculledModelHint(struct card *data, const char *cardline, char letter)
+{
+    char *line = (char *) cardline, *tok, *hint = NULL;
+    int first = 1;
+
+    while (*line && !hint) {
+        if (INPgetTok(&line, &tok, 1) || !tok)
+            break;
+        if (*tok && !first) {
+            struct card *k;
+            size_t n = strlen(tok);
+            for (k = data; k; k = k->nextcard) {
+                const char *l = k->line;
+                if (strncmp(l, "*model ", 7) != 0)
+                    continue;
+                l += 7;
+                while (*l == ' ' || *l == '\t')
+                    l++;
+                if (strncmp(l, tok, n) == 0 && (l[n] == ' ' || l[n] == '\t')) {
+                    char *rest = (char *) l + n, *type;
+                    int ty;
+                    if (INPgetTok(&rest, &type, 1) || !type)
+                        break;
+                    ty = INPtypelook(type);
+                    if (ty >= 0 && osdi_devtype_is_osdi(ty))
+                        hint = tprintf("  '%s' names a .model card (type %s) that was "
+                                       "dropped as unused: no line refers to it in the "
+                                       "model position; %s is a compiled (OSDI) module, "
+                                       "and its instances are written with the prefix "
+                                       "'n', not '%c'\n", tok, type, type, letter);
+                    else
+                        hint = tprintf("  '%s' names a .model card (type %s) that was "
+                                       "dropped as unused: no line refers to it in the "
+                                       "model position\n", tok, type);
+                    tfree(type);
+                    break;
+                }
+            }
+        }
+        first = 0;
+        tfree(tok);
+    }
+    return hint;
+}
+
+static char *
+INPosdiModelToken(const char *cardline)
+{
+    char *line = (char *) cardline, *tok;
+    int first = 1;
+
+    while (*line) {
+        if (INPgetTok(&line, &tok, 1) || !tok)
+            break;
+        if (*tok && !first) {
+            INPmodel *m = INPlookMod(tok);
+            if (m && m->INPmodType >= 0 && osdi_devtype_is_osdi(m->INPmodType))
+                return tok;
+        }
+        first = 0;
+        tfree(tok);
+    }
+    return NULL;
+}
+#endif
 
 void INPpas2(CKTcircuit *ckt, struct card *data, INPtables * tab, TSKtask *task)
 {
@@ -92,6 +179,12 @@ void INPpas2(CKTcircuit *ckt, struct card *data, INPtables * tab, TSKtask *task)
         c = *(current->line);
         if(islower_c(c))
             c = toupper_c(c);
+#ifdef OSDI
+        {
+            char *osdi_tok = (c != 'N' && isalpha_c(c)) ?
+                INPosdiModelToken(current->line) : NULL;      /* Enhancement-740 */
+            char *err_before = current->error;
+#endif
 
         switch (c) {
 
@@ -263,6 +356,26 @@ void INPpas2(CKTcircuit *ckt, struct card *data, INPtables * tab, TSKtask *task)
             LITERR(" unknown device type - error \n");
             break;
         }
+#ifdef OSDI
+            if (current->error && current->error != err_before) {
+                if (osdi_tok)
+                    current->error = INPerrCat(current->error,
+                        tprintf("  '%s' names a compiled (OSDI) model of module "
+                                "'%s'; its instances are written with the prefix "
+                                "'n', not '%c'\n",
+                                osdi_tok, INPlookMod(osdi_tok)->INPmodTypeName
+                                    ? INPlookMod(osdi_tok)->INPmodTypeName : "?",
+                                *current->line));
+                else if (c != 'N' && isalpha_c(c)) {
+                    char *hint = INPculledModelHint(data, current->line, *current->line);
+                    if (hint)
+                        current->error = INPerrCat(current->error, hint);
+                }
+            }
+            if (osdi_tok)
+                tfree(osdi_tok);
+        }
+#endif
     }
 
     return;

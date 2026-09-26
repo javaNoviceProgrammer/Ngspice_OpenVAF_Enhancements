@@ -382,44 +382,65 @@ E-738 binary).
 
 ## N1 — notes, not OSDI-specific or by design
 
-* `.model dva vadiode(level=1 is_=1e-14)` is accepted without a word;
-  `bogus=3` on the same card gets a *Model issue* warning. `level` is
-  special-cased by the model parser before the OSDI check sees it. A deck
-  ported from a built-in card keeps its `level=54` and no one is told.
-* `nm1 ... off`, `nm1 ... ic=0.5,0.6,0`, an unknown instance parameter
-  (`nd1 a 0 dva foo=1`) and an instance with a prefix that is not `n`
-  (`y1 a 0 dva`) each stop with *Error on line 4 or its substitute* and the
-  line echoed, nothing more. E-687 gave `m` and the
-  model-parameter-on-an-instance case a sentence; these three have none.
+*(the fixable items fixed in [E-740](../../enhancements_doc/Enhancement-740.md); two
+claims below were wrong and are corrected in place)*
+
+* *(fixed in E-740: warned as ignored, once per card)* `.model dva
+  vadiode(level=1 is_=1e-14)` was accepted without a word; `bogus=3` on the
+  same card gets a *Model issue* warning. `level` is special-cased by the
+  model parser before the OSDI check sees it. A deck ported from a built-in
+  card kept its `level=54` and no one was told.
+* *(fixed in E-740 for `ic=`, a bare `off` and the wrong prefix; corrected:
+  these errors were not bare)* `nm1 ... off`, `nm1 ... ic=0.5,0.6,0`, an
+  unknown instance parameter (`nd1 a 0 dva foo=1`) and an instance with a
+  prefix that is not `n` (`y1 a 0 dva`) each stop with *Error on line 4 or
+  its substitute*, the line echoed, and a third line the hunt's filter had
+  cut: *parameter 'off' has no value* (the VA BSIM4 declares an `off`
+  parameter, so that one is right), *unknown parameter (ic)*, *unknown
+  parameter (foo)* and *model name is not found*. What none of them said is
+  what the keyword is, or that the model exists under another letter; E-740
+  says it, and finds the model even after the unused-model cull has
+  commented its card out.
 * `meas tran imax MAX @nd1[i]` after a `tran` without a prior `save` fails
   with *holds 1 point(s) but the analysis produced 211*; the built-in
   `@d1[id]` fails identically, and with `save` or `.option savecurrents`
-  both work. ngspice-wide.
+  both work. ngspice-wide, unchanged.
 * `stop when time > 30n` followed by `resume` stops again at once, since the
-  condition still holds; the built-in twin behaves the same. ngspice-wide.
-* `.option bypass=1` is silently without effect for compiled devices; the
-  built-in twin's transient load halves under it (measured earlier on
-  2026-09-26 with a prototype that is not in the tree, and parked).
-* `nd1 a 0 dva m=2` on a model that owns a parameter `m` is refused with
-  *it is a model parameter of this device -- set it on the .model card*,
-  which is right, but the message does not say that the multiplier the
-  user wanted is reachable as `_mfactor=2`.
-* A `$warning` or `$strobe` whose text does not change is printed once per
-  analysis and its later arrivals are neither printed nor counted: 23
-  arrivals over an 11-point sweep print one line, and two instances with the
-  same text print one line each. The header of `osdicallbacks.c` promises
-  five showings and a count for a repeated text, which is what a setup-time
-  flood gets (*was repeated 9995 more times by other instances*); the
-  analysis-time path has no count at all. A message whose text carries
-  `$abstime` prints once per accepted point (68 lines for 68 points).
+  condition still holds; the built-in twin behaves the same. ngspice-wide,
+  unchanged.
+* *(fixed in E-740: noted once per circuit)* `.option bypass=1` was silently
+  without effect for compiled devices; the built-in twin's transient load
+  halves under it (measured earlier on 2026-09-26 with a prototype that is
+  not in the tree, and parked).
+* *(fixed in E-740)* `nd1 a 0 dva m=2` on a model that owns a parameter `m`
+  is refused with *it is a model parameter of this device -- set it on the
+  .model card*, which is right, but the message did not say that the
+  multiplier the user wanted is reachable as `_mfactor=2`.
+* *(corrected: by design, not a suppression)* A `$warning` or `$strobe`
+  whose text does not change prints once per setup — 3 lines for three
+  `op`s, 1 for an 11-point sweep — while one whose text carries `$abstime`
+  or is gated on a voltage prints once per accepted point (68 lines for 68
+  points, 11 for 11). The hunt read the first as ngspice suppressing repeats
+  without a count. It is the compiler: a message with no dependence on
+  voltages or time is hoisted into the instance's setup code and emitted
+  there, once per setup, and the callbacks' five-then-count rule applies
+  only to a setup-time flood (*was repeated 9995 more times by other
+  instances*). Nothing to fix.
 * `dc nr1 1k 3k 1k` over a compiled resistor stops with *Voltage source,
   current source, or resistor named "nr1" is not in the circuit*: accurate,
   since ngspice's `dc` sweeps only its own resistor, but a compiled resistor
-  is not sweepable at all.
+  is not sweepable at all. Unchanged.
 * `method=gear maxord=6` gives bit-identical results to `maxord=2` on every
   deck tried, built-in or compiled; the order is raised only with
   `.option dynorder` (E-128, E-259), under which the compiled charge
-  integrates without incident.
+  integrates without incident. By design, unchanged.
+
+*Fixed in [E-740](../../enhancements_doc/Enhancement-740.md)* for the five
+fixable items: the texts above, the `level=` warning, the prefix hint in both
+halves and the bypass note; `hunt12diag` carries six checks for them (26 in
+all, 20 of 26 on the E-739 binary). A wrong prefix that parses as a valid
+line of its own kind (`t1 a 0 dva`, a transmission line with `dva` as a
+node) fails later at setup and gets no parse-time hint.
 
 ## What was checked and holds
 

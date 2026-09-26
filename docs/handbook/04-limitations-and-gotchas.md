@@ -111,6 +111,13 @@ The single most useful mental model for this toolchain:
   — a diode's diffusion charge, a varactor — enters the kernels; before it
   only the resistive part did, and a pure charge nonlinearity reported no
   distortion at all.
+- **The built-in dialect on a compiled device is named, not just refused**
+  ([E-740](../../enhancements_doc/Enhancement-740.md)): `ic=` and a bare
+  `off` on the instance line, `level=` on the model card, a model owning `m`
+  given `m=` (the multiplier is `_mfactor=`), a compiled model under another
+  device letter, and `.option bypass` each get a message that says what the
+  keyword is and the route that exists; none of them does anything on a
+  compiled device.
 - **`@(final_step)` fires only on success**: a failed or interrupted
   analysis never fires it — "final" means the converged end of the run
   ([E-53](../../enhancements_doc/Enhancement-53.md)).

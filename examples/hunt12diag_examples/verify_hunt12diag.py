@@ -27,6 +27,21 @@ Checks:
   [D19] rows made by wcd's own iteration are labelled `op (wcd probe)`
   [D21] (compiler) statistics on a `from {1.0, 2.0, 3.0}` parameter: warned
   [D24] -inflate on the print spelling of a device inside a subcircuit matches (E-622's suffix rule)
+
+Enhancement-740 (N1 of the 2026-09-26 options-and-convergence hunt), the
+diagnostics of a compiled device's instance and model lines and of one option:
+  [E-740a] ic= on a compiled instance: named as the built-in keyword, with the .ic route
+  [E-740b] a bare off on a compiled model that declares no off parameter: named as the
+           built-in start-off flag
+  [E-740c] m= on an instance of a model that owns a parameter m: the message says the
+           multiplier is spelled _mfactor=
+  [E-740d] level= on a compiled model card: warned as ignored, and the point is the card's
+  [E-740e] a compiled model under another device letter (d, q, y, t): the letter's own
+           message is followed by the model's name, its module and the n prefix, whether
+           the card is still live or was dropped as unused because the wrong line refers
+           to it as a node or a parameter
+  [E-740f] .option bypass with a compiled device: noted once per circuit as without
+           effect, and the point is the same as without it
 """
 import os
 import re
@@ -250,6 +265,68 @@ out = run(".option osdimc mcseed=3\n.subckt blk a b\nn1 a b rm\n.ends\nv1 a 0 1\
           "highsigma 4 -analysis op -metric i(v1) -max 0 -seed 1 -inflate " + A + "x1.n1[dr]", "d24", PRE)
 check("[D24] -inflate on the print spelling of a device inside a subcircuit (x1.n1) matches -- no 'matched nothing' note",
       "matched a" not in out and "NOTHING was" not in out and "failures observed" in out, out[-300:])
+
+
+# ------------------------------------------------------------ E-740 ---
+# N1 of the 2026-09-26 options-and-convergence hunt: what a compiled device's
+# instance line, model card and one option said when the deck spoke the
+# built-in devices' dialect. Every check below reads the message, and [d] and
+# [f] also pin that the number did not move.
+ok_r, _ = compile_src("""module r740(p,n); inout p,n; electrical p,n;
+parameter real r = 1k from (0:inf);
+analog I(p,n) <+ V(p,n)/r;
+endmodule
+""", "r740")
+ok_d, _ = compile_src("""module d740(a,c); inout a,c; electrical a,c;
+parameter real is_ = 1e-14 from (0:inf);
+parameter real m = 0.5 from (0:1);
+analog I(a,c) <+ is_*(limexp(V(a,c)/$vt) - 1.0) + 0.0*m;
+endmodule
+""", "d740")
+P740 = "pre_osdi r740.osdi\npre_osdi d740.osdi\n"
+BASE740 = "v1 in 0 1\nr1 in a 1k\n.model rm r740\n.model dm d740"
+
+
+def v_of(out, name="v(a)"):
+    m = re.search(r"^%s = (\S+)" % re.escape(name), out, re.M)
+    return m.group(1) if m else None
+
+
+out = run(BASE740 + "\nn1 a 0 rm ic=0.5", "op", "e740a", P740)
+check("[E-740a] ic= on a compiled instance is named as the built-in keyword, with the .ic route",
+      ok_r and "unknown parameter (ic)" in out and "initial-condition list" in out and ".ic v(<node>)=<value>" in out,
+      out[out.find("unknown parameter"):][:120] if "unknown parameter" in out else out[-200:])
+
+out = run(BASE740 + "\nn1 a 0 rm off", "op", "e740b", P740)
+check("[E-740b] a bare off on a compiled model without an off parameter is named as the built-in start-off flag",
+      "start-off flag" in out and "declares no `off` parameter" in out,
+      out[out.find("'off'"):][:120] if "'off'" in out else out[-200:])
+
+out = run(BASE740 + "\nn1 a 0 dm m=2", "op", "e740c", P740)
+check("[E-740c] m= on an instance of a model that owns m says the multiplier is spelled _mfactor=",
+      ok_d and "it is a model parameter" in out and "_mfactor=" in out,
+      out[out.find("unknown parameter"):][:160] if "unknown parameter" in out else out[-200:])
+
+out = run("v1 in 0 1\nr1 in a 1k\nn1 a 0 dm\n.model dm d740(level=1 is_=1e-14)", "op\nprint v(a)", "e740d", P740)
+ref = run("v1 in 0 1\nr1 in a 1k\nn1 a 0 dm\n.model dm d740(is_=1e-14)", "op\nprint v(a)", "e740d0", P740)
+check("[E-740d] level= on a compiled model card is warned as ignored, and the point is the card's without it",
+      "`level=` on the .model card of a compiled model (module d740)" in out and "ignored" in out
+      and "level=" not in ref and v_of(out) is not None and v_of(out) == v_of(ref),
+      "v(a) %s vs %s" % (v_of(out), v_of(ref)))
+
+pfx = {}
+for letter, line in (("d", "d1 a 0 dm"), ("q", "q1 a 0 0 dm"), ("y", "y1 a 0 dm"), ("t", "t1 a 0 b 0 dm")):
+    o = run(BASE740 + "\n" + line, "op", "e740e_" + letter, P740)
+    pfx[letter] = ("module 'd740'" in o or "d740 is a compiled (OSDI) module" in o) and "prefix 'n'" in o
+check("[E-740e] a compiled model under the letters d, q, y and t is named with its module and the n prefix, live or dropped",
+      all(pfx.values()), str(pfx))
+
+out = run(BASE740 + "\nn1 a 0 rm\n.option bypass=1", "op\nprint v(a)\nop\nprint v(a)", "e740f", P740)
+ref = run(BASE740 + "\nn1 a 0 rm", "op\nprint v(a)", "e740f0", P740)
+check("[E-740f] .option bypass with a compiled device is noted once per circuit as without effect, and the point is the same",
+      out.count("no effect on compiled (OSDI) devices") == 1 and "no effect" not in ref
+      and v_of(out) is not None and v_of(out) == v_of(ref),
+      "%d note(s), v(a) %s vs %s" % (out.count("no effect on compiled"), v_of(out), v_of(ref)))
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

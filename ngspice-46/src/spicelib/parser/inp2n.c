@@ -851,6 +851,14 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
                   msg = tprintf("  '%s' is a value without a parameter name; "
                                 "the model is '%s' -- write <name>=%s\n",
                                 token, prev, token);
+              else if (cieq(token, "off"))
+                  /* Enhancement-740 (options-and-convergence hunt N1): the
+                   * built-in devices' bare keyword, on a compiled device
+                   * that declares no `off` parameter of its own */
+                  msg = tprintf("  'off' is the built-in devices' start-off flag; a "
+                                "compiled device has no such keyword and model '%s' "
+                                "declares no `off` parameter -- remove it, or give "
+                                "the model one and write off=<value>\n", prev);
               else
                   msg = tprintf("  '%s' is not a model and not a name=value "
                                 "parameter; the model is '%s', so a parameter "
