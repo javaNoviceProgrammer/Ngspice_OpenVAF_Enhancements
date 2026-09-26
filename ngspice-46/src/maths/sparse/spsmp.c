@@ -297,6 +297,8 @@ SMPmatSize(SMPmatrix *Matrix)
 int
 SMPnewMatrix(SMPmatrix *Matrix, int size)
 {
+    Matrix->SMPgminDiag = NULL;      /* Enhancement-738 */
+    Matrix->SMPgminDiagSize = 0;
     int Error;
     Matrix->SPmatrix = spCreate( size, 1, &Error );
     return Error;
@@ -321,7 +323,28 @@ SMPnewMatrixForCIDER (SMPmatrix *Matrix, int size, int complex)
 void
 SMPdestroy(SMPmatrix *Matrix)
 {
+    free(Matrix->SMPgminDiag);      /* Enhancement-738 */
+    Matrix->SMPgminDiag = NULL;
     spDestroy( Matrix->SPmatrix );
+}
+
+
+/* Enhancement-738: record the stamped diagonals for LoadGmin, before the MNA
+ * preorder swaps columns and before any factorization, while internal and
+ * external numbering still agree. */
+static void
+SparseGminDiag(SMPmatrix *eMatrix)
+{
+    MatrixPtr Matrix = eMatrix->SPmatrix;
+    int I, Size = Matrix->Size;
+
+    if(Matrix->RowsLinked)
+        return;                /* already reordered: keep what was recorded */
+    free(eMatrix->SMPgminDiag);
+    eMatrix->SMPgminDiag =(double **) calloc((size_t) Size + 1, sizeof(double *));
+    eMatrix->SMPgminDiagSize = Size;
+    for(I = 1; I <= Size; I++)
+        eMatrix->SMPgminDiag [I] = Matrix->Diag [I] ? &Matrix->Diag [I]->Real : NULL;
 }
 
 /*
@@ -330,6 +353,7 @@ SMPdestroy(SMPmatrix *Matrix)
 int
 SMPpreOrder(SMPmatrix *Matrix)
 {
+    SparseGminDiag(Matrix);               /* Enhancement-738 */
     spMNA_Preorder( Matrix->SPmatrix );
     return spError( Matrix->SPmatrix );
 }
@@ -490,6 +514,13 @@ LoadGmin(SMPmatrix *eMatrix, double Gmin)
     assert( IS_SPARSE( Matrix ) );
 
     if (Gmin != 0.0) {
+        /* Enhancement-738: the stamped diagonals, whatever the pivot order. */
+        if (eMatrix->SMPgminDiag != NULL && eMatrix->SMPgminDiagSize == Matrix->Size) {
+            for (I = Matrix->Size; I > 0; I--)
+                if (eMatrix->SMPgminDiag[I] != NULL)
+                    *eMatrix->SMPgminDiag[I] += Gmin;
+            return;
+        }
 	Diag = Matrix->Diag;
 	for (I = Matrix->Size; I > 0; I--) {
 	    if ((diag = Diag[I]) != NULL)

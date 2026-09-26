@@ -320,6 +320,11 @@ solve (`klu_z_tsolve`) and lifts the guards, so under KLU:
   stage no longer gives two, three or five poles by solver and knob; the dense method's
   infinity threshold discards roots beyond about 1e13 times the nearest one (a ladder's
   −1e15 and ±j3.16e13), which the Muller search finds.
+  [Enhancement-738](../../../enhancements_doc/Enhancement-738.md) made Sparse feed the
+  gmin ladder's diagonal gmin to the stamped diagonals, as KLU's `LoadGmin_CSC` does:
+  Sparse's `Diag[]` follows the pivot order, so the shunt went to the ±1 twins the MNA
+  preorder and the Markowitz exchanges had put on the diagonal, and an unsolvable loop of
+  sources climbed every rung under one solver and none under the other.
 
 [Enhancement-114](../../../enhancements_doc/Enhancement-114.md) then fixes
 **sensitivity** under KLU. Sensitivity builds an auxiliary perturbation matrix

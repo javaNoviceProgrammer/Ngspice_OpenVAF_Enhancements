@@ -32,7 +32,7 @@ pole-zero, and a quadratic ordering cost.**
 | # | finding | severity |
 |---|---|---|
 | [F1](#f1--source-stepping-leaves-the-diagonal-gmin-armed-every-later-solve-in-the-job-carries-a-gmin-shunt-on-every-node) | *(fixed in [E-734](../../enhancements_doc/Enhancement-734.md): the diagonal gmin is put back at source stepping's exit)* after source stepping — succeeded or failed — `CKTdiagGmin` stays at `gmin`; the transient operating point, every transient time point and every DC sweep point that follow are solved with a 1e-12 S shunt on every diagonal. A 1e11 Ω divider beside a diode clamp reads 0.476 V instead of 0.500 V through the transient; a 1e14 Ω node beside a singular loop reads 990 V instead of 100 kV. Both solvers, no message | **high** — wrong answers on high-impedance nodes, silent |
-| [F2](#f2--an-unsolvable-loop-of-voltage-sources-succeeds-under-sparse-with-1gmin-amperes-and-fails-under-klu) | *(its symptom closed by [E-734](../../enhancements_doc/Enhancement-734.md): the loop is refused under Sparse too; the branch-row mechanism stays)* a KVL-inconsistent loop of three voltage sources ends in "Transient op finished successfully" with 1e12 A circulating under Sparse; under KLU the same deck fails. F1's leaked gmin lands, under Sparse alone, on the branch-row diagonals that pivoting created; KLU adds gmin only to stamped diagonals | **medium** — a spurious operating point; the two solvers disagree on whether a netlist is solvable |
+| [F2](#f2--an-unsolvable-loop-of-voltage-sources-succeeds-under-sparse-with-1gmin-amperes-and-fails-under-klu) | *(its symptom closed by [E-734](../../enhancements_doc/Enhancement-734.md); the mechanism fixed in [E-738](../../enhancements_doc/Enhancement-738.md): Sparse's diagonal gmin went to whatever the pivot order had put on the diagonal, the ±1 twins of the sources among them; it now goes to the stamped diagonals as under KLU, and no rung of the loop "succeeds")* a KVL-inconsistent loop of three voltage sources ends in "Transient op finished successfully" with 1e12 A circulating under Sparse; under KLU the same deck fails. F1's leaked gmin lands, under Sparse alone, on the branch-row diagonals that pivoting created; KLU adds gmin only to stamped diagonals | **medium** — a spurious operating point; the two solvers disagree on whether a netlist is solvable |
 | [F3](#f3--pivtol-is-inert-under-both-solvers) | *(fixed in [E-736](../../enhancements_doc/Enhancement-736.md): a pivot at or below pivtol is reported and named under both solvers when the deck sets pivtol, and under `set ngdebug` for the default)* `.option pivtol` never rejects a pivot: ngspice's `spmatrix.h` maps Sparse's `spSMALL_PIVOT` to `OK`, so `SearchEntireMatrix`'s fallback to the largest element is reported as success; KLU ignores the value by construction. A matrix of 1e-14 S pivots solves under `pivtol=1e-3` with no word. E-475 validates an option that does nothing | **medium-low** — the manual promises a minimum pivot that is not enforced |
 | [F4](#f4--pole-zero-finds-two-three-four-or-five-poles-on-the-same-stage-depending-on-the-solver-its-knobs-and-the-decks-line-order) | *(fixed in [E-737](../../enhancements_doc/Enhancement-737.md): the search keeps its sign-change bracket, Muller starts beside its complex start, the outward march stops when the deflated determinant is flat, a minimum at the floor is taken at once; five poles under every solver and knob, the six-element RLC's six roots, the bandpass's pair, no warning)* Muller's `pz` on a common-emitter stage returns 2 poles under KLU (default), 3 with `klu_btf=off`, 5 with `klu_scale=sum` or `colamd`, 5 under Sparse — and 5 under KLU too once three deck lines are moved; on the linearised stage Sparse gives up with 3 and KLU finds 5; `.option pzeig` gives the same 4 finite poles under both | **medium** — incomplete pole lists, with only a "giving up" warning |
 | [N1](#n1--sparses-ordering-is-quadratic-in-the-node-count) | *(fixed in [E-735](../../enhancements_doc/Enhancement-735.md): the lists stay in a layout the ordering never walks through and the scan is a bucket index; same pivots, same factors; the 300 × 300 mesh reorders in 9 s)* Sparse's Markowitz ordering costs 1.5 s at 10k nodes, 17–37 s at 40k and 226 s at 90k on a 2-D resistor mesh (94 % of the run is "matrix reorder time"; equal or random values alike); KLU takes 1.8 s at 90k | low — known character, now measured |
@@ -207,6 +207,21 @@ and having `LoadGmin` add only to those.
 under KLU. The branch-row diagonals that pivoting creates still receive the diagonal gmin
 during the gmin ladder's own rungs, so the two solvers still differ in what a rung
 regularises; that part stays open.
+
+*Mechanism fixed in [E-738](../../enhancements_doc/Enhancement-738.md).* The branch-row element
+was a side effect, and the exchange cited above creates nothing (its lookup passes `NO`).
+Sparse's `Diag[]` is indexed by *internal* row and follows the pivot order: the MNA preorder
+swaps a voltage source's column with a node's so that the source's ±1 twins sit on the
+diagonal, the Markowitz exchanges put whatever pivot was chosen there, and `LoadGmin` walked
+that array. Traced on this deck, four of the six entries that received gmin were ±1 KCL/KVL
+stamps, one was node `a`'s conductance and one a fill-in at the v3 branch's own diagonal; on a
+BJT stage with an inductor, six of ten (the source and inductor twins), while the nodes those
+twins displaced got no shunt. KLU feeds the stamped diagonals by external identity and never a
+branch row. Sparse now records the stamped diagonals at its first preorder — before the column
+swaps, while internal and external numbering agree — and feeds those whatever the pivot order:
+the two loops climb no rung under Sparse (374 singular reports and no "successful gmin step",
+KLU's numbers exactly, against 366 and 22), the 122 Sparse decks of these harnesses print the
+same values, and the twelve ladder-related suites pass under both solvers.
 
 ## F3 — `pivtol` is inert under both solvers
 

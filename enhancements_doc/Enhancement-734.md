@@ -82,6 +82,12 @@ the branch rows own a `Diag[]` entry that `LoadGmin` feeds, turning `v(a) − v(
 `v(a) − v(b) + gmin·i = 1`. KLU's `LoadGmin_CSC` adds gmin only to stamped diagonals, so it
 could not, and refused.
 
+*Corrected by [E-738](Enhancement-738.md):* the exchange creates no element (its lookup passes
+`NO`). Sparse's `Diag[]` is indexed by internal row and follows the pivot order, so the gmin
+went to the ±1 twins the MNA preorder had swapped onto the diagonal and to whatever the
+Markowitz exchanges chose as pivots, the branch row's fill-in diagonal among them. E-738 feeds
+the stamped diagonals instead, as KLU does.
+
 ## What changed
 
 **The exit puts the diagonal gmin back.** `gillespie_src` ends with `CKTdiagGmin =
@@ -137,7 +143,9 @@ probed-port and open-gate decks; the 16 ladder-related suites; the sweep twice.
 - Sparse's pivoting still creates branch-row diagonals, and the gmin ladder's own rungs
   still feed them: during gmin stepping the two solvers regularise different equations. The
   loop is refused because the *final* solves carry no diagonal gmin, not because the rungs
-  agree. That is the hunt's F2 mechanism, and it stays open.
+  agree. That is the hunt's F2 mechanism, and it stays open. *(Closed by
+  [E-738](Enhancement-738.md): the diagonal gmin goes to the stamped diagonals under Sparse
+  too; the mechanism was the pivot-indexed diagonal array, not a created element.)*
 - A node the DC-path walk passes by (a name with `#`, an OSDI gate whose entries the walk
   reads as a path) is not held; it goes down the ladder as before, and reaches `optran`
   honestly or not at all.

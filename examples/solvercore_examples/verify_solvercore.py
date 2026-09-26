@@ -363,6 +363,56 @@ def main():
     check("a healthy divider with pivtol=1e-3: every pivot is above it, nothing is said, v(x) = 0.5",
           len(w) == 0 and near(v.get("v(x)"), 0.5, 1e-9), f"{w[:1]} {v.get('v(x)')}")
 
+    print("[F2, second hunt] the diagonal gmin goes to the stamped diagonals under Sparse, as under KLU (E-738)")
+    # Sparse's Diag[] is indexed by internal row and follows the pivot order: after the MNA
+    # preorder's column swaps and the Markowitz exchanges it holds the +-1 twins of voltage
+    # sources and inductors and whatever else was chosen as a pivot, and LoadGmin fed those.
+    # KLU adds gmin to the stamped diagonals by external identity. Sparse now records the
+    # stamped diagonals at its first preorder and feeds those, so the same equations are
+    # regularised under both solvers and an unsolvable loop no longer "succeeds" rung by rung.
+
+    def rungs(out):
+        return sum(1 for l in out.splitlines() if "successful gmin step" in l)
+
+    def singulars(out):
+        return sum(1 for l in out.splitlines() if "singular matrix" in l)
+
+    def refused(out):
+        return "could not be simulated" in out or "Transient op failed" in out
+
+    def loop_deck(v3, options=None):
+        return "\n".join(["* three voltage sources in a loop"] + (options or []) +
+                         ["V1 a b 1", "V2 b c 1", f"V3 c a {v3}", "R1 a 0 1k", ".control", "set noinit", "set ngdebug",
+                          "op", "print v(a) i(v1)", ".endc", ".end", ""])
+
+    out = ngspice(loop_deck(-1))
+    check("a KVL-inconsistent loop of sources (sum 1 V): no rung of any ladder 'succeeds' (Sparse had 22), every one is singular, the point is refused",
+          rungs(out) == 0 and singulars(out) >= 100 and refused(out), f"rungs {rungs(out)}, singular {singulars(out)}")
+    out = ngspice(loop_deck(-2))
+    check("a consistent, rank-deficient loop (sum 0 V): the same -- no rung succeeds, refused",
+          rungs(out) == 0 and singulars(out) >= 100 and refused(out), f"rungs {rungs(out)}, singular {singulars(out)}")
+    out = ngspice(loop_deck(-1, [".option gmin=1e-6"]))
+    check("the inconsistent loop under .option gmin=1e-6 (the hunt's 1.004e6 A): no rung succeeds, refused",
+          rungs(out) == 0 and singulars(out) >= 100 and refused(out), f"rungs {rungs(out)}, singular {singulars(out)}")
+
+    # the ladder still does its work where a point exists: a BJT stage with the plain
+    # Newton attempt skipped climbs the gmin ladder to the same point as before
+    ce = ["Vcc vcc 0 12", "Vin in 0 dc 0.7", "Rs in b 1k", "Rb1 vcc b 100k", "Rb2 b 0 22k", "Q1 c b e qm",
+          ".model qm npn(bf=150 is=1e-15 cje=2p cjc=1p tf=0.3n rb=50)", "Rc vcc c 4.7k", "Re e 0 1k", "L1 c out 1u", "Rl out 0 100k"]
+    out = ngspice("\n".join(["* ce stage, gmin stepping forced", ".option noopiter gminsteps=6"] + ce +
+                            [".control", "set noinit", "set ngdebug", "op", "print v(c)", ".endc", ".end", ""]))
+    v = scalars(out)
+    check("a BJT stage with noopiter: the gmin ladder's rungs succeed and v(c) = 10.939 as before",
+          rungs(out) >= 5 and near(v.get("v(c)"), 10.939, 2e-3), f"rungs {rungs(out)}, v(c) {v.get('v(c)')}")
+
+    # the rule, the same under both solvers: the shunt goes where a diagonal was stamped (a and
+    # c through R1; b, between two sources, has none), so the rungs of a floating chain solve
+    # and the gmin-free point at the end is refused
+    out = ngspice("\n".join(["* two sources in a chain, one resistor across, no path to ground", ".option dcpath=off",
+                             "V1 a b 1", "V2 b c 1", "R1 a c 1meg", ".control", "set noinit", "set ngdebug", "op", "print v(a)", ".endc", ".end", ""]))
+    check("a floating chain of sources with dcpath off: the rungs solve on the stamped diagonals' shunts and the final gmin-free point is refused, both solvers alike",
+          rungs(out) >= 10 and refused(out), f"rungs {rungs(out)}")
+
     print("\nALL PASSED" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)
 

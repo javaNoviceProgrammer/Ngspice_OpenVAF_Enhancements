@@ -16,6 +16,7 @@ is still open.
 | F5 | an infinite pivot hung the determinant normalisation | code guard only (`isfinite`), no deck |
 | N1 | Sparse's ordering was quadratic in the node count: its sorted lists were walked through at every interchange and fill-in (second hunt, 2026-09-25; fixed by [E-735](../../enhancements_doc/Enhancement-735.md), same pivots and factors) | a 150 × 150 mesh: the same voltages under both solvers and a reorder time under 4 s (0.9 s here, 6.4 s before); a 30 × 30 RC mesh's AC (the complex ordering); a switch that shorts two mesh nodes mid-transient |
 | F3 (second hunt) | `.option pivtol` was inert: Sparse took the largest element left when nothing passed the floor and returned a verdict ngspice maps to OK, KLU ignored the value; nothing was ever said (second hunt; fixed by [E-736](../../enhancements_doc/Enhancement-736.md)) | a 1e-14 S ladder under `pivtol=1e-3`, `1e30` and the default, with and without `set ngdebug`: the warning names the node and the pivot when the deck sets pivtol or ngdebug is on, the values never change; a gmin-held node under `pivtol=1e-10`; an AC and a transient report once from their own factorization; a healthy divider under `pivtol=1e-3` stays silent |
+| F2 (second hunt) | the diagonal gmin went, under Sparse, to whatever the pivot order had put on the diagonal — the ±1 twins of voltage sources and inductors among them — so an unsolvable loop of sources climbed every rung under Sparse and none under KLU (second hunt; fixed by [E-738](../../enhancements_doc/Enhancement-738.md)) | the inconsistent loop, the rank-deficient loop and the loop under `gmin=1e-6`: no rung succeeds, every one is singular, the point is refused; a BJT stage with `noopiter` climbs the ladder to its point; a floating chain of sources with `dcpath` off: the rungs solve on the stamped diagonals' shunts and the gmin-free point is refused, both solvers alike |
 
 The fixes: `CKTsetup` gives every node without an entry a zero diagonal and tells the
 solver the true size (`SMPsizeHint`, `SMPmarkOccupied`); KLU's conversion no longer
@@ -30,4 +31,4 @@ refactor and asks `NIacIter` to re-pivot when it collapsed.
 python3 verify_solvercore.py
 ```
 
-37 checks per solver, all PASS.
+42 checks per solver, all PASS.

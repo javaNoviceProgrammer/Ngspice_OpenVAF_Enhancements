@@ -43,6 +43,15 @@ typedef struct sSMPmatrix {
     int SMPsmallPivotRow ;
     int SMPsmallPivotCol ;
     double SMPsmallPivotMag ;
+    /* Enhancement-738: under Sparse the diagonal gmin goes to the stamped
+     * diagonal of every row, as under KLU -- &Element.Real of the external
+     * (e,e) element present before the first factorization, NULL for a row
+     * without one (a voltage source's branch); NULL array before the first
+     * preorder.  Sparse's Diag[] is by internal index and follows the pivot
+     * order, so gmin used to land on the +-1 twins the MNA preorder swapped
+     * onto the diagonal and on whatever the Markowitz exchanges put there. */
+    double **SMPgminDiag ;
+    int SMPgminDiagSize ;
 } SMPmatrix ;
 
 

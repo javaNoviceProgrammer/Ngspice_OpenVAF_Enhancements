@@ -733,6 +733,10 @@ the deflated determinant is flat — so a common-emitter stage's five poles no l
 on the solver, its knobs or the deck's line order, and a twelve-decade RLC ladder gives all
 six of its roots where it gave up with three
 ([E-737](../../enhancements_doc/Enhancement-737.md)).
+Under Sparse the operating-point ladder's diagonal gmin goes to every row's stamped diagonal,
+as under KLU; it went to whatever the pivot order had put on the diagonal — the ±1 twins of
+voltage sources and inductors among them — so an unsolvable loop of sources climbed every
+rung under Sparse and none under KLU ([E-738](../../enhancements_doc/Enhancement-738.md)).
 Since [E-666](../../enhancements_doc/Enhancement-666.md): a raw-file `run n5.raw`
 puts every corner's plot in the file, each named with its corner, and `load` reads
 them all; `meas tran` (`ac`, `dc`) reads the combined plot as its nominal's analysis;
