@@ -723,6 +723,10 @@ Sparse's ordering is no longer quadratic in the node count: the pivot search kee
 element lists in a layout it never has to walk through, chooses the same pivots and
 leaves the same factors, and a 300 × 300 resistor mesh under `.option sparse` runs in
 16 s instead of 226 ([E-735](../../enhancements_doc/Enhancement-735.md)).
+`.option pivtol` is answered: a deck that sets it is told, under either solver, when a
+factorization had to take a pivot at or below it — "the pivot for node b is 3e-14, below
+pivtol (0.001)" — and `set ngdebug` reports the default floor too
+([E-736](../../enhancements_doc/Enhancement-736.md)).
 Since [E-666](../../enhancements_doc/Enhancement-666.md): a raw-file `run n5.raw`
 puts every corner's plot in the file, each named with its corner, and `load` reads
 them all; `meas tran` (`ac`, `dc`) reads the combined plot as its nominal's analysis;

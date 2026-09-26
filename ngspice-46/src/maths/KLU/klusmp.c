@@ -927,12 +927,73 @@ SMPluFacKLUforCIDER (SMPmatrix *Matrix)
 #endif
 
 /*
+ * Enhancement-736: pivtol under both solvers.  Sparse's searches never
+ * accept a pivot at or below its absolute threshold while an acceptable one
+ * exists, and take the largest element left when none does -- a verdict
+ * (spSMALL_PIVOT) that ngspice maps to OK, so nothing ever heard of it.  KLU
+ * has no absolute threshold at all.  Both reorders now leave the first pivot
+ * at or below pivtol in the SMPmatrix, read back by SMPsmallPivot(): Sparse
+ * from its own record, KLU from the diagonal of U after a full factorization,
+ * each pivot scaled back by its row's factor when KLU factored the row-scaled
+ * matrix (klu_scale), so the comparison is in the units of the loaded matrix.
+ */
+static void
+klu_reset_small_pivot (SMPmatrix *Matrix)
+{
+    Matrix->SMPsmallPivotRow = 0 ;
+    Matrix->SMPsmallPivotCol = 0 ;
+    Matrix->SMPsmallPivotMag = 0.0 ;
+}
+
+static void
+klu_note_small_pivot (SMPmatrix *Matrix, double PivTol, int complex)
+{
+    klu_numeric *Numeric = Matrix->SMPkluMatrix->KLUmatrixNumeric ;
+    klu_symbolic *Symbolic = Matrix->SMPkluMatrix->KLUmatrixSymbolic ;
+    double *Udiag, mag ;
+    int n, j, row ;
+
+    if (Numeric == NULL || Symbolic == NULL || Numeric->Udiag == NULL || PivTol <= 0.0)
+        return ;
+    Udiag = (double *) Numeric->Udiag ;
+    n = Symbolic->n ;
+    for (j = 0 ; j < n ; j++) {
+        mag = complex ? fabs (Udiag[2 * j]) + fabs (Udiag[2 * j + 1]) : fabs (Udiag[j]) ;
+        row = Numeric->Pnum[j] ;
+        if (Numeric->Rs != NULL)
+            mag *= Numeric->Rs[row] ;
+        if (mag <= PivTol) {
+            Matrix->SMPsmallPivotRow = row + 1 ;
+            Matrix->SMPsmallPivotCol = Symbolic->Q[j] + 1 ;
+            Matrix->SMPsmallPivotMag = mag ;
+            return ;
+        }
+    }
+}
+
+static void
+klu_note_sparse_small_pivot (SMPmatrix *Matrix)
+{
+    spWhereSmallPivot (Matrix->SPmatrix, &Matrix->SMPsmallPivotRow, &Matrix->SMPsmallPivotCol, &Matrix->SMPsmallPivotMag) ;
+}
+
+int
+SMPsmallPivot (SMPmatrix *Matrix, int *Row, int *Col, double *Mag)
+{
+    *Row = Matrix->SMPsmallPivotRow ;
+    *Col = Matrix->SMPsmallPivotCol ;
+    *Mag = Matrix->SMPsmallPivotMag ;
+    return (Matrix->SMPsmallPivotCol > 0) ;
+}
+
+/*
  * SMPcReorder()
  */
 
 int
 SMPcReorder (SMPmatrix *Matrix, double PivTol, double PivRel, int *NumSwaps)
 {
+    klu_reset_small_pivot (Matrix) ;   /* Enhancement-736 */
     if (Matrix->CKTkluMODE)
     {
         if (CircuitIsDigital() && Matrix->SMPkluMatrix->KLUmatrixN == 0) {
@@ -969,6 +1030,7 @@ SMPcReorder (SMPmatrix *Matrix, double PivTol, double PivRel, int *NumSwaps)
                                                                Matrix->SMPkluMatrix->KLUmatrixCommon) ;
         Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex = 1 ;   /* Enhancement-499 */
         klu_note_zfactor_rcond (Matrix) ;   /* F7: the reference for every refactor of this sweep */
+        klu_note_small_pivot (Matrix, PivTol, 1) ;   /* Enhancement-736 */
 
         if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL)
         {
@@ -996,9 +1058,12 @@ SMPcReorder (SMPmatrix *Matrix, double PivTol, double PivRel, int *NumSwaps)
             return 0 ;
         }
     } else {
+        int error ;
         *NumSwaps = 1 ;
         spSetComplex (Matrix->SPmatrix) ;
-        return spOrderAndFactor (Matrix->SPmatrix, NULL, (spREAL)PivRel, (spREAL)PivTol, YES) ;
+        error = spOrderAndFactor (Matrix->SPmatrix, NULL, (spREAL)PivRel, (spREAL)PivTol, YES) ;
+        klu_note_sparse_small_pivot (Matrix) ;   /* Enhancement-736 */
+        return error ;
     }
 }
 
@@ -1009,6 +1074,7 @@ SMPcReorder (SMPmatrix *Matrix, double PivTol, double PivRel, int *NumSwaps)
 int
 SMPreorder (SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
 {
+    klu_reset_small_pivot (Matrix) ;   /* Enhancement-736 */
     if (Matrix->CKTkluMODE)
     {
         if (CircuitIsDigital() && Matrix->SMPkluMatrix->KLUmatrixN == 0) {
@@ -1034,6 +1100,7 @@ SMPreorder (SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
                                                              Matrix->SMPkluMatrix->KLUmatrixCommon) ;
         Matrix->SMPkluMatrix->KLUmatrixNumericIsComplex = 0 ;   /* Enhancement-499 */
         klu_note_factor_rcond (Matrix) ;   /* F1 (large-circuit sweep): the reference for every refactor */
+        klu_note_small_pivot (Matrix, PivTol, 0) ;   /* Enhancement-736 */
 
         if (Matrix->SMPkluMatrix->KLUmatrixNumeric == NULL)
         {
@@ -1061,9 +1128,12 @@ SMPreorder (SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
             return 0 ;
         }
     } else {
+        int error ;
         spSetReal (Matrix->SPmatrix) ;
         LoadGmin (Matrix, Gmin) ;
-        return spOrderAndFactor (Matrix->SPmatrix, NULL, (spREAL)PivRel, (spREAL)PivTol, YES) ;
+        error = spOrderAndFactor (Matrix->SPmatrix, NULL, (spREAL)PivRel, (spREAL)PivTol, YES) ;
+        klu_note_sparse_small_pivot (Matrix) ;   /* Enhancement-736 */
+        return error ;
     }
 }
 

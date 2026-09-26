@@ -7,9 +7,9 @@
 new `Order*` routines), `spbuild.c` (`spcCreateFillin`), `spdefs.h` (ordering fields of
 the matrix frame), `spalloc.c` (their lifetime).
 [`examples/solvercore_examples/`](../examples/solvercore_examples/) (section [N1], 8 checks,
-26 per solver). Handbook [§3.7](../docs/handbook/03-ngspice-workflows.md). The hunt page.
+27 per solver). Handbook [§3.7](../docs/handbook/03-ngspice-workflows.md). The hunt page.
 
-**Suites:** `solvercore` 26 of 26 per solver, both solvers (25 of 26 under Sparse on the
+**Suites:** `solvercore` 27 of 27 per solver, both solvers (26 of 27 under Sparse on the
 E-734 binaries: the mesh's reorder time; 26 of 26 under KLU); `oprobust` 38 of 38,
 `floatnode` 16 of 16, `singularname` 12 of 12, `acgminhold` 10 of 10, `internalnode` 28 of
 28, `dcpath` per solver, both solvers, unchanged; no new build warnings; full sweep, run

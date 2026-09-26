@@ -57,6 +57,7 @@ retry:
 
             return(error);
         }
+        NIsmallPivot(ckt);   /* Enhancement-736 */
     }
     else {
         startTime = SPfrontEnd->IFseconds();
@@ -135,6 +136,7 @@ retry:
              */
             return(error);
         }
+        NIsmallPivot(ckt);   /* Enhancement-736 */
     } else {
 	startTime = SPfrontEnd->IFseconds();
         error = SMPcLUfac(ckt->CKTmatrix,ckt->CKTpivotAbsTol);

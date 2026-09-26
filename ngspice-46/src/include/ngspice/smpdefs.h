@@ -37,7 +37,12 @@ typedef struct sSMPmatrix {
     int CKTkluScale ;                      /* Enhancement-152: 0=none, 1=sum, 2=max   */
     int CKTkluBTF ;                        /* Enhancement-152: 1=BTF on, 0=off        */
 #endif
-
+    /* Enhancement-736: the first pivot the last SMPreorder / SMPcReorder took
+     * at or below pivtol (external row and column, 0 when none) and its
+     * magnitude; SMPsmallPivot() reads them, NIsmallPivot() reports them. */
+    int SMPsmallPivotRow ;
+    int SMPsmallPivotCol ;
+    double SMPsmallPivotMag ;
 } SMPmatrix ;
 
 
@@ -68,6 +73,7 @@ int SMPcLUfac( SMPmatrix *, double );
 int SMPluFac( SMPmatrix *, double , double );
 int SMPcReorder( SMPmatrix * , double , double , int *);
 int SMPreorder( SMPmatrix * , double , double , double );
+int SMPsmallPivot( SMPmatrix *, int *, int *, double * );   /* Enhancement-736: the last reorder's pivot below pivtol, if any */
 void SMPcaSolve(SMPmatrix *Matrix, double RHS[], double iRHS[],
 		double Spare[], double iSpare[]);
 void SMPcSolve( SMPmatrix *, double [], double [], double [], double []);

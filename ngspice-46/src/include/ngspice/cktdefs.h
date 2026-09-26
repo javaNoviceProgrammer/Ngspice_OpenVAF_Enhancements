@@ -721,6 +721,7 @@ extern int NIintegrate(CKTcircuit *, double *, double *, double , int);
 extern void NIsdirkInfo(int *stages, double *gamma);
 extern double NIsdirkC(int stage);
 extern int NIiter(CKTcircuit * , int);
+extern void NIsmallPivot(CKTcircuit *);   /* Enhancement-736: warn when the last reorder took a pivot below pivtol */
 extern void NIresetwarnmsg(void);
 extern int NIpzMuller(PZtrial **, PZtrial *);
 extern int NIpzComplex(PZtrial **, PZtrial *);

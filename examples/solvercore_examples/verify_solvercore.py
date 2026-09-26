@@ -26,6 +26,11 @@ ladder matches a 70-digit reference at every printed point.
       and every fill-in, so a 300 x 300 resistor mesh spent 213 s of 226 s reordering
       where KLU took 1.8 s.  The lists now stay in a layout the ordering never walks
       through, the same pivots are chosen and the same factors come out.
+  F3 of the second hunt (fixed by Enhancement-736): .option pivtol was inert: Sparse took the
+      largest element left when nothing passed the floor and returned a verdict ngspice
+      maps to OK, KLU ignored the value.  A deck that sets pivtol is now told which
+      node's pivot fell at or below it, under either solver; the default floor is
+      reported under `set ngdebug`.  Values never change.
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
@@ -294,6 +299,69 @@ def main():
     check("the source current rises from 249.2 uA to 297.2 uA",
           near(v.get("i(v1)[2]"), -2.49211e-4, 1e-8) and near(v.get("i(v1)[9]"), -2.9725e-4, 3e-7),
           f"{v.get('i(v1)[2]')} {v.get('i(v1)[9]')}")
+
+    print("[F3, second hunt] .option pivtol is answered: a pivot at or below it is reported and named, under both solvers (E-736)")
+
+    def warned(out):
+        return [l for l in out.splitlines() if "below pivtol" in l]
+
+    tiny = ["I1 0 a 1p", "R1 a 0 1e14", "R2 a b 1e14", "R3 b 0 1e14", "R4 b c 1e14", "R5 c 0 1e14"]
+
+    def tiny_ladder_deck(options, control="op\nprint v(a) v(c)"):
+        return "\n".join(["* every conductance 1e-14 S"] + options + tiny + [".control", "set noinit", control, ".endc", ".end", ""])
+
+    # the hunt's deck: 1e-14 S everywhere, pivtol 1e-3 -- Sparse takes the largest element
+    # of the reduced matrix (node b, 3e-14), KLU's first pivot in its order is node a (2e-14)
+    out = ngspice(tiny_ladder_deck([".option pivtol=1e-3"]))
+    v, w = scalars(out), warned(out)
+    check("pivtol=1e-3 on 1e-14 S conductances: a warning names the node and the pivot (was silent)",
+          len(w) >= 1 and re.search(r"the pivot for node [abc] is [23]e-14, below pivtol \(0\.001\)", w[0]) is not None, f"{w[:1]}")
+    check("pivtol=1e-3: the values are unchanged, v(a) = 62.5, v(c) = 12.5",
+          near(v.get("v(a)"), 62.5, 1e-6) and near(v.get("v(c)"), 12.5, 1e-6), f"{v.get('v(a)')} {v.get('v(c)')}")
+    out = ngspice(tiny_ladder_deck([]))
+    v, w = scalars(out), warned(out)
+    check("the default pivtol (1e-13) is crossed too, but is not reported unless asked: no warning, same values",
+          len(w) == 0 and near(v.get("v(a)"), 62.5, 1e-6), f"{w[:1]} {v.get('v(a)')}")
+    out = ngspice(tiny_ladder_deck([], "set ngdebug\nop\nprint v(a) v(c)"))
+    w = warned(out)
+    check("set ngdebug reports the default floor: 'below pivtol (1e-13)'",
+          len(w) >= 1 and "below pivtol (1e-13)" in w[0], f"{w[:1]}")
+    out = ngspice(tiny_ladder_deck([".option pivtol=1e30"]))
+    v, w = scalars(out), warned(out)
+    check("pivtol=1e30 (E-475's open item: no value changed anything visible): a warning, same values",
+          len(w) >= 1 and "below pivtol (1e+30)" in w[0] and near(v.get("v(a)"), 62.5, 1e-6), f"{w[:1]}")
+
+    # a node held by the dcpath gmin (1e-12) alone, under pivtol 1e-10 and under the default
+    held = ["V1 in 0 1", "R1 in x 1k", "R2 x 0 1k", "C1 y 0 1p", "I2 0 y 1n"]
+
+    def held_deck(options):
+        return "\n".join(["* node y held by gmin alone"] + options + held + [".control", "set noinit", "op", "print v(x) v(y)", ".endc", ".end", ""])
+
+    out = ngspice(held_deck([".option pivtol=1e-10"]))
+    v, w = scalars(out), warned(out)
+    check("pivtol=1e-10 on a node held by gmin (1e-12): 'the pivot for node y is 1e-12, below pivtol (1e-10)', v(y) = I/gmin still",
+          len(w) >= 1 and "the pivot for node y is 1e-12, below pivtol (1e-10)" in w[0] and near(v.get("v(y)"), 1000.0, 1e-3), f"{w[:1]} {v.get('v(y)')}")
+    out = ngspice(held_deck([]))
+    v, w = scalars(out), warned(out)
+    check("the same node under the default pivtol: no warning (1e-12 is above 1e-13)",
+          len(w) == 0 and near(v.get("v(y)"), 1000.0, 1e-3), f"{w[:1]}")
+
+    # the AC and the transient reorder for themselves and report too; a healthy deck stays silent
+    rc = ["V1 in 0 dc 0 ac 1", "R1 in x 1k", "C1 x 0 1n", "R2 x y 1e14", "R3 y 0 1e14"]
+    out = ngspice("\n".join(["* AC with pivtol 1e-3", ".option pivtol=1e-3"] + rc + [".control", "set noinit", "ac lin 1 1k 1k", "print vm(x)", ".endc", ".end", ""]))
+    v, w = scalars(out), warned(out)
+    check("AC with pivtol=1e-3: the 1e-14 S node is reported from the AC's own factorization, once; vm(x) = 0.99998",
+          len(w) == 1 and "the pivot for node y is 2e-14, below pivtol (0.001)" in w[0] and near(v.get("vm(x)"), 0.9999803, 1e-6), f"{w} {v.get('vm(x)')}")
+    out = ngspice("\n".join(["* tran with pivtol 1e-3", ".option pivtol=1e-3", "V1 in 0 pulse(0 1 1u 1n 1n 5u 20u)", "R1 in x 1k", "C1 x 0 1n", "R2 x y 1e14", "R3 y 0 1e14",
+                              ".option interp", ".control", "set noinit", "tran 1u 10u", "print v(x)[9]", ".endc", ".end", ""]))
+    v, w = scalars(out), warned(out)
+    check("transient with pivtol=1e-3: reported once (the same node and magnitude are not repeated); v(x) at 9 us = e^-3 after the pulse",
+          len(w) == 1 and "the pivot for node y is 2e-14" in w[0] and near(v.get("v(x)[9]"), 0.0498, 0.005), f"{w} {v.get('v(x)[9]')}")
+    out = ngspice("\n".join(["* a healthy divider with pivtol 1e-3", ".option pivtol=1e-3", "V1 in 0 dc 1 ac 1", "R1 in x 1k", "R2 x 0 1k", "C1 x 0 1n",
+                              ".control", "set noinit", "op", "print v(x)", "ac lin 1 1k 1k", "print vm(x)", "tran 1u 5u", "print v(x)[last]", ".endc", ".end", ""]))
+    v, w = scalars(out), warned(out)
+    check("a healthy divider with pivtol=1e-3: every pivot is above it, nothing is said, v(x) = 0.5",
+          len(w) == 0 and near(v.get("v(x)"), 0.5, 1e-9), f"{w[:1]} {v.get('v(x)')}")
 
     print("\nALL PASSED" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)

@@ -249,6 +249,9 @@ spOrderAndFactor(MatrixPtr Matrix, RealNumber RHS[], RealNumber RelThreshold,
     assert( IS_VALID(Matrix) && !Matrix->Factored);
 
     Matrix->Error = spOKAY;
+    Matrix->SmallPivotRow = 0;      /* Enhancement-736 */
+    Matrix->SmallPivotCol = 0;
+    Matrix->SmallPivotMag = 0.0;
     Size = Matrix->Size;
     if (RelThreshold <= 0.0)
         RelThreshold = Matrix->RelThreshold;
@@ -1968,6 +1971,15 @@ SearchEntireMatrix( MatrixPtr Matrix, int Step )
         return NULL;
     }
 
+    /* Enhancement-736: no element of the reduced matrix is above the absolute
+     * threshold; the largest is taken, and the first such pivot of this
+     * ordering is remembered for spWhereSmallPivot() -- ngspice maps
+     * spSMALL_PIVOT to OK, so the record is the only trace of it. */
+    if (Matrix->SmallPivotRow == 0) {
+        Matrix->SmallPivotRow = Matrix->IntToExtRowMap[pLargestElement->Row];
+        Matrix->SmallPivotCol = Matrix->IntToExtColMap[pLargestElement->Col];
+        Matrix->SmallPivotMag = LargestElementMag;
+    }
     Matrix->Error = spSMALL_PIVOT;
     return pLargestElement;
 }

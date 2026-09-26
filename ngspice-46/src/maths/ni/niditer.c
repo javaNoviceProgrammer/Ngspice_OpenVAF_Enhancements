@@ -51,6 +51,7 @@ skip:
              */
             return(error);
         }
+        NIsmallPivot(ckt);   /* Enhancement-736 */
     } else {
         error = SMPcLUfac(ckt->CKTmatrix,ckt->CKTpivotAbsTol);
         if(error != 0) {

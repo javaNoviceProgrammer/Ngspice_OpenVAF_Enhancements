@@ -20,11 +20,65 @@ Modified: 2001 AlansFixes
 #include "ngspice/sperror.h"
 #include "ngspice/fteext.h"
 #ifdef OSDI
+#include "ngspice/optdefs.h"  /* Enhancement-736: ERRP_PIVTOL */
 #include "ngspice/osdiitf.h"   /* Enhancement-689: OSDIuicSeed */
 #endif
 
 /* Limit the number of 'singular matrix' warnings */
 static int msgcount = 0;
+static int smallpivcount = 0;   /* Enhancement-736 */
+static int smallpivlastcol = 0;
+static double smallpivlastmag = 0.0;
+
+
+/* Enhancement-736: .option pivtol, "the absolute minimum value for a matrix
+ * entry to be accepted as a pivot", reached both solvers and changed nothing
+ * a user could see: Sparse honoured it while choosing among candidates and,
+ * when no candidate passed, took the largest element and reported a verdict
+ * ngspice maps to OK; KLU ignored the value.  Every full factorization now
+ * records its first pivot at or below pivtol (SMPreorder / SMPcReorder,
+ * SMPsmallPivot), and this prints it, naming the node whose unknown the
+ * pivot belongs to and, when the pivot came from another node's equation,
+ * that node too, once for a given node and magnitude; six in all, all of
+ * them under `set ngdebug`, like the singular-matrix messages.  It speaks
+ * when the deck set pivtol (ERRP_PIVTOL), or under ngdebug for the default.  A factorization that reuses a pivot order
+ * (spFactor, klu_refactor) does not check: the order is what was chosen. */
+void
+NIsmallPivot(CKTcircuit *ckt)
+{
+    int row, col;
+    double mag;
+
+    if (!SMPsmallPivot(ckt->CKTmatrix, &row, &col, &mag))
+        return;
+    /* The default floor, 1e-13, is crossed by decks that are fine (an OSDI
+     * branch that carries nothing, a probe source's row beside a 10 T-ohm
+     * path), and Spice3 chose to say nothing then; the floor a deck sets is
+     * a request, and is answered.  `set ngdebug` reports the default too. */
+    if (!(ckt->CKTtolGiven & ERRP_PIVTOL) && !ft_ngdebug)
+        return;
+    /* KLU factors afresh at every reorder request (an operating point asks
+     * twice, a transient and an AC once more) and finds the same pivot each
+     * time, to rounding; the same node at the same magnitude is reported once. */
+    if (col == smallpivlastcol && fabs(mag - smallpivlastmag) <= 1e-6 * fabs(smallpivlastmag))
+        return;
+    smallpivlastcol = col;
+    smallpivlastmag = mag;
+    if (!ft_ngdebug && smallpivcount >= 6)
+        return;
+    smallpivcount++;
+    if (row == col || row <= 0)
+        SPfrontEnd->IFerrorf(ERR_WARNING,
+                             "the pivot for node %s is %g, below pivtol (%g)\n",
+                             NODENAME(ckt, col), mag, ckt->CKTpivotAbsTol);
+    else
+        SPfrontEnd->IFerrorf(ERR_WARNING,
+                             "the pivot for node %s (from the equation of node %s) is %g, below pivtol (%g)\n",
+                             NODENAME(ckt, col), NODENAME(ckt, row), mag, ckt->CKTpivotAbsTol);
+    if (!ft_ngdebug && smallpivcount == 6)
+        SPfrontEnd->IFerrorf(ERR_WARNING,
+                             "further pivtol warnings are not printed (set ngdebug to see them all)\n");
+}
 
 /* NIiter() - return value is non-zero for convergence failure */
 
@@ -293,6 +347,7 @@ NIiter(CKTcircuit *ckt, int maxIter)
                     return(error); /* can't handle these errors - pass up! */
                 }
                 ckt->CKTniState &= ~NISHOULDREORDER;
+                NIsmallPivot(ckt);   /* Enhancement-736 */
             } else {
                 startTime = SPfrontEnd->IFseconds();
 
@@ -345,6 +400,7 @@ NIiter(CKTcircuit *ckt, int maxIter)
                         FREE(OldCKTstate0);
                         return(error);
                     }
+                    NIsmallPivot(ckt);   /* Enhancement-736 */
                 } else if (error) {
                     if (!(ckt->CKTkluMODE) && (error == E_SINGULAR)) {
 

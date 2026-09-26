@@ -773,6 +773,12 @@ struct  MatrixFrame
     int                      RowsLinked;
     int                          SingularCol;
     int                          SingularRow;
+    /* Enhancement-736: the first pivot spOrderAndFactor() had to take at or
+     * below AbsThreshold (external row and column, 0 when there was none)
+     * and its magnitude; spWhereSmallPivot() reads them. */
+    int                          SmallPivotRow;
+    int                          SmallPivotCol;
+    RealNumber                   SmallPivotMag;
     int                          Singletons;
     int                          Size;
     struct MatrixElement         TrashCan;

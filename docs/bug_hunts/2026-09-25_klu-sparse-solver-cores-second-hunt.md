@@ -33,7 +33,7 @@ pole-zero, and a quadratic ordering cost.**
 |---|---|---|
 | [F1](#f1--source-stepping-leaves-the-diagonal-gmin-armed-every-later-solve-in-the-job-carries-a-gmin-shunt-on-every-node) | *(fixed in [E-734](../../enhancements_doc/Enhancement-734.md): the diagonal gmin is put back at source stepping's exit)* after source stepping — succeeded or failed — `CKTdiagGmin` stays at `gmin`; the transient operating point, every transient time point and every DC sweep point that follow are solved with a 1e-12 S shunt on every diagonal. A 1e11 Ω divider beside a diode clamp reads 0.476 V instead of 0.500 V through the transient; a 1e14 Ω node beside a singular loop reads 990 V instead of 100 kV. Both solvers, no message | **high** — wrong answers on high-impedance nodes, silent |
 | [F2](#f2--an-unsolvable-loop-of-voltage-sources-succeeds-under-sparse-with-1gmin-amperes-and-fails-under-klu) | *(its symptom closed by [E-734](../../enhancements_doc/Enhancement-734.md): the loop is refused under Sparse too; the branch-row mechanism stays)* a KVL-inconsistent loop of three voltage sources ends in "Transient op finished successfully" with 1e12 A circulating under Sparse; under KLU the same deck fails. F1's leaked gmin lands, under Sparse alone, on the branch-row diagonals that pivoting created; KLU adds gmin only to stamped diagonals | **medium** — a spurious operating point; the two solvers disagree on whether a netlist is solvable |
-| [F3](#f3--pivtol-is-inert-under-both-solvers) | `.option pivtol` never rejects a pivot: ngspice's `spmatrix.h` maps Sparse's `spSMALL_PIVOT` to `OK`, so `SearchEntireMatrix`'s fallback to the largest element is reported as success; KLU ignores the value by construction. A matrix of 1e-14 S pivots solves under `pivtol=1e-3` with no word. E-475 validates an option that does nothing | **medium-low** — the manual promises a minimum pivot that is not enforced |
+| [F3](#f3--pivtol-is-inert-under-both-solvers) | *(fixed in [E-736](../../enhancements_doc/Enhancement-736.md): a pivot at or below pivtol is reported and named under both solvers when the deck sets pivtol, and under `set ngdebug` for the default)* `.option pivtol` never rejects a pivot: ngspice's `spmatrix.h` maps Sparse's `spSMALL_PIVOT` to `OK`, so `SearchEntireMatrix`'s fallback to the largest element is reported as success; KLU ignores the value by construction. A matrix of 1e-14 S pivots solves under `pivtol=1e-3` with no word. E-475 validates an option that does nothing | **medium-low** — the manual promises a minimum pivot that is not enforced |
 | [F4](#f4--pole-zero-finds-two-three-four-or-five-poles-on-the-same-stage-depending-on-the-solver-its-knobs-and-the-decks-line-order) | Muller's `pz` on a common-emitter stage returns 2 poles under KLU (default), 3 with `klu_btf=off`, 5 with `klu_scale=sum` or `colamd`, 5 under Sparse — and 5 under KLU too once three deck lines are moved; on the linearised stage Sparse gives up with 3 and KLU finds 5; `.option pzeig` gives the same 4 finite poles under both | **medium** — incomplete pole lists, with only a "giving up" warning |
 | [N1](#n1--sparses-ordering-is-quadratic-in-the-node-count) | *(fixed in [E-735](../../enhancements_doc/Enhancement-735.md): the lists stay in a layout the ordering never walks through and the scan is a bucket index; same pivots, same factors; the 300 × 300 mesh reorders in 9 s)* Sparse's Markowitz ordering costs 1.5 s at 10k nodes, 17–37 s at 40k and 226 s at 90k on a 2-D resistor mesh (94 % of the run is "matrix reorder time"; equal or random values alike); KLU takes 1.8 s at 90k | low — known character, now measured |
 
@@ -254,6 +254,20 @@ passing, the fallback is the same.)
 "pivot below pivtol" line, and have KLU compare `Common->rcond`-style pivots against it
 after a full factorization. If it is to stay a Sparse-internal preference, say so in the
 option's documentation and print a note when a deck sets it.
+
+*Fixed in [E-736](../../enhancements_doc/Enhancement-736.md).* The option now has the meaning
+the manual gives it, seen from outside: Sparse remembers the first pivot it had to take at or
+below the threshold because nothing acceptable was left (the `spSMALL_PIVOT` verdict ngspice
+maps to `OK`), KLU reads the diagonal of U after every full factorization — each pivot scaled
+back by its row's factor when KLU factored the row-scaled matrix — and the iteration drivers
+print "the pivot for node b is 3e-14, below pivtol (0.001)", naming the unknown's node and,
+when the pivot came from another node's equation, that node too; once per node and magnitude,
+six per run, all under `set ngdebug`. A deck that sets `pivtol` is answered every time; the
+default floor of 1e-13 is reported only under `set ngdebug`, because a sweep of the suites
+crossed it 125 times on decks that are fine (an OSDI branch carrying nothing at 8e-79, a
+probe source's row beside a 10 TΩ path at 7e-14, a thermal node at 8e-27) and Spice3 chose
+silence there. Values are unchanged in every case; the E-475 item — no `pivtol` value, even
+1e30, changed anything visible — is closed by the same message.
 
 ## F4 — pole-zero finds two, three, four or five poles on the same stage depending on the solver, its knobs, and the deck's line order
 

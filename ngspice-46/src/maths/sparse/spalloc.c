@@ -174,6 +174,9 @@ spCreate(int Size, int Complex, int *pError)
     Matrix->InternalVectorsAllocated = NO;
     Matrix->SingularCol = 0;
     Matrix->SingularRow = 0;
+    Matrix->SmallPivotRow = 0;
+    Matrix->SmallPivotCol = 0;
+    Matrix->SmallPivotMag = 0.0;
     Matrix->Size = Size;
     Matrix->AllocatedSize = AllocatedSize;
     Matrix->ExtSize = Size;
@@ -772,6 +775,45 @@ spWhereSingular(MatrixPtr Matrix, int *pRow, int *pCol)
         *pCol = Matrix->SingularCol;
     }
     else *pRow = *pCol = 0;
+    return;
+}
+
+
+
+
+
+
+
+
+/*
+ *  WHERE A PIVOT BELOW THE ABSOLUTE THRESHOLD WAS TAKEN
+ *
+ *  Enhancement-736.  Reports the first pivot the last spOrderAndFactor()
+ *  had to take at or below its AbsThreshold because no acceptable one was
+ *  left (the case Sparse calls spSMALL_PIVOT, which ngspice maps to OK): its
+ *  external row and column, and its magnitude.  Row and column are 0 when
+ *  every pivot was above the threshold.
+ *
+ *  >>> Arguments:
+ *  Matrix  <input>  (MatrixPtr)
+ *      Pointer to matrix.
+ *  pRow  <output>  (int *)
+ *      The external row number of the pivot, 0 if none.
+ *  pCol  <output>  (int *)
+ *      The external column number of the pivot, 0 if none.
+ *  pMag  <output>  (RealNumber *)
+ *      The magnitude of the pivot.
+ */
+
+void
+spWhereSmallPivot(MatrixPtr Matrix, int *pRow, int *pCol, RealNumber *pMag)
+{
+    /* Begin `spWhereSmallPivot'. */
+    assert( IS_SPARSE( Matrix ) );
+
+    *pRow = Matrix->SmallPivotRow;
+    *pCol = Matrix->SmallPivotCol;
+    *pMag = Matrix->SmallPivotMag;
     return;
 }
 

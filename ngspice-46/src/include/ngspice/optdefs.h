@@ -164,6 +164,7 @@ enum {
 #define ERRP_GMINSTEPS (1u << 6)
 #define ERRP_ITL1      (1u << 7)
 #define ERRP_CONVHELP  (1u << 8) /* Enhancement-204: auto-escalating convergence aids */
+#define ERRP_PIVTOL    (1u << 9) /* Enhancement-736: pivtol was set by the deck; a pivot below it is reported */
 
 #ifdef XSPICE
 /* gtri - begin - wbk - add new options */

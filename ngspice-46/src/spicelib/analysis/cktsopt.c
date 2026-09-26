@@ -234,6 +234,7 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
             val->rValue, task->TSKpivotAbsTol))
             break;
         task->TSKpivotAbsTol = val->rValue;
+        task->TSKtolGiven |= ERRP_PIVTOL;   /* Enhancement-736 */
         break;
     case OPT_PIVREL:
         /* Enhancement-475: pivrel is a RELATIVE threshold -- the fraction of

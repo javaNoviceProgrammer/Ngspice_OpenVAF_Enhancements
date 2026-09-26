@@ -107,7 +107,10 @@ plumbing is correct — `SMPreorder` forwards into `spOrderAndFactor`'s
 `(RelThreshold, AbsThreshold)` order properly — and `AbsThreshold` is consulted
 in the pivot search, so the cause lies further in. Validating the input is a
 separate matter from whether the value then does anything, and that question
-needs its own change with its own evidence.
+needs its own change with its own evidence. (It got one:
+[E-736](Enhancement-736.md) reports a pivot at or below `pivtol`, naming its node,
+under both solvers — the value steered Sparse's choice among candidates all along
+and was ignored by KLU; what was missing was any word when the floor was crossed.)
 
 ## 6 & 7. Two `.for` refusals named the wrong fault
 

@@ -189,10 +189,27 @@ int
 SMPcReorder(SMPmatrix *Matrix, double PivTol, double PivRel,
 	    int *NumSwaps)
 {
+    int error;
     *NumSwaps = 1;
     spSetComplex( Matrix->SPmatrix );
-    return spOrderAndFactor( Matrix->SPmatrix, NULL,
-                             PivRel, PivTol, YES );
+    error = spOrderAndFactor( Matrix->SPmatrix, NULL,
+                              PivRel, PivTol, YES );
+    /* Enhancement-736 */
+    spWhereSmallPivot( Matrix->SPmatrix, &Matrix->SMPsmallPivotRow,
+                       &Matrix->SMPsmallPivotCol, &Matrix->SMPsmallPivotMag );
+    return error;
+}
+
+/*
+ * SMPsmallPivot()  -- Enhancement-736: the last reorder's pivot below pivtol
+ */
+int
+SMPsmallPivot(SMPmatrix *Matrix, int *Row, int *Col, double *Mag)
+{
+    *Row = Matrix->SMPsmallPivotRow;
+    *Col = Matrix->SMPsmallPivotCol;
+    *Mag = Matrix->SMPsmallPivotMag;
+    return (Matrix->SMPsmallPivotCol > 0);
 }
 
 /*
@@ -201,10 +218,15 @@ SMPcReorder(SMPmatrix *Matrix, double PivTol, double PivRel,
 int
 SMPreorder(SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
 {
+    int error;
     spSetReal( Matrix->SPmatrix );
     LoadGmin( Matrix, Gmin );
-    return spOrderAndFactor( Matrix->SPmatrix, NULL,
-                             PivRel, PivTol, YES );
+    error = spOrderAndFactor( Matrix->SPmatrix, NULL,
+                              PivRel, PivTol, YES );
+    /* Enhancement-736 */
+    spWhereSmallPivot( Matrix->SPmatrix, &Matrix->SMPsmallPivotRow,
+                       &Matrix->SMPsmallPivotCol, &Matrix->SMPsmallPivotMag );
+    return error;
 }
 
 /*
