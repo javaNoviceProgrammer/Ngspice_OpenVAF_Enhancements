@@ -115,8 +115,9 @@ def main():
     if ok:
         out = ngspice(op_deck("osdi probed port", "v1 a 0 1\nr1 a b 1k\nnx1 x c vc\nrc c 0 1k\n.model vc va_vcvs()",
                               "v(b) v(c) v(x)", "pre_osdi va_vcvs.osdi\n"))
-        check("a Verilog-A module's probed port on an untouched node (E-569's zero diagonal): 'check node x'",
-              blamed(out) == {"x"} and "could not be simulated" not in out, f"blamed={sorted(blamed(out))}")
+        check("a Verilog-A module's probed port on an untouched node (E-569's zero diagonal): 'check node x', and with dcpath off "
+              "the point is refused (E-734 closed the leaked gmin the transient op used to 'succeed' on)",
+              blamed(out) == {"x"} and "could not be simulated" in out, f"blamed={sorted(blamed(out))}")
 
     print("\n[no zero line: the pivot the factorization stopped at still stands]")
     out = ngspice(op_deck("parallel sources", "v1 a 0 1\nv2 a 0 1\nr1 a 0 1k", "v(a)"))

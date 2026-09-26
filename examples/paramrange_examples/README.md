@@ -46,7 +46,10 @@ python3 verify_paramrange.py
 Checks (13, ALL PASS): out-of-range defaults accepted with exact solutions
 (feature-off and feature-on conductances); given out-of-range values still
 rejected (exclusive range bound, exclude list, beyond-range); the hisimsoi
-noise crash reproducer now aborts cleanly (was SIGABRT); and the stock CMC
+noise crash reproducer now aborts cleanly (was SIGABRT; under E-571 it completed
+with the device absent on an operating point that Enhancement-734 showed to be the
+gmin source stepping had left behind -- the point is refused now, naming the device's
+node, and the noise aborts cleanly again); and the stock CMC
 `diode_cmc` from VA_TEST runs op/AC/noise at default parameters with a
 positive noise spectrum. Checks 4–5 use the VA_TEST corpus and are skipped
 if it is absent.

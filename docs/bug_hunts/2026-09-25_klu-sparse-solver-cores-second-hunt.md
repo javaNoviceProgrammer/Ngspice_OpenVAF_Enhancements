@@ -31,8 +31,8 @@ pole-zero, and a quadratic ordering cost.**
 
 | # | finding | severity |
 |---|---|---|
-| [F1](#f1--source-stepping-leaves-the-diagonal-gmin-armed-every-later-solve-in-the-job-carries-a-gmin-shunt-on-every-node) | after source stepping — succeeded or failed — `CKTdiagGmin` stays at `gmin`; the transient operating point, every transient time point and every DC sweep point that follow are solved with a 1e-12 S shunt on every diagonal. A 1e11 Ω divider beside a diode clamp reads 0.476 V instead of 0.500 V through the transient; a 1e14 Ω node beside a singular loop reads 990 V instead of 100 kV. Both solvers, no message | **high** — wrong answers on high-impedance nodes, silent |
-| [F2](#f2--an-unsolvable-loop-of-voltage-sources-succeeds-under-sparse-with-1gmin-amperes-and-fails-under-klu) | a KVL-inconsistent loop of three voltage sources ends in "Transient op finished successfully" with 1e12 A circulating under Sparse; under KLU the same deck fails. F1's leaked gmin lands, under Sparse alone, on the branch-row diagonals that pivoting created; KLU adds gmin only to stamped diagonals | **medium** — a spurious operating point; the two solvers disagree on whether a netlist is solvable |
+| [F1](#f1--source-stepping-leaves-the-diagonal-gmin-armed-every-later-solve-in-the-job-carries-a-gmin-shunt-on-every-node) | *(fixed in [E-734](../../enhancements_doc/Enhancement-734.md): the diagonal gmin is put back at source stepping's exit)* after source stepping — succeeded or failed — `CKTdiagGmin` stays at `gmin`; the transient operating point, every transient time point and every DC sweep point that follow are solved with a 1e-12 S shunt on every diagonal. A 1e11 Ω divider beside a diode clamp reads 0.476 V instead of 0.500 V through the transient; a 1e14 Ω node beside a singular loop reads 990 V instead of 100 kV. Both solvers, no message | **high** — wrong answers on high-impedance nodes, silent |
+| [F2](#f2--an-unsolvable-loop-of-voltage-sources-succeeds-under-sparse-with-1gmin-amperes-and-fails-under-klu) | *(its symptom closed by [E-734](../../enhancements_doc/Enhancement-734.md): the loop is refused under Sparse too; the branch-row mechanism stays)* a KVL-inconsistent loop of three voltage sources ends in "Transient op finished successfully" with 1e12 A circulating under Sparse; under KLU the same deck fails. F1's leaked gmin lands, under Sparse alone, on the branch-row diagonals that pivoting created; KLU adds gmin only to stamped diagonals | **medium** — a spurious operating point; the two solvers disagree on whether a netlist is solvable |
 | [F3](#f3--pivtol-is-inert-under-both-solvers) | `.option pivtol` never rejects a pivot: ngspice's `spmatrix.h` maps Sparse's `spSMALL_PIVOT` to `OK`, so `SearchEntireMatrix`'s fallback to the largest element is reported as success; KLU ignores the value by construction. A matrix of 1e-14 S pivots solves under `pivtol=1e-3` with no word. E-475 validates an option that does nothing | **medium-low** — the manual promises a minimum pivot that is not enforced |
 | [F4](#f4--pole-zero-finds-two-three-four-or-five-poles-on-the-same-stage-depending-on-the-solver-its-knobs-and-the-decks-line-order) | Muller's `pz` on a common-emitter stage returns 2 poles under KLU (default), 3 with `klu_btf=off`, 5 with `klu_scale=sum` or `colamd`, 5 under Sparse — and 5 under KLU too once three deck lines are moved; on the linearised stage Sparse gives up with 3 and KLU finds 5; `.option pzeig` gives the same 4 finite poles under both | **medium** — incomplete pole lists, with only a "giving up" warning |
 | [N1](#n1--sparses-ordering-is-quadratic-in-the-node-count) | Sparse's Markowitz ordering costs 1.5 s at 10k nodes, 17–37 s at 40k and 226 s at 90k on a 2-D resistor mesh (94 % of the run is "matrix reorder time"; equal or random values alike); KLU takes 1.8 s at 90k | low — known character, now measured |
@@ -144,6 +144,16 @@ expectation must come from E-575's explicit `dcpath` stamp, not from this leak �
 leak closed, a floating node whose ladder failed is singular in `optran`, which is the
 honest verdict E-566 asked for.
 
+*Fixed in [E-734](../../enhancements_doc/Enhancement-734.md).* `gillespie_src` exits with `CKTdiagGmin = CKTgshunt`
+like every other rung. The divider reads 0.5 V through the transient and the sweep, the
+1e14 Ω node 1e5 V, and the loop is refused on both solvers. Five suites had pinned the
+leaked point itself and move with it: a floating node under `dcpath=off` is refused (it
+was never held by anything but the leak), the rejected HiSIM-SOI's noise aborts cleanly
+after a refused operating point, and the OSDI open gate's transient-op point moves by
+0.7 mV. The E-566 warning printed on the no-hold path now says nothing holds the node,
+and a `.tf` card naming a phantom node is refused before the operating point (its
+refusal had been reached only because the leak let the point "succeed").
+
 ## F2 — an unsolvable loop of voltage sources "succeeds" under Sparse with 1/gmin amperes, and fails under KLU
 
 ```spice
@@ -192,6 +202,11 @@ equation depends on the solver and on the pivot history — the same deck gets t
 on *where* diagonal gmin goes: the KLU rule (stamped diagonals only) is the sane one, and
 Sparse can follow it by recording the diagonals that exist before the first factorization
 and having `LoadGmin` add only to those.
+
+*Symptom closed by [E-734](../../enhancements_doc/Enhancement-734.md).* With the leak gone the loop is refused under Sparse as
+under KLU. The branch-row diagonals that pivoting creates still receive the diagonal gmin
+during the gmin ladder's own rungs, so the two solvers still differ in what a rung
+regularises; that part stays open.
 
 ## F3 — `pivtol` is inert under both solvers
 

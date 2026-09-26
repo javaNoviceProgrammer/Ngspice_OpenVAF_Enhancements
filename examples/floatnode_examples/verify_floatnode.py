@@ -73,7 +73,9 @@ def op_deck(title, body, prints, options=""):
     return f"* {title}\n{options}{body}\n.control\nop\nprint {prints}\nrusage totiter\n.endc\n.end\n"
 
 
-HELD = "connected to nothing that conducts; it is held only by gmin"
+# Enhancement-734: with dcpath off nothing holds the node (the gmin the ladder
+# used to leave behind is closed), and the line says so
+HELD = "connected to nothing that conducts, and nothing holds it"
 # Enhancement-575: a node with no DC path to ground is now found by the
 # connectivity walk at setup and held by an INSTALLED gmin -- Spectre's message,
 # three iterations instead of a trip through the ladder. E-569's own message
@@ -101,13 +103,13 @@ def main():
     check("B-source `v=2*v(x)`, nothing else on x: the point is found",
           FAILED not in out and near(s.get("v(b)"), 1.0, 1e-9) and near(s.get("v(c)"), 0.0, 1e-9) and near(s.get("v(x)"), 0.0, 1e-9),
           f"v(b)={s.get('v(b)')} v(c)={s.get('v(c)')} v(x)={s.get('v(x)')}")
-    check("...and x is named as held only by gmin", held("x") in out)
+    check("...and x is named: connected to nothing that conducts, nothing holds it", held("x") in out)
     out = ngspice(op_deck("xspice input x", "vdd vdd 0 3\na1 %v(x) %v(y) gainm\n.model gainm gain(gain=2)\nrl y 0 1k", "v(y) v(x)"))
     s = scalars(out)
     check("XSPICE `gain` whose input port x touches nothing: the point is found",
           FAILED not in out and near(s.get("v(y)"), 0.0, 1e-9) and near(s.get("v(x)"), 0.0, 1e-9),
           f"v(y)={s.get('v(y)')} v(x)={s.get('v(x)')}")
-    check("...and x is named as held only by gmin", held("x") in out)
+    check("...and x is named: connected to nothing that conducts, nothing holds it", held("x") in out)
 
     print("\n[empty-column nodes] -- Enhancement-566's cases, still caught")
     out = ngspice(op_deck("isrc only", "v1 a 0 1\nr1 a b 1k\ni1 0 x 1m", "v(b) v(x)"))
@@ -168,8 +170,11 @@ def main():
         out = ngspice(op_deck("bsim4 open gate", "vdd vdd 0 1.2\nrd vdd d 10k\nnm1 d g 0 0 nmv w=1u l=0.2u\n.model nmv bsim4va(type=1 w=1e-6 l=0.2e-6)",
                               "v(d) v(g)", "").replace(".control\n", f".control\npre_osdi {BSIM4}\n"))
         s = scalars(out)
-        check("BSIM4 (OSDI) with an open gate: solved through optran, v(g)=0.4317, v(d)=1.0083, within 400 iterations",
-              near(s.get("v(g)"), 0.4317335, 1e-4) and near(s.get("v(d)"), 1.00831, 1e-4) and "Transient op finished" in out
+        # Enhancement-734: the transient op no longer solves with the gmin source
+        # stepping left on every diagonal, so the gate settles where its own
+        # capacitances put it (0.4324 / 1.0064; 0.4317 / 1.0083 with the shunt).
+        check("BSIM4 (OSDI) with an open gate: solved through optran, v(g)=0.4324, v(d)=1.0064, within 400 iterations",
+              near(s.get("v(g)"), 0.4324286, 1e-4) and near(s.get("v(d)"), 1.006363, 1e-4) and "Transient op finished" in out
               and iters(out) is not None and iters(out) <= 400, f"v(g)={s.get('v(g)')} v(d)={s.get('v(d)')} iterations={iters(out)}")
 
     print("\n[.option rshunt] -- the global workaround, for comparison")

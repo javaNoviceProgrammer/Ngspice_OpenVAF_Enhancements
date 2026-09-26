@@ -502,7 +502,8 @@ CKTacLoad(CKTcircuit* ckt)
      * held in the small-signal matrix too.  The DC point of such a node -- one
      * nothing conducts to (Enhancements 566 and 569), or an open MOSFET gate
      * with no capacitance -- is the solution with CKTgmin on every diagonal:
-     * the ladder leaves CKTdiagGmin at gmin and optran solves with it.  The AC
+     * the E-575 dcpath stamp holds it with gmin (until Enhancement-734 the
+     * ladder also left CKTdiagGmin at gmin, which optran then solved with).  The AC
      * load adds nothing to any diagonal, so the same node's AC row came out
      * all zero and every AC-family analysis on the deck ended in "matrix is
      * singular" under both solvers, after an operating point that had just

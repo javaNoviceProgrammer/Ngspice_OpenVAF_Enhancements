@@ -914,7 +914,27 @@ gillespie_src (CKTcircuit *ckt, long int firstmode,
 
         } while ((raise >= 1e-7) && (ConvFact < 1));
 
-        ckt->CKTdiagGmin = ckt->CKTgmin = gminstart;
+        /* Enhancement-734 (solver-core hunt F1 of 2026-09-25): this line used
+         * to read `CKTdiagGmin = CKTgmin = gminstart` -- a leftover from when the
+         * inner ladder above raised CKTgmin itself -- and so was the ONE exit of the
+         * operating-point ladder that left the diagonal gmin ARMED: every other rung
+         * (dynamic_gmin, spice3_gmin, new_gmin, pseudo_transient, and the inner
+         * ladder above) puts CKTdiagGmin back to CKTgshunt when it is done. NIiter
+         * factors with trGmin = CKTdiagGmin on every call and nothing between jobs
+         * clears the field, so after source stepping -- succeeded or failed -- the
+         * transient operating point (optran), every transient time point, every
+         * later DC sweep point and the next job's plain Newton all solved with a
+         * gmin shunt on every diagonal. A 1e11 ohm divider beside a diode clamp read
+         * 0.476 V for 0.5 V through the whole transient, a 1e14 ohm node beside a
+         * singular loop 990 V for 100 kV, on both solvers and without a word; under
+         * Sparse the same shunt landed on the voltage-source branch rows that
+         * pivoting had given a diagonal, and an unsolvable loop of sources
+         * "converged" with 1/gmin amperes. The holds that used to ride on this leak
+         * -- a node nothing conducts to (E-566/E-569), an open gate -- are E-575's
+         * explicit dcpath stamp since then, and E-571's AC hold uses its own value,
+         * so nothing legitimate needs it. */
+        ckt->CKTdiagGmin = ckt->CKTgshunt;
+        ckt->CKTgmin = gminstart;
         FREE (OldRhsOld);
         FREE (OldCKTstate0);
     }

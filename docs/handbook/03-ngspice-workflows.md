@@ -715,6 +715,10 @@ reported once per run ([E-732](../../enhancements_doc/Enhancement-732.md)). The 
 wildcard `alter @*[p]` names the instances whose `p` is an instance parameter only, which
 it cannot reach, and the instance wildcard for them, whether or not a built-in's model took
 the value ([E-733](../../enhancements_doc/Enhancement-733.md)).
+Source stepping puts the diagonal gmin back when it is done, so the transient operating
+point, the transient's points and a DC sweep's later points no longer carry a gmin shunt
+on every node, and a floating node with `dcpath` off is refused instead of "held" by that
+leak ([E-734](../../enhancements_doc/Enhancement-734.md)).
 Since [E-666](../../enhancements_doc/Enhancement-666.md): a raw-file `run n5.raw`
 puts every corner's plot in the file, each named with its corner, and `load` reads
 them all; `meas tran` (`ac`, `dc`) reads the combined plot as its nominal's analysis;

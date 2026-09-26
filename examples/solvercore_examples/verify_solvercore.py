@@ -137,16 +137,23 @@ def main():
         print(f"  {'PASS' if cond else 'FAIL'}  {label}   {detail}")
 
     print("[F1] a node nothing conducts to: the rest of the circuit stays right, the node is named")
-    # Enhancement-575: `.option dcpath=off` keeps this the E-566 run -- with the
-    # default the walk holds nx at setup and neither message below is printed
-    out = ngspice("* floating middle node\n.option dcpath=off\nv1 n1 0 1\nr1 n1 n2 1k\ni1 0 nx 1m\nr2 n2 0 1k\nr3 n1 n3 1k\nr4 n3 0 1k\n"
-                  ".control\nop\nprint v(n1) v(n2) v(n3) v(nx) i(v1)\n.endc\n.end\n")
+    # Enhancement-575 holds nx at setup under the default `dcpath`; that is where
+    # the I/gmin reading comes from. Enhancement-734: it used to come from the
+    # gmin that source stepping left on every diagonal, which is closed now, so
+    # the values are pinned under the default hold and the naming under
+    # `dcpath=off`, where nothing holds the node and the point is refused.
+    DECK_A = "v1 n1 0 1\nr1 n1 n2 1k\ni1 0 nx 1m\nr2 n2 0 1k\nr3 n1 n3 1k\nr4 n3 0 1k\n"
+    out = ngspice("* floating middle node\n" + DECK_A + ".control\nop\nprint v(n1) v(n2) v(n3) v(nx) i(v1)\n.endc\n.end\n")
     v = scalars(out)
     check("op: v(n1)=1, v(n2)=v(n3)=0.5, i(v1)=-1mA", near(v.get("v(n1)"), 1, 1e-9) and near(v.get("v(n2)"), .5, 1e-9)
           and near(v.get("v(n3)"), .5, 1e-9) and near(v.get("i(v1)"), -1e-3, 1e-12), f"{v}")
-    check("the floating node reads I/gmin (>1e8 V), not a phantom 1 V/A", v.get("v(nx)", 0) > 1e8, f"v(nx)={v.get('v(nx)')}")
-    check("setup names it: 'connected to nothing that conducts'", "connected to nothing that conducts" in out)
-    check("the solver names it: 'singular matrix:  check node nx'", "check node nx" in out)
+    check("the floating node reads I/gmin (>1e8 V) under the dcpath hold, not a phantom 1 V/A",
+          v.get("v(nx)", 0) > 1e8 and "no DC path from node 'nx'" in out, f"v(nx)={v.get('v(nx)')}")
+    out = ngspice("* floating middle node, no hold\n.option dcpath=off\n" + DECK_A + ".control\nop\nprint v(n1)\n.endc\n.end\n")
+    check("dcpath=off: setup names it: 'connected to nothing that conducts'", "connected to nothing that conducts" in out)
+    check("dcpath=off: the solver names it: 'singular matrix:  check node nx'", "check node nx" in out)
+    check("dcpath=off: nothing holds it and the point is refused (E-734; the transient op used to 'succeed' on a leaked gmin)",
+          "could not be simulated" in out and scalars(out).get("v(n1)") is None, "")
     out = ngspice("* CCCS output into a floating node\nv1 n1 0 1\nr1 n1 n2 1k\nf1 0 nx v1 1\nr2 n2 0 1k\nr3 n1 n3 1k\nr4 n3 0 1k\n"
                   ".control\nop\nprint v(n1) v(n2) v(n3) v(nx)\n.endc\n.end\n")
     v = scalars(out)

@@ -370,8 +370,9 @@ def main():
           f"v(n1#c)={v.get('v(n1#c)')} i(v1)={v.get('i(v1)')} cc={v.get(NC)} iterations={iters(out)}")
     out = ngspice(deck("open port off", gate, prints="i(v1)", pre=PRE, opts=".option dcpath=off\n"))
     v = values(out)
-    check("dcpath=off: the old road -- singular reports, the gmin ladder, the transient operating point, the same current after 100+ iterations",
-          SING in out and "gmin stepping" in out and near(v.get("i(v1)"), -1e-3) and (iters(out) or 0) > 100,
+    check("dcpath=off: the old road -- singular reports, the gmin ladder, 100+ iterations, and the point refused "
+          "(until E-734 the transient op 'succeeded' on the gmin source stepping had left armed)",
+          SING in out and "gmin stepping" in out and "could not be simulated" in out and v.get("i(v1)") is None and (iters(out) or 0) > 100,
           f"i(v1)={v.get('i(v1)')} iterations={iters(out)}")
     out = ngspice(deck("open port quiet", gate, prints="v(n1#c) i(v1)", pre=PRE, opts=".option silentports\n"))
     v = values(out)

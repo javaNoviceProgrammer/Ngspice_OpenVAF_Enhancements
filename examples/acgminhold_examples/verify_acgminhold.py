@@ -5,9 +5,10 @@ by gmin is held in the small-signal matrix too, on BOTH solvers.
 
 The DC point of such a node -- one nothing conducts to (Enhancements 566 and
 569), or an open MOSFET gate with no capacitance -- is the solution with gmin
-on every diagonal: the ladder leaves CKTdiagGmin at gmin and optran solves
-with it. The AC load added nothing to any diagonal, so the same node's AC row
-(or, for a current-source output, its column) came out all zero and every
+on every diagonal: E-575's dcpath stamp holds it (until Enhancement-734 the
+ladder also left CKTdiagGmin at gmin, and optran solved with it). The AC
+load added nothing to any diagonal, so the same node's AC row (or, for a
+current-source output, its column) came out all zero and every
 AC-family analysis on the deck ended in "matrix is singular" under both
 solvers, right after an operating point that had succeeded.
 

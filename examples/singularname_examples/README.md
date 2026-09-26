@@ -21,5 +21,5 @@ python3 verify_singularname.py
 The suite compiles `va_cap.va` and `va_vcvs.va` itself and uses the benchmark
 BSIM4. It covers the capacitor-coupled and open BSIM4 gate, the built-in MOS1
 gate, a CMOS inverter chain with its input open, a capacitor-only node, a
-Verilog-A probed port, the two no-zero-line fallbacks (parallel sources, an
-inductor loop), and the AC path.
+Verilog-A probed port (named, and with `dcpath=off` refused since Enhancement-734),
+the two no-zero-line fallbacks (parallel sources, an inductor loop), and the AC path.

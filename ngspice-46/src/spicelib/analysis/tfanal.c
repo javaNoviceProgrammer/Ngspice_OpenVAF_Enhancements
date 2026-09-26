@@ -44,27 +44,17 @@ TFanal(CKTcircuit *ckt, int restart)
 
     NG_IGNORE(restart);
 
-    /* first, find the operating point */
-    converged = CKTop(ckt,
-            (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITJCT,
-            (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITFLOAT,
-            ckt->CKTdcMaxIter);
-
-    /* Enhancement-315: CKTop's return was ignored. When the operating point fails --
-       e.g. a singular matrix from a dangling inductor (`l1 2 3 1` with 2,3 floating) --
-       the matrix is never factored, and the SMPsolve() below asserts
-       IS_FACTORED(Matrix) (spsolve.c:137, SIGABRT). Propagate the error instead of
-       solving an unfactored matrix. A well-posed .tf returns 0 here and is unaffected. */
-    if (converged)
-        return converged;
-
-#ifdef OSDI
-    /* Enhancement-703 (hunt F2 of 2026-09-21): a fatal judged on the accepted
-     * solution -- the operating point just found. */
-    if (OSDIdeferredFatal(ckt, "transfer-function operating point"))
-        return (E_PANIC);
-#endif
-
+    /* Enhancement-734: the two output-node checks below used to sit AFTER the
+     * operating point. A `.tf` card naming a node no device connects to --
+     * a typo, or a device-internal spelling like `x1.n1#mid` -- therefore
+     * first sent that phantom node, which nothing holds, down the whole
+     * convergence ladder (277 iterations of "singular matrix: check node"),
+     * and the refusal below was reached only because source stepping left
+     * a gmin shunt on every diagonal that let the transient operating point
+     * "succeed". With that leak closed the point is refused and the card's
+     * own message was never printed. The checks need nothing but the job's
+     * node numbers and the matrix size CKTsetup fixed, so they come first,
+     * as noisean.c already has them. */
     /* Enhancement-426: the SOURCE was checked (just below) and the OUTPUT NODE
      * was not -- and the consequence is worse than a wrong number. A node that
      * no device ever stamped still owns an equation number drawn from
@@ -108,6 +98,27 @@ TFanal(CKTcircuit *ckt, int restart)
                              "(no device connects to it)", job->TFoutName);
         return E_NOTFOUND;
     }
+
+    /* first, find the operating point */
+    converged = CKTop(ckt,
+            (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITJCT,
+            (ckt->CKTmode & MODEUIC) | MODEDCOP | MODEINITFLOAT,
+            ckt->CKTdcMaxIter);
+
+    /* Enhancement-315: CKTop's return was ignored. When the operating point fails --
+       e.g. a singular matrix from a dangling inductor (`l1 2 3 1` with 2,3 floating) --
+       the matrix is never factored, and the SMPsolve() below asserts
+       IS_FACTORED(Matrix) (spsolve.c:137, SIGABRT). Propagate the error instead of
+       solving an unfactored matrix. A well-posed .tf returns 0 here and is unaffected. */
+    if (converged)
+        return converged;
+
+#ifdef OSDI
+    /* Enhancement-703 (hunt F2 of 2026-09-21): a fatal judged on the accepted
+     * solution -- the operating point just found. */
+    if (OSDIdeferredFatal(ckt, "transfer-function operating point"))
+        return (E_PANIC);
+#endif
 
     ptr = CKTfndDev(ckt, job->TFinSrc);
 

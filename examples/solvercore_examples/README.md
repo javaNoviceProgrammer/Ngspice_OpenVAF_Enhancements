@@ -7,7 +7,7 @@ is still open.
 
 | # | what was wrong | what the suite checks |
 |---|---|---|
-| F1 | a node nothing conducts to (a current source's only load, a controlled-current-source output, a forgotten monitor load) made KLU's `SMPconvertCOOtoCSC` "collapse" its column and mis-address every other node's RHS: 0 V at a 1 V source, 1 A into two dividers, silently | every other node exact under both solvers; the node reads I/gmin; setup and solver both name it |
+| F1 | a node nothing conducts to (a current source's only load, a controlled-current-source output, a forgotten monitor load) made KLU's `SMPconvertCOOtoCSC` "collapse" its column and mis-address every other node's RHS: 0 V at a 1 V source, 1 A into two dividers, silently | every other node exact under both solvers; the node reads I/gmin under the default `dcpath` hold; with `dcpath=off` setup and solver both name it and the point is refused (E-734) |
 | F8 | the same node numbered last was outside the matrix under both solvers (`NIinit` starts at size 0); Sparse's RHS vectors were one short and the current source wrote past them; both printed the current as the voltage, accumulating across a `dc` sweep | exact neighbours, I/gmin on the node, a `dc` sweep that scales instead of summing |
 | F2 | `.ic`/`.nodeset` on a node without a diagonal element aborted every analysis under KLU as "out of memory" | stacked supplies, two inductors, a VCVS output — all run with the right values |
 | F3 | `.option rshunt` reached the operating point but not ac, noise, sp or disto under KLU | ac, noise and sp match Sparse |
@@ -28,4 +28,4 @@ refactor and asks `NIacIter` to re-pivot when it collapsed.
 python3 verify_solvercore.py
 ```
 
-17 checks per solver, all PASS.
+18 checks per solver, all PASS.

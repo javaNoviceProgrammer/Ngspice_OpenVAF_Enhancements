@@ -234,6 +234,42 @@ def main():
           near(s.get("v(q)"), 0.0, 1e-9) and near(s.get("v(qb)"), 0.0, 1e-9) and n is not None and n <= 4 and not aids(out),
           f"v(q)={s.get('v(q)')} iterations={n}")
 
+    # Enhancement-734 (solver-core hunt F1 of 2026-09-25): source stepping used to
+    # exit with CKTdiagGmin left at gmin -- the one rung that did -- so every solve
+    # after it in the job (the transient op, every transient point, every DC sweep
+    # point) carried a gmin shunt on every diagonal. `noopiter gminsteps=0` sends
+    # the ladder straight to source stepping, which completes on these decks.
+    print("\n[R5] the diagonal gmin is put back after source stepping")
+    HIZ = """v1 in 0 5
+r1 in a 1e10
+r2 a 0 1e10
+d1 a 0 dm
+.model dm d(is=1e-15)
+vs s 0 1
+rs s z 1e11
+rz z 0 1e11"""
+    FORCED = ".option noopiter gminsteps=0\n"
+    out = ngspice(f"* hiz\n{FORCED}{HIZ}\n.control\nop\nprint v(a) v(z)\ntran 1u 10u\nprint v(z)[5]\ndc vs 1 2 1\nprint v(z)[0] v(z)[1]\n.endc\n.end\n")
+    s = scalars(out)
+    check("a 1e11-ohm divider beside a diode clamp, source stepping forced: the op is 0.5 V and source stepping ran",
+          near(s.get("v(z)"), 0.5, 1e-6) and "Source stepping completed" in out, f"v(z)={s.get('v(z)')} aids={aids(out)}")
+    check("...the transient that follows reads 0.5 V too (was 0.4762 V: 0.5*2e-11/(2e-11+gmin))",
+          near(s.get("v(z)[5]"), 0.5, 1e-6), f"v(z)[5]={s.get('v(z)[5]')}")
+    check("...and the dc sweep after it reads 0.5 V and 1.0 V (was 0.4762 and 0.9524)",
+          near(s.get("v(z)[0]"), 0.5, 1e-6) and near(s.get("v(z)[1]"), 1.0, 1e-6), f"{s.get('v(z)[0]')} {s.get('v(z)[1]')}")
+    out2 = ngspice(f"* hiz_plain\n{HIZ}\n.control\nop\nprint v(a) v(z)\n.endc\n.end\n")
+    s2 = scalars(out2)
+    check("the clamp node itself agrees with the plain (unforced) operating point to Newton's tolerance",
+          near(s.get("v(a)"), s2.get("v(a)") or 0, 1e-3) and not aids(out2), f"forced {s.get('v(a)')} plain {s2.get('v(a)')}")
+    out = ngspice("* lsrc\nv1 a 0 1\nl1 a 0 1u\nr1 a b 1k\nr2 b 0 1k\ni9 0 z 1n\nr9 z 0 1e14\n.control\nop\nprint v(z) i(v1)\n.endc\n.end\n")
+    s = scalars(out)
+    check("an inductor across an ideal source (every rung fails, optran integrates): the 1e14-ohm node beside it reads 1e5 V (was 990 V)",
+          near(s.get("v(z)"), 1e5, 1.0), f"v(z)={s.get('v(z)')}")
+    out = ngspice("* loop\nv1 a b 1\nv2 b c 1\nv3 c a -1\nr1 a 0 1k\n.control\nop\nprint v(a) i(v1)\n.endc\n.end\n")
+    s = scalars(out)
+    check("a KVL-inconsistent loop of voltage sources is refused on both solvers (Sparse used to 'succeed' with 1/gmin amperes)",
+          "could not be simulated" in out and s.get("i(v1)") is None, f"i(v1)={s.get('i(v1)')}")
+
     for f in ("_o.cir",):
         try:
             os.remove(os.path.join(HERE, f))

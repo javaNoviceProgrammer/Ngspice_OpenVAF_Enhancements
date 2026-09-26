@@ -796,8 +796,14 @@ CKTsetup(CKTcircuit *ckt)
                 if (!rowocc[nd->number] || !colocc[nd->number]) {
                     if (!named[nd->number]) {
                         if (nfloat < 5)
-                            fprintf(stderr, "Warning: node '%s' is connected to nothing that conducts; "
-                                    "it is held only by gmin\n", CKTnodName(ckt, nd->number));
+                            /* Enhancement-734: this line is reached when the
+                             * dcpath walk did not name the node -- the option is
+                             * off, or the name carries a '#' the walk passes by
+                             * -- and "held only by gmin" described the gmin that
+                             * source stepping used to leave on every diagonal,
+                             * closed now: nothing holds the node at all. */
+                            fprintf(stderr, "Warning: node '%s' is connected to nothing that conducts, "
+                                    "and nothing holds it\n", CKTnodName(ckt, nd->number));
                         nfloat++;
                     }
                     SMPmakeElt(matrix, nd->number, nd->number);

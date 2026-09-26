@@ -142,8 +142,13 @@ def main():
         out, rc = r.stdout + r.stderr, r.returncode
         check("ngspice did not crash (was SIGABRT)",
               "STILL_ALIVE" in out and rc in (0, 1) and "Assertion" not in out)
-        check("the model's rejection is printed and the noise completes with the device absent (E-571)",
-              "Fatal(HiSIM_SOI)" in out and "No. of Data Rows" in out and "aborting the noise analysis" not in out)
+        # Enhancement-734: the operating point E-571 saw succeed came from the gmin
+        # source stepping left on every diagonal; with that closed, the rejected
+        # device's nodes are held by nothing, the point is refused naming one of
+        # them, and the noise is aborted cleanly -- the clean stop E-56 wrote for.
+        check("the model's rejection is printed, the operating point is refused naming the device's node, the noise aborts cleanly (E-734)",
+              "Fatal(HiSIM_SOI)" in out and "could not be simulated" in out and "ndut#" in out
+              and "noise simulation(s) aborted" in out and "Assertion" not in out)
     else:
         print("  SKIP  VA_TEST corpus not found")
 

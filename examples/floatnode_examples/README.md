@@ -4,7 +4,9 @@
 by something that *reads* it — a B-source expression `v=2*v(x)`, an XSPICE input
 port — gets the same treatment Enhancement-566 gave a node nothing conducts to: a
 zero diagonal so gmin can hold it, and the warning "node 'x' is connected to
-nothing that conducts; it is held only by gmin".
+nothing that conducts, and nothing holds it" (since
+Enhancement-734; it said "held only by gmin" while source stepping's leaked gmin did
+the holding).
 
 Before, E-566 judged a node by its matrix **column**. A read-only node has a column
 entry (the reader's derivative) and an empty **row** (no equation), so it passed as
@@ -21,7 +23,8 @@ python3 verify_floatnode.py
 A compiled Verilog-A module has the same shape: `va_vcvs.va` (`V(out) <+ gain*V(in)`,
 compiled by the suite) only probes its `in` port, and with `in` on an untouched node
 it failed the same way; it now converges, named, on both solvers. A BSIM4 (OSDI) with
-an open gate is pinned too: it goes through the ladder to optran, both solvers agreeing.
+an open gate is pinned too: it goes through the ladder to optran, both solvers agreeing
+(E-734 moved its point by 0.7 mV, the leaked gmin gone).
 
 Beside the two read-only cases it keeps E-566's empty-column cases (a current
 source's only load, a CCCS output), three ordinary shapes that must not warn (a
