@@ -1,6 +1,7 @@
 # Design — multithreaded device evaluation without OpenMP
 
-**Date:** 2026-09-26 · **Status: design proposal, nothing changed.** Builds
+**Date:** 2026-09-26 · **Status: design proposal with a measured profile;
+nothing in the code changed.** Builds
 on the measured pass [2026-09-04_openmp-build.md](2026-09-04_openmp-build.md)
 (the OpenMP build, parked) and on the solver scoping note
 [parallel_solver_scope.md](../internals/ngspice_internals/parallel_solver_scope.md).
@@ -19,6 +20,14 @@ instance array, stamp serially in instance order* — for the OSDI devices
 first and the eight built-ins that already have that shape second. Its
 defining property is that the numbers are bit-identical to the serial build
 at every thread count, which makes the whole regression sweep the oracle.
+
+**What it is worth, measured** (the section *What it buys* below): on a
+10 000-device chain two thirds of the run is the compiled `eval`, the
+serial stamping loop is a fifth and KLU is a few per cent, for the VA BSIM4
+and for PSP103 alike. Phase 1 therefore gives about 2.4× at 8 threads and
+2.7× at 16 on the whole run, with a ceiling of 3×; parallel stamping, the
+later phase, lifts that to 4.4× and 5.7×. A single-thread KLU run is not the
+thing being waited on in this regime: it is 3.5–10 % of the time.
 
 ---
 
@@ -54,7 +63,9 @@ Where the time goes decides what to parallelise. On a 5 000-stage OSDI BSIM4
 chain 94 % of the run is evaluating and stamping and the factorisation is
 1 %; on a 180 k-instance resistor mesh it is the other way round (57 % in
 `klu_kernel` + `klu_refactor`, `eval` near 0 %). This page is about the
-first regime. The second is the solver track and is scoped separately.
+first regime; the split of that 94 % between the evaluation and the stamping,
+which decides the gain, is measured in *What it buys*. The second regime is
+the solver track and is scoped separately.
 
 ## Why OpenMP is the wrong portability layer
 
@@ -244,22 +255,66 @@ and neither changes here.
 | 1 | the pool; OSDI instance arrays; the eval region; the limiter shadow; the thread-local audit of `osdicallbacks.c` and `osdiload.c`; `num_threads` plumbing; suite checks at 1, 2 and 8 threads | ~1 000 lines of C | one enhancement |
 | 2 | the eight built-ins on the pool macro; `USE_OMP` retired | mechanical | one enhancement |
 | 3 | BTF blocks factored in parallel in the KLU refactor | small, topology-limited gain | one enhancement, solver side |
-| later | parallel stamping by graph colouring (instances sharing a matrix entry get different colours; colours stamp in order, so the sums stay deterministic); NICSLU | only if profiles show the serial stamp has become the bottleneck | — |
+| later | parallel stamping by graph colouring (instances sharing a matrix entry get different colours; colours stamp in order, so the sums stay deterministic); NICSLU | the serial stamp is 18–23 % of the run (measured below), so this is the step from 2.4× to 4.4× at 8 threads | — |
 
 ## What it buys
 
-From the 2026-09-04 profile, on the decks this project runs:
+Measured on 2026-09-26 on the serial E-738 binary (`ngspice-46/build`,
+`.option klu`), so the numbers are the baseline a pool build has to beat.
+The deck is a 10 000-stage NMOS common-source chain, one compiled MOSFET
+and a 20 k load per stage, once with the VA BSIM4 of
+`examples/benchmark_examples/bsim4va.osdi` and once with its `psp103.osdi`.
+The split comes from the macOS `sample` profiler at 1 ms over the first
+8 s (BSIM4) and 10 s (PSP103, which is its operating-point phase), self
+time per symbol, on a 16-performance-core machine.
 
-| deck | share of run in eval + stamp | ceiling at 16 cores |
-|---|---:|---:|
-| 5 000-stage OSDI BSIM4 chain, op | 94 % | about 4× (evaluation ≈ 5/6 of the load, the serial stamp the rest) |
-| dearer compiled models — PSP103, HiCUM, MEXTRAM | higher (evaluation 5–20× dearer than BSIM4) | higher; the serial stamp does not grow with model cost |
-| 180 k-instance resistor mesh | near 0 % (57 % in the KLU kernel) | none — phase 3 and the solver track |
+| deck | analysis | iterations | total | matrix load | KLU factor + solve | per device per iteration |
+|---|---|---:|---:|---:|---:|---:|
+| VA BSIM4 | `op` | 146 | 1.5 s | 1.29 s | 0.02 s | 0.88 µs |
+| VA BSIM4 | `tran 0.5n 60n` | 3 396 | 34.0 s | 31.1 s | 0.52 s | 0.92 µs |
+| PSP103 | `tran 0.5n 20n` | 14 071 | 225.5 s | 210.1 s | 3.68 s | 1.49 µs |
 
-The 2026-09-04 page measured the shape itself: the built-in BSIM4 under
-`parallel for` went from 1.80 s serial to 0.77 s at 8 threads and 0.71 s at
-16 on the 5 000-stage chain. A compiled model on the same shape should
-follow the same curve from twice the serial cost.
+Where the run goes, by what the pool would and would not parallelise:
+
+| share of the run | BSIM4, `op` | BSIM4, `tran` | PSP103 |
+|---|---:|---:|---:|
+| the model's `eval`, its libm calls, the `$simparam` and `$limit` callbacks — **parallel in phase 1** | 76 % | 67 % | 68 % |
+| the OSDI stamping loop: `load_jacobian_*`, `load_spice_rhs_*`, the loop in `OSDIload`, the extra-data lookups, the noise stamp — serial in phase 1, parallel with colouring later | 20 % | 23 % | 18 % |
+| KLU refactor and solve — serial in every phase here | 2 % | 3.5 % | 10 % |
+| everything else: `CKTterr`, `NIintegrate`, `OSDItrunc`, the resistors and sources — serial | 2 % | 6 % | 4 % |
+
+PSP103 costs 1.6× the BSIM4 per evaluation here, not the 5–20× an earlier
+draft of this page assumed, and its split is the same. So the parallel
+fraction is two thirds of the run for both, and Amdahl's law gives the
+whole-run speedup:
+
+| threads | phase 1: `eval` parallel | with parallel stamping too | BSIM4 `tran`, 34.0 s serial, phase 1 | PSP103, 225 s serial, phase 1 |
+|---:|---:|---:|---:|---:|
+| 2 | 1.5× | 1.8× | 22.7 s | 150 s |
+| 4 | 2.0× | 2.9× | 16.9 s | 112 s |
+| 8 | 2.4× | 4.4× | 14.0 s | 93 s |
+| 16 | 2.7× | 5.7× | 12.6 s | 84 s |
+| ceiling | 3.0× | 8.3× | 11.2 s | 75 s |
+
+Why the model is trusted: the 2026-09-04 page measured the shape itself on
+the built-in BSIM4 under `parallel for`, whose load went from 1.80 s serial
+to 0.77 s at 8 threads and 0.71 s at 16 on a 5 000-stage chain. Fitting
+Amdahl to those points gives a parallel fraction of 0.65 and predicts the
+16-thread point within 2 %, so the profiled fraction is the right predictor
+on this machine and memory bandwidth does not eat the gain at 8 or 16
+threads. The pool build at one thread must match the serial binary within
+noise, where the OpenMP build paid 16 %.
+
+What the numbers say about the single-thread KLU run the question compared
+against: on these decks it is not the wall. It stays single-threaded in every
+phase, and it is 3.5 % of the BSIM4 transient and 10 % of the PSP103 run.
+The comparison is "the same KLU, the evaluation divided by the core count,
+the stamping unchanged". On the other deck class — the 180 k-instance mesh
+where KLU is 57 % of the run — the pool gives roughly nothing, and only the
+solver track (phase 3, then NICSLU) helps.
+
+The probe decks and the profiles are under the session scratchpad `mt/`
+(`chain_op.cir`, `chain_tr.cir`, `psp_tr.cir`, `*.sample`, `cat.awk`).
 
 ## Verification
 
@@ -274,9 +329,10 @@ follow the same curve from twice the serial cost.
   lines, in its order, run after run.
 * **ThreadSanitizer.** A `-fsanitize=thread` build with Apple clang, run over
   the two suites above; clean is the bar.
-* **Scaling.** The 5 000-stage chain and one dear model at 1/2/4/8/16
-  threads, load time and total, against the serial binary — the F3 table
-  redone.
+* **Scaling.** The two 10 000-device chains above at 1/2/4/8/16 threads,
+  load time and total, against their 34.0 s and 225 s serial runs; the
+  Amdahl table is the prediction to check, and a point well under it means
+  the pool, not the model, is the cost.
 * **Thread count 1.** The serial binary and the pool build at one thread
   must agree on every suite and every timing within noise, which also fixes
   the 16 % single-thread penalty the OpenMP build paid.
