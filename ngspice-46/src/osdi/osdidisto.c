@@ -225,7 +225,16 @@ extern int OSDIdisto(int mode, GENmodel *inModel, CKTcircuit *ckt)
          * so the device sees the context it converged in; osdidistonum.c clears
          * the limiter for its own probe steps. Being evaluated at the operating
          * point, the tensors are frequency-independent and every frequency point
-         * below reuses them. */
+         * below reuses them.
+         *
+         * Enhancement-739 (options-and-convergence hunt F9): the REACTIVE
+         * Jacobian must be requested too. A DC evaluation never computes it, so
+         * with the operating-point flags alone every probe step of
+         * osdidistonum.c read the same stale reactive array, every finite
+         * difference of it was zero, and the j*omega pass below rotated an empty
+         * tensor: a device whose only nonlinearity is a charge reported no
+         * distortion at all, and a diode's diffusion charge was 15 % low in HD2
+         * and 40 % in HD3 against the transient. */
         OsdiNumModelCache *mc = numcache_for(descr, true);
         numcache_reset(mc);
         OsdiSimInfo sim_info = {
@@ -236,7 +245,8 @@ extern int OSDIdisto(int mode, GENmodel *inModel, CKTcircuit *ckt)
             .next_state = ckt->CKTstates[0],
             .flags = CALC_RESIST_JACOBIAN | CALC_RESIST_RESIDUAL | CALC_OP |
                      CALC_RESIST_LIM_RHS | ENABLE_LIM | ANALYSIS_DC |
-                     ANALYSIS_STATIC,
+                     ANALYSIS_STATIC |
+                     CALC_REACT_JACOBIAN | CALC_REACT_RESIDUAL,
         };
         for (gen_model = inModel; gen_model; gen_model = gen_model->GENnextModel) {
             void *model = osdi_model_data(gen_model);

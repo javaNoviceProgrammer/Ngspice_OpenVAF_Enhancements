@@ -611,6 +611,10 @@ Two later additions do not fit a single row above:
   differences the analytic Jacobian numerically at the operating point rather than
   having the compiler emit derivative tensors, which keeps compile time, object
   size, runtime and the OSDI ABI at baseline.
+  The evaluations it perturbs must request the reactive Jacobian as well as the
+  resistive one ([E-739](../../../enhancements_doc/Enhancement-739.md)); under
+  operating-point flags alone the reactive tensor came out zero and the charge
+  nonlinearity of every compiled device was missing from the analysis.
 
 
 The [ngspice change report](../../change_log/ngspice_changes_full-report.md) has

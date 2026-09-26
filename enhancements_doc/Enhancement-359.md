@@ -140,6 +140,14 @@ per alias. That was a silent ~0.2% error, and it briefly looked like a defect in
 the *shipped* analytic implementation. It was not; E-352/E-353 are correct on
 every model tested.
 
+*A fifth, found on 2026-09-26 and fixed by [E-739](Enhancement-739.md):* the
+evaluations this implementation perturbs ran under operating-point flags,
+which never compute the reactive Jacobian, so the reactive tensor the j·ω
+pass rotates was always zero — the nonlinearity of every compiled device's
+charges was missing from `.disto` from this enhancement until E-739, silently,
+while the resistive results above stand. A diode's diffusion charge put HD2 a
+sixth low; a device whose only nonlinearity is a charge reported none.
+
 ## Verification
 
 Regression 285/285. `examples/osdidisto_examples` 6/6 and

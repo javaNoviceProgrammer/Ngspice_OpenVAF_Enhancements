@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+// Enhancement-739: a CHARGE polynomial. I = d/dt Q(v) with Q = c1 v + c2 v^2 +
+// c3 v^3, so at zero bias the Taylor coefficients of the charge ARE the
+// parameters and every harmonic has a Volterra closed form: the n-th order
+// current source is j*omega_out times the n-th order term of Q, solved at
+// omega_out against Rs and the linear capacitance c1.
+module dst_qcube(p,n);
+  inout p,n; electrical p,n;
+  (*type="instance"*) parameter real c1 = 1e-12;
+  (*type="instance"*) parameter real c2 = 2e-12;
+  (*type="instance"*) parameter real c3 = 20e-12;
+  analog I(p,n) <+ ddt(c1*V(p,n) + c2*V(p,n)*V(p,n) + c3*V(p,n)*V(p,n)*V(p,n));
+endmodule

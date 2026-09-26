@@ -106,6 +106,11 @@ The single most useful mental model for this toolchain:
   to ~5e-9 rather than exact; **every other analysis still uses the compiler's
   exact derivatives**, unchanged. Supersedes the older behaviour where OSDI
   devices were skipped with a warning ([E-62](../../enhancements_doc/Enhancement-62.md)).
+  Since [E-739](../../enhancements_doc/Enhancement-739.md) the differencing
+  also covers the reactive Jacobian, so the nonlinearity of a device's charges
+  — a diode's diffusion charge, a varactor — enters the kernels; before it
+  only the resistive part did, and a pure charge nonlinearity reported no
+  distortion at all.
 - **`@(final_step)` fires only on success**: a failed or interrupted
   analysis never fires it — "final" means the converged end of the run
   ([E-53](../../enhancements_doc/Enhancement-53.md)).

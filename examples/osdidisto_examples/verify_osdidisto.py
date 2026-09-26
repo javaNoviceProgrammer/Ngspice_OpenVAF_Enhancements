@@ -23,6 +23,14 @@ which is a property of those helpers, not the mathematics.
   [6] a GROUND-REFERENCED nonlinearity contributes, against a closed form. E-352
       indexed tensors by model input (a hi/lo pair) and so could not reach this
       at all; E-359 works in node coordinates, where there is no pair to miss
+  [9] Enhancement-739: a CHARGE nonlinearity against its Volterra closed form.
+      The driver evaluated the model with operating-point flags, which never
+      compute the reactive Jacobian, so every finite difference of it was zero
+      and a device whose only nonlinearity is a charge reported NO distortion
+  [10] [11] a diode WITH charge storage (junction and diffusion) against the
+      built-in diode: harmonics and two-tone products at three frequencies
+  [12] the charge polynomial's .disto against the transient: the same drive as
+      a real sine, ngspice's own `fourier`, the check the suite lacked
 
 WHY THE ORACLES ARE WHAT THEY ARE. A distortion result that is wrong by a
 constant looks entirely plausible, and the previous OSDI campaign "tested"
@@ -40,7 +48,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from _setup import VAF as OPENVAF, NG as NGSPICE  # noqa: E402
 
-MODELS = ["dst_cubic", "dst_mixer", "dst_diode"]
+MODELS = ["dst_cubic", "dst_mixer", "dst_diode", "dst_qcube", "dst_diodeq"]
 checks = passed = 0
 
 
@@ -77,6 +85,17 @@ def run(deck, tag, timeout=600):
 def cplx(out, name="d"):
     return [complex(float(a), float(b)) for a, b in
             re.findall(r"^%s(?:\[0\])? = ([-\d.e+]+),\s*([-\d.e+]+)" % name, out, re.M)]
+
+
+def cplx_idx(out, name="d"):
+    """every `name[k] = re,im` line, in print order (E-739)"""
+    return [complex(float(a), float(b)) for a, b in
+            re.findall(r"^%s\[\d+\] = ([-\d.e+]+),\s*([-\d.e+]+)" % name, out, re.M)]
+
+
+def fourier_mags(out):
+    """harmonic magnitudes 1.. from ngspice's `fourier` table (E-739)"""
+    return [float(m) for m in re.findall(r"^\s*[1-9]\s+[\d.e+]+\s+([\d.e+-]+)\s", out, re.M)]
 
 
 # ------------------------------------------------------------------ [1] [2]
@@ -318,6 +337,137 @@ print d[0]
 """ % (A1, A2, A3), "deg0")
     check("a zero-step .disto sweep is refused, not run with an arbitrary count",
           not cplx(out), "no distortion output" if not cplx(out) else "PRODUCED OUTPUT")
+
+    # ---------------------------------------------------------------- [9]
+    # Enhancement-739 (options-and-convergence hunt, F9). osdidisto.c built its
+    # tensors under operating-point evaluation flags -- resistive Jacobian and
+    # residual only. A DC evaluation never computes the REACTIVE Jacobian, so
+    # write_jacobian_array_react returned the same stale array at every probe
+    # step, every finite difference of it was zero, and the j*omega pass rotated
+    # an empty tensor: this charge polynomial reported 0 + j0 for HD2 and HD3.
+    # Closed form as for [1], with I = d/dt Q(v): the n-th order current source
+    # is j*omega_out times the n-th order term of Q, and the network is solved at
+    # omega_out against Rs and the linear capacitance c1.
+    Q1, Q2, Q3, FQ = 1e-12, 2e-12, 20e-12, 1e6
+
+    def qcube_run(amp, tag):
+        return run(f"""dst qcube
+V1 in 0 dc 0 ac 1 distof1 {amp}
+Rs in d {RS}
+N1 d 0 m1
+.model m1 dst_qcube(c1={Q1} c2={Q2} c3={Q3})
+.control
+pre_osdi _dst_qcube.osdi
+option noacct
+set numdgt=14
+disto lin 1 {FQ} {FQ}
+setplot disto1
+print d[0]
+setplot disto2
+print d[0]
+.endc
+.end
+""", tag)
+
+    def qcube_closed_form(amp, f):
+        w = 2.0 * math.pi * f
+        Y = 1.0 / RS
+        H1 = amp * Y / (Y + 1j * w * Q1)
+        H2 = -(1j * 2 * w * Q2 * H1 * H1) / (Y + 1j * 2 * w * Q1)
+        H3 = -(1j * 3 * w * (2 * Q2 * H1 * H2 + Q3 * H1 ** 3)) / (Y + 1j * 3 * w * Q1)
+        return abs(H2) / 2.0, abs(H3) / 4.0
+
+    got = cplx(qcube_run(1.0, "qcube"))
+    e2, e3 = qcube_closed_form(1.0, FQ)
+    # measured 1.4e-9 (HD2) and 1.6e-12 (HD3) against this closed form; the
+    # bound is 1e-6, the same three orders of headroom [1] keeps over its own
+    ok = len(got) >= 2 and abs(abs(got[0]) - e2) <= 1e-6 * e2 and abs(abs(got[1]) - e3) <= 1e-6 * e3
+    check("[E-739] a charge nonlinearity's HD2 and HD3 match the closed form (were 0 + j0)", ok,
+          "HD2 %.6e vs %.6e ; HD3 %.6e vs %.6e"
+          % (abs(got[0]) if got else 0, e2, abs(got[1]) if len(got) > 1 else 0, e3))
+
+    # ------------------------------------------------------------ [10] [11]
+    # A diode WITH charge storage against the built-in diode on the same card:
+    # dst_diodeq.va is the benchmark suite's vadiode.va, which mirrors the
+    # built-in's junction (cjo, vj, m, fc) and diffusion (tt) charge. Before
+    # E-739 the diffusion charge's HD2 was 15 % low and HD3 40 % low at 10 MHz
+    # (the transient's `fourier` sides with the built-in); now the two agree to
+    # the $vt constant. Harmonics, then the two-tone products.
+    QCARD = "is_=1e-14 n=1.2 cjo=2p vj=0.8 m=0.4 tt=5n"
+    BCARD = "is=1e-14 n=1.2 cjo=2p vj=0.8 m=0.4 tt=5n"
+
+    def dq_run(two_tone, osdi):
+        src = "V1 in 0 dc 0.7 ac 1 distof1 0.01" + (" distof2 0.01" if two_tone else "")
+        dev = ("N1 d 0 m1\n.model m1 dst_diodeq(%s)" % QCARD) if osdi else ("D1 d 0 dm\n.model dm d(%s)" % BCARD)
+        plots = "\n".join("setplot disto%d\nprint d[0] d[1] d[2]" % k for k in ((1, 2, 3) if two_tone else (1, 2)))
+        return run(f"""dst diode charge
+{src}
+Rs in d 1k
+{dev}
+C1 d 0 1p
+.control
+{"pre_osdi _dst_diodeq.osdi" if osdi else "option noacct"}
+option noacct
+set numdgt=14
+disto dec 1 1e6 1e8{" 0.9" if two_tone else ""}
+{plots}
+.endc
+.end
+""", "dq_%d_%d" % (two_tone, osdi))
+
+    for two_tone, label in ((False, "HD2 and HD3"), (True, "two-tone f1+f2, f1-f2 and IM3")):
+        o, b = cplx_idx(dq_run(two_tone, True)), cplx_idx(dq_run(two_tone, False))
+        n = 9 if two_tone else 6
+        worst = max((abs(x - y) / max(abs(x), abs(y))
+                     for x, y in zip(o, b) if max(abs(x), abs(y)) > 1e-30), default=1.0)
+        check("[E-739] %s of a diode with charge storage match the built-in at 1, 10 and 100 MHz" % label,
+              len(o) == n and len(b) == n and worst < 1e-4,
+              "%d/%d values, worst complex rel %.2e" % (len(o), len(b), worst))
+
+    # ---------------------------------------------------------------- [12]
+    # The check the suite lacked: `.disto` against the TIME DOMAIN. The charge
+    # polynomial driven by the same amplitude as a real sine, a tight
+    # transient, and ngspice's own `fourier`. The drive is small enough for the
+    # third-order series to hold (c2*A/c1 = 5 %, c3*A^2/c1 = 2.5 %), the
+    # tolerances are the transient's, not the analysis's.
+    AQ, FT = 0.05, 1e7
+    got = cplx(run(f"""dst qcube vs tran
+V1 in 0 dc 0 ac 1 distof1 {AQ}
+Rs in d {RS}
+N1 d 0 m1
+.model m1 dst_qcube(c1={Q1} c2={Q2} c3={Q3})
+.control
+pre_osdi _dst_qcube.osdi
+option noacct
+set numdgt=14
+disto lin 1 {FT} {FT}
+setplot disto1
+print d[0]
+setplot disto2
+print d[0]
+.endc
+.end
+""", "qtr_disto"))
+    mags = fourier_mags(run(f"""dst qcube tran truth
+V1 in 0 dc 0 sin(0 {AQ} {FT})
+Rs in d {RS}
+N1 d 0 m1
+.model m1 dst_qcube(c1={Q1} c2={Q2} c3={Q3})
+.option reltol=1e-6 abstol=1e-15 vntol=1e-9
+.control
+pre_osdi _dst_qcube.osdi
+option noacct
+tran 0.05n 500n
+fourier {FT} v(d)
+.endc
+.end
+""", "qtr_tran"))
+    ok = len(got) >= 2 and len(mags) >= 3 and \
+        abs(abs(got[0]) - mags[1]) <= 0.02 * mags[1] and abs(abs(got[1]) - mags[2]) <= 0.05 * mags[2]
+    check("[E-739] the charge polynomial's .disto agrees with the transient's fourier", ok,
+          "HD2 %.4e vs tran %.4e ; HD3 %.4e vs tran %.4e"
+          % (abs(got[0]) if got else 0, mags[1] if len(mags) > 1 else 0,
+             abs(got[1]) if len(got) > 1 else 0, mags[2] if len(mags) > 2 else 0))
 
     for junk in os.listdir(HERE):
         if junk.startswith("_"):

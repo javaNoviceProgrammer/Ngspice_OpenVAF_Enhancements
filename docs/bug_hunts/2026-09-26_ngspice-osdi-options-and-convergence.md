@@ -26,7 +26,7 @@ resistor — so a difference is the integration's, not the model's.
 | [F6](#f6--the-negative-multiplier-check-prints-two-warnings-that-contradict-each-other) | the two warnings for `m=-1` say "the device's contribution is sign-inverted" and "the value is ignored"; measured, it is ignored | low — diagnostics |
 | [F7](#f7--a-compiled-model-that-owns-a-parameter-m-cannot-be-used-inside-a-subcircuit-called-with-m) | a compiled diode (`vadiode`, whose grading coefficient is `m`) inside a `.subckt` instantiated with `m=2` is refused — *unknown parameter (m): it is a model parameter of this device* — because the expansion appends `m=2` to the inner line; `_mfactor=3` on the inner line is refused too, as a double setting; the built-in diode multiplies | **medium** |
 | [F8](#f8--a-compiled-module-with-its-own-instance-parameter-m-is-not-multiplied-inside-a-subcircuit-called-with-m-its-parameter-is-overwritten) | a module declaring an instance parameter `m` of its own (`I <+ V/1k + m*1u`) inside a `.subckt` called with `m=2` reports 0.502 mA where a multiplied device gives 1.002 mA: the expansion's `m=2` sets the module's parameter and no multiplier is applied, with no message from ngspice (the compiler warns once at compile time) | **medium–high** — silent wrong result |
-| [F9](#f9--disto-of-a-compiled-diode-with-diffusion-charge-is-wrong-by-a-sixth-in-the-second-harmonic-and-two-fifths-in-the-third-and-the-built-in-is-right) | `.disto` on the twin diodes agrees to six digits without charge storage and within 1 % with junction capacitance only, but with diffusion charge (`tt=5n`) the second harmonic at 10 MHz is −7.6e-5 + j6.3e-5 against the built-in's −1.15e-4 + j1.6e-5, and at 100 MHz 6.7e-6 − j1.9e-6 against 1.9e-5 + j4.0e-5; a tight transient's `fourier` gives 1.164e-4 at 82° for the second and 2.17e-6 for the third harmonic, the built-in's numbers, so the compiled path is the wrong one; a module whose only nonlinearity is a cubic charge gives exactly zero distortion where the transient shows 5.9 % THD — the compiled path contributes nothing from reactive nonlinearity, because its perturbed evaluations never ask for the reactive Jacobian (`osdidisto.c:237`) | **medium–high** — wrong numbers from an analysis, silently |
+| [F9](#f9--disto-of-a-compiled-diode-with-diffusion-charge-is-wrong-by-a-sixth-in-the-second-harmonic-and-two-fifths-in-the-third-and-the-built-in-is-right) | *(fixed in [E-739](../../enhancements_doc/Enhancement-739.md): the driver's evaluations now request the reactive Jacobian; the suite pins a charge polynomial against its closed form and against the transient, and the charge-storage diode against the built-in)* `.disto` on the twin diodes agrees to six digits without charge storage and within 1 % with junction capacitance only, but with diffusion charge (`tt=5n`) the second harmonic at 10 MHz is −7.6e-5 + j6.3e-5 against the built-in's −1.15e-4 + j1.6e-5, and at 100 MHz 6.7e-6 − j1.9e-6 against 1.9e-5 + j4.0e-5; a tight transient's `fourier` gives 1.164e-4 at 82° for the second and 2.17e-6 for the third harmonic, the built-in's numbers, so the compiled path is the wrong one; a module whose only nonlinearity is a cubic charge gives exactly zero distortion where the transient shows 5.9 % THD — the compiled path contributes nothing from reactive nonlinearity, because its perturbed evaluations never ask for the reactive Jacobian (`osdidisto.c:237`) | **medium–high** — wrong numbers from an analysis, silently |
 | [N1](#n1--notes-not-osdi-specific-or-by-design) | `level=` on a compiled model card is accepted silently; `off`, `ic=` and a wrong instance prefix give a bare *Error on line N*; `meas` on a device vector needs a `save` first; `stop when` re-fires at once on `resume`; `maxord` above 2 needs `dynorder` | notes |
 
 ---
@@ -371,6 +371,14 @@ is missing. The
 distortion suites compare against the built-in on resistive cores and on
 the junction capacitance, where the agreement is exact; a `tt`-only diode
 against the transient `fourier` is the check they lack.
+
+*Fixed in [E-739](../../enhancements_doc/Enhancement-739.md).* The two
+flags went on the driver's evaluation; the compiled diode with junction and
+diffusion charge now matches the built-in's harmonics and two-tone products
+at 1, 10 and 100 MHz to 6e-6, a charge polynomial matches its Volterra
+closed form to 1.4e-9 and the transient `fourier` within the transient's
+tolerance, and `osdidisto` carries those checks (12 in all, 8 of 12 on the
+E-738 binary).
 
 ## N1 — notes, not OSDI-specific or by design
 
