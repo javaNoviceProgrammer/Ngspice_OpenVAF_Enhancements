@@ -189,6 +189,14 @@ spCreate(int Size, int Complex, int *pError)
     Matrix->DoCmplxDirect = NULL;
     Matrix->DoRealDirect = NULL;
     Matrix->Intermediate = NULL;
+    Matrix->OrderRowKey = NULL;
+    Matrix->OrderFinInCol = NULL;
+    Matrix->OrderBits = NULL;
+    Matrix->OrderSum = NULL;
+    Matrix->OrderCount = NULL;
+    Matrix->OrderWhere = NULL;
+    Matrix->OrderWords = 0;
+    Matrix->OrderSumWords = 0;
     Matrix->RelThreshold = DEFAULT_THRESHOLD;
     Matrix->AbsThreshold = 0.0;
 
@@ -675,6 +683,12 @@ spDestroy(MatrixPtr Matrix)
     SP_FREE( Matrix->DoCmplxDirect );
     SP_FREE( Matrix->DoRealDirect );
     SP_FREE( Matrix->Intermediate );
+    SP_FREE( Matrix->OrderRowKey );
+    SP_FREE( Matrix->OrderFinInCol );
+    SP_FREE( Matrix->OrderBits );
+    SP_FREE( Matrix->OrderSum );
+    SP_FREE( Matrix->OrderCount );
+    SP_FREE( Matrix->OrderWhere );
 
     /* Sequentially step through the list of allocated pointers
      * freeing pointers along the way. */

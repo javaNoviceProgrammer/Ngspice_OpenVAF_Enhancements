@@ -20,6 +20,13 @@ Now: both solvers agree, name the floating node ("singular matrix: check node",
 "connected to nothing that conducts"), hold it at I/gmin, and the wide-range
 ladder matches a 70-digit reference at every printed point.
 
+  N1  (second hunt, 2026-09-25, docs/bug_hunts/2026-09-25_klu-sparse-solver-cores-
+      second-hunt.md; fixed by Enhancement-735) Sparse's ordering was quadratic in the
+      node count: its sorted element lists were walked through at every interchange
+      and every fill-in, so a 300 x 300 resistor mesh spent 213 s of 226 s reordering
+      where KLU took 1.8 s.  The lists now stay in a layout the ordering never walks
+      through, the same pivots are chosen and the same factors come out.
+
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
 import os
@@ -226,6 +233,67 @@ def main():
         v = scalars(ngspice(ladder_deck(opt)))
         check(f"{label}: vdb(n10) at 1 GHz and 1 THz within 0.05 dB of {ref9:.2f} / {ref12:.2f}",
               near(v.get("m[24]"), ref9, 0.05) and near(v.get("m[30]"), ref12, 0.05), f"{v}")
+
+    print("[N1] Sparse's ordering on meshes: the same numbers as KLU, and no longer quadratic (E-735)")
+
+    def mesh_lines(M, cap=None):
+        L = ["V1 n0_0x 0 dc 1 ac 1", "R0 n0_0x n0_0 1"]
+        k = 0
+        for i in range(M):
+            for j in range(M):
+                if j + 1 < M:
+                    k += 1
+                    L.append(f"R{k} n{i}_{j} n{i}_{j+1} 1k")
+                if i + 1 < M:
+                    k += 1
+                    L.append(f"R{k} n{i}_{j} n{i+1}_{j} 1k")
+                if cap:
+                    L.append(f"C{i}_{j} n{i}_{j} 0 {cap}")
+        L.append(f"Rl n{M-1}_{M-1} 0 1k")
+        return L
+
+    def mesh_deck(title, M, extra, control, cap=None):
+        return "\n".join([title] + mesh_lines(M, cap) + extra +
+                         [".control", "set noinit", control, ".endc", ".end", ""])
+
+    # a 150 x 150 mesh (22 502 unknowns): the old Sparse reordered it in 6.4 s here
+    # (quadratic: 16.5 s at 200 x 200, 213 s at 300 x 300), the new one in 0.9 s; KLU 0.07 s.
+    # The bound leaves room for a slow machine and a loaded sweep and still fails the old code.
+    out = ngspice(mesh_deck("* 150 x 150 resistor mesh", 150, [], "op\nprint v(n75_75) v(n0_0)\nrusage all"))
+    v = scalars(out)
+    m = re.search(r"Matrix reorder time\s*=\s*([0-9.eE+-]+)", out)
+    reorder = float(m.group(1)) if m else None
+    check("150 x 150 mesh: v(n75_75) = 0.5662284 under both solvers",
+          near(v.get("v(n75_75)"), 0.5662284, 1e-6), f"{v.get('v(n75_75)')}")
+    check("150 x 150 mesh: v(n0_0) = 0.9998659",
+          near(v.get("v(n0_0)"), 0.9998659, 1e-6), f"{v.get('v(n0_0)')}")
+    check("150 x 150 mesh: the reorder time is under 4 s (was 6.4 s under Sparse; 0.9 s now)",
+          reorder is not None and reorder < 4.0, f"reorder {reorder} s")
+
+    # the complex ordering: a 30 x 30 RC mesh at 10 kHz
+    out = ngspice(mesh_deck("* 30 x 30 RC mesh", 30, [], "ac lin 1 10k 10k\nprint vm(n15_15) vp(n15_15)", cap="1n"))
+    v = scalars(out)
+    check("30 x 30 RC mesh at 10 kHz: vm(n15_15) = 5.379633e-3",
+          near(v.get("vm(n15_15)"), 5.379633e-3, 1e-8), f"{v.get('vm(n15_15)')}")
+    check("30 x 30 RC mesh at 10 kHz: vp(n15_15) = 2.429440 degrees",
+          near(v.get("vp(n15_15)"), 2.429440, 1e-5), f"{v.get('vp(n15_15)')}")
+
+    # a switch shorts two mesh nodes at 4.5 us: different before, equal after, and the
+    # source current changes (the factorization follows the new structure of values)
+    out = ngspice(mesh_deck("* 10 x 10 mesh with a switch closing at 4.5 us", 10,
+                            ["S1 n2_2 n7_7 c 0 swm", ".model swm sw(ron=1e-9 roff=1e12 vt=0.5 vh=0)",
+                             "Vc c 0 pwl(0 0 4u 0 5u 1)", ".option interp"],
+                            "tran 1u 10u\nprint v(n2_2)[2] v(n7_7)[2] v(n2_2)[9] v(n7_7)[9] i(v1)[2] i(v1)[9]"))
+    v = scalars(out)
+    check("switch open at 2 us: v(n2_2) = 0.7451303, v(n7_7) = 0.5038311",
+          near(v.get("v(n2_2)[2]"), 0.7451303, 1e-6) and near(v.get("v(n7_7)[2]"), 0.5038311, 1e-6),
+          f"{v.get('v(n2_2)[2]')} {v.get('v(n7_7)[2]')}")
+    check("switch closed at 9 us: v(n2_2) = v(n7_7) = 0.6485 (the two solvers step slightly differently through the 1e9 S short)",
+          near(v.get("v(n2_2)[9]"), v.get("v(n7_7)[9]"), 1e-9) and near(v.get("v(n2_2)[9]"), 0.6485, 1e-3),
+          f"{v.get('v(n2_2)[9]')} {v.get('v(n7_7)[9]')}")
+    check("the source current rises from 249.2 uA to 297.2 uA",
+          near(v.get("i(v1)[2]"), -2.49211e-4, 1e-8) and near(v.get("i(v1)[9]"), -2.9725e-4, 3e-7),
+          f"{v.get('i(v1)[2]')} {v.get('i(v1)[9]')}")
 
     print("\nALL PASSED" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)

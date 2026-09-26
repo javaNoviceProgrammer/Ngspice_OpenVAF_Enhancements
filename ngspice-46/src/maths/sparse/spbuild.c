@@ -862,6 +862,73 @@ spcCreateElement(MatrixPtr Matrix, int  Row, int  Col,
 
 
 /*
+ *  CREATE FILL-IN DURING ORDERING
+ *
+ *  Enhancement-735.  Creates a fill-in for spOrderAndFactor() while the lists
+ *  are in their ordering layout: the column position is known to the caller
+ *  (LastAddr is the address of the pointer that will point to the new element)
+ *  and the row list of an active row is not kept sorted during the ordering,
+ *  so the element is put at the front of the row.  Compare spcCreateElement(),
+ *  which walks the row to find the sorted place and is used everywhere else.
+ *
+ *  >>> Returns:
+ *  Pointer to the new element, or NULL if memory ran out.
+ *
+ *  >>> Arguments:
+ *  Matrix  <input>  (MatrixPtr)
+ *      Pointer to matrix.
+ *  Row  <input>  (int)
+ *      Internal row number of the fill-in.
+ *  Col  <input>  (int)
+ *      Internal column number of the fill-in.
+ *  LastAddr  <input-output>  (ElementPtr *)
+ *      Address of the NextInCol pointer (or of FirstInCol[Col]) that is to
+ *      point to the new element; the element's own NextInCol receives its
+ *      old value.
+ */
+
+ElementPtr
+spcCreateFillin(MatrixPtr Matrix, int Row, int Col, ElementPtr *LastAddr)
+{
+    ElementPtr  pElement;
+
+    /* Begin `spcCreateFillin'. */
+    pElement = spcGetFillin( Matrix );
+    Matrix->Fillins++;
+    if (pElement == NULL) return NULL;
+
+    /* If element is on diagonal, store pointer in Diag. */
+    if (Row == Col)
+        Matrix->Diag[Row] = pElement;
+
+    /* Initialize Element. */
+    pElement->Row = Row;
+    pElement->Col = Col;
+    pElement->Real = 0.0;
+    pElement->Imag = 0.0;
+#if INITIALIZE
+    pElement->pInitInfo = NULL;
+#endif
+
+    /* Splice element into column at the place the caller found. */
+    pElement->NextInCol = *LastAddr;
+    *LastAddr = pElement;
+
+    /* Put element at the front of its (unsorted, active) row. */
+    pElement->NextInRow = Matrix->FirstInRow[Row];
+    Matrix->FirstInRow[Row] = pElement;
+
+    Matrix->Elements++;
+    return pElement;
+}
+
+
+
+
+
+
+
+/*
  *
  *  LINK ROWS
  *
@@ -985,6 +1052,12 @@ EnlargeMatrix(MatrixPtr Matrix, int  NewSize)
     SP_FREE( Matrix->DoRealDirect );
     SP_FREE( Matrix->DoCmplxDirect );
     SP_FREE( Matrix->Intermediate );
+    SP_FREE( Matrix->OrderRowKey );
+    SP_FREE( Matrix->OrderFinInCol );
+    SP_FREE( Matrix->OrderBits );
+    SP_FREE( Matrix->OrderSum );
+    SP_FREE( Matrix->OrderCount );
+    SP_FREE( Matrix->OrderWhere );
     Matrix->InternalVectorsAllocated = NO;
 
     /* Initialize the new portion of the vectors. */

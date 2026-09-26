@@ -787,6 +787,26 @@ struct  MatrixFrame
     int                          FillinsRemaining;
     struct FillinListNodeStruct *FirstFillinListNode;
     struct FillinListNodeStruct *LastFillinListNode;
+
+    /* Enhancement-735: bookkeeping for the ordering phase of spOrderAndFactor().
+     * OrderRowKey[i] is a key that travels with the row through the
+     * interchanges, so the active part of every column list can stay sorted by
+     * it while the internal row numbers change; OrderFinInCol[c] collects the
+     * entries of column c that belong to already-eliminated rows once a walk of
+     * the column has moved them out of its active part.  Both are allocated with
+     * the Markowitz vectors and used only inside spOrderAndFactor(). */
+    int                         *OrderRowKey;
+    ArrayOfElementPtrs           OrderFinInCol;
+    /* The bucket index over the Markowitz products of the active diagonals
+     * (see OrderIndexBuild in spfactor.c): one bit set per index in the
+     * bucket of its product, a summary bit per non-empty word, a count per
+     * bucket, and the bucket each index sits in (-1 when it is not indexed). */
+    unsigned long long          *OrderBits;
+    unsigned long long          *OrderSum;
+    int                         *OrderCount;
+    int                         *OrderWhere;
+    int                          OrderWords;
+    int                          OrderSumWords;
 };
 
 
@@ -798,6 +818,7 @@ extern ElementPtr spcGetElement( MatrixPtr );
 extern ElementPtr spcGetFillin( MatrixPtr );
 extern ElementPtr spcFindElementInCol( MatrixPtr, ElementPtr*, int, int, int );
 extern ElementPtr spcCreateElement( MatrixPtr, int, int, ElementPtr*, int );
+extern ElementPtr spcCreateFillin( MatrixPtr, int, int, ElementPtr* );
 extern void spcCreateInternalVectors( MatrixPtr );
 extern void spcLinkRows( MatrixPtr );
 extern void spcColExchange( MatrixPtr, int, int );

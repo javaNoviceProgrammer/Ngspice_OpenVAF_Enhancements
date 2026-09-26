@@ -234,6 +234,12 @@ overhead — which is what the steady few percent is. A mesh (substrate grid, po
 grid, coupled array, or a densely coupled compact-model cascade) generates real
 fill-in, and there Sparse's Markowitz re-pivoting on every factorization loses to
 KLU's fixed ordering, increasingly so with size.
+(Until [E-735](../../../enhancements_doc/Enhancement-735.md) most of that loss was not the
+ordering's choices but its bookkeeping: the sorted element lists were walked through at
+every interchange and fill-in, quadratic in the node count — 213 s of a 226 s run on a
+300 × 300 resistor mesh. The lists now stay in a layout the ordering never walks through,
+with the same pivots and factors; the mesh reorders in 9 s, and what remains against
+KLU's 1.8 s is the numeric refactorization and the fill itself.)
 
 So "large" in the 68× benchmark above means **densely coupled**, not "many nodes".
 Both statements are true at once:

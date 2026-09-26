@@ -18,13 +18,30 @@
  *  SearchForPivot              SearchForSingleton
  *  QuicklySearchDiagonal       SearchDiagonal
  *  SearchEntireMatrix          FindLargestInCol
- *  FindBiggestInColExclude     ExchangeRowsAndCols
+ *  FindBiggestInColExclude     DiagonalHasSymmetricPair
+ *  OrderEnter                  OrderExit
+ *  OrderIndexBuild             OrderIndexUpdate
+ *  OrderIndexRemove            OrderPickDiagonal
+ *  OrderRelabelRow             OrderRelabelCol
+ *  OrderSwapRows
+ *  OrderSwapCols               OrderExchange
+ *  OrderFindDiag               OrderCreateFillin
+ *  OrderRealElimination        OrderComplexElimination
+ *  OrderFinishStep             CreateFillin
  *  spcRowExchange              spcColExchange
  *  ExchangeColElements         ExchangeRowElements
  *  RealRowColElimination       ComplexRowColElimination
- *  UpdateMarkowitzNumbers      CreateFillin
  *  MatrixIsSingular            ZeroPivot
  *  WriteStatus
+ *
+ *  Enhancement-735: while spOrderAndFactor() chooses pivots, the element
+ *  lists are kept in an "ordering layout" (see OrderEnter) in which a row or
+ *  column interchange only relabels the active entries of the two rows or
+ *  columns, a fill-in is spliced in at a known place, and the entries that
+ *  belong to already-eliminated rows and columns are never walked again.
+ *  The pivots chosen, the fill-ins created and every arithmetic operation are
+ *  the same as before; OrderExit() rebuilds the sorted lists that spFactor()
+ *  and spSolve() rely on.
  */
 
 
@@ -56,6 +73,7 @@
  *    Matrix type and macro definitions for the sparse matrix routines.
  */
 #include <assert.h>
+#include <string.h>
 #define spINSIDE_SPARSE
 #include "spconfig.h"
 #include "ngspice/spmatrix.h"
@@ -76,6 +94,13 @@ do { \
 #endif
 
 /*
+ * Enhancement-735: buckets of the Markowitz-product index (see OrderIndexBuild).
+ */
+
+#define ORDER_EXACT     256
+#define ORDER_BUCKETS   (ORDER_EXACT + 55)   /* exact buckets, then [2^8, 2^9) .. [2^62, 2^63) */
+
+/*
  * Function declarations
  */
 
@@ -89,15 +114,30 @@ static ElementPtr SearchDiagonal( MatrixPtr, int );
 static ElementPtr SearchEntireMatrix( MatrixPtr, int );
 static RealNumber FindLargestInCol( ElementPtr );
 static RealNumber FindBiggestInColExclude( MatrixPtr, ElementPtr, int );
-static void ExchangeRowsAndCols( MatrixPtr, ElementPtr, int );
+static void OrderEnter( MatrixPtr, int );
+static void OrderExit( MatrixPtr );
+static void OrderIndexBuild( MatrixPtr, int );
+static void OrderIndexUpdate( MatrixPtr, int );
+static void OrderIndexRemove( MatrixPtr, int );
+static ElementPtr OrderPickDiagonal( MatrixPtr, int, long* );
+static int  DiagonalHasSymmetricPair( MatrixPtr, ElementPtr, int, int );
+static void OrderRelabelRow( MatrixPtr, int, int, int );
+static void OrderRelabelCol( MatrixPtr, int, int, int );
+static void OrderSwapRows( MatrixPtr, int, int, int );
+static void OrderSwapCols( MatrixPtr, int, int, int );
+static void OrderExchange( MatrixPtr, ElementPtr, int );
+static ElementPtr OrderFindDiag( MatrixPtr, int, int );
+static ElementPtr OrderCreateFillin( MatrixPtr, int, int, ElementPtr* );
+static void OrderRealElimination( MatrixPtr, ElementPtr, int );
+static void OrderComplexElimination( MatrixPtr, ElementPtr, int );
+static void OrderFinishStep( MatrixPtr, int );
+static ElementPtr CreateFillin( MatrixPtr, int, int );
 static void ExchangeColElements( MatrixPtr, int, ElementPtr, int,
                                  ElementPtr, int );
 static void ExchangeRowElements( MatrixPtr, int, ElementPtr, int,
                                  ElementPtr, int );
 static void RealRowColElimination( MatrixPtr, ElementPtr );
 static void ComplexRowColElimination( MatrixPtr, ElementPtr );
-static void UpdateMarkowitzNumbers( MatrixPtr, ElementPtr );
-static ElementPtr CreateFillin( MatrixPtr, int, int );
 static int  MatrixIsSingular( MatrixPtr, int );
 static int  ZeroPivot( MatrixPtr, int );
 
@@ -274,6 +314,10 @@ spOrderAndFactor(MatrixPtr Matrix, RealNumber RHS[], RealNumber RelThreshold,
     MarkowitzProducts( Matrix, Step );
     Matrix->MaxRowCountInLowerTri = -1;
 
+    /* Enhancement-735: switch the lists to the ordering layout from Step on;
+     * OrderExit() puts them back on every way out of the loop. */
+    OrderEnter( Matrix, Step );
+
     /* Perform reordering and factorization. */
     for (; Step <= Size; Step++) {
 #ifdef HAS_WINGUI
@@ -281,21 +325,29 @@ spOrderAndFactor(MatrixPtr Matrix, RealNumber RHS[], RealNumber RelThreshold,
         INCRESP;
 #endif
         pPivot = SearchForPivot( Matrix, Step, DiagPivoting );
-        if (pPivot == NULL) return MatrixIsSingular( Matrix, Step );
-        ExchangeRowsAndCols( Matrix, pPivot, Step );
+        if (pPivot == NULL) {
+            (void)MatrixIsSingular( Matrix, Step );
+            OrderExit( Matrix );
+            return Matrix->Error;
+        }
+        OrderExchange( Matrix, pPivot, Step );
 
         if (Matrix->Complex)
-            ComplexRowColElimination( Matrix, pPivot );
+            OrderComplexElimination( Matrix, pPivot, Step );
         else
-            RealRowColElimination( Matrix, pPivot );
+            OrderRealElimination( Matrix, pPivot, Step );
 
-        if (Matrix->Error >= spFATAL) return Matrix->Error;
-        UpdateMarkowitzNumbers( Matrix, pPivot );
+        if (Matrix->Error >= spFATAL) {
+            OrderExit( Matrix );
+            return Matrix->Error;
+        }
+        OrderFinishStep( Matrix, Step );
 
 #if (ANNOTATE == FULL)
         WriteStatus( Matrix, Step );
 #endif
     }
+    OrderExit( Matrix );
 
 Done:
     Matrix->NeedsOrdering = NO;
@@ -760,6 +812,37 @@ spcCreateInternalVectors( MatrixPtr Matrix )
     /* Create Intermediate vectors for use in MatrixSolve. */
     if (Matrix->Intermediate == NULL) {
         if ((Matrix->Intermediate = SP_MALLOC(RealNumber,2*(Size+1))) == NULL)
+            Matrix->Error = spNO_MEMORY;
+    }
+
+    /* Enhancement-735: the row keys and the finished-entry lists of the
+     * ordering layout, same lifetime as the Markowitz vectors. */
+    if (Matrix->OrderRowKey == NULL) {
+        if (( Matrix->OrderRowKey = SP_MALLOC(int, Size+1)) == NULL)
+            Matrix->Error = spNO_MEMORY;
+    }
+    if (Matrix->OrderFinInCol == NULL) {
+        if (( Matrix->OrderFinInCol = SP_MALLOC(ElementPtr, Size+1)) == NULL)
+            Matrix->Error = spNO_MEMORY;
+    }
+    if (Matrix->OrderBits == NULL) {
+        Matrix->OrderWords = Size / 64 + 1;
+        Matrix->OrderSumWords = Matrix->OrderWords / 64 + 1;
+        if (( Matrix->OrderBits = SP_MALLOC(unsigned long long,
+                    ORDER_BUCKETS * Matrix->OrderWords)) == NULL)
+            Matrix->Error = spNO_MEMORY;
+    }
+    if (Matrix->OrderSum == NULL) {
+        if (( Matrix->OrderSum = SP_MALLOC(unsigned long long,
+                    ORDER_BUCKETS * Matrix->OrderSumWords)) == NULL)
+            Matrix->Error = spNO_MEMORY;
+    }
+    if (Matrix->OrderCount == NULL) {
+        if (( Matrix->OrderCount = SP_MALLOC(int, ORDER_BUCKETS)) == NULL)
+            Matrix->Error = spNO_MEMORY;
+    }
+    if (Matrix->OrderWhere == NULL) {
+        if (( Matrix->OrderWhere = SP_MALLOC(int, Size+1)) == NULL)
             Matrix->Error = spNO_MEMORY;
     }
 
@@ -1336,22 +1419,28 @@ QuicklySearchDiagonal( MatrixPtr Matrix, int Step )
         if (*pMarkowitzProduct == 1) {
             /* Case where only one element exists in row and column other than diagonal. */
 
-            /* Find off diagonal elements. */
-            pOtherInRow = pDiag->NextInRow;
-            pOtherInCol = pDiag->NextInCol;
-            if (pOtherInRow == NULL && pOtherInCol == NULL) {
-                pOtherInRow = Matrix->FirstInRow[I];
-                while(pOtherInRow != NULL) {
-                    if (pOtherInRow->Col >= Step && pOtherInRow->Col != I)
-                        break;
-                    pOtherInRow = pOtherInRow->NextInRow;
-                }
-                pOtherInCol = Matrix->FirstInCol[I];
-                while(pOtherInCol != NULL) {
-                    if (pOtherInCol->Row >= Step && pOtherInCol->Row != I)
-                        break;
-                    pOtherInCol = pOtherInCol->NextInCol;
-                }
+            /* Find off diagonal elements.  Enhancement-735: the lists are in
+             * the ordering layout, so the lone active off-diagonals are found
+             * by a walk that skips finished entries wherever they sit.  The
+             * original code only tried the pair when both lay after the
+             * diagonal (NextInRow/NextInCol) or both before it (the fallback
+             * walk); that condition is kept so the pivot choice is unchanged. */
+            pOtherInRow = Matrix->FirstInRow[I];
+            while(pOtherInRow != NULL) {
+                if (pOtherInRow->Col >= Step && pOtherInRow->Col != I)
+                    break;
+                pOtherInRow = pOtherInRow->NextInRow;
+            }
+            pOtherInCol = Matrix->FirstInCol[I];
+            while(pOtherInCol != NULL) {
+                if (pOtherInCol->Row >= Step && pOtherInCol->Row != I)
+                    break;
+                pOtherInCol = pOtherInCol->NextInCol;
+            }
+            if (pOtherInRow != NULL  &&  pOtherInCol != NULL  &&
+                    (pOtherInRow->Col > I) != (pOtherInCol->Row > I)) {
+                pOtherInRow = NULL;
+                pOtherInCol = NULL;
             }
 
             /* Accept diagonal as pivot if diagonal is larger than off diagonals and the
@@ -1418,6 +1507,12 @@ QuicklySearchDiagonal( MatrixPtr Matrix, int Step )
  *  QUICK SEARCH OF DIAGONAL FOR PIVOT WITH CONVENTIONAL MARKOWITZ
  *  CRITERION
  *
+ *  Enhancement-735: QuicklySearchDiagonalScan is the original array scan,
+ *  kept as the fallback of QuicklySearchDiagonal for the case its bucket
+ *  index cannot decide alone (a smallest product of zero, where the scan's
+ *  early acceptance of a product-one diagonal can pre-empt the zero); the
+ *  index itself is described at OrderIndexBuild.
+ *
  *  Searches the diagonal looking for the best pivot.  For a pivot to be
  *  acceptable it must be larger than the pivot RelThreshold times the largest
  *  element in its reduced column.  Among the acceptable diagonals, the
@@ -1465,15 +1560,15 @@ QuicklySearchDiagonal( MatrixPtr Matrix, int Step )
  */
 
 static ElementPtr
-QuicklySearchDiagonal( MatrixPtr Matrix, int Step )
+QuicklySearchDiagonalScan( MatrixPtr Matrix, int Step )
 {
     long  MinMarkowitzProduct, *pMarkowitzProduct;
     ElementPtr  pDiag;
     int  I;
-    ElementPtr  ChosenPivot, pOtherInRow, pOtherInCol;
-    RealNumber  Magnitude, LargestInCol, LargestOffDiagonal;
+    ElementPtr  ChosenPivot;
+    RealNumber  Magnitude, LargestInCol;
 
-    /* Begin `QuicklySearchDiagonal'. */
+    /* Begin `QuicklySearchDiagonalScan'. */
     ChosenPivot = NULL;
     MinMarkowitzProduct = LARGEST_LONG_INTEGER;
     pMarkowitzProduct = &(Matrix->MarkowitzProd[Matrix->Size+2]);
@@ -1519,36 +1614,9 @@ QuicklySearchDiagonal( MatrixPtr Matrix, int Step )
 
         if (*pMarkowitzProduct == 1) {
             /* Case where only one element exists in row and column other than diagonal. */
-
-            /* Find off-diagonal elements. */
-            pOtherInRow = pDiag->NextInRow;
-            pOtherInCol = pDiag->NextInCol;
-            if (pOtherInRow == NULL && pOtherInCol == NULL) {
-                pOtherInRow = Matrix->FirstInRow[I];
-                while(pOtherInRow != NULL) {
-                    if (pOtherInRow->Col >= Step && pOtherInRow->Col != I)
-                        break;
-                    pOtherInRow = pOtherInRow->NextInRow;
-                }
-                pOtherInCol = Matrix->FirstInCol[I];
-                while(pOtherInCol != NULL) {
-                    if (pOtherInCol->Row >= Step && pOtherInCol->Row != I)
-                        break;
-                    pOtherInCol = pOtherInCol->NextInCol;
-                }
-            }
-
-            /* Accept diagonal as pivot if diagonal is larger than off-diagonals and the
-            * off-diagonals are placed symmetricly. */
-            if (pOtherInRow != NULL  &&  pOtherInCol != NULL) {
-                if (pOtherInRow->Col == pOtherInCol->Row) {
-                    LargestOffDiagonal = MAX(ELEMENT_MAG(pOtherInRow),
-                                             ELEMENT_MAG(pOtherInCol));
-                    if (Magnitude >= LargestOffDiagonal) {
-                        /* Accept pivot, it is unlikely to contribute excess error. */
-                        return pDiag;
-                    }
-                }
+            if (DiagonalHasSymmetricPair( Matrix, pDiag, I, Step )) {
+                /* Accept pivot, it is unlikely to contribute excess error. */
+                return pDiag;
             }
         }
 
@@ -1561,6 +1629,59 @@ QuicklySearchDiagonal( MatrixPtr Matrix, int Step )
         if( ELEMENT_MAG(ChosenPivot) <= Matrix->RelThreshold * LargestInCol )
             ChosenPivot = NULL;
     }
+    return ChosenPivot;
+}
+
+/*
+ *  QUICK SEARCH OF DIAGONAL FOR PIVOT, THROUGH THE BUCKET INDEX
+ *
+ *  Enhancement-735.  Chooses the diagonal the array scan of
+ *  QuicklySearchDiagonalScan chose, without the scan: the scan examined the
+ *  diagonals with Step first and then from the last row upwards, kept the
+ *  first acceptable one of each strictly smaller Markowitz product, accepted
+ *  at once a product-one diagonal with a symmetric pair of off-diagonals it
+ *  dominates, and finally checked the relative threshold of what it kept.
+ *  Its choice is therefore the first, in that order, of the acceptable
+ *  diagonals with the smallest product; OrderPickDiagonal finds it through
+ *  the index.  A smallest product of zero (singletons that
+ *  SearchForSingleton rejected) is left to the scan, whose early acceptance
+ *  can then pre-empt the zero.
+ *
+ *  >>> Returned:
+ *  A pointer to the diagonal element chosen to be pivot.  If no diagonal is
+ *  acceptable, a NULL is returned.
+ *
+ *  >>> Arguments:
+ *  Matrix  <input>  (MatrixPtr)
+ *      Pointer to matrix.
+ *  Step  <input>  (int)
+ *      Index of the diagonal currently being eliminated.
+ */
+
+static ElementPtr
+QuicklySearchDiagonal( MatrixPtr Matrix, int Step )
+{
+    ElementPtr  ChosenPivot;
+    RealNumber  LargestInCol;
+    long  Product;
+
+    /* Begin `QuicklySearchDiagonal'. */
+    ChosenPivot = OrderPickDiagonal( Matrix, Step, &Product );
+    if (ChosenPivot == NULL)
+        return NULL;
+    if (Product == 0)
+        return QuicklySearchDiagonalScan( Matrix, Step );
+    if (Product == 1) {
+        /* Case where only one element exists in row and column other than diagonal. */
+        if (DiagonalHasSymmetricPair( Matrix, ChosenPivot, ChosenPivot->Row, Step )) {
+            /* Accept pivot, it is unlikely to contribute excess error. */
+            return ChosenPivot;
+        }
+    }
+
+    LargestInCol = FindBiggestInColExclude( Matrix, ChosenPivot, Step );
+    if( ELEMENT_MAG(ChosenPivot) <= Matrix->RelThreshold * LargestInCol )
+        ChosenPivot = NULL;
     return ChosenPivot;
 }
 #endif /* Not MODIFIED_MARKOWITZ */
@@ -1767,17 +1888,39 @@ SearchEntireMatrix( MatrixPtr Matrix, int Step )
     LargestElementMag = 0.0;
     MinMarkowitzProduct = LARGEST_LONG_INTEGER;
 
-    /* Start search of matrix on column by column basis. */
+    /* Start search of matrix on column by column basis.  Enhancement-735:
+     * the lists are in the ordering layout, so the active part of the column
+     * is gathered (moving finished entries aside) and visited in ascending
+     * row order, the order the sorted list used to give, because the tie
+     * rules below depend on it. */
     for (I = Step; I <= Size; I++) {
-        pElement = Matrix->FirstInCol[I];
+        ElementPtr *ppElement, *Active = (ElementPtr *)Matrix->Intermediate;
+        int Count = 0, K;
 
-        while (pElement != NULL && pElement->Row < Step)
-            pElement = pElement->NextInCol;
+        ppElement = &(Matrix->FirstInCol[I]);
+        LargestInCol = 0.0;
+        while ((pElement = *ppElement) != NULL) {
+            if (pElement->Row < Step) {
+                *ppElement = pElement->NextInCol;
+                pElement->NextInCol = Matrix->OrderFinInCol[I];
+                Matrix->OrderFinInCol[I] = pElement;
+                continue;
+            }
+            if ((Magnitude = ELEMENT_MAG(pElement)) > LargestInCol)
+                LargestInCol = Magnitude;
+            /* Insertion sort by row: the active part is short. */
+            for (K = Count; K > 0 && Active[K-1]->Row > pElement->Row; K--)
+                Active[K] = Active[K-1];
+            Active[K] = pElement;
+            Count++;
+            ppElement = &(pElement->NextInCol);
+        }
 
-        if((LargestInCol = FindLargestInCol(pElement)) == 0.0)
+        if (LargestInCol == 0.0)
             continue; /* for loop */
 
-        while (pElement != NULL) {
+        for (K = 0; K < Count; K++) {
+            pElement = Active[K];
             /* Check to see if element is the largest encountered so
                far.  If so, record its magnitude and address. */
             if ((Magnitude = ELEMENT_MAG(pElement)) > LargestElementMag) {
@@ -1815,8 +1958,7 @@ SearchEntireMatrix( MatrixPtr Matrix, int Step )
                         return ChosenPivot;
                 }
             }
-            pElement = pElement->NextInCol;
-        }  /* End of while(pElement != NULL) */
+        }  /* End of for(K) */
     } /* End of for(Step) */
 
     if (ChosenPivot != NULL) return ChosenPivot;
@@ -1938,28 +2080,30 @@ FindBiggestInColExclude( MatrixPtr Matrix, ElementPtr pElement, int Step )
     int  Row;
     int  Col;
     RealNumber  Largest, Magnitude;
+    ElementPtr  *ppElement;
 
     /* Begin `FindBiggestInColExclude'. */
+    /* Enhancement-735: the lists are in the ordering layout, so finished
+     * entries can sit anywhere in the column; they are moved aside as they
+     * are met, and the largest of the remaining active entries, excluding
+     * the candidate's own row, is returned (the same value the sorted walk
+     * gave). */
     Row = pElement->Row;
     Col = pElement->Col;
-    pElement = Matrix->FirstInCol[Col];
-
-    /* Travel down column until reduced submatrix is entered. */
-    while ((pElement != NULL) && (pElement->Row < Step))
-        pElement = pElement->NextInCol;
-
-    /* Initialize the variable Largest. */
-    if (pElement->Row != Row)
-        Largest = ELEMENT_MAG(pElement);
-    else
-        Largest = 0.0;
-
-    /* Search rest of column for largest element, avoiding excluded element. */
-    while ((pElement = pElement->NextInCol) != NULL) {
-        if ((Magnitude = ELEMENT_MAG(pElement)) > Largest) {
-            if (pElement->Row != Row)
+    ppElement = &(Matrix->FirstInCol[Col]);
+    Largest = 0.0;
+    while ((pElement = *ppElement) != NULL) {
+        if (pElement->Row < Step) {
+            *ppElement = pElement->NextInCol;
+            pElement->NextInCol = Matrix->OrderFinInCol[Col];
+            Matrix->OrderFinInCol[Col] = pElement;
+            continue;
+        }
+        if (pElement->Row != Row) {
+            if ((Magnitude = ELEMENT_MAG(pElement)) > Largest)
                 Largest = Magnitude;
         }
+        ppElement = &(pElement->NextInCol);
     }
 
     return Largest;
@@ -1975,10 +2119,561 @@ FindBiggestInColExclude( MatrixPtr Matrix, ElementPtr pElement, int Step )
 
 
 /*
+ *  ORDERING LAYOUT OF THE ELEMENT LISTS  (Enhancement-735)
+ *
+ *  While spOrderAndFactor() chooses pivots, the lists are kept in a layout
+ *  that makes every operation of a step proportional to the active entries
+ *  it touches:
+ *
+ *  - An entry is "finished" once its row or its column has been eliminated
+ *    (row < Step in a column list, column < Step in a row list).  Finished
+ *    entries are never relabelled or moved by an interchange.  The entries
+ *    below the pivot of an eliminated column carry -(external row number)
+ *    in Row, the entries right of the pivot of an eliminated row carry
+ *    -(external column number) in Col: the external number is the identity
+ *    of the row or column, which the interchanges do not change.  OrderExit()
+ *    turns them back into internal numbers.
+ *  - Finished entries stay in the lists of the active rows and columns until
+ *    a walk meets them; a column walk then moves the entry to
+ *    OrderFinInCol[column] (so the column still owns it), a row walk drops
+ *    it (the row lists are rebuilt from the columns by OrderExit()).
+ *  - The active part of a column list is sorted by OrderRowKey[row], a key
+ *    that is swapped along with the row by an interchange, so the merge in
+ *    the elimination works and the fill-in positions are known; a row or
+ *    column interchange relabels the active entries of the two rows or
+ *    columns and swaps the list heads, and nothing else moves.  The active
+ *    part of a row list is not sorted; a fill-in goes to its front.
+ *
+ *  The pivot search reads the same Markowitz vectors and the same elements
+ *  as before, in the same order where a tie rule depends on it, so the pivot
+ *  sequence, the fill-in pattern and every arithmetic operation are those of
+ *  the sorted-list code, and after OrderExit() the lists are identical to
+ *  what that code left.
+ */
+
+/*
+ *  DOES A PRODUCT-ONE DIAGONAL DOMINATE A SYMMETRIC PAIR
+ *
+ *  For a diagonal whose row and column each hold one other active entry,
+ *  finds the two and reports whether they sit symmetrically and the
+ *  diagonal is at least as large as both, in which case the diagonal is a
+ *  safe pivot without a threshold check.  Enhancement-735: the lists are in
+ *  the ordering layout, so the two are found by walks that skip finished
+ *  entries wherever they sit.  The original code only tried the pair when
+ *  both lay after the diagonal (NextInRow/NextInCol) or both before it (its
+ *  fallback walk); that condition is kept so the pivot choice is unchanged.
+ *
+ *  >>> Returned:
+ *  YES if the diagonal is to be accepted at once.
+ *
+ *  >>> Arguments:
+ *  Matrix  <input>  (MatrixPtr)
+ *      Pointer to matrix.
+ *  pDiag  <input>  (ElementPtr)
+ *      The diagonal element.
+ *  I  <input>  (int)
+ *      Its row and column index.
+ *  Step  <input>  (int)
+ *      Index of the diagonal currently being eliminated.
+ */
+
+static int
+DiagonalHasSymmetricPair( MatrixPtr Matrix, ElementPtr pDiag, int I, int Step )
+{
+    ElementPtr  pOtherInRow, pOtherInCol;
+    RealNumber  LargestOffDiagonal;
+
+    /* Begin `DiagonalHasSymmetricPair'. */
+    pOtherInRow = Matrix->FirstInRow[I];
+    while(pOtherInRow != NULL) {
+        if (pOtherInRow->Col >= Step && pOtherInRow->Col != I)
+            break;
+        pOtherInRow = pOtherInRow->NextInRow;
+    }
+    pOtherInCol = Matrix->FirstInCol[I];
+    while(pOtherInCol != NULL) {
+        if (pOtherInCol->Row >= Step && pOtherInCol->Row != I)
+            break;
+        pOtherInCol = pOtherInCol->NextInCol;
+    }
+    if (pOtherInRow == NULL  ||  pOtherInCol == NULL)
+        return NO;
+    if ((pOtherInRow->Col > I) != (pOtherInCol->Row > I))
+        return NO;
+
+    /* Accept diagonal as pivot if diagonal is larger than off-diagonals and the
+     * off-diagonals are placed symmetricly. */
+    if (pOtherInRow->Col == pOtherInCol->Row) {
+        LargestOffDiagonal = MAX(ELEMENT_MAG(pOtherInRow),
+                                 ELEMENT_MAG(pOtherInCol));
+        if (ELEMENT_MAG(pDiag) >= LargestOffDiagonal)
+            return YES;
+    }
+    return NO;
+}
+
+
+
+
+
+
+
+
+/*
+ *  THE BUCKET INDEX OVER THE MARKOWITZ PRODUCTS  (Enhancement-735)
+ *
+ *  QuicklySearchDiagonal wants the first, in the order (Step, Size, Size-1,
+ *  ..., Step+1), of the acceptable active diagonals with the smallest
+ *  Markowitz product.  The array scan that found it cost the whole active
+ *  range at every step.  The index keeps, for every active diagonal, a bit
+ *  in the bucket of its product: the products 0 .. ORDER_EXACT-1 have a
+ *  bucket each, the larger ones share a bucket per power of two.  A bucket
+ *  is a bit set over the row indices with a summary bit per non-empty word,
+ *  so the largest index in a bucket, or the largest below a given one, is
+ *  found in a few words, and a bucket's members are visited without
+ *  touching its empty words.  An index moves between buckets whenever its
+ *  product is set (OrderIndexUpdate) and leaves when it is eliminated
+ *  (OrderIndexRemove); the Markowitz vectors themselves are unchanged and
+ *  remain what the other searches read.
+ */
+
+static int
+OrderHighBit( unsigned long long x )
+{
+    /* Position of the highest set bit of x, which must not be 0. */
+#if defined(__GNUC__) || defined(__clang__)
+    return 63 - __builtin_clzll( x );
+#else
+    int n = 0;
+    while (x >>= 1) n++;
+    return n;
+#endif
+}
+
+static int
+OrderLowBit( unsigned long long x )
+{
+    /* Position of the lowest set bit of x, which must not be 0. */
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_ctzll( x );
+#else
+    int n = 0;
+    while (!(x & 1)) { x >>= 1; n++; }
+    return n;
+#endif
+}
+
+static int
+OrderBucketOf( long Product )
+{
+    if (Product < ORDER_EXACT)
+        return (Product < 0) ? 0 : (int)Product;
+    return ORDER_EXACT + OrderHighBit( (unsigned long long)Product ) - 8;
+}
+
+static void
+OrderIndexSet( MatrixPtr Matrix, int Bucket, int I )
+{
+    unsigned long long *Bits = Matrix->OrderBits + (size_t)Bucket * (size_t)Matrix->OrderWords;
+    unsigned long long *Sum = Matrix->OrderSum + (size_t)Bucket * (size_t)Matrix->OrderSumWords;
+    int Word = I >> 6;
+
+    Bits[Word] |= 1ULL << (I & 63);
+    Sum[Word >> 6] |= 1ULL << (Word & 63);
+    Matrix->OrderCount[Bucket]++;
+}
+
+static void
+OrderIndexClear( MatrixPtr Matrix, int Bucket, int I )
+{
+    unsigned long long *Bits = Matrix->OrderBits + (size_t)Bucket * (size_t)Matrix->OrderWords;
+    unsigned long long *Sum = Matrix->OrderSum + (size_t)Bucket * (size_t)Matrix->OrderSumWords;
+    int Word = I >> 6;
+
+    Bits[Word] &= ~(1ULL << (I & 63));
+    if (Bits[Word] == 0)
+        Sum[Word >> 6] &= ~(1ULL << (Word & 63));
+    Matrix->OrderCount[Bucket]--;
+}
+
+/* The largest index below Bound in a bucket, 0 if there is none. */
+static int
+OrderIndexMaxBelow( MatrixPtr Matrix, int Bucket, int Bound )
+{
+    unsigned long long *Bits = Matrix->OrderBits + (size_t)Bucket * (size_t)Matrix->OrderWords;
+    unsigned long long *Sum = Matrix->OrderSum + (size_t)Bucket * (size_t)Matrix->OrderSumWords;
+    unsigned long long x;
+    int Hi, Word, SumWord;
+
+    if (Bound <= 1) return 0;
+    Hi = Bound - 1;
+    Word = Hi >> 6;
+    x = Bits[Word] & (((Hi & 63) == 63) ? ~0ULL : ((1ULL << ((Hi & 63) + 1)) - 1));
+    if (x != 0)
+        return (Word << 6) + OrderHighBit( x );
+
+    /* Nothing in this word below Hi: the highest non-empty word before it. */
+    SumWord = Word >> 6;
+    x = Sum[SumWord] & (((Word & 63) == 0) ? 0ULL : ((1ULL << (Word & 63)) - 1));
+    while (x == 0) {
+        if (SumWord == 0) return 0;
+        SumWord--;
+        x = Sum[SumWord];
+    }
+    Word = (SumWord << 6) + OrderHighBit( x );
+    return (Word << 6) + OrderHighBit( Bits[Word] );
+}
+
+static void
+OrderIndexBuild( MatrixPtr Matrix, int Step )
+{
+    int I, Size = Matrix->Size;
+
+    /* Begin `OrderIndexBuild'. */
+    memset( Matrix->OrderBits, 0, (size_t)ORDER_BUCKETS * (size_t)Matrix->OrderWords * sizeof(unsigned long long) );
+    memset( Matrix->OrderSum, 0, (size_t)ORDER_BUCKETS * (size_t)Matrix->OrderSumWords * sizeof(unsigned long long) );
+    memset( Matrix->OrderCount, 0, (size_t)ORDER_BUCKETS * sizeof(int) );
+    for (I = 0; I <= Size; I++)
+        Matrix->OrderWhere[I] = -1;
+    for (I = Step; I <= Size; I++)
+        OrderIndexUpdate( Matrix, I );
+    return;
+}
+
+static void
+OrderIndexUpdate( MatrixPtr Matrix, int I )
+{
+    int Bucket = OrderBucketOf( Matrix->MarkowitzProd[I] );
+
+    /* Begin `OrderIndexUpdate'. */
+    if (Matrix->OrderWhere[I] == Bucket) return;
+    if (Matrix->OrderWhere[I] >= 0)
+        OrderIndexClear( Matrix, Matrix->OrderWhere[I], I );
+    OrderIndexSet( Matrix, Bucket, I );
+    Matrix->OrderWhere[I] = Bucket;
+    return;
+}
+
+static void
+OrderIndexRemove( MatrixPtr Matrix, int I )
+{
+    /* Begin `OrderIndexRemove'. */
+    if (Matrix->OrderWhere[I] >= 0) {
+        OrderIndexClear( Matrix, Matrix->OrderWhere[I], I );
+        Matrix->OrderWhere[I] = -1;
+    }
+    return;
+}
+
+/*
+ *  PICK THE DIAGONAL THE SCAN WOULD PICK
+ *
+ *  Returns the first, in the order (Step, Size, Size-1, ..., Step+1), of the
+ *  acceptable active diagonals (present, and larger than AbsThreshold) with
+ *  the smallest Markowitz product, and that product through pProduct; NULL
+ *  if no active diagonal is acceptable.
+ */
+
+static ElementPtr
+OrderPickDiagonal( MatrixPtr Matrix, int Step, long *pProduct )
+{
+    int Bucket, I, Word, SumWord;
+    unsigned long long x, y;
+    ElementPtr pDiag;
+#define ACCEPTABLE(i) (((pDiag = Matrix->Diag[i]) != NULL) && (ELEMENT_MAG(pDiag) > Matrix->AbsThreshold))
+
+    /* Begin `OrderPickDiagonal'. */
+    for (Bucket = 0; Bucket < ORDER_BUCKETS; Bucket++) {
+        if (Matrix->OrderCount[Bucket] == 0) continue;
+        if (Bucket < ORDER_EXACT) {
+            /* One product: Step first, then from the last index upwards. */
+            if (Matrix->OrderWhere[Step] == Bucket && ACCEPTABLE(Step)) {
+                *pProduct = Bucket;
+                return pDiag;
+            }
+            for (I = OrderIndexMaxBelow( Matrix, Bucket, Matrix->Size + 1 ); I > Step;
+                    I = OrderIndexMaxBelow( Matrix, Bucket, I )) {
+                if (ACCEPTABLE(I)) {
+                    *pProduct = Bucket;
+                    return pDiag;
+                }
+            }
+        } else {
+            /* A range of products: the smallest acceptable one wins, ties as above. */
+            unsigned long long *Bits = Matrix->OrderBits + (size_t)Bucket * (size_t)Matrix->OrderWords;
+            unsigned long long *Sum = Matrix->OrderSum + (size_t)Bucket * (size_t)Matrix->OrderSumWords;
+            ElementPtr pBest = NULL;
+            long BestProduct = 0;
+            int BestIsStep = NO;
+
+            for (SumWord = 0; SumWord < Matrix->OrderSumWords; SumWord++) {
+                for (y = Sum[SumWord]; y != 0; y &= y - 1) {
+                    Word = (SumWord << 6) + OrderLowBit( y );
+                    for (x = Bits[Word]; x != 0; x &= x - 1) {
+                        I = (Word << 6) + OrderLowBit( x );
+                        if (I < Step) continue;
+                        if (!ACCEPTABLE(I)) continue;
+                        if (pBest == NULL || Matrix->MarkowitzProd[I] < BestProduct ||
+                                (Matrix->MarkowitzProd[I] == BestProduct && !BestIsStep &&
+                                 (I == Step || I > pBest->Row))) {
+                            pBest = pDiag;
+                            BestProduct = Matrix->MarkowitzProd[I];
+                            BestIsStep = (I == Step);
+                        }
+                    }
+                }
+            }
+            if (pBest != NULL) {
+                *pProduct = BestProduct;
+                return pBest;
+            }
+        }
+    }
+#undef ACCEPTABLE
+    return NULL;
+}
+
+
+
+
+
+
+
+
+/*
+ *  ENTER THE ORDERING LAYOUT
+ *
+ *  Prepares the lists for the ordering loop that starts at Step.  The lists
+ *  are sorted by internal row and column at this point, so the active part
+ *  of every column is already sorted by the identity key; the entries of the
+ *  rows and columns that are already eliminated (a partial reordering after
+ *  a failed fast factorization) get their external labels.
+ *
+ *  >>> Arguments:
+ *  Matrix  <input>  (MatrixPtr)
+ *      Pointer to matrix.
+ *  Step  <input>  (int)
+ *      Index of the first diagonal the ordering loop will eliminate.
+ */
+
+static void
+OrderEnter( MatrixPtr Matrix, int Step )
+{
+    int  I, Size = Matrix->Size;
+    ElementPtr  pElement;
+
+    /* Begin `OrderEnter'. */
+    for (I = 1; I <= Size; I++) {
+        Matrix->OrderRowKey[I] = I;
+        Matrix->OrderFinInCol[I] = NULL;
+    }
+    OrderIndexBuild( Matrix, Step );
+
+    /* Rows and columns below Step are eliminated already: label their
+     * finished entries with their external numbers. */
+    for (I = 1; I < Step; I++) {
+        pElement = Matrix->Diag[I];
+        if (pElement == NULL) continue;
+        for (pElement = pElement->NextInCol; pElement != NULL;
+                pElement = pElement->NextInCol)
+            pElement->Row = -Matrix->IntToExtRowMap[pElement->Row];
+        for (pElement = Matrix->Diag[I]->NextInRow; pElement != NULL;
+                pElement = pElement->NextInRow)
+            pElement->Col = -Matrix->IntToExtColMap[pElement->Col];
+    }
+    return;
+}
+
+
+
+
+
+
+
+
+/*
+ *  LEAVE THE ORDERING LAYOUT
+ *
+ *  Rebuilds the sorted column and row lists and the Diag vector from the
+ *  ordering layout, restoring the internal labels of the finished entries.
+ *  Every element is reached through its column (the column list plus the
+ *  column's finished list); the elements are threaded into rows sorted by
+ *  column and then into columns sorted by row, two linear passes.
+ *
+ *  >>> Arguments:
+ *  Matrix  <input>  (MatrixPtr)
+ *      Pointer to matrix.
+ */
+
+static void
+OrderExit( MatrixPtr Matrix )
+{
+    int  I, Size = Matrix->Size;
+    ElementPtr  pElement, pNext, pList;
+    ArrayOfElementPtrs  FirstInRow = Matrix->FirstInRow;
+    ArrayOfElementPtrs  FirstInCol = Matrix->FirstInCol;
+    int  Pass;
+
+    /* Begin `OrderExit'. */
+    for (I = 1; I <= Size; I++) {
+        FirstInRow[I] = NULL;
+        Matrix->Diag[I] = NULL;
+    }
+
+    /* Pass 1: columns from the last to the first, so that each row list
+     * ends up sorted by column. */
+    for (I = Size; I >= 1; I--) {
+        for (Pass = 0; Pass < 2; Pass++) {
+            pList = (Pass == 0) ? FirstInCol[I] : Matrix->OrderFinInCol[I];
+            for (pElement = pList; pElement != NULL; pElement = pNext) {
+                pNext = pElement->NextInCol;
+                if (pElement->Row < 0)
+                    pElement->Row = Matrix->ExtToIntRowMap[-pElement->Row];
+                if (pElement->Col < 0)
+                    pElement->Col = Matrix->ExtToIntColMap[-pElement->Col];
+                pElement->NextInRow = FirstInRow[pElement->Row];
+                FirstInRow[pElement->Row] = pElement;
+            }
+        }
+        FirstInCol[I] = NULL;
+        Matrix->OrderFinInCol[I] = NULL;
+    }
+
+    /* Pass 2: rows from the last to the first, so that each column list
+     * ends up sorted by row. */
+    for (I = Size; I >= 1; I--) {
+        for (pElement = FirstInRow[I]; pElement != NULL;
+                pElement = pElement->NextInRow) {
+            pElement->NextInCol = FirstInCol[pElement->Col];
+            FirstInCol[pElement->Col] = pElement;
+            if (pElement->Row == pElement->Col)
+                Matrix->Diag[pElement->Col] = pElement;
+        }
+    }
+    return;
+}
+
+
+
+
+
+
+
+
+/*
+ *  RELABEL THE ACTIVE ENTRIES OF A ROW / OF A COLUMN
+ *
+ *  Walks the list of row Row (column Col), gives every active entry the new
+ *  internal row (column) number, drops the finished entries from a row list
+ *  and moves those of a column list to the column's finished list.
+ *
+ *  >>> Arguments:
+ *  Matrix  <input>  (MatrixPtr)
+ *      Pointer to matrix.
+ *  Row / Col  <input>  (int)
+ *      Current index of the row / column whose list is walked.
+ *  NewLabel  <input>  (int)
+ *      The index its active entries are to carry.
+ *  Step  <input>  (int)
+ *      Index of the diagonal currently being eliminated.
+ */
+
+static void
+OrderRelabelRow( MatrixPtr Matrix, int Row, int NewLabel, int Step )
+{
+    ElementPtr  pElement, *ppElement;
+
+    /* Begin `OrderRelabelRow'. */
+    ppElement = &(Matrix->FirstInRow[Row]);
+    while ((pElement = *ppElement) != NULL) {
+        if (pElement->Col < Step) {
+            *ppElement = pElement->NextInRow;
+        } else {
+            pElement->Row = NewLabel;
+            ppElement = &(pElement->NextInRow);
+        }
+    }
+    return;
+}
+
+static void
+OrderRelabelCol( MatrixPtr Matrix, int Col, int NewLabel, int Step )
+{
+    ElementPtr  pElement, *ppElement;
+
+    /* Begin `OrderRelabelCol'. */
+    ppElement = &(Matrix->FirstInCol[Col]);
+    while ((pElement = *ppElement) != NULL) {
+        if (pElement->Row < Step) {
+            *ppElement = pElement->NextInCol;
+            pElement->NextInCol = Matrix->OrderFinInCol[Col];
+            Matrix->OrderFinInCol[Col] = pElement;
+        } else {
+            pElement->Col = NewLabel;
+            ppElement = &(pElement->NextInCol);
+        }
+    }
+    return;
+}
+
+
+
+
+
+
+
+
+/*
+ *  FIND THE DIAGONAL OF AN ACTIVE COLUMN
+ *
+ *  Returns the element in row Col of column Col, or NULL if there is none;
+ *  finished entries met on the way are moved to the column's finished list.
+ *
+ *  >>> Arguments:
+ *  Matrix  <input>  (MatrixPtr)
+ *      Pointer to matrix.
+ *  Col  <input>  (int)
+ *      Index of the column.
+ *  Step  <input>  (int)
+ *      Index of the diagonal currently being eliminated.
+ */
+
+static ElementPtr
+OrderFindDiag( MatrixPtr Matrix, int Col, int Step )
+{
+    ElementPtr  pElement, *ppElement, pDiag = NULL;
+
+    /* Begin `OrderFindDiag'. */
+    ppElement = &(Matrix->FirstInCol[Col]);
+    while ((pElement = *ppElement) != NULL) {
+        if (pElement->Row < Step) {
+            *ppElement = pElement->NextInCol;
+            pElement->NextInCol = Matrix->OrderFinInCol[Col];
+            Matrix->OrderFinInCol[Col] = pElement;
+            continue;
+        }
+        if (pElement->Row == Col)
+            pDiag = pElement;
+        ppElement = &(pElement->NextInCol);
+    }
+    return pDiag;
+}
+
+
+
+
+
+
+
+
+/*
  *  EXCHANGE ROWS AND COLUMNS
  *
  *  Exchanges two rows and two columns so that the selected pivot is moved to
- *  the upper left corner of the remaining submatrix.
+ *  the upper left corner of the remaining submatrix.  In the ordering layout
+ *  this relabels the active entries of the rows and columns involved and
+ *  swaps the per-row and per-column vectors; the Markowitz and singleton
+ *  bookkeeping is that of the original routine.
  *
  *  >>> Arguments:
  *  Matrix  <input>  (MatrixPtr)
@@ -2006,12 +2701,46 @@ FindBiggestInColExclude( MatrixPtr Matrix, ElementPtr pElement, int Step )
  */
 
 static void
-ExchangeRowsAndCols( MatrixPtr Matrix, ElementPtr pPivot, int Step )
+OrderSwapRows( MatrixPtr Matrix, int Row1, int Row2, int Step )
+{
+    /* Begin `OrderSwapRows'. */
+    OrderRelabelRow( Matrix, Row1, Row2, Step );
+    OrderRelabelRow( Matrix, Row2, Row1, Step );
+    SWAP( int, Matrix->MarkowitzRow[Row1], Matrix->MarkowitzRow[Row2] );
+    SWAP( int, Matrix->OrderRowKey[Row1], Matrix->OrderRowKey[Row2] );
+    SWAP( ElementPtr, Matrix->FirstInRow[Row1], Matrix->FirstInRow[Row2] );
+    SWAP( int, Matrix->IntToExtRowMap[Row1], Matrix->IntToExtRowMap[Row2] );
+#if TRANSLATE
+    Matrix->ExtToIntRowMap[ Matrix->IntToExtRowMap[Row1] ] = Row1;
+    Matrix->ExtToIntRowMap[ Matrix->IntToExtRowMap[Row2] ] = Row2;
+#endif
+    return;
+}
+
+static void
+OrderSwapCols( MatrixPtr Matrix, int Col1, int Col2, int Step )
+{
+    /* Begin `OrderSwapCols'. */
+    OrderRelabelCol( Matrix, Col1, Col2, Step );
+    OrderRelabelCol( Matrix, Col2, Col1, Step );
+    SWAP( int, Matrix->MarkowitzCol[Col1], Matrix->MarkowitzCol[Col2] );
+    SWAP( ElementPtr, Matrix->FirstInCol[Col1], Matrix->FirstInCol[Col2] );
+    SWAP( ElementPtr, Matrix->OrderFinInCol[Col1], Matrix->OrderFinInCol[Col2] );
+    SWAP( int, Matrix->IntToExtColMap[Col1], Matrix->IntToExtColMap[Col2] );
+#if TRANSLATE
+    Matrix->ExtToIntColMap[ Matrix->IntToExtColMap[Col1] ] = Col1;
+    Matrix->ExtToIntColMap[ Matrix->IntToExtColMap[Col2] ] = Col2;
+#endif
+    return;
+}
+
+static void
+OrderExchange( MatrixPtr Matrix, ElementPtr pPivot, int Step )
 {
     int   Row, Col;
     long  OldMarkowitzProd_Step, OldMarkowitzProd_Row, OldMarkowitzProd_Col;
 
-    /* Begin `ExchangeRowsAndCols'. */
+    /* Begin `OrderExchange'. */
     Row = pPivot->Row;
     Col = pPivot->Col;
     Matrix->PivotsOriginalRow = Row;
@@ -2021,9 +2750,11 @@ ExchangeRowsAndCols( MatrixPtr Matrix, ElementPtr pPivot, int Step )
 
     /* Exchange rows and columns. */
     if (Row == Col) {
-        spcRowExchange( Matrix, Step, Row );
-        spcColExchange( Matrix, Step, Col );
+        OrderSwapRows( Matrix, Step, Row, Step );
+        OrderSwapCols( Matrix, Step, Col, Step );
         SWAP( long, Matrix->MarkowitzProd[Step], Matrix->MarkowitzProd[Row] );
+        OrderIndexUpdate( Matrix, Step );
+        OrderIndexUpdate( Matrix, Row );
         SWAP( ElementPtr, Matrix->Diag[Row], Matrix->Diag[Step] );
     } else {
 
@@ -2034,11 +2765,12 @@ ExchangeRowsAndCols( MatrixPtr Matrix, ElementPtr pPivot, int Step )
 
         /* Exchange rows. */
         if (Row != Step) {
-            spcRowExchange( Matrix, Step, Row );
+            OrderSwapRows( Matrix, Step, Row, Step );
             Matrix->NumberOfInterchangesIsOdd =
                 !Matrix->NumberOfInterchangesIsOdd;
             Matrix->MarkowitzProd[Row] = Matrix->MarkowitzRow[Row] *
                                          Matrix->MarkowitzCol[Row];
+            OrderIndexUpdate( Matrix, Row );
 
             /* Update singleton count. */
             if ((Matrix->MarkowitzProd[Row]==0) != (OldMarkowitzProd_Row==0)) {
@@ -2051,11 +2783,12 @@ ExchangeRowsAndCols( MatrixPtr Matrix, ElementPtr pPivot, int Step )
 
         /* Exchange columns. */
         if (Col != Step) {
-            spcColExchange( Matrix, Step, Col );
+            OrderSwapCols( Matrix, Step, Col, Step );
             Matrix->NumberOfInterchangesIsOdd =
                 !Matrix->NumberOfInterchangesIsOdd;
             Matrix->MarkowitzProd[Col] = Matrix->MarkowitzCol[Col] *
                                          Matrix->MarkowitzRow[Col];
+            OrderIndexUpdate( Matrix, Col );
 
             /* Update singleton count. */
             if ((Matrix->MarkowitzProd[Col]==0) != (OldMarkowitzProd_Col==0)) {
@@ -2065,22 +2798,17 @@ ExchangeRowsAndCols( MatrixPtr Matrix, ElementPtr pPivot, int Step )
                     Matrix->Singletons++;
             }
 
-            Matrix->Diag[Col] = spcFindElementInCol( Matrix,
-                                Matrix->FirstInCol+Col,
-                                Col, Col, NO );
+            Matrix->Diag[Col] = OrderFindDiag( Matrix, Col, Step );
         }
         if (Row != Step) {
-            Matrix->Diag[Row] = spcFindElementInCol( Matrix,
-                                Matrix->FirstInCol+Row,
-                                Row, Row, NO );
+            Matrix->Diag[Row] = OrderFindDiag( Matrix, Row, Step );
         }
-        Matrix->Diag[Step] = spcFindElementInCol( Matrix,
-                             Matrix->FirstInCol+Step,
-                             Step, Step, NO );
+        Matrix->Diag[Step] = OrderFindDiag( Matrix, Step, Step );
 
         /* Update singleton count. */
         Matrix->MarkowitzProd[Step] = Matrix->MarkowitzCol[Step] *
                                       Matrix->MarkowitzRow[Step];
+        OrderIndexUpdate( Matrix, Step );
         if ((Matrix->MarkowitzProd[Step]==0) != (OldMarkowitzProd_Step==0)) {
             if (OldMarkowitzProd_Step == 0)
                 Matrix->Singletons--;
@@ -2098,7 +2826,253 @@ ExchangeRowsAndCols( MatrixPtr Matrix, ElementPtr pPivot, int Step )
 
 
 
-
+/*
+ *  CREATE FILL-IN DURING ORDERING
+ *
+ *  Creates a fill-in at a known place in its column (see spcCreateFillin())
+ *  and updates the Markowitz counts, products and the singleton count as
+ *  the original CreateFillin did.
+ *
+ *  >>> Returns:
+ *  Pointer to fill-in, or NULL when memory ran out.
+ *
+ *  >>> Arguments:
+ *  Matrix  <input>  (MatrixPtr)
+ *      Pointer to the matrix.
+ *  Row  <input>  (int)
+ *      Row index for element.
+ *  Col  <input>  (int)
+ *      Column index for element.
+ *  ppElementAbove  <input>  (ElementPtr *)
+ *      Address of the pointer that is to point to the new element.
+ */
+
+static ElementPtr
+OrderCreateFillin( MatrixPtr Matrix, int Row, int Col, ElementPtr *ppElementAbove )
+{
+    ElementPtr  pElement;
+
+    /* Begin `OrderCreateFillin'. */
+    pElement = spcCreateFillin( Matrix, Row, Col, ppElementAbove );
+
+    /* Update Markowitz counts and products. */
+    Matrix->MarkowitzProd[Row] = ++Matrix->MarkowitzRow[Row] *
+                                 Matrix->MarkowitzCol[Row];
+    if ((Matrix->MarkowitzRow[Row] == 1) && (Matrix->MarkowitzCol[Row] != 0))
+        Matrix->Singletons--;
+    Matrix->MarkowitzProd[Col] = ++Matrix->MarkowitzCol[Col] *
+                                 Matrix->MarkowitzRow[Col];
+    if ((Matrix->MarkowitzRow[Col] != 0) && (Matrix->MarkowitzCol[Col] == 1))
+        Matrix->Singletons--;
+    OrderIndexUpdate( Matrix, Row );
+    OrderIndexUpdate( Matrix, Col );
+
+    return pElement;
+}
+
+
+
+
+
+
+
+
+/*
+ *  ROW AND COLUMN ELIMINATION IN THE ORDERING LAYOUT
+ *
+ *  Eliminates the pivot row and column, leaving the row of U and the column
+ *  of L in place, by Gauss's method: every active entry of the pivot row
+ *  scales into U, and for each of them the active part of its column is
+ *  merged against the active part of the pivot column, both sorted by the
+ *  row key, creating the fill-ins where a row of the pivot column has no
+ *  entry.  Finished entries met in the column, including the pivot row's
+ *  own entry once it has been used, are moved to the column's finished list.
+ *  Each element receives exactly the update the sorted-list code gave it.
+ *
+ *  >>> Arguments:
+ *  Matrix  <input>  (MatrixPtr)
+ *      Pointer to the matrix.
+ *  pPivot  <input>  (ElementPtr)
+ *      Pointer to the current pivot.
+ *  Step  <input>  (int)
+ *      Index of the diagonal currently being eliminated.
+ *
+ *  >>> Possible errors:
+ *  spNO_MEMORY
+ */
+
+#define ORDER_ELIMINATION_BODY(SCALE_UPPER, UPDATE_SUB)                        \
+    for (pUpper = Matrix->FirstInRow[Step]; pUpper != NULL;                   \
+            pUpper = pUpper->NextInRow) {                                     \
+        Col = pUpper->Col;                                                    \
+        if (Col <= Step) continue;   /* the pivot, or a finished entry */    \
+        SCALE_UPPER;                                                          \
+        ppSub = &(Matrix->FirstInCol[Col]);                                   \
+        pSub = *ppSub;                                                        \
+        for (pLower = Matrix->FirstInCol[Step]; pLower != NULL;               \
+                pLower = pLower->NextInCol) {                                 \
+            Row = pLower->Row;                                                \
+            if (Row <= Step) continue;   /* the pivot, or a finished entry */ \
+            KeyLower = Key[Row];                                              \
+            /* Move down the column to this row's key, setting finished       \
+             * entries aside (the pivot row's entry is finished now). */      \
+            while (pSub != NULL) {                                            \
+                if (pSub->Row <= Step) {                                      \
+                    *ppSub = pSub->NextInCol;                                 \
+                    pSub->NextInCol = FinInCol[Col];                          \
+                    FinInCol[Col] = pSub;                                     \
+                    pSub = *ppSub;                                            \
+                    continue;                                                 \
+                }                                                             \
+                if (Key[pSub->Row] >= KeyLower) break;                        \
+                ppSub = &(pSub->NextInCol);                                   \
+                pSub = *ppSub;                                                \
+            }                                                                 \
+            if (pSub == NULL || pSub->Row != Row) {                           \
+                pSub = OrderCreateFillin( Matrix, Row, Col, ppSub );          \
+                if (pSub == NULL) {                                           \
+                    Matrix->Error = spNO_MEMORY;                              \
+                    return;                                                   \
+                }                                                             \
+            }                                                                 \
+            UPDATE_SUB;                                                       \
+            ppSub = &(pSub->NextInCol);                                       \
+            pSub = *ppSub;                                                    \
+        }                                                                     \
+    }
+
+static void
+OrderRealElimination( MatrixPtr Matrix, ElementPtr pPivot, int Step )
+{
+    ElementPtr  pSub, *ppSub, pLower, pUpper;
+    ArrayOfElementPtrs  FinInCol = Matrix->OrderFinInCol;
+    int  *Key = Matrix->OrderRowKey;
+    int  Row, Col, KeyLower;
+
+    /* Begin `OrderRealElimination'. */
+
+    /* Test for zero pivot. */
+    if (ABS(pPivot->Real) == 0.0) {
+        (void)MatrixIsSingular( Matrix, pPivot->Row );
+        return;
+    }
+    pPivot->Real = 1.0 / pPivot->Real;
+
+    ORDER_ELIMINATION_BODY( pUpper->Real *= pPivot->Real,
+                            pSub->Real -= pUpper->Real * pLower->Real )
+    return;
+}
+
+static void
+OrderComplexElimination( MatrixPtr Matrix, ElementPtr pPivot, int Step )
+{
+    ElementPtr  pSub, *ppSub, pLower, pUpper;
+    ArrayOfElementPtrs  FinInCol = Matrix->OrderFinInCol;
+    int  *Key = Matrix->OrderRowKey;
+    int  Row, Col, KeyLower;
+
+    /* Begin `OrderComplexElimination'. */
+
+    /* Test for zero pivot. */
+    if (ELEMENT_MAG(pPivot) == 0.0) {
+        (void)MatrixIsSingular( Matrix, pPivot->Row );
+        return;
+    }
+    CMPLX_RECIPROCAL(*pPivot, *pPivot);
+
+    /* Cmplx exprs: *pUpper = *pUpper * (1.0 / *pPivot); *pSub -= *pUpper * *pLower. */
+    ORDER_ELIMINATION_BODY( CMPLX_MULT_ASSIGN(*pUpper, *pPivot),
+                            CMPLX_MULT_SUBT_ASSIGN(*pSub, *pUpper, *pLower) )
+    return;
+}
+
+#undef ORDER_ELIMINATION_BODY
+
+
+
+
+
+
+
+
+/*
+ *  FINISH A STEP
+ *
+ *  Updates the Markowitz counts and products of the rows and columns the
+ *  pivot touched, and the singleton count, exactly as UpdateMarkowitzNumbers
+ *  did (rows of the pivot column first, then columns of the pivot row); then
+ *  gives the entries of the eliminated column and row their external labels.
+ *
+ *  >>> Arguments:
+ *  Matrix  <input>  (MatrixPtr)
+ *      Pointer to matrix.
+ *  Step  <input>  (int)
+ *      Index of the diagonal just eliminated.
+ */
+
+static void
+OrderFinishStep( MatrixPtr Matrix, int Step )
+{
+    int  Row, Col;
+    ElementPtr  ColPtr, RowPtr;
+    int *MarkoRow = Matrix->MarkowitzRow;
+    int *MarkoCol = Matrix->MarkowitzCol;
+    double Product;
+
+    /* Begin `OrderFinishStep'. */
+
+    /* Update Markowitz numbers. */
+    for (ColPtr = Matrix->FirstInCol[Step]; ColPtr != NULL; ColPtr = ColPtr->NextInCol) {
+        Row = ColPtr->Row;
+        if (Row <= Step) continue;
+        --MarkoRow[Row];
+
+        /* Form Markowitz product while being cautious of overflows. */
+        if ((MarkoRow[Row] > LARGEST_SHORT_INTEGER && MarkoCol[Row] != 0) ||
+                (MarkoCol[Row] > LARGEST_SHORT_INTEGER && MarkoRow[Row] != 0)) {
+            Product = MarkoCol[Row] * MarkoRow[Row];
+            if (Product >= (double)LARGEST_LONG_INTEGER)
+                Matrix->MarkowitzProd[Row] = LARGEST_LONG_INTEGER;
+            else
+                Matrix->MarkowitzProd[Row] = (long)Product;
+        } else Matrix->MarkowitzProd[Row] = MarkoRow[Row] * MarkoCol[Row];
+        if (MarkoRow[Row] == 0)
+            Matrix->Singletons++;
+        OrderIndexUpdate( Matrix, Row );
+
+        /* This entry now belongs to the eliminated column. */
+        ColPtr->Row = -Matrix->IntToExtRowMap[Row];
+    }
+
+    for (RowPtr = Matrix->FirstInRow[Step]; RowPtr != NULL; RowPtr = RowPtr->NextInRow) {
+        Col = RowPtr->Col;
+        if (Col <= Step) continue;
+        --MarkoCol[Col];
+
+        /* Form Markowitz product while being cautious of overflows. */
+        if ((MarkoRow[Col] > LARGEST_SHORT_INTEGER && MarkoCol[Col] != 0) ||
+                (MarkoCol[Col] > LARGEST_SHORT_INTEGER && MarkoRow[Col] != 0)) {
+            Product = MarkoCol[Col] * MarkoRow[Col];
+            if (Product >= (double)LARGEST_LONG_INTEGER)
+                Matrix->MarkowitzProd[Col] = LARGEST_LONG_INTEGER;
+            else
+                Matrix->MarkowitzProd[Col] = (long)Product;
+        } else Matrix->MarkowitzProd[Col] = MarkoRow[Col] * MarkoCol[Col];
+        if ((MarkoCol[Col] == 0) && (MarkoRow[Col] != 0))
+            Matrix->Singletons++;
+        OrderIndexUpdate( Matrix, Col );
+
+        /* This entry now belongs to the eliminated row. */
+        RowPtr->Col = -Matrix->IntToExtColMap[Col];
+    }
+
+    /* The pivot's own index leaves the active range. */
+    OrderIndexRemove( Matrix, Step );
+    return;
+}
+
+
+
 /*
  *  EXCHANGE ROWS
  *
@@ -2709,90 +3683,12 @@ ComplexRowColElimination( MatrixPtr Matrix, ElementPtr pPivot )
 
 
 /*
- *  UPDATE MARKOWITZ NUMBERS
- *
- *  Updates the Markowitz numbers after a row and column have been eliminated.
- *  Also updates singleton count.
- *
- *  >>> Argument:
- *  Matrix  <input>  (MatrixPtr)
- *      Pointer to the matrix.
- *  pPivot  <input>  (ElementPtr)
- *      Pointer to the current pivot.
- *
- *  >>> Local variables:
- *  Row  (int)
- *      Rowstrchr.
- *  Col  (int)
- *      Columnstrchr.
- *  ColPtr  (ElementPtr)
- *      Points to matrix element in upper triangular column.
- *  RowPtr  (ElementPtr)
- *      Points to matrix element in lower triangular row.
- */
-
-static void
-UpdateMarkowitzNumbers( MatrixPtr Matrix, ElementPtr pPivot )
-{
-    int  Row, Col;
-    ElementPtr  ColPtr, RowPtr;
-    int *MarkoRow = Matrix->MarkowitzRow;
-    int *MarkoCol = Matrix->MarkowitzCol;
-    double Product;
-
-    /* Begin `UpdateMarkowitzNumbers'. */
-
-    /* Update Markowitz numbers. */
-    for (ColPtr = pPivot->NextInCol; ColPtr != NULL; ColPtr = ColPtr->NextInCol) {
-        Row = ColPtr->Row;
-        --MarkoRow[Row];
-
-        /* Form Markowitz product while being cautious of overflows. */
-        if ((MarkoRow[Row] > LARGEST_SHORT_INTEGER && MarkoCol[Row] != 0) ||
-                (MarkoCol[Row] > LARGEST_SHORT_INTEGER && MarkoRow[Row] != 0)) {
-            Product = MarkoCol[Row] * MarkoRow[Row];
-            if (Product >= (double)LARGEST_LONG_INTEGER)
-                Matrix->MarkowitzProd[Row] = LARGEST_LONG_INTEGER;
-            else
-                Matrix->MarkowitzProd[Row] = (long)Product;
-        } else Matrix->MarkowitzProd[Row] = MarkoRow[Row] * MarkoCol[Row];
-        if (MarkoRow[Row] == 0)
-            Matrix->Singletons++;
-    }
-
-    for (RowPtr = pPivot->NextInRow;
-            RowPtr != NULL;
-            RowPtr = RowPtr->NextInRow) {
-        Col = RowPtr->Col;
-        --MarkoCol[Col];
-
-        /* Form Markowitz product while being cautious of overflows. */
-        if ((MarkoRow[Col] > LARGEST_SHORT_INTEGER && MarkoCol[Col] != 0) ||
-                (MarkoCol[Col] > LARGEST_SHORT_INTEGER && MarkoRow[Col] != 0)) {
-            Product = MarkoCol[Col] * MarkoRow[Col];
-            if (Product >= (double)LARGEST_LONG_INTEGER)
-                Matrix->MarkowitzProd[Col] = LARGEST_LONG_INTEGER;
-            else
-                Matrix->MarkowitzProd[Col] = (long)Product;
-        } else Matrix->MarkowitzProd[Col] = MarkoRow[Col] * MarkoCol[Col];
-        if ((MarkoCol[Col] == 0) && (MarkoRow[Col] != 0))
-            Matrix->Singletons++;
-    }
-    return;
-}
-
-
-
-
-
-
-
-
-/*
  *  CREATE FILL-IN
  *
  *  This routine is used to create fill-ins and splice them into the
- *  matrix.
+ *  matrix.  Since Enhancement-735 it serves the fast factorization path of
+ *  spOrderAndFactor() only, whose lists are sorted; the ordering loop uses
+ *  OrderCreateFillin().
  *
  *  >>> Returns:
  *  Pointer to fill-in.
