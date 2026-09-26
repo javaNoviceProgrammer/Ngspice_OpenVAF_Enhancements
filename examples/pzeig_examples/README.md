@@ -31,11 +31,15 @@ the Muller method; `pzeig` is opt-in.
 - **`verify_pzeig.py`** — 13 checks: series RLC conjugate pair (both solvers);
   a **10-section RC ladder** whose ten poles must match the analytic
   tridiagonal-eigenvalue formula `s_k = −(2−2cos((2k−1)π/21))/RC` *and* the
-  Muller results root-for-root; the RLC bandpass where Muller hits its
-  iteration limit (eig: identical roots, **no warning**); the twin-T notch
+  Muller results root-for-root; the RLC bandpass (eig: identical roots, **no
+  warning** — and since [E-737](../../enhancements_doc/Enhancement-737.md)
+  the Muller search no longer gives up on it either); the twin-T notch
   (all 6 roots, both solvers); the bandstop's purely imaginary zeros ±j·10⁶
   (**exact** under eig); balanced/differential output; a purely resistive
-  circuit (no roots, no crash); and that the default remains Muller.
+  circuit (no roots, no crash); and that the default remains Muller — on a
+  six-element RLC ladder the Muller search reports the six exact roots of
+  the characteristic polynomial while the dense method's infinity threshold
+  discards the three far ones (see Scope).
 - **`make_pzeig_fig.py`** → **`pzeig.png`** — ladder poles vs analytic +
   twin-T s-plane under both solvers.
 - **`pzeig_demo.cir`** — the bandpass with `.options pzeig`.
@@ -58,6 +62,16 @@ ngspice -b pzeig_demo.cir     # demo
   print as ~1e-7 when poles sit at 1e6 rad/s. Muller refines each root locally
   and can resolve wider dynamic ranges; the eig method never misses or invents
   a root. (The methods agree to ≥6 digits on every circuit in the battery.)
+- **Far roots are discarded.** An eigenvalue μ of M at or below
+  `64·n·ε·‖M‖` is taken as one of the pencil's infinite eigenvalues, and
+  ‖M‖ is set by the root nearest the shift, so a root more than about
+  10¹³ times farther out than the nearest one is discarded with them: the
+  six-element RLC ladder of the verify (roots at −1, −10³, −10⁹,
+  −5·10¹¹ ± j3.16·10¹³ and −10¹⁵, exact over the rationals) reports three
+  under `pzeig`, and a common-emitter stage's −Rp/Lp = −10¹⁸ pole is
+  dropped beside its −0.955. The Muller search, which refines each root
+  locally, reports all of them since
+  [E-737](../../enhancements_doc/Enhancement-737.md).
 - Devices whose small-signal load is not affine in s (none in the standard
   device set; transmission lines are already rejected by PZ itself) are
   detected by the affinity check and reported.

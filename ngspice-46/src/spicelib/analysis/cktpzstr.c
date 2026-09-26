@@ -42,6 +42,29 @@ static void show_trial(PZtrial* new_trial, char x);
 
 #define NITER_LIM	200
 
+/* Enhancement-737: the outward march stops when the deflated determinant is
+ * flat.  With the roots found so far divided out, f(s) = c * prod (1 - s/r)
+ * over the roots r that remain, so three points spanning S at which f agrees
+ * to 2^-PZ_FLAT_BITS put every remaining root beyond S * 2^PZ_FLAT_BITS; at
+ * PZ_FLAT_SPAN that is 1e22, the span at which the search below gives up
+ * anyway.  Before this the march went on to +-1e21, where the rounding of the
+ * s*C entries against G makes the determinant's variation noise, and a
+ * chance minimum there trapped the search for the rest of its iterations. */
+#define PZ_FLAT_BITS	20
+#define PZ_FLAT_SPAN	1.0e16
+
+/* Enhancement-737: in the hunt for a magnitude minimum on the real axis (the
+ * sign of a conjugate pair), the three magnitudes agreeing to 2^-PZ_MIN_FLAT_BITS
+ * means the minimum cannot be located any better by more trials -- the
+ * function is quadratic there and its variation has reached the rounding
+ * floor -- so the middle point is taken as the minimum and the complex search
+ * starts from it, as the coincidence test would have decided had two trials
+ * happened to agree to 1e-12 (which took 45 trials on the pair of a
+ * bandpass, and never came under one solver's rounding on a pair at
+ * -4e-5 +- j1.2e9).  The imaginary part the start uses (NIpzK) was taken
+ * from the first quadratic in any case. */
+#define PZ_MIN_FLAT_BITS	33
+
 #define	SHIFT_LEFT	2
 #define	SHIFT_RIGHT	3
 #define	SKIP_LEFT	4
@@ -108,6 +131,7 @@ static double	High_Guess, Low_Guess;
 static int	Last_Move, Consec_Moves;
 static int	NIter, NTrials;
 static int	Aberr_Num;
+static int	Complex_Init_From_K;	/* Enhancement-737 */
 
 int PZeval(int strat, PZtrial** set, PZtrial** new_trial_p);
 static PZtrial* pzseek(PZtrial* t, int dir);
@@ -151,6 +175,9 @@ CKTpzFindZeros(CKTcircuit* ckt, PZtrial** rootinfo, int* rootcount)
 #endif
                 break;
             }
+
+        if (strat == QUIT)      /* Enhancement-737: no root left in range */
+            break;
 
         NIter += 1;
 
@@ -218,12 +245,14 @@ CKTpzFindZeros(CKTcircuit* ckt, PZtrial** rootinfo, int* rootcount)
     *rootinfo = Trials;
     *rootcount = NZeros;
 
+    /* Enhancement-737: say what was found, and that the eigenvalue method
+     * (.option pzeig) is there for a search that will not converge. */
     if (Aberr_Num > 2) {
-        SPfrontEnd->IFerrorf(ERR_WARNING, "Pole-zero converging to numerical aberrations; giving up after %d trials", Seq_Num);
+        SPfrontEnd->IFerrorf(ERR_WARNING, "Pole-zero converging to numerical aberrations; giving up after %d trials with %d root%s found (.option pzeig does not iterate)", Seq_Num, NZeros, NZeros == 1 ? "" : "s");
     }
 
     if (NIter >= NITER_LIM) {
-        SPfrontEnd->IFerrorf(ERR_WARNING, "Pole-zero iteration limit reached; giving up after %d trials", Seq_Num);
+        SPfrontEnd->IFerrorf(ERR_WARNING, "Pole-zero iteration limit reached; giving up after %d trials with %d root%s found (.option pzeig does not iterate)", Seq_Num, NZeros, NZeros == 1 ? "" : "s");
     }
 
     return error;
@@ -356,9 +385,12 @@ PZeval(int strat, PZtrial** set, PZtrial** new_trial_p)
                 NIpzK_mag += 1;
             }
             new_trial->s.imag = NIpzK;
+            Complex_Init_From_K = 1;
         }
-        else
+        else {
             new_trial->s.imag = 10000.0;
+            Complex_Init_From_K = 0;
+        }
 
         /*
          * Reset NIpzK so the same value doesn't get used again.
@@ -370,14 +402,22 @@ PZeval(int strat, PZtrial** set, PZtrial** new_trial_p)
         break;
 
     case COMPLEX_GUESS:
-        if (!set[2]) {
-            new_trial->s.real = set[0]->s.real;
-            new_trial->s.imag = 1.0e8;
-        }
-        else {
-            new_trial->s.real = set[0]->s.real;
-            new_trial->s.imag = 1.0e12;
-        }
+        /* Enhancement-737: Muller needs two companions to the complex
+         * starting point.  When that point's imaginary part came from the
+         * real-axis quadratic (NIpzK), it is close to the pair, and the
+         * companions go to twice and half of it, so the triple spans the
+         * pair; the original's companions at j1e8 and j1e12, whatever the
+         * scale of the circuit, left Muller a triple with two points far
+         * from the pair, and on a pair at j3e13 it wandered to the
+         * iteration limit from a start that was almost on the root.  The
+         * blind start (imaginary part 10000) keeps the wide companions. */
+        new_trial->s.real = set[0]->s.real;
+        if (!set[2])
+            new_trial->s.imag = Complex_Init_From_K
+                ? 0.5 * set[1]->s.imag : 1.0e8;
+        else
+            new_trial->s.imag = Complex_Init_From_K
+                ? 2.0 * set[0]->s.imag : 1.0e12;
         error = OK;
         break;
 
@@ -452,7 +492,17 @@ int CKTpzStrat(PZtrial** set)
 
                 k1 = set[1]->s.real - set[0]->s.real;
                 k2 = set[2]->s.real - set[1]->s.real;
-                if (a_mag + 10 < set[0]->mag_def
+                if (set[2]->s.real - set[0]->s.real >= PZ_FLAT_SPAN
+                    && (a == 0.0
+                        || (a_mag + PZ_FLAT_BITS < set[0]->mag_def
+                            && a_mag + PZ_FLAT_BITS < set[1]->mag_def))
+                    && (b == 0.0
+                        || (b_mag + PZ_FLAT_BITS < set[1]->mag_def
+                            && b_mag + PZ_FLAT_BITS < set[2]->mag_def))) {
+                    /* Enhancement-737: flat over the span -- see PZ_FLAT_SPAN */
+                    suggestion = QUIT;
+                }
+                else if (a_mag + 10 < set[0]->mag_def
                     && a_mag + 10 < set[1]->mag_def
                     && b_mag + 10 < set[1]->mag_def
                     && b_mag + 10 < set[2]->mag_def) {
@@ -485,7 +535,21 @@ int CKTpzStrat(PZtrial** set)
             else {
                 new_trap = 3; /* still */
                 /* XXX ? Are these tests needed or is SYM safe all the time? */
-                if (sgn(a) != sgn(b)) {
+                if (NIpzK != 0.0 && NIpzK_mag > -10
+                    && (a == 0.0
+                        || (a_mag + PZ_MIN_FLAT_BITS < set[0]->mag_def
+                            && a_mag + PZ_MIN_FLAT_BITS < set[1]->mag_def))
+                    && (b == 0.0
+                        || (b_mag + PZ_MIN_FLAT_BITS < set[1]->mag_def
+                            && b_mag + PZ_MIN_FLAT_BITS < set[2]->mag_def))) {
+                    /* Enhancement-737: at the floor -- see PZ_MIN_FLAT_BITS */
+                    set[1]->flags |= ISAMINIMA;
+                    set[0] = NULL;
+                    set[2] = NULL;
+                    suggestion = COMPLEX_INIT;
+                    new_trap = 0;
+                }
+                else if (sgn(a) != sgn(b)) {
                     /*  minima in magnitude */
                     /* Search for exact mag. minima, look for complex pair */
                     suggestion = SYM;
@@ -499,7 +563,14 @@ int CKTpzStrat(PZtrial** set)
         }
         if (Consec_Moves >= 3 && CKTpzTrapped == new_trap) {
             new_trap = CKTpzTrapped;
-            if (Last_Move == MID_LEFT || Last_Move == NEAR_RIGHT)
+            /* Enhancement-737: trapped in a sign change, split inside it;
+             * the rule below sent a third NEAR_LEFT to the far side of
+             * set[1], outside the crossing. */
+            if (new_trap == 1)
+                suggestion = SPLIT_LEFT;
+            else if (new_trap == 2)
+                suggestion = SPLIT_RIGHT;
+            else if (Last_Move == MID_LEFT || Last_Move == NEAR_RIGHT)
                 suggestion = SPLIT_LEFT;
             else if (Last_Move == MID_RIGHT || Last_Move == NEAR_LEFT)
                 suggestion = SPLIT_RIGHT;
@@ -968,10 +1039,30 @@ CKTpzUpdateSet(PZtrial** set, PZtrial* new)
         this_move = FAR_LEFT;
     }
     else if (new->s.real < set[1]->s.real) {
-        if (!CKTpzTrapped || new->mag_def < set[1]->mag_def
-            || (new->mag_def == set[1]->mag_def
-                && fabs(new->f_def.real) < fabs(set[1]->f_def.real))) {
-            /* Really should check signs, not just compare fabs( ) */
+        int mid;
+        /* Enhancement-737: a bracket with a sign change keeps it.  The
+         * magnitude rule (take the new point as the middle when it is the
+         * smaller) is right on a smooth function; at the determinant's
+         * rounding floor the magnitudes are noise, and making the new point
+         * the left end when its sign is set[1]'s dropped the only point of
+         * the other sign -- the three points then read as a magnitude
+         * minimum and the search left the real axis for a conjugate pair
+         * that is not there (a common-emitter stage's third pole, under
+         * KLU's default ordering).  With the crossing between set[0] and
+         * set[1], a new point of set[1]'s sign goes to the middle, so the
+         * crossing is between set[0] and it; with the crossing between
+         * set[1] and set[2], a point to the left of set[1] is the new left
+         * end and set[1], set[2] stay. */
+        if (CKTpzTrapped == 1
+            && sgn(new->f_def.real) == sgn(set[1]->f_def.real))
+            mid = 1;
+        else if (CKTpzTrapped == 2)
+            mid = 0;
+        else
+            mid = (!CKTpzTrapped || new->mag_def < set[1]->mag_def
+                   || (new->mag_def == set[1]->mag_def
+                       && fabs(new->f_def.real) < fabs(set[1]->f_def.real)));
+        if (mid) {
             set[2] = set[1];	/* XXX = set[2]->prev :: possible opt */
             set[1] = new;
             this_move = MID_LEFT;
@@ -982,10 +1073,18 @@ CKTpzUpdateSet(PZtrial** set, PZtrial* new)
         }
     }
     else if (new->s.real < set[2]->s.real) {
-        if (!CKTpzTrapped || new->mag_def < set[1]->mag_def
-            || (new->mag_def == set[1]->mag_def
-                && fabs(new->f_def.real) < fabs(set[1]->f_def.real))) {
-            /* Really should check signs, not just compare fabs( ) */
+        int mid;
+        /* Enhancement-737: the mirror image -- see above. */
+        if (CKTpzTrapped == 2
+            && sgn(new->f_def.real) == sgn(set[1]->f_def.real))
+            mid = 1;
+        else if (CKTpzTrapped == 1)
+            mid = 0;
+        else
+            mid = (!CKTpzTrapped || new->mag_def < set[1]->mag_def
+                   || (new->mag_def == set[1]->mag_def
+                       && fabs(new->f_def.real) < fabs(set[1]->f_def.real)));
+        if (mid) {
             set[0] = set[1];
             set[1] = new;
             this_move = MID_RIGHT;

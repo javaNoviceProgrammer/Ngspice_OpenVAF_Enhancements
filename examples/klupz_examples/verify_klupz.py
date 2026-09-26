@@ -186,5 +186,166 @@ compare("[9] twin-T notch: deflated conjugate zero pair (was stalling under KLU)
         "pz in 0 out 0 vol pz",
         expect=[("zero", 0.0, 1e6)])
 
+# ---------------------------------------------------------------------------
+# Enhancement-737 -- F4 of the second solver-core hunt (2026-09-25): the same
+# common-emitter stage gave 2, 3 or 5 poles depending on the solver, its knobs
+# and the deck's line order.  The determinant near a far root is at its
+# rounding floor, and the Muller driver (cktpzstr.c) lost its sign-change
+# bracket there (an endpoint replaced by magnitude, which is noise at the
+# floor), read the three same-sign points as a magnitude minimum, and went
+# hunting a conjugate pair that is not there until its iteration limit.  Now
+# a bracket keeps its crossing, Muller's two companions to a complex start sit
+# at half and twice its imaginary part instead of j1e8 and j1e12, and the
+# outward march stops once the deflated determinant is flat over 1e16 (every
+# remaining root is then beyond 1e22, the search's own horizon), and a
+# real-axis magnitude minimum whose three values agree to 2^-33 is taken at
+# once instead of being refined until two trials coincide by chance.
+# ---------------------------------------------------------------------------
+
+def pz_run(deck_body, pzcard, solver, opts=""):
+    """Full deck body (sources included).  Returns (sorted roots, output)."""
+    opt = f".option {solver}" + (f" {opts}" if opts else "")
+    deck = (f"* pz\n{opt}\n{deck_body}\n.control\n{pzcard}\nset numdgt=12\n"
+            f"print all\n.endc\n.end\n")
+    path = os.path.join(SCRATCH, "e737.cir")
+    open(path, "w").write(deck)
+    r = subprocess.run([NGSPICE, "-b", path], capture_output=True, text=True,
+                       timeout=120, cwd=SCRATCH)
+    out = r.stdout + r.stderr
+    roots = []
+    for m in re.finditer(r"(pole|zero)\(\d+\)\s*=\s*([-\d.eE+]+),([-\d.eE+]+)", out):
+        roots.append((m.group(1), float(m.group(2)), float(m.group(3))))
+    return sorted(roots), out
+
+
+def poles_are(roots, expect, tol):
+    """Every expected pole (a complex number) is matched by one found pole to
+    tol relative, and there are no others."""
+    pol = [complex(r, i) for k, r, i in roots if k == "pole"]
+    if len(pol) != len(expect):
+        return False
+    left = pol[:]
+    for e in expect:
+        best = min(left, key=lambda z: abs(z - e))
+        if abs(best - e) > tol * max(abs(e), 1e-300):
+            return False
+        left.remove(best)
+    return True
+
+
+def gave_up(out):
+    return "giving up" in out
+
+
+CE = """Vcc vcc 0 12
+Vin in 0 dc 0.7 ac 1
+Rs in b 1k
+Rb1 vcc b 100k
+Rb2 b 0 22k
+Q1 c b e qm
+.model qm npn(bf=150 is=1e-15 cje=2p cjc=1p tf=0.3n rb=50)
+Rc vcc c 4.7k
+Re e 0 1k
+Ce e 0 100u
+Cc c out 10u
+Rl out 0 100k
+Cs out 0 1p
+Lp c c2 1n
+Rp c2 0 1e9"""
+# the three lines the hunt moved to the top (five poles under KLU either way now)
+CE_MOVED = "Lp c c2 1n\nRp c2 0 1e9\nCs out 0 1p\n" + "\n".join(
+    l for l in CE.splitlines() if not l.startswith(("Lp ", "Rp ", "Cs ")))
+# the five poles both solvers agree on (E-736 Sparse; -Rp/Lp = -1e18 is real)
+CE_POLES = [-1e18, -5.9265028e8, -5.7692869e7, -53.963296, -0.95510995]
+
+# [10] the hunt's failure: KLU default gave -53.963 and -0.95511 and
+#      "iteration limit reached; giving up after 218 trials"
+kl, out = pz_run(CE, "pz in 0 out 0 vol pol", "klu")
+check("[10] CE stage under KLU (default): five poles, no 'giving up' (was 2 and a warning)",
+      poles_are(kl, CE_POLES, 1e-4) and not gave_up(out),
+      f"({len([1 for k, _, _ in kl if k == 'pole'])} poles)")
+
+# [11] the knobs that gave 3 (btf off, scale none) or 5 (scale sum, colamd):
+#      five under every one, identical to the default's to 1e-6
+for opts in ("klu_btf=off", "klu_scale=none", "klu_scale=sum", "klu_ordering=colamd"):
+    r, o = pz_run(CE, "pz in 0 out 0 vol pol", "klu", opts)
+    check(f"[11] CE stage under KLU {opts}: the same five poles, no warning",
+          poles_are(r, CE_POLES, 1e-4) and same_roots(r, kl) and not gave_up(o),
+          f"({len([1 for k, _, _ in r if k == 'pole'])} poles)")
+
+# [12] Sparse found the five before; it still does, and they are KLU's
+sp, o = pz_run(CE, "pz in 0 out 0 vol pol", "sparse")
+check("[12] CE stage under Sparse: the same five poles as KLU (1e-6), no warning",
+      poles_are(sp, CE_POLES, 1e-4) and same_roots(sp, kl) and not gave_up(o))
+
+# [13] the deck's line order changes the matrix order, not the answer
+r, o = pz_run(CE_MOVED, "pz in 0 out 0 vol pol", "klu")
+check("[13] CE stage with Lp, Rp, Cs moved to the top (KLU): the same five poles",
+      poles_are(r, CE_POLES, 1e-4) and same_roots(r, kl) and not gave_up(o))
+
+# [14] the hunt's six-element RLC ladder over twelve decades: both solvers gave
+#      up after 236 trials with three poles.  The exact roots of det(G + sC)
+#      (characteristic polynomial over the rationals, degree 6): three real,
+#      a conjugate pair at -5e11 +- j3.16e13 and one at -1e15.
+RLC = """V1 in 0 dc 0 ac 1
+R1 in a 1
+L1 a b 1e-12
+C1 b 0 1e-15
+R2 b c 1e6
+L2 c d 1e-3
+C2 d 0 1e-18
+R3 d e 1e3
+C3 e 0 1e-6
+R4 e out 1e9
+C4 out 0 1e-12
+Rl out 0 1e12"""
+RLC_POLES = [-0.999000002995, -1001.001, -1001000999.0,
+             complex(-499999999500.0, 3.16188235233e13),
+             complex(-499999999500.0, -3.16188235233e13), -9.99999999001e14]
+for sol in ("sparse", "klu"):
+    r, o = pz_run(RLC, "pz in 0 out 0 vol pol", sol)
+    check(f"[14] six-element RLC ladder ({sol}): all six exact roots incl. the pair "
+          f"at +-j3.16e13 and -1e15, no warning (was 3 and 'giving up after 236')",
+          poles_are(r, RLC_POLES, 1e-6) and not gave_up(o),
+          f"({len([1 for k, _, _ in r if k == 'pole'])} poles)")
+
+# [15] the RLC bandpass of [6]: Sparse used to give up after 231 trials once
+#      the pair was found -- the outward march reached the rounding zone at
+#      +-1e21 and trapped on a chance minimum there
+r, o = pz_run("v1 in 0 dc 0 ac 1\nl1 in n1 1m\nc1 n1 out 1n\nr1 out 0 100",
+              "pz in 0 out 0 vol pz", "sparse")
+check("[15] RLC bandpass under Sparse: the pair and the origin zero, no 'giving up' "
+      "(was a warning after 231 trials)",
+      poles_are(r, [complex(-5e4, 998749.217772), complex(-5e4, -998749.217772)], 1e-6)
+      and any(k == "zero" and abs(re) < 1.0 for k, re, _ in r) and not gave_up(o))
+
+# [16] the CE stage's linear twin (the hunt's: Sparse gave up with 3 of 5):
+#      exact roots of its characteristic polynomial
+LIN = """Vcc vcc 0 12
+Vin in 0 dc 0.7 ac 1
+Rs in b 1k
+Rb1 vcc b 100k
+Rb2 b 0 22k
+Rbb b bi 50
+Rpi bi e 3.9k
+Cpi bi e 20p
+Cmu bi c 1p
+G1 c e bi e 0.038
+Ro c e 100k
+Rc vcc c 4.7k
+Re e 0 1k
+Ce e 0 100u
+Cc c out 10u
+Rl out 0 100k
+Cs out 0 1p
+Lp c c2 1n
+Rp c2 0 1e9"""
+LIN_POLES = [-0.955181035262, -301.757666387, -6491633.69063, -1100972078.43, -1e18]
+for sol in ("sparse", "klu"):
+    r, o = pz_run(LIN, "pz in 0 out 0 vol pol", sol)
+    check(f"[16] linear CE twin ({sol}): the five exact poles, no warning",
+          poles_are(r, LIN_POLES, 1e-6) and not gave_up(o),
+          f"({len([1 for k, _, _ in r if k == 'pole'])} poles)")
+
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

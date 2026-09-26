@@ -727,6 +727,12 @@ leaves the same factors, and a 300 × 300 resistor mesh under `.option sparse` r
 factorization had to take a pivot at or below it — "the pivot for node b is 3e-14, below
 pivtol (0.001)" — and `set ngdebug` reports the default floor too
 ([E-736](../../enhancements_doc/Enhancement-736.md)).
+The pole-zero search holds at the determinant's rounding floor — a sign-change bracket
+keeps its crossing, Muller starts beside its complex start, the outward march stops when
+the deflated determinant is flat — so a common-emitter stage's five poles no longer depend
+on the solver, its knobs or the deck's line order, and a twelve-decade RLC ladder gives all
+six of its roots where it gave up with three
+([E-737](../../enhancements_doc/Enhancement-737.md)).
 Since [E-666](../../enhancements_doc/Enhancement-666.md): a raw-file `run n5.raw`
 puts every corner's plot in the file, each named with its corner, and `load` reads
 them all; `meas tran` (`ac`, `dc`) reads the combined plot as its nominal's analysis;

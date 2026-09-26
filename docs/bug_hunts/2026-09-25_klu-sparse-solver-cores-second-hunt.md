@@ -34,7 +34,7 @@ pole-zero, and a quadratic ordering cost.**
 | [F1](#f1--source-stepping-leaves-the-diagonal-gmin-armed-every-later-solve-in-the-job-carries-a-gmin-shunt-on-every-node) | *(fixed in [E-734](../../enhancements_doc/Enhancement-734.md): the diagonal gmin is put back at source stepping's exit)* after source stepping — succeeded or failed — `CKTdiagGmin` stays at `gmin`; the transient operating point, every transient time point and every DC sweep point that follow are solved with a 1e-12 S shunt on every diagonal. A 1e11 Ω divider beside a diode clamp reads 0.476 V instead of 0.500 V through the transient; a 1e14 Ω node beside a singular loop reads 990 V instead of 100 kV. Both solvers, no message | **high** — wrong answers on high-impedance nodes, silent |
 | [F2](#f2--an-unsolvable-loop-of-voltage-sources-succeeds-under-sparse-with-1gmin-amperes-and-fails-under-klu) | *(its symptom closed by [E-734](../../enhancements_doc/Enhancement-734.md): the loop is refused under Sparse too; the branch-row mechanism stays)* a KVL-inconsistent loop of three voltage sources ends in "Transient op finished successfully" with 1e12 A circulating under Sparse; under KLU the same deck fails. F1's leaked gmin lands, under Sparse alone, on the branch-row diagonals that pivoting created; KLU adds gmin only to stamped diagonals | **medium** — a spurious operating point; the two solvers disagree on whether a netlist is solvable |
 | [F3](#f3--pivtol-is-inert-under-both-solvers) | *(fixed in [E-736](../../enhancements_doc/Enhancement-736.md): a pivot at or below pivtol is reported and named under both solvers when the deck sets pivtol, and under `set ngdebug` for the default)* `.option pivtol` never rejects a pivot: ngspice's `spmatrix.h` maps Sparse's `spSMALL_PIVOT` to `OK`, so `SearchEntireMatrix`'s fallback to the largest element is reported as success; KLU ignores the value by construction. A matrix of 1e-14 S pivots solves under `pivtol=1e-3` with no word. E-475 validates an option that does nothing | **medium-low** — the manual promises a minimum pivot that is not enforced |
-| [F4](#f4--pole-zero-finds-two-three-four-or-five-poles-on-the-same-stage-depending-on-the-solver-its-knobs-and-the-decks-line-order) | Muller's `pz` on a common-emitter stage returns 2 poles under KLU (default), 3 with `klu_btf=off`, 5 with `klu_scale=sum` or `colamd`, 5 under Sparse — and 5 under KLU too once three deck lines are moved; on the linearised stage Sparse gives up with 3 and KLU finds 5; `.option pzeig` gives the same 4 finite poles under both | **medium** — incomplete pole lists, with only a "giving up" warning |
+| [F4](#f4--pole-zero-finds-two-three-four-or-five-poles-on-the-same-stage-depending-on-the-solver-its-knobs-and-the-decks-line-order) | *(fixed in [E-737](../../enhancements_doc/Enhancement-737.md): the search keeps its sign-change bracket, Muller starts beside its complex start, the outward march stops when the deflated determinant is flat, a minimum at the floor is taken at once; five poles under every solver and knob, the six-element RLC's six roots, the bandpass's pair, no warning)* Muller's `pz` on a common-emitter stage returns 2 poles under KLU (default), 3 with `klu_btf=off`, 5 with `klu_scale=sum` or `colamd`, 5 under Sparse — and 5 under KLU too once three deck lines are moved; on the linearised stage Sparse gives up with 3 and KLU finds 5; `.option pzeig` gives the same 4 finite poles under both | **medium** — incomplete pole lists, with only a "giving up" warning |
 | [N1](#n1--sparses-ordering-is-quadratic-in-the-node-count) | *(fixed in [E-735](../../enhancements_doc/Enhancement-735.md): the lists stay in a layout the ordering never walks through and the scan is a bucket index; same pivots, same factors; the 300 × 300 mesh reorders in 9 s)* Sparse's Markowitz ordering costs 1.5 s at 10k nodes, 17–37 s at 40k and 226 s at 90k on a 2-D resistor mesh (94 % of the run is "matrix reorder time"; equal or random values alike); KLU takes 1.8 s at 90k | low — known character, now measured |
 
 Four diagnostic slips and the smaller notes are at the end.
@@ -323,6 +323,33 @@ setting — `klu_scale=sum` and `colamd` both rescued this stage — or fall thr
 and say so. At the least, the "giving up" warning should say how many roots it has and that
 `.option pzeig` exists.
 
+*Fixed in [E-737](../../enhancements_doc/Enhancement-737.md).* The determinant was not
+the fault, its rounding was the trigger: near the third pole the deflated determinant is at
+its floor (2⁻⁸⁸ against 2⁻⁵⁷ a decade away), the sign flips at random, and
+`CKTpzUpdateSet` replaced a bracket's endpoint by magnitude — its own comment says "really
+should check signs" — so the one point of the other sign was dropped, the three same-sign
+points read as a magnitude minimum, and the search left the real axis for a conjugate pair
+that is not there until its iteration limit; which ordering's rounding did this first was
+the solver's and the knobs' only part. Three more of the same family on the way: the two
+companions to a complex start sat at j1e8 and j1e12 whatever the circuit's scale, the
+outward march after the last root went on to ±1e21 where the s·C rounding against G makes
+the deflated determinant noise (the bandpass under Sparse gave up *after* finding both
+roots), and a magnitude-minimum hunt refined values already equal to 1e-13 until two trials
+coincided by chance. A bracket now keeps its crossing and a repeated move splits inside it;
+the companions sit at half and twice the start's imaginary part; the march stops once the
+deflated determinant is flat to 2⁻²⁰ over 1e16 (every remaining root is then beyond 1e22,
+the search's own horizon); a minimum whose three magnitudes agree to 2⁻³³ is taken at once.
+The stage gives its five poles under KLU's default, `klu_btf=off`, `klu_scale=none`,
+`klu_scale=sum`, `colamd` and Sparse, with the lines moved or not (61 trials where the old
+search spent 208 on two); the six-element RLC of the notes below gives all six exact roots
+of its characteristic polynomial (a pair at −5e11 ± j3.16e13 and −1e15, which `pzeig`'s
+infinity threshold discards) where it gave up with three; the bandpass under Sparse no
+longer gives up; 40 random networks against exact roots: 77 of 80 solver runs complete
+against 70, one warning against eight, none worse. The "giving up" warning says how many
+roots it has and that `.option pzeig` does not iterate. Not changed: the coincidence test
+that accepts a root, judged on the real part — a pair whose real part is 3e-14 of its
+magnitude still stalls under KLU's rounding.
+
 ## N1 — Sparse's ordering is quadratic in the node count
 
 | deck | unknowns | Sparse | of which reorder | KLU | fill-in Sparse / KLU |
@@ -390,7 +417,9 @@ Sparse's numeric refactorization and the fill of the mesh, as for KLU.
   conditioning (1e12) sets the error — inherent to MNA, the same under both, not a solver
   fault.
 * `pz` on a six-element RLC over twelve decades gives up after 236 trials under both solvers
-  with three poles; `pzeig` was not tried on it.
+  with three poles; `pzeig` was not tried on it. *(E-737: all six exact roots of its
+  characteristic polynomial under both solvers, 42 trials; `pzeig` reports three, its
+  infinity threshold discards the far ones.)*
 * KLU with `pivrel=1` (full partial pivoting) is *less* accurate on the indefinite ladder
   than with the default threshold (7.1e-7 against 7.6e-9 relative, on values of 1e-50);
   Sparse with `pivrel=1` is unchanged. Odd but within the reference tolerance; left.

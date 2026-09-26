@@ -313,6 +313,13 @@ solve (`klu_z_tsolve`) and lifts the guards, so under KLU:
   eigensolver) is solver-agnostic by construction — the pencil is extracted
   densely through `SMPdenseExtractReal` from whichever solver holds the matrix —
   and returns identical roots under both.
+  [Enhancement-737](../../../enhancements_doc/Enhancement-737.md) made the Muller
+  driver itself hold at the determinant's rounding floor — a sign-change bracket keeps
+  its crossing, Muller starts beside its complex start, the outward march stops when the
+  deflated determinant is flat, a minimum at the floor is taken at once — so the same
+  stage no longer gives two, three or five poles by solver and knob; the dense method's
+  infinity threshold discards roots beyond about 1e13 times the nearest one (a ladder's
+  −1e15 and ±j3.16e13), which the Muller search finds.
 
 [Enhancement-114](../../../enhancements_doc/Enhancement-114.md) then fixes
 **sensitivity** under KLU. Sensitivity builds an auxiliary perturbation matrix

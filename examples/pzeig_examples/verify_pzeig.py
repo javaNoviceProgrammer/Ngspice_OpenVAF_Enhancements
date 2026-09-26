@@ -21,8 +21,8 @@ with the Muller method where Muller works):
   [2] 10-section RC ladder: ALL TEN poles match the analytic tridiagonal
       eigenvalue formula s_k = -(2 - 2cos((2k-1)pi/21))/(RC) -- and match
       Muller's roots, root for root.
-  [3] RLC bandpass: Muller under Sparse hits its iteration limit ("giving up
-      after N trials"); eig produces the identical correct roots with NO
+  [3] RLC bandpass: the Muller search (which gave up here under Sparse
+      before E-737) and eig produce the identical roots, neither with a
       warning.
   [4] twin-T notch: all 6 roots (3 poles, real zero, conjugate notch pair at
       +-j1e6) under eig, both solvers.
@@ -30,8 +30,12 @@ with the Muller method where Muller works):
   [6] balanced (differential) output works under eig too, both solvers.
   [7] a purely resistive circuit (C = 0: every pencil eigenvalue infinite)
       yields no roots and no crash, either method.
-  [8] the default remains the Muller method (without `.options pzeig` the
-      bandpass still shows Muller's iteration-limit warning).
+  [8] the default remains the Muller method: the two differ where the dense
+      method's infinity threshold discards a root -- a six-element RLC ladder
+      (exact characteristic polynomial of degree 6) has a pair at
+      -5e11 +- j3.16e13 and a root at -1e15 beside roots at -1, -1e3 and
+      -1e9; without `.options pzeig` all six are reported (E-737), with it
+      three.
 
 This is a front-end-of-analysis feature independent of the dual-solver
 harness: the verify drives both solvers and both methods itself.
@@ -127,7 +131,9 @@ for sol in ("sparse", "klu"):
     check(f"[2] 10-pole RC ladder: eig == analytic == muller ({sol})", ok,
           f"({len(eg)} eig roots, {len(mu)} muller roots)")
 
-# [3] bandpass: muller warns (iteration limit) under sparse; eig is clean + identical
+# [3] bandpass: eig is clean and matches Muller's roots (Muller gave up here
+#     under Sparse after finding the pair, until E-737 stopped its outward
+#     march at a flat deflated determinant; it no longer warns either)
 mu, mu_out = run_pz(BP, "pz in 0 out 0 vol pz", "sparse", eig=False)
 eg, eg_out = run_pz(BP, "pz in 0 out 0 vol pz", "sparse", eig=True)
 check("[3] RLC bandpass: eig has NO iteration-limit warning and matches Muller's roots",
@@ -162,9 +168,24 @@ for eig in (False, True):
     check(f"[7] resistive circuit: no poles, no crash ({'eig' if eig else 'muller'})",
           len(roots) == 0 and "Segm" not in out)
 
-# [8] default stays Muller (bandpass without pzeig still shows the warning)
-check("[8] default method remains Muller (no pzeig -> iteration-limit warning present)",
-      "iteration limit" in mu_out)
+# [8] default stays Muller.  The two methods differ where the dense method's
+#     infinity threshold (|mu| <= 64 n eps ||M||) discards a root: the
+#     six-element RLC ladder's characteristic polynomial (degree 6, exact over
+#     the rationals) has a pair at -5e11 +- j3.16e13 and a root at -1e15
+#     beside roots at -1, -1e3 and -1e9.  The Muller search reports all six
+#     since E-737 (it gave up with three before); the eig method reports
+#     three.  (Before E-737 this check keyed on Muller's iteration-limit
+#     warning on the bandpass, which E-737 removed.)
+RLC6 = ("r1 in a 1\nl1 a b 1e-12\nc1 b 0 1e-15\nr2 b c 1e6\nl2 c d 1e-3\nc2 d 0 1e-18\n"
+        "r3 d e 1e3\nc3 e 0 1e-6\nr4 e out 1e9\nc4 out 0 1e-12\nrl out 0 1e12")
+mu6, _ = run_pz(RLC6, "pz in 0 out 0 vol pol", "sparse", eig=False)
+eg6, _ = run_pz(RLC6, "pz in 0 out 0 vol pol", "sparse", eig=True)
+far = [x for x in mu6 if abs(x[1]) > 1e14 or abs(x[2]) > 1e13]
+check("[8] default method remains Muller: the ladder's far roots (a pair at +-j3.16e13, "
+      "-1e15), which the eig method's infinity threshold discards, are reported "
+      "without pzeig and not with it",
+      len(mu6) == 6 and len(far) == 3 and len(eg6) == 3,
+      f"({len(mu6)} muller roots, {len(far)} far; {len(eg6)} eig roots)")
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
