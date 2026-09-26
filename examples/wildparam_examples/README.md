@@ -25,3 +25,17 @@ Eight checks on a model with mixed-case `Wavelength` (model) and `L_um` (instanc
 both cross-level hints name the right form; a truly absent parameter gets no bogus
 hint; sweep labels both wildcard kinds correctly; the matching wildcard still sweeps
 correctly; ALL-CAPS `@*[[L_UM]]` still resolves `L_um`.
+
+## Enhancement-733 — beside a built-in
+
+The hint of [2] was printed only when NO model took the value. ngspice's built-in resistor
+has a MODEL parameter `r` (its default resistance), so beside `R9 a 0 1k` the same
+`alter @*[r]=2k` set that default, counted one, and said nothing while the OSDI instances,
+whose `r` is an instance parameter, kept theirs. Whenever the model wildcard set something,
+the instances of device types whose model lacks the parameter but whose instances carry it
+are counted, by type, and a warning names them and `@#*[r]`.
+
+Checks [8]–[12] (`rinst.va`, `r` an instance parameter): the line beside `R9`, the OSDI
+instances unchanged (1k, 1k, −3 mA); `@#*[r]` sets both and `R9` (its `r` is the alias of
+`resistance`: 2k, 2k, 2k, −1.5 mA) with no line; `altermod @*[r]` says the same; without the
+built-in [2]'s message is unchanged. Fourteen checks in all.

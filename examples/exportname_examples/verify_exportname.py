@@ -99,6 +99,10 @@ ok, out = compile_src(MOD(f"{D}real m; {D}real temp; {D}real dt;\nanalog begin m
 check("[7] operating-point variables 'm', 'temp' and 'dt': three L035, ngspice's own instance parameter wins the lookup",
       ok and out.count(L035) == 3 and "has the name of ngspice's own instance parameter 'm', which wins the lookup" in out
       and "'temp', which wins" in out and "'dt', which wins" in out, first_warn(out))
+o = run("r1", f"print {A}na1[temp]") if ok else ""
+w = [l for l in o.splitlines() if l.startswith("Warning")]
+check("[7b] ...and at load ngspice says so once per name (E-505), with no 'declared more than once' beside it (E-731)",
+      ok and sum("wins the lookup" in l for l in w) == 3 and not [l for l in w if "differing only in case" in l], [l[:70] for l in w][:4])
 ok, out = compile_src(MOD(f"{D}real i_p; {D}real i;\nanalog begin i_p = 4; i = 5; I(p,n) <+ V(p,n); end"), "r2")
 check("[8] operating-point variables 'i_p' and 'i' on a two-terminal device shadow the synthesized terminal currents (E-394): two L035",
       ok and out.count(L035) == 2 and "shadows 'i_p', the terminal current ngspice synthesizes" in out and "shadows 'i', the terminal current" in out, first_warn(out))

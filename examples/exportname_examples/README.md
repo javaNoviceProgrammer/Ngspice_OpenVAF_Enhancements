@@ -1,6 +1,6 @@
 # exportname_examples — an exported name ngspice cannot reach is reported at compile time (Enhancement-652)
 
-Nineteen checks per solver, run under both KLU and Sparse by `_setup.check_both_solvers`.
+Twenty checks per solver, run under both KLU and Sparse by `_setup.check_both_solvers`.
 
 Verilog-A is case-sensitive; ngspice folds every name to lower case and keeps two flat
 tables per device: the instance's parameters, aliases and operating-point variables (with

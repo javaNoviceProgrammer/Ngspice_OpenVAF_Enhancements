@@ -1954,6 +1954,54 @@ if_hasparam_wildcard(CKTcircuit *ckt, char *param, int do_model)
 }
 
 
+/* Enhancement-733 (D3 of the 2026-09-25 evening hunt): how many INSTANCES
+ * carry `param` as an instance parameter on a device type whose MODEL has no
+ * parameter of that name -- the instances the model wildcard `@*[param]`
+ * cannot reach however many models it set. `types` receives the device-type
+ * names, comma-separated, cut to `cap`. This only PROBES. */
+int
+if_hasparam_wildcard_instance_only(CKTcircuit *ckt, char *param, char *types,
+                                   size_t cap)
+{
+    int typecode, count = 0;
+    size_t used = 0;
+
+    if (types && cap)
+        types[0] = '\0';
+    if (!param || !*param || !ckt)
+        return 0;
+
+    for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+        IFdevice    *device = ft_sim->devices[typecode];
+        GENinstance *dummy  = NULL;
+        GENmodel    *mod;
+        int          here = 0;
+
+        if (!device || !ckt->CKThead[typecode])
+            continue;
+        if (parmlookup(device, &dummy, param, 1 /*do_model*/, 1 /*inout=set*/))
+            continue;               /* the model wildcard reaches this type */
+        if (!parmlookup(device, &dummy, param, 0 /*instance*/, 1 /*inout=set*/))
+            continue;               /* no instance parameter of that name */
+        for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
+            GENinstance *inst;
+            for (inst = mod->GENinstances; inst; inst = inst->GENnextInstance)
+                here++;
+        }
+        if (here == 0)
+            continue;
+        count += here;
+        if (types && cap > used + 1) {
+            int w = snprintf(types + used, cap - used, "%s%s",
+                             used ? ", " : "", device->name);
+            if (w > 0)
+                used += ((size_t) w < cap - used) ? (size_t) w : cap - used - 1;
+        }
+    }
+    return count;
+}
+
+
 /* Enhancement-409: read one target's scalar value into vals[*n]. Returns 0 --
  * refusing the whole capture -- for anything that is not a plain number, since a
  * vector-valued parameter cannot be put back from a single reading. */

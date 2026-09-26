@@ -1,0 +1,14 @@
+// Enhancement-733 -- a resistor whose `r` is an INSTANCE parameter, to sit
+// beside ngspice's built-in resistor, whose MODEL has an `r` of its own (the
+// default resistance): the model wildcard `@*[r]` reaches the built-in's model
+// and not these instances.
+`include "disciplines.vams"
+
+module rinst(p, n);
+   inout p, n;
+   electrical p, n;
+
+   (* type="instance" *) parameter real r = 1000.0 from (0:inf);
+
+   analog I(p, n) <+ V(p, n) / r;
+endmodule

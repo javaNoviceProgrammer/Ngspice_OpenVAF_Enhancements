@@ -253,6 +253,31 @@ endmodule
           "differing only in case" in o,
           [ln.strip()[:60] for ln in o.splitlines() if ln.startswith("Warning")][:1])
 
+    # Enhancement-731 (D1 of the 2026-09-25 evening hunt): an operating-point
+    # VARIABLE named `temp`, `m` or `dt` draws E-505's line, which names the
+    # winner -- and drew this one too, against an instance parameter the model
+    # never declared, with no case difference to find. The loader's own rows
+    # (`temp`, `dt`/`dtemp`, the `m` spelling of `$mfactor`, the terminal
+    # currents) are not the module's declarations and are outside the check.
+    A = "@"
+    for name in ("temp", "m", "dt"):
+        d, rc, out = build(mod(f"{name} = 44.0; I(p,n) <+ V(p,n)*1e-3;",
+                               decl=f' (* desc="{name}" *) real {name};'), "opv_" + name)
+        rcs, o = run(d, deck())
+        w = [ln for ln in o.splitlines() if ln.startswith("Warning")]
+        check(f"[E-731] an operating-point variable '{name}': E-505's line once, no 'declared more than once'",
+              rc == 0 and sum("wins the lookup" in ln for ln in w) == 1
+              and not [ln for ln in w if "differing only in case" in ln],
+              [ln.strip()[:70] for ln in w][:2])
+    d, rc, out = build(mod("i_p = 43.0; i = 44.0; I(p,n) <+ V(p,n)*1e-3;",
+                           decl=' (* desc="ip" *) real i_p; (* desc="i" *) real i;'), "opv_i")
+    rcs, o = run(d, deck(body=f"op\nprint {A}n1[i_p] {A}n1[i] {A}n1[i_n]"))
+    w = [ln for ln in o.splitlines() if ln.startswith("Warning")]
+    check("[E-731] variables 'i_p' and 'i' (E-394's terminal-current names): no line at all, the model's values read back, i_n the loader's",
+          rc == 0 and not w and opvar(o, "i_p") == 43.0 and opvar(o, "i") == 44.0
+          and opvar(o, "i_n") is not None and abs(opvar(o, "i_n") + 1e-3) < 1e-12,
+          [ln.strip()[:70] for ln in w][:1] or f"{opvar(o, 'i_p')} {opvar(o, 'i')} {opvar(o, 'i_n')}")
+
     # ================================================== [4] table data files
     print("\n  -- [4] non-finite values in a $table_model data file --")
     TBL = mod('y = $table_model(V(p,n), "t.tbl", "1L"); I(p,n) <+ V(p,n)*1e-3;',

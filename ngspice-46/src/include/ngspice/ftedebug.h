@@ -55,6 +55,9 @@ struct dbcomm {
     int db_graphid; /* If iplot, id of graph. */
     int db_auto;    /* Enhancement-496: this save was inferred by
                        `.option saveused`, not written by the user. */
+    int db_said;    /* Enhancement-732: a `stop when` operand of this entry
+                       was reported missing in the current run; the message
+                       is printed once, not once per accepted point. */
     struct dbcomm *db_also; /* Link for conjunctions. */
     struct dbcomm *db_next; /* List of active debugging commands. */
 } ;

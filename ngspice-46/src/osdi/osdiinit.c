@@ -133,6 +133,28 @@ static int osdi_param_is_fixed(const OsdiDescriptor *descr, int id) {
          (descr->param_opvar[id].flags & PARA_FLAG_FIXED) != 0;
 }
 
+/* Enhancement-731 (D1 of the 2026-09-25 evening hunt): the instance table
+ * starts with rows THIS LOADER writes -- `dt`/`dtemp`, `temp`, and after the
+ * module's own rows the terminal currents `i_<term>` and the bare `i` of
+ * Enhancement-394 -- and none of them is a declaration of the model's. The
+ * check ran over the whole table, so an operating-point VARIABLE named `temp`
+ * (Enhancement-505 warns about it, once, naming the winner) also drew "instance
+ * parameter 'temp' is declared more than once differing only in case": no such
+ * parameter is declared, and the two spellings are identical. The caller now
+ * hands this function the module's own rows alone. A model that names one of
+ * the loader's rows keeps the arrangement it always had -- `m`, `dtemp` and
+ * `temp` are routed or suppressed (E-396), an opvar `m`/`temp`/`dt` is named
+ * by E-505, and an opvar `i` or `i_<term>` comes first in the table and wins,
+ * as E-644 chose for `i`. */
+/* Enhancement-731: the one loader row that sits AMONG the module's own --
+ * write_param_info spells the compiler's `$mfactor` as `m` as well (E-394),
+ * so an opvar `m` met it there and drew the same wrong line. */
+static int osdi_is_mfactor_alias(const OsdiDescriptor *descr, const IFparm *p) {
+  return p->keyword && !strcmp(p->keyword, "m") && p->id >= 0 &&
+         (uint32_t)p->id < descr->num_instance_params &&
+         !strcmp(descr->param_opvar[p->id].name[0], "$mfactor");
+}
+
 static void osdi_warn_case_collisions(const IFparm *params, int n,
                                       const OsdiDescriptor *descr,
                                       const char *kind) {
@@ -145,6 +167,10 @@ static void osdi_warn_case_collisions(const IFparm *params, int n,
         if (params[j].id == params[i].id) {
           /* the same parameter under two spellings -- deliberately routed */
           continue;
+        }
+        if (osdi_is_mfactor_alias(descr, &params[j]) ||
+            osdi_is_mfactor_alias(descr, &params[i])) {
+          continue; /* Enhancement-731: the loader's `m`, not a declaration */
         }
         if (osdi_param_is_fixed(descr, params[j].id) ||
             osdi_param_is_fixed(descr, params[i].id)) {
@@ -255,9 +281,11 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
                       "Instance temperature"};
     dst += 1;
   }
+  IFparm *own_start = dst; /* Enhancement-731: the module's own rows */
   write_param_info(&dst, descr, 0, descr->num_instance_params, entry->has_m);
   write_param_info(&dst, descr, descr->num_params,
                    descr->num_params + descr->num_opvars, true);
+  int own_count = (int)(dst - own_start);
 
   /* Enhancement-505: say so when one of the model's own names is unreachable.
    *
@@ -330,8 +358,8 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
       dst += 1;
     }
   }
-  osdi_warn_case_collisions(instance_para_names, *num_instance_para_names,
-                            descr, "instance");
+  /* Enhancement-731: the module's own declarations, not the loader's rows */
+  osdi_warn_case_collisions(own_start, own_count, descr, "instance");
 
   // allocate and fill model params
   int *num_model_para_names = TMALLOC(int, 1);

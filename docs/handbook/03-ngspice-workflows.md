@@ -707,6 +707,14 @@ the shared node sits at the same port index on both devices the instance names
 decide, the one that sorts first forward, whatever the deck order, and a note says
 so; `.adapt b:n2` names the forward device outright, tie or no tie
 ([E-729](../../enhancements_doc/Enhancement-729.md)).
+An operating-point variable named `temp`, `m` or `dt` draws E-505's line alone at load: the
+case-collision check reads the module's own declarations, not the loader's rows
+([E-731](../../enhancements_doc/Enhancement-731.md)). `stop when` reads an operating-point
+variable that is not in the save set live, as `print` does, and a name that is nowhere is
+reported once per run ([E-732](../../enhancements_doc/Enhancement-732.md)). The model
+wildcard `alter @*[p]` names the instances whose `p` is an instance parameter only, which
+it cannot reach, and the instance wildcard for them, whether or not a built-in's model took
+the value ([E-733](../../enhancements_doc/Enhancement-733.md)).
 Since [E-666](../../enhancements_doc/Enhancement-666.md): a raw-file `run n5.raw`
 puts every corner's plot in the file, each named with its corner, and `load` reads
 them all; `meas tran` (`ac`, `dc`) reads the combined plot as its nominal's analysis;

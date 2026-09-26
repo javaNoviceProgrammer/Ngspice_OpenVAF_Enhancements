@@ -1508,6 +1508,26 @@ alter_set(char *dev, char *param, struct dvec *dv, int do_model)
                         "'@#*[%s]'.\n", pn, pn);
             else
                 fprintf(cp_err, "Warning: no loaded model has parameter '%s'.\n", pn);
+        } else {
+            /* Enhancement-733 (D3 of the 2026-09-25 evening hunt): the hint
+             * above is printed only when NO model took the value. A built-in
+             * resistor's model has `r` too (its default resistance), so beside
+             * `R9 a 0 1k` the same `alter @*[r]=2k` set that default, counted
+             * one, and said nothing while the OSDI instances whose `r` is an
+             * instance parameter kept theirs. Name what the model wildcard
+             * could not reach whenever there is something. */
+            char types[256];
+            int left = if_hasparam_wildcard_instance_only(ft_curckt->ci_ckt,
+                                                          param, types,
+                                                          sizeof types);
+            if (left > 0)
+                fprintf(cp_err, "Warning: the model wildcard '@*[%s]' set %d "
+                        "model%s, but %d instance%s (%s) carr%s '%s' as an "
+                        "instance parameter only, which it cannot reach -- "
+                        "use the instance wildcard '@#*[%s]' for %s.\n",
+                        param, n, n == 1 ? "" : "s", left, left == 1 ? "" : "s",
+                        types, left == 1 ? "ies" : "y", param, param,
+                        left == 1 ? "it" : "them");
         }
     } else {
         /* Enhancement-436: a concrete `@rmod[param]` names the TOP-LEVEL card

@@ -123,6 +123,45 @@ check("[7] ALL-CAPS `@*[[L_UM]]` still matches the mixed-case `L_um`",
       m is not None and abs(float(m.group(1)) + 2.5e-4) < 1e-9,
       f"={m.group(1) if m else '?'}")
 
+# ---------------------------------------------------------------- Enhancement-733
+# (D3 of the 2026-09-25 evening hunt) The hint of [2] was printed only when NO
+# model took the value. ngspice's built-in resistor has a MODEL parameter `r`
+# (its default resistance), so beside `R9 a 0 1k` the same `alter @*[r]=2k`
+# set that default, counted one, and said nothing while the OSDI instances,
+# whose `r` is an instance parameter, kept theirs.
+A = "@"
+
+
+def val(out, name):
+    m = re.search(re.escape(name) + r"\s*=\s*(-?\d+\.?\d*[eE][-+]?\d+)", out)
+    return float(m.group(1)) if m else None
+
+
+ok = build("rinst")
+check("[8] rinst compiles (`r` an instance parameter, as on a CMC resistor)", ok)
+RB = ("* rinst\n.model rm rinst\nn1 a 0 rm r=1k\nn2 a 0 rm r=1k\nr9 a 0 1k\nv1 a 0 1\n"
+      ".control\npre_osdi rinst.osdi\n")
+PR = f"op\nprint i(v1) {A}n1[r] {A}n2[r]\nquit\n.endc\n.end\n"
+rc, out = run(RB + f"alter {A}*[r]=2k\n" + PR)
+check(f"[9] beside a built-in resistor, `alter {A}*[r]=2k` names the instances it could not reach and the form that does (was silent)",
+      "model wildcard '" + A + "*[r]' set 1 model" in out and "instance parameter only" in out
+      and A + "#*[r]" in out and "rinst" in out, "")
+check("[9] ...and the OSDI instances kept their value: 1k, 1k, i(v1) = -3 mA",
+      val(out, A + "n1[r]") == 1e3 and val(out, A + "n2[r]") == 1e3
+      and val(out, "i(v1)") is not None and abs(val(out, "i(v1)") + 3e-3) < 1e-9, f"{val(out, 'i(v1)')}")
+rc, out = run(RB + f"alter {A}#*[r]=2k\n" + PR.replace("quit", f"print {A}r9[resistance]\nquit"))
+check("[10] the instance wildcard sets both OSDI instances AND r9 (its `r` is the alias of `resistance`): 2k, 2k, 2k, i(v1) = -1.5 mA, no such line",
+      val(out, A + "n1[r]") == 2e3 and val(out, A + "n2[r]") == 2e3 and val(out, A + "r9[resistance]") == 2e3
+      and abs((val(out, "i(v1)") or 0) + 1.5e-3) < 1e-9 and "cannot reach" not in out, f"{val(out, 'i(v1)')}")
+rc, out = run(RB + f"altermod {A}*[r]=2k\n" + PR)
+check(f"[11] `altermod {A}*[r]=2k` is the same wildcard and draws the same line",
+      "cannot reach" in out and A + "#*[r]" in out and val(out, A + "n1[r]") == 1e3, "")
+RB2 = ("* rinst\n.model rm rinst\nn1 a 0 rm r=1k\nn2 a 0 rm r=1k\nv1 a 0 1\n"
+       ".control\npre_osdi rinst.osdi\n")
+rc, out = run(RB2 + f"alter {A}*[r]=2k\n" + PR)
+check("[12] without the built-in, [2]'s message is unchanged: 'no loaded model has parameter'",
+      "no loaded model has parameter 'r'" in out and A + "#*[r]" in out and "cannot reach" not in out, "")
+
 print(f"\n{passed}/{checks} checks passed")
 if passed == checks:
     print("ALL PASS")

@@ -33,9 +33,9 @@ named like a built-in, the same module from two files), and the batch dot cards.
 | [F3](#f3--the-branch-current-of-a-voltage-contribution-cannot-be-saved-by-name) | the branch current a `V(p,n) <+` contribution creates is the vector `n1#flow(p,n)`, readable by `print`, `let`, `meas` and `wrdata`, but `save n1#flow(p,n)` registers a node called `p,n` and the analysis is then refused "no data saved" | one command's parser against the name the device chose |
 | [F4](#f4--an-alter-at-a-stop-reaches-the-resumed-run-through-a-door-that-skips-the-range-check-and-only-for-some-parameters) | an `alter` at a `stop` is applied by the next analysis and not by `resume` for a built-in resistor and for an OSDI parameter folded into the setup-time expressions (`reff = r·rmod·(…)`: `r`, `m`, `dtemp` unchanged on resume), but a parameter the evaluation reads directly (`V(p,mid)/r`) does reach the resumed run — without the range check setup would have made: `alter @n1[r]=0` then `resume` dies "Timestep too small … trouble with node mid" where a fresh run says "out of bounds" | a mid-run change applied to some parameters, checked for none |
 | [F5](#f5--an-operating-point-variable-of-an-osdi-device-inside-a-subcircuit-cannot-be-saved-under-its-own-name) | `save @x1.n1[vm]` is "no such device, so this vector will stay empty" and the vector has 0 points, while `print @x1.n1[vm]` reads the value, `save @n.x1.n1[vm]` records 61 points and a built-in's `@x1.r1[i]` saves under the natural name; `stop when @x1.n1[vm] > 0.3` and `meas … when @x1.n1[vm]=0.3` then find nothing | the hierarchical retry of the save does not allow for a variable that has no value yet |
-| [D1](#d1--an-operating-point-variable-named-temp-draws-a-wrong-duplicate-parameter-warning) | a module whose operating-point *variable* is called `temp` draws, beside the correct "the simulator's own parameter wins" warning, a second one that the *instance parameter* `temp` "is declared more than once differing only in case" — there is no such parameter and no case difference | a diagnostic slip |
-| [D2](#d2--a-stop-condition-on-an-unsaved-operating-point-variable-says-no-such-node-at-every-step) | `stop when @n1[vm] > 0.3` with the variable not in the save set prints `Error: @n1[vm]: no such node` at every accepted point and never stops, while `print @n1[vm]` reads the live value and `save @n1[vm]` makes the condition work | the wrong message, once per step |
-| [D3](#d3--the-model-wildcard-alter-on-an-instance-parameter-is-silent-when-a-built-in-device-is-in-the-deck) | `alter @*[r]=2k` (the model wildcard) on an OSDI instance parameter says "no loaded model has parameter 'r', but a loaded instance does -- use the instance wildcard '@#*[r]'" in a deck of OSDI devices, and nothing at all once a built-in resistor is in the deck; either way nothing changes | a message that depends on a bystander |
+| [D1](#d1--an-operating-point-variable-named-temp-draws-a-wrong-duplicate-parameter-warning) | *(fixed in [E-731](../../enhancements_doc/Enhancement-731.md): the check reads the module's own rows only)* a module whose operating-point *variable* is called `temp` draws, beside the correct "the simulator's own parameter wins" warning, a second one that the *instance parameter* `temp` "is declared more than once differing only in case" — there is no such parameter and no case difference | a diagnostic slip |
+| [D2](#d2--a-stop-condition-on-an-unsaved-operating-point-variable-says-no-such-node-at-every-step) | *(fixed in [E-732](../../enhancements_doc/Enhancement-732.md): the variable is read live; a missing name is said once per run)* `stop when @n1[vm] > 0.3` with the variable not in the save set prints `Error: @n1[vm]: no such node` at every accepted point and never stops, while `print @n1[vm]` reads the live value and `save @n1[vm]` makes the condition work | the wrong message, once per step |
+| [D3](#d3--the-model-wildcard-alter-on-an-instance-parameter-is-silent-when-a-built-in-device-is-in-the-deck) | *(fixed in [E-733](../../enhancements_doc/Enhancement-733.md): what the model wildcard could not reach is named, bystander or not)* `alter @*[r]=2k` (the model wildcard) on an OSDI instance parameter says "no loaded model has parameter 'r', but a loaded instance does -- use the instance wildcard '@#*[r]'" in a deck of OSDI devices, and nothing at all once a built-in resistor is in the deck; either way nothing changes | a message that depends on a bystander |
 | [N1](#n1-not-osdi--reset-drops-a-control-block-set-temp) | (not OSDI) `set temp=100` in the control block is honoured by the next `op`, but after a `reset` the run is back at the deck's temperature, `set temp` still set and silent; `unset temp` does not give the deck's temperature back either | an ngspice-core inconsistency, seen through `$temperature` |
 
 Smaller notes are at the end: what `alter n1 r=[1k 2k]` does (nothing, in silence, for
@@ -236,6 +236,12 @@ declarations.
 
 **Kind.** A diagnostic slip that accuses the model of something it did not write.
 
+*Fixed in [E-731](../../enhancements_doc/Enhancement-731.md).* The check is handed the module's own rows alone; the
+loader's `temp`, `dt`/`dtemp`, the `m` spelling of `$mfactor` and the terminal currents
+are outside it. A variable named `temp`, `m` or `dt` draws E-505's line once; one named
+`i_p` or `i` draws nothing and reads back the model's value, as E-644 chose for `i`;
+`GAIN`/`gain` is still reported.
+
 ## D2 — a stop condition on an unsaved operating-point variable says "no such node" at every step
 
 **Observed.** `harnQ.py` [Q1]:
@@ -257,6 +263,11 @@ plot; an operating-point variable is a per-point vector only when saved
 says "`@n1[vm]` is an operating-point variable; `save @n1[vm]` to watch it" — once.
 
 **Kind.** The wrong message, repeated.
+
+*Fixed in [E-732](../../enhancements_doc/Enhancement-732.md).* The condition reads an accessor name the plot lacks
+live, the way `print` does, so the unsaved run stops where the saved one does (25 points
+in [Q1]); a name that is nowhere is reported once per run, with the stop's number, not
+once per accepted point, and a fresh run reports it again.
 
 ## D3 — the model wildcard `alter` on an instance parameter is silent when a built-in device is in the deck
 
@@ -286,6 +297,14 @@ reached, no model actually takes the value, and the OSDI instances keep theirs.
 in the deck.
 
 **Kind.** A message that depends on a bystander device.
+
+*Fixed in [E-733](../../enhancements_doc/Enhancement-733.md).* Whenever the model wildcard set something, the
+instances of device types whose model lacks the parameter but whose instances carry it
+are counted, by type, and a warning names them and the instance wildcard -- with `R9` in
+the deck, "set 1 model, but 3 instances (Vsource, res) carry 'r' as an instance
+parameter only" (the voltage source's `r` is real: `@#*[r]` reaches it too, as it always
+did); `altermod` through the same branch says the same; without the built-in the E-284
+hint is unchanged.
 
 ## N1 (not OSDI) — `reset` drops a control-block `set temp`
 
@@ -467,6 +486,11 @@ it put the deck's temperature back.
   binary — ngspice's `$&` takes a name, not an accessor with two nodes.
 - `.print op @n1[vm]` prints the variable; `.print ac @n1[vm]` prints its operating-point
   value at each frequency.
+- **A crash, met while folding D2** ([E-732](../../enhancements_doc/Enhancement-732.md)):
+  `stop when 0.3 lt v(mid)` — a number on the left, a name on the right — ends ngspice
+  with a segmentation fault before the run starts, on the E-730 binaries as well, for a
+  plain node as for an accessor; only the order `name op number` works. Not pursued.
+
 
 ## Coverage, honestly
 

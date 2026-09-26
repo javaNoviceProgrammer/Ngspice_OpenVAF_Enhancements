@@ -1,0 +1,20 @@
+// Enhancement-732 -- an RC whose mid-node voltage is an operating-point
+// variable, for the `stop when` tests: `vm` rises with the RC time constant,
+// so a threshold on it is met part-way through the run, and it is a VARIABLE
+// (no residual of its own), so it is in the plot only when saved.
+`include "disciplines.vams"
+
+module sg_op(p, n);
+   inout p, n;
+   electrical p, n, mid;
+
+   parameter real r = 1000.0 from (0:inf);
+   parameter real c = 1e-9   from (0:inf);
+   (* desc="mid voltage" *) real vm;
+
+   analog begin
+      I(p, mid) <+ V(p, mid) / r;
+      I(mid, n) <+ ddt(c * V(mid, n));
+      vm = V(mid, n);
+   end
+endmodule

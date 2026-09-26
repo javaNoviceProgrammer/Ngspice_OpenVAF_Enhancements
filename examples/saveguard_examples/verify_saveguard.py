@@ -240,6 +240,33 @@ def main():
         check(f"{mod}: {'warns once' if want_warn else 'does NOT warn'} about the delay",
               n == (1 if want_warn else 0), f"{n} warnings")
 
+    # ------------------------------------------------- [5] stop when, unsaved
+    print("\n    [5] `stop when` on an operating-point variable that was not saved")
+    print("        (Enhancement-732). The condition read the plot alone, called the")
+    print("        variable a node at every accepted point, and never stopped.")
+    osdi_o = compile_va("sg_op")
+    A = "@"
+    SW = "v1 a 0 dc 1\nn1 a 0 mm\n.model mm sg_op(r=1000 c=1e-9)"
+    COND = f"stop when {A}n1[vm] > 0.3\ntran 20n 5u uic\nprint length(time)"
+    out_s = run("swsaved", SW + f"\n.save all {A}n1[vm]", COND, osdi_o)
+    out_u = run("swlive", SW, COND, osdi_o)
+    ns, nu = num(out_s, "length(time)"), num(out_u, "length(time)")
+    check("saved: the condition stops the run part-way (the reference)",
+          "condition met" in out_s and ns is not None and 1 < ns < 200, f"{ns} points")
+    check("unsaved: the variable is read live and the run stops at the same point (was 'no such node' per point, no stop)",
+          "condition met" in out_u and nu == ns and "no such" not in out_u, f"{nu} points")
+    out = run("swbad", SW, f"stop when {A}n1[nosuch] > 0.3\ntran 20n 1u uic\nprint length(time)", osdi_o)
+    n1 = num(out, "length(time)")
+    check("a parameter the device lacks: 'no such parameter' and the stop's own line once each, the run completes",
+          out.count("no such parameter nosuch") == 1 and out.count("is not evaluated again in this run") == 1
+          and n1 is not None and n1 > 40,
+          f"{out.count('no such parameter nosuch')}+{out.count('is not evaluated again')} lines, {n1} points")
+    out = run("swnode", SW, "stop when nosuchnode > 0.3\ntran 20n 1u uic\nprint length(time)\n"
+                            "tran 20n 1u uic\nprint length(time)", osdi_o)
+    check("a node that does not exist: 'no such node' once per RUN (two runs, two lines), not once per point",
+          out.count("no such node") == 2 and out.count("is not evaluated again in this run") == 2
+          and len(re.findall(r"length\(time\)\s*=", out)) == 2, f"{out.count('no such node')} lines")
+
     print(f"\n{passed}/{checks} checks passed")
     return 0 if passed == checks else 1
 

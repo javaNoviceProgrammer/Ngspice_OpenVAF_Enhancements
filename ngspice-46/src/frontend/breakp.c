@@ -17,6 +17,7 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 #include "breakp2.h"
 #include "runcoms2.h"
 #include "com_plot.h"
+#include "variable.h"      /* Enhancement-732: the live read */
 
 #include "completion.h"
 
@@ -525,6 +526,13 @@ ft_bpcheck(struct plot *runplot, int iteration)
         return (FALSE);
     }
 
+    /* Enhancement-732: a new run may have saved what the last one lacked, so
+     * a missing operand is reported once per run, not once per session. */
+    if (iteration == 1)
+        for (d = dbs; d; d = d->db_next)
+            for (dt = d; dt; dt = dt->db_also)
+                dt->db_said = 0;
+
     /* Check the debugs set. */
     for (d = dbs; d; d = d->db_next) {
         for (dt = d; dt; dt = dt->db_also) {
@@ -570,43 +578,127 @@ ft_bpcheck(struct plot *runplot, int iteration)
 }
 
 
+/* Enhancement-732 (D2 of the 2026-09-25 evening hunt): read an `@dev[param]`
+ * operand LIVE when the run plot has no vector of that name. `print @n1[vm]`
+ * reads an operating-point variable that was never saved -- vec_get builds a
+ * one-point vector from if_getparam -- while the stop condition read the plot
+ * alone, called the variable a node, and said so at every accepted point
+ * without ever stopping. This is the same read without the temporary vector:
+ * the value is the one the last accepted point left in the device, which is
+ * what the saved vector's last element would be (Enhancement-418). A
+ * list-valued parameter answers with its first element, as `@dev[p][0]`
+ * would. */
+static bool
+stop_live_value(const char *nm, double *out)
+{
+    char *whole, *name, *param, *s;
+    struct variable *vv, *v;
+    int brdepth = 1;
+    bool ok = FALSE;
+
+    if (!nm || nm[0] != '@' || ft_nutmeg || !ft_curckt || !ft_curckt->ci_ckt)
+        return FALSE;
+
+    whole = copy(nm);
+    name = whole + 1;
+    param = ft_accessor_param_start(name);
+    if (!param) {
+        tfree(whole);
+        return FALSE;
+    }
+    *param++ = '\0';
+    for (s = param; *s; s++) {          /* the ']' that matches (E-408) */
+        if (*s == '[')
+            brdepth++;
+        else if (*s == ']' && --brdepth == 0)
+            break;
+    }
+    *s = '\0';
+
+    vv = if_getparam(ft_curckt->ci_ckt, &name, param, 0, 0);
+    if (vv) {
+        v = vv;
+        if (v->va_type == CP_LIST)
+            v = v->va_vlist;
+        if (v) {
+            switch (v->va_type) {
+            case CP_BOOL:
+                *out = (double) v->va_bool;
+                ok = TRUE;
+                break;
+            case CP_NUM:
+                *out = (double) v->va_num;
+                ok = TRUE;
+                break;
+            case CP_REAL:
+                *out = v->va_real;
+                ok = TRUE;
+                break;
+            default:
+                break;
+            }
+        }
+        free_struct_variable(vv);
+    }
+    tfree(whole);
+    return ok;
+}
+
+
+/* Enhancement-732: one operand of a `stop when`. The plot's vector first (its
+ * last point); failing that the live read above; failing that ONE message per
+ * run -- db_said, cleared by ft_bpcheck at the first point -- where there was
+ * one per accepted point. */
+static bool
+stop_operand(struct dbcomm *d, char *nm, struct plot *plot, double *out)
+{
+    struct dvec *v = vec_fromplot(nm, plot);
+
+    if (v) {
+        if (v->v_length == 0)
+            return FALSE;
+        if (isreal(v))
+            *out = v->v_realdata[v->v_length - 1];
+        else
+            *out = realpart(v->v_compdata[v->v_length - 1]);
+        return TRUE;
+    }
+    if (d->db_said)
+        return FALSE;
+    if (nm[0] == '@' && stop_live_value(nm, out))
+        return TRUE;
+    d->db_said = 1;
+    if (nm[0] == '@')
+        fprintf(cp_err, "Error: %s: no such vector in the plot, and no "
+                "parameter of that name to read live -- stop %d is not "
+                "evaluated again in this run\n", nm, d->db_number);
+    else
+        fprintf(cp_err, "Error: %s: no such node -- stop %d is not evaluated "
+                "again in this run\n", nm, d->db_number);
+    return FALSE;
+}
+
+
 /* This is called to determine whether a STOPWHEN is TRUE. */
 
 static bool
 satisfied(struct dbcomm *d, struct plot *plot)
 {
-    struct dvec *v1 = NULL, *v2 = NULL;
     double d1, d2;
     static double laststoptime = 0.;
 
     if (d->db_nodename1) {
-        if ((v1 = vec_fromplot(d->db_nodename1, plot)) == NULL) {
-            fprintf(cp_err, "Error: %s: no such node\n", d->db_nodename1);
+        if (!stop_operand(d, d->db_nodename1, plot, &d1))   /* Enhancement-732 */
             return (FALSE);
-        }
-        if (v1->v_length == 0)
-            return (FALSE);
-
-        if (isreal(v1))
-            d1 = v1->v_realdata[v1->v_length - 1];
-        else
-            d1 = realpart((v1->v_compdata[v1->v_length - 1]));
-
     } else {
         d1 = d->db_value1;
     }
 
     if (d->db_nodename2) {
-        if ((v2 = vec_fromplot(d->db_nodename2, plot)) == NULL) {
-            fprintf(cp_err, "Error: %s: no such node\n", d->db_nodename2);
+        if (!stop_operand(d, d->db_nodename2, plot, &d2))   /* Enhancement-732 */
             return (FALSE);
-        }
-        if (isreal(v2))
-            d2 = v2->v_realdata[v2->v_length - 1];
-        else
-            d2 = realpart((v2->v_compdata[v2->v_length - 1]));
     /* option interp: no new time step since last stop */
-    } else if (interpolated && AlmostEqualUlps(d1, laststoptime, 3)){    
+    } else if (interpolated && AlmostEqualUlps(d1, laststoptime, 3)){
         d2 = 0.;
     } else {
         d2 = d->db_value2;
