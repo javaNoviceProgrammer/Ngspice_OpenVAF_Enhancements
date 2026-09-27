@@ -461,5 +461,22 @@ check("refused by name: [Mixed-Mode Order]; a v2 two-port without [Two-Port Data
       "Mixed-Mode Order" in la and "without [Two-Port Data Order]" in lb and "disagrees with the 3 given on the command" in lc,
       (la + lb + lc)[-300:])
 
+print("[10] Enhancement-750: a frame on one line longer than 4 KB")
+# a 16-port frame is 513 numbers; written on one line it is over 8 KB, and the
+# reader's fixed 4 KB line buffer cut a number in two at the boundary
+import random as _rnd
+_r = _rnd.Random(750)
+_lines = ["# Hz S RI R 50"]
+_last = None
+for _k in range(3):
+    _vals = [f"{_r.uniform(-0.9, 0.9):.9e}" for _ in range(512)]
+    _last = float(_vals[510]), float(_vals[511])          # S_16_16 of the last frame
+    _lines.append(f"{1e6 * (_k + 1):.7e} " + " ".join(_vals))
+log = rd("_long16.s16p", "\n".join(_lines) + "\n", "rdsnp _long16.s16p\nprint length(frequency) S_16_16[2] S_1_1[0]", "j")
+s1616 = cx(log, "S_16_16", 2)
+check("[E-750e] a 16-port file with one 8.7 KB line per frame reads all three frames, the last frame's S_16_16 as written "
+      "(a number at the old 4 KB boundary was cut in two)",
+      val(log, "length(frequency)") == 3.0 and s1616 is not None and abs(s1616 - complex(*_last)) < 1e-12, log[-300:])
+
 print(f"\n{'ALL PASS' if failed == 0 else 'FAILURES'}: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

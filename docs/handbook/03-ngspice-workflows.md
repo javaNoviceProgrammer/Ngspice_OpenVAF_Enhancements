@@ -295,7 +295,10 @@ same two versions since [E-744](../../enhancements_doc/Enhancement-744.md).
 A fit whose worst element's rms relative error is above 0.1 is refused with
 the number and nothing is written ([E-745](../../enhancements_doc/Enhancement-745.md));
 `pre_snp -maxerr <x>` raises the limit for a noisy measurement, `-force`
-removes it.
+removes it; the error is each element's, relative to its own size or a
+thousandth of the largest element's, and the order climb goes to 80 poles,
+`-maxpoles <N>` or `-order <N>` setting or pinning it
+([E-750](../../enhancements_doc/Enhancement-750.md)).
 
 ## 3.6 Monte Carlo
 

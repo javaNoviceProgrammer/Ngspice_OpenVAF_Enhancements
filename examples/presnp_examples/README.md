@@ -137,3 +137,19 @@ network converts as before and the status line says how many rows were read
 and that the model does not use them. The E-741 refusal check became two
 reading checks, and the v2 section's rows are counted. 26 checks in all; 23 of
 26 on the E-748 binary.
+
+## Round 7 (Enhancement-750) — the fit's error measure and its order climb
+
+A 16-port bus of eight coupled lines was refused at 23 percent because the
+worst element's error was measured against that element's own size, and the
+coupling between the farthest channels is 4e-11 of the diagonal. The error is
+now relative to the larger of an element's own size and a thousandth of the
+largest element's (tolerance 1e-4 on that measure); the climb goes past 24
+poles (a fifth per step, 80 by default), needs two flat steps to stop and
+returns the best fit, and says so when it reaches the cap; `-maxpoles <N>`
+sets the cap, `-order <N>` pins the order, `PRE_SNP_DEBUG=1` traces the
+climb; the reader takes a line of any length. Five checks: the bus (one 8.7
+KB line per frame, ten digits) converging at 8 poles and 1.5e-5 and matching
+a built-in bus on the through channel and the nearest crosstalk, `-order 8`
+and `-maxpoles 2`, the bad values, the trace. 31 checks in all; 26 of 31 on
+the E-749 binary.

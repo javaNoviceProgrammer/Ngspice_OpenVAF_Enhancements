@@ -652,3 +652,4 @@ examples/scanbody_examples/_sb*.cir
 examples/scanbody_examples/*.osdi
 examples/scanbody_examples/scanbody_data.txt
 examples/**/_*.ts
+examples/**/_*.s??p

@@ -91,8 +91,10 @@ def matmul(A, B):
             for i in range(len(A))]
 
 
-def write_snp(fn, freqs, Yof, N):
-    """Write a Touchstone file (S, RI) from an analytic Y(f) N-port."""
+def write_snp(fn, freqs, Yof, N, digits=7):
+    """Write a Touchstone file (S, RI) from an analytic Y(f) N-port. `digits` is the
+    precision after the point (E-750: a near-transparent block needs more, since the
+    S-to-Y conversion amplifies the file's rounding by the inverse of I + S)."""
     I = [[1.0 if i == j else 0j for j in range(N)] for i in range(N)]
     with open(fn, "w") as f:
         f.write("# HZ S RI R 50\n")
@@ -104,14 +106,15 @@ def write_snp(fn, freqs, Yof, N):
             row = f"{fr:.7e} "
             for i in range(N):
                 for j in range(N):
-                    row += f"{S[i][j].real:.7e} {S[i][j].imag:.7e} "
+                    row += f"{S[i][j].real:.{digits}e} {S[i][j].imag:.{digits}e} "
             f.write(row + "\n")
 
 
-def run(deck):
+def run(deck, extra_env=None):
     open(os.path.join(HERE, "_t.cir"), "w").write(deck)
+    env = dict(ENV, **extra_env) if extra_env else ENV
     r = subprocess.run([NGSPICE, "-b", "_t.cir"], capture_output=True, text=True,
-                       cwd=HERE, timeout=180, env=ENV)
+                       cwd=HERE, timeout=180, env=env)
     rows = []
     p = os.path.join(HERE, "_o.dat")
     if os.path.exists(p):
@@ -140,11 +143,12 @@ def cleanup(*names):
 GENERATED = ["_t.cir", "_o.dat"]
 for _b, _e in (("_resonator", "s2p"), ("_star", "s3p"),
                ("_ladder4", "s4p"), ("_ladder8", "s8p")):
-    GENERATED += [f"{_b}.{_e}", f"{_b}.va", f"{_b}.osdi", f"{_b}.o"]
+    GENERATED += [f"{_b}.{_e}", f"{_b}.va", f"{_b}.osdi", f"{_b}.o", f"{_b}.nport"]   # E-750: -native runs too
     GENERATED += [f"{_b}.o{_i}" for _i in range(1, 9)]
 
 
-for _b, _e in (("_noisy", "s2p"),                                # E-745
+for _b, _e in (("_bus16", "s16p"),                               # E-750
+               ("_noisy", "s2p"),                                # E-745
                ("_v2ord", "s2p"), ("_v2ref", "s2p"), ("_v2low", "ts"),
                ("_v2noise", "s2p"), ("_v1noise", "s2p"), ("_v1y", "y2p"),
                ("_v1z", "z2p"), ("_v2y", "s2p"), ("_mm", "s2p"),
@@ -762,6 +766,111 @@ _, o = run("* tight limit\nR1 a 0 1\nV1 a 0 1\n.control\npre_snp -native -maxerr
 check("[E-745e] a limit tighter than a clean fit's error refuses even the resonator (the limit is the user's), and the "
       "default limit does not touch the suite's clean fits (every check above ran under it)",
       "above the limit of 1e-09" in o and not os.path.exists(os.path.join(HERE, "_v2ord.nport")), o[-300:])
+
+# ================= Enhancement-750: the fit's error measure and its order climb ====
+# Found while timing the backends on a 16-port bus of eight coupled lines: the
+# worst element's error was measured against that element's own size, so the
+# coupling between the far channels -- 4e-11 of the diagonal -- held the error
+# at 23 percent whatever the order, and E-745 refused a fit that was the data
+# to 1e-8 of its largest element. The error is now relative to the larger of
+# an element's own size and a thousandth of the largest; the climb goes past
+# 24 poles (a fifth per step, 80 poles by default), needs two flat steps to
+# stop, and says so when it reaches the cap; -maxpoles and -order set or pin
+# the order; PRE_SNP_DEBUG=1 traces the climb.
+NCH16 = 8
+N16 = 2 * NCH16
+Rb, Lb, Ceb, Ccb = 1.0, 1e-9, 0.5e-12, 0.3e-12
+
+
+def Y16(f):
+    s = 1j * 2 * math.pi * f
+    yh = 1.0 / (Rb + s * Lb)
+    n = N16 + NCH16
+    Y = [[0j] * n for _ in range(n)]
+    for k in range(NCH16):
+        a, b, m = 2 * k, 2 * k + 1, N16 + k
+        for x, y in ((a, m), (m, b)):
+            Y[x][x] += yh; Y[y][y] += yh; Y[x][y] -= yh; Y[y][x] -= yh
+    for k in range(NCH16 - 1):
+        m1, m2 = N16 + k, N16 + k + 1
+        Y[m1][m1] += s * Ccb; Y[m2][m2] += s * Ccb; Y[m1][m2] -= s * Ccb; Y[m2][m1] -= s * Ccb
+    for k in range(N16):
+        Y[k][k] += s * Ceb
+    A = [row[:N16] for row in Y[:N16]]
+    B = [row[N16:] for row in Y[:N16]]
+    C = [row[:N16] for row in Y[N16:]]
+    D = [row[N16:] for row in Y[N16:]]
+    BDC = matmul(matmul(B, mat_inv(D)), C)
+    return [[A[i][j] - BDC[i][j] for j in range(N16)] for i in range(N16)]
+
+
+freqs16 = [10 ** (6 + 3.5 * k / 150) for k in range(151)]
+write_snp(os.path.join(HERE, "_bus16.s16p"), freqs16, Y16, N16, digits=10)   # one 8.7 KB line per frame
+ports16 = " ".join(f"p{k}" for k in range(1, N16 + 1))
+loads16 = "".join(f"Rl{k} p{k} 0 50\n" for k in range(2, N16 + 1))
+twin16 = ""
+for k in range(1, NCH16 + 1):
+    a, b = 2 * k - 1, 2 * k
+    twin16 += f"R{k}a p{a} x{k}a {Rb}\nL{k}a x{k}a m{k} {Lb}\nL{k}b m{k} x{k}b {Lb}\nR{k}b x{k}b p{b} {Rb}\n"
+twin16 += "".join(f"Ce{k} p{k} 0 {Ceb}\n" for k in range(1, N16 + 1))
+twin16 += "".join(f"Cc{k} m{k} m{k + 1} {Ccb}\n" for k in range(1, NCH16))
+
+
+def bus_ac(dut, pre=""):
+    return run(f"""* 16-port bus AC
+Vs in 0 dc 0 ac 1
+Rs in p1 50
+{dut}{loads16}.control
+{pre}
+ac dec 30 1meg 3g
+wrdata _o.dat v(p2) v(p4) v(p16)
+.endc
+.end
+""")
+
+
+def floored_err(a, b, col):
+    """relative to the larger of the point's own size and 1e-3 of the largest point"""
+    m = min(len(a), len(b))
+    ref = [complex(a[k][col], a[k][col + 1]) for k in range(m)]
+    tst = [complex(b[k][col], b[k][col + 1]) for k in range(m)]
+    mx = max(abs(v) for v in ref) + 1e-30
+    return max(abs(tst[k] - ref[k]) / max(abs(ref[k]), 1e-3 * mx) for k in range(m)) if m else 1e9
+
+
+ra16, _ = bus_ac(twin16)
+rb16, o = bus_ac(f"N1 {ports16} 0 mb\n.model mb nport(file=\"_bus16.nport\")\n", "pre_snp -native _bus16.s16p")
+m = re.search(r"\((16-port, (\d+) poles, rms rel err ([0-9.e+-]+))", o)
+ok = m is not None and int(m.group(2)) <= 12 and float(m.group(3)) < 1e-4
+check("[E-750a] a 16-port bus of eight coupled lines converts under the default limit (E-745 refused it at 23 percent, "
+      "the far-channel coupling 4e-11 of the diagonal deciding the error): at most 12 poles, error below 1e-4",
+      ok, f"({m.group(1) if m else o[-300:]})")
+if ra16 and rb16:
+    e2, e4 = floored_err(ra16, rb16, 1), floored_err(ra16, rb16, 4)
+    check("[E-750a] ... and the block matches the built-in bus (32 R and L, 23 C) in AC: the through channel v(p2) and "
+          "the nearest crosstalk v(p4), each to 2e-3 of its own size or 1e-3 of its largest point (the file is read "
+          "from 8.7 KB lines, one frame each; the farthest port's crosstalk sits below the file's precision)",
+          e2 < 2e-3 and e4 < 2e-3, f"(v(p2) {e2:.2e}, v(p4) {e4:.2e})")
+else:
+    check("[E-750a] ... and the block matches the built-in bus in AC", False, o[-300:])
+cleanup("_v2ord.nport")
+_, o1 = run("* order 8\nR1 a 0 1\nV1 a 0 1\n.control\npre_snp -native -order 8 _v2ord.s2p\n.endc\n.end\n")
+cleanup("_ladder4.nport")
+_, o2 = run("* cap 2\nR1 a 0 1\nV1 a 0 1\n.control\npre_snp -native -maxpoles 2 _ladder4.s4p\n.endc\n.end\n")
+check("[E-750b] `-order 8` pins the resonator's fit at 8 poles; `-maxpoles 2` on the 4-port ladder (which needs more) "
+      "reaches the cap and says so, in the status line or in E-745's refusal with -maxpoles named",
+      "(2-port, 8 poles," in o1 and ("order cap of 2 poles reached" in o2 or "reached its order cap (raise it with -maxpoles" in o2),
+      (o1 + o2)[-400:])
+_, o3 = run("* bad\nR1 a 0 1\nV1 a 0 1\n.control\npre_snp -native -maxpoles abc _v2ord.s2p\n.endc\n.end\n")
+_, o4 = run("* bad\nR1 a 0 1\nV1 a 0 1\n.control\npre_snp -native -order 0 _v2ord.s2p\n.endc\n.end\n")
+check("[E-750c] `-maxpoles abc` and `-order 0` are refused naming the flag and the default cap",
+      "-maxpoles needs a positive pole count" in o3 and "-order needs a positive pole count" in o4 and "default 80" in o3,
+      (o3 + o4)[-300:])
+cleanup("_ladder4.nport")
+_, o5 = run("* trace\nR1 a 0 1\nV1 a 0 1\n.control\npre_snp -native _ladder4.s4p\n.endc\n.end\n", extra_env={"PRE_SNP_DEBUG": "1"})
+check("[E-750d] PRE_SNP_DEBUG=1 traces the climb, one line per order with its error (the 4-port ladder climbs past "
+      "two orders)",
+      "pre_snp: order 2 poles: rms rel err" in o5 and "pre_snp: order 4 poles: rms rel err" in o5, o5[-300:])
 
 # tidy -- see tidy_all() above; the atexit hook makes this idempotent.
 tidy_all()

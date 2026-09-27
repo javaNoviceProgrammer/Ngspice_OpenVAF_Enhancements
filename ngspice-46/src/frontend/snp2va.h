@@ -15,5 +15,9 @@ int snp2nport_convert(const char *snpfile, const char *nportfile,
 void snp2va_set_maxerr(double x);
 double snp2va_maxerr_default(void);
 double snp2va_last_err(void);       /* the last fit's error, after a conversion */
+/* Enhancement-750: the order climb's cap (poles; 0 restores the default) and a pinned pole count (0: climb) */
+void snp2va_set_maxpoles(int np);
+void snp2va_set_order(int np);
+int snp2va_maxpoles_default(void);
 void com_pre_snp(wordlist *wl);
 #endif

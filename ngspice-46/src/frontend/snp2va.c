@@ -197,6 +197,22 @@ static long ts_numbers(char *p, double **nums, long *ncap, long *nn, int limit)
     return added;
 }
 
+/* Enhancement-750: read one line of any length into a growable buffer (a
+ * 16-port frame written on one line is 513 numbers, over 8 KB, and a fixed
+ * 4 KB buffer cut a number in two at the boundary). Returns 0 at end of file. */
+static int ts_getline(FILE *f, char **buf, size_t *cap)
+{
+    size_t len = 0;
+    if (!*buf) { *cap = 4096; *buf = (char*) malloc(*cap); }
+    (*buf)[0] = '\0';
+    for (;;) {
+        if (!fgets(*buf + len, (int)(*cap - len), f)) return len > 0;
+        len += strlen(*buf + len);
+        if (len == 0 || (*buf)[len-1] == '\n' || len + 1 < *cap) return 1;
+        *cap *= 2; *buf = (char*) realloc(*buf, *cap);
+    }
+}
+
 /* returns 0 on ok.
  *
  * Enhancement-741 (Touchstone-import hunt F1, F10, F11): the parser reads
@@ -236,8 +252,8 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
     double *nz = NULL; long nzcap = 0, nnz = 0;
     /* collect all numeric tokens after the '#' options line(s) */
     double *nums = NULL; long ncap = 0, nn = 0;
-    char line[4096];
-    while (fgets(line, sizeof line, f)) {
+    char *line = NULL; size_t linecap = 0;
+    while (ts_getline(f, &line, &linecap)) {
         lineno++;
         char *h = strchr(line, '!'); if (h) *h = '\0';
         char *p = line;
@@ -262,7 +278,7 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
             else if (!strcmp(kw, "reference")) {
                 if (kw_nports <= 0) { snprintf(msg,(size_t)msglen,"line %d: [Reference] before [Number of Ports]", lineno); goto bad; }
                 want_zref = 1;
-                { char tmp[4096]; snprintf(tmp, sizeof tmp, "%s", rest); ts_numbers(tmp, &zref, &zcap, &nzref, (int)(kw_nports - nzref)); }
+                { char *tmp = strdup(rest); ts_numbers(tmp, &zref, &zcap, &nzref, (int)(kw_nports - nzref)); free(tmp); }
                 if (nzref >= kw_nports) want_zref = 0;
             }
             else if (!strcmp(kw, "matrix format")) {
@@ -308,6 +324,7 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
     }
     fclose(f);
     f = NULL;
+    free(line); line = NULL;
 
     /* port count N: v2 from [Number of Ports]; v1 from the .sNp/.yNp/.zNp
      * extension, else brute force (Enhancement-227 caps it at 512) */
@@ -423,6 +440,7 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
     return 0;
 bad:
     if (f) fclose(f);
+    free(line);
     free(nums); free(zref); free(nz);
     return 1;
 }
@@ -837,6 +855,35 @@ void snp2va_set_maxerr(double x) { snp_maxerr = (x < 0) ? SNP_MAXERR_DEFAULT : x
 double snp2va_maxerr_default(void) { return SNP_MAXERR_DEFAULT; }
 double snp2va_last_err(void) { return snp_last_err; }
 
+/* Enhancement-750: the order climb's cap, and a pinned order. The climb went
+ * one pole pair at a time to 12 pairs (24 poles) and stopped there whatever
+ * the error: a bus of eight coupled lines, whose admittance has more poles
+ * than that, fitted at 23 percent and E-745 refused it with no word that the
+ * cap was the cause. The climb now goes a pair at a time to 12 and then by a
+ * fifth per step to the cap -- 40 pairs (80 poles) by default, never more
+ * than the frequency points support (2*Ns rows against Np+2 unknowns per
+ * element) -- and a fit that reaches the cap without converging says so in
+ * its status line and in E-745's refusal. `pre_snp -maxpoles <N>` sets the
+ * cap for one command, `-order <N>` pins the pole count (rounded up to a
+ * pair), as snp2va.py's --order does. */
+#define SNP_MAXPAIRS_DEFAULT 40
+static int snp_maxpairs = SNP_MAXPAIRS_DEFAULT;
+static int snp_order = 0;              /* 0: climb; else the pinned pole count */
+static int snp_hit_cap = 0;
+static int snp_cap_poles = 0;
+
+void snp2va_set_maxpoles(int np) { snp_maxpairs = (np <= 0) ? SNP_MAXPAIRS_DEFAULT : (np + 1) / 2; }
+void snp2va_set_order(int np) { snp_order = (np <= 0) ? 0 : np; }
+int snp2va_maxpoles_default(void) { return 2 * SNP_MAXPAIRS_DEFAULT; }
+
+static const char *snp_cap_note(void)
+{
+    static char buf[64];
+    if (!snp_hit_cap) return "";
+    snprintf(buf, sizeof buf, "; the order cap of %d poles reached", snp_cap_poles);
+    return buf;
+}
+
 /* Enhancement-749: the status line's note on noise-parameter rows read */
 static const char *snp_noise_note(void)
 {
@@ -881,13 +928,35 @@ static int snp_fit(const char *snpfile, int *pN, int *pNp,
     if (reciprocal) { for (i = 0; i < N; i++) for (j = i; j < N; j++) elems[Ne++] = i*N+j; }
     else            { for (i = 0; i < Nf; i++) elems[Ne++] = i; }
 
+    /* Enhancement-750: the error measure. The worst element's rms error was
+     * taken relative to that element's own size, so an element a millionth of
+     * the diagonal -- the coupling between the far channels of a bus -- held
+     * the error at 23 percent whatever the order while the block was fitted to
+     * 1e-8 of its largest element, and E-745 refused a fit that was the data.
+     * Each element's error is now relative to its own size or a thousandth of
+     * the largest element's, whichever is larger: an element that matters is
+     * still held to its own scale, a negligible one no longer decides. */
+    double *elemNorm = (double*) malloc((size_t) Nf*sizeof(double));
+    double maxNorm = 0.0;
+    for (i = 0; i < Nf; i++) {
+        double acc = 0.0;
+        for (r = 0; r < nf; r++) { cplx fv = F[(long)i*nf+r]; acc += creal(fv)*creal(fv)+cimag(fv)*cimag(fv); }
+        elemNorm[i] = sqrt(acc);
+        if (elemNorm[i] > maxNorm) maxNorm = elemNorm[i];
+    }
     /* ---- order selection: climb, keep best STABLE fit, knee near a floor ---- */
-    double fmin = ts.freqs[0], fmax = ts.freqs[nf-1], tol = 1e-3;
+    double fmin = ts.freqs[0], fmax = ts.freqs[nf-1], tol = 1e-4;   /* Enhancement-750: was 1e-3 (see the measure above) */
     cplx *bestP=NULL,*bestRes=NULL; double *bestD=NULL,*bestE=NULL; int bestNp=0; double bestErr=1e300;
     cplx *prevP=NULL,*prevRes=NULL; double *prevD=NULL,*prevE=NULL; int prevNp=0; double prevErr=-1, firstErr=-1;
     int chosenP=0; cplx *chP=NULL,*chRes=NULL; double *chD=NULL,*chE=NULL; double chErr=-1;
-    int npair;
-    for (npair = 1; npair <= 12; npair++) {
+    int strikes = 0;   /* Enhancement-750: flat steps in a row near the floor before the climb stops */
+    int npair, pinned = 0, cap = snp_maxpairs, capnf = (2*nf - 2) / 2;   /* rows: 2*nf >= Np + 2 */
+    if (capnf < 1) capnf = 1;
+    if (cap > capnf) cap = capnf;
+    if (snp_order > 0) { pinned = (snp_order + 1) / 2; if (pinned > capnf) pinned = capnf; if (pinned < 1) pinned = 1; }
+    snp_hit_cap = 0; snp_cap_poles = 2*cap;
+    for (npair = pinned ? pinned : 1; npair <= (pinned ? pinned : cap);
+         npair = (npair < 12) ? npair + 1 : npair + (npair + 4) / 5) {
         int Np = 2*npair;
         cplx *P = (cplx*) malloc((size_t) Np*sizeof(cplx));
         cplx *res = (cplx*) malloc((size_t) Nf*Np*sizeof(cplx));
@@ -905,21 +974,23 @@ static int snp_fit(const char *snpfile, int *pN, int *pNp,
         for (i = 0; i < Np; i++) if (creal(P[i]) > 1e-6) stable = 0;
         for (int ei = 0; ei < Ne; ei++) {
             k = elems[ei];
-            double numr=0, denr=0;
+            double numr=0, denr;
             for (r = 0; r < nf; r++) {
                 cplx fit = dd[k] + s[r]*ee[k];
                 for (i = 0; i < Np; i++) fit += res[(long)k*Np+i]/(s[r]-P[i]);
                 cplx dif = fit - F[(long)k*nf+r];
                 numr += creal(dif)*creal(dif)+cimag(dif)*cimag(dif);
-                cplx fv = F[(long)k*nf+r];
-                denr += creal(fv)*creal(fv)+cimag(fv)*cimag(fv);
             }
-            double e2 = sqrt(numr)/(sqrt(denr)+1e-300);
+            denr = elemNorm[k] > 1e-3*maxNorm ? elemNorm[k] : 1e-3*maxNorm;   /* Enhancement-750 */
+            double e2 = sqrt(numr)/(denr+1e-300);
             if (e2 > err) err = e2;
         }
         if (!(err==err)) stable = 0;   /* NaN */
         free(p0);
+        if (getenv("PRE_SNP_DEBUG"))   /* Enhancement-750: trace the climb */
+            fprintf(stderr, "pre_snp: order %d poles: rms rel err %.3e%s\n", Np, err, stable ? "" : " (unstable)");
                 if (firstErr < 0) firstErr = err;
+        double bestBefore = bestErr;                     /* Enhancement-750: the knee compares against the best BEFORE this order */
         int keep_best = stable && err < bestErr;
         if (keep_best) {
             /* Don't free the old best buffers if `prev` still aliases them (that
@@ -932,15 +1003,26 @@ static int snp_fit(const char *snpfile, int *pN, int *pNp,
         if (!stable) { if(!keep_best){free(P);free(res);free(dd);free(ee);} break; }
         if (err < tol) { chosenP=Np; chP=P;chRes=res;chD=dd;chE=ee; chErr=err; if(keep_best){/*owned by best too*/} break; }
         int near_floor = (err < 0.1*firstErr) || (err < 0.05);
-        if (prevErr >= 0 && err > 0.7*prevErr && near_floor) {  /* knee at floor -> use prev */
-            chosenP=prevNp; chP=prevP;chRes=prevRes;chD=prevD;chE=prevE; chErr=prevErr;
-            if (!keep_best) { free(P);free(res);free(dd);free(ee); }
-            break;
-        }
+        /* Enhancement-750: the knee. One flat step used to end the climb and hand
+         * back the previous order -- a bus whose modes come in pairs gives the
+         * same error at 6 poles as at 4 and then drops three decades at 8, so
+         * the climb stopped at 4. Two flat steps in a row, measured against the
+         * best so far, end it now, and the best fit so far is what is returned. */
+        if (prevErr >= 0 && err > 0.7*bestBefore && (near_floor || npair >= 12)) {
+            /* no real gain over the best so far: a flat step near the floor, or any
+             * flat step past the old cap of 12 pairs, where a fit that is not
+             * converging (a random file at 0.7) would otherwise climb to the cap */
+            if (++strikes >= 2) {
+                if (!keep_best) { free(P);free(res);free(dd);free(ee); }
+                break;                                   /* the best so far is picked below */
+            }
+        } else
+            strikes = 0;
         /* shift prev <- current (free old prev unless it is the best) */
         if (prevP && prevP!=bestP) { free(prevP);free(prevRes);free(prevD);free(prevE); }
         prevP=P;prevRes=res;prevD=dd;prevE=ee;prevNp=Np;prevErr=err;
     }
+    if (!chP && !pinned && npair > cap) snp_hit_cap = 1;     /* Enhancement-750: ran out of order */
     /* pick chosen, else best, else prev */
     cplx *P; cplx *res; double *dd,*ee; int Np; double fitErr;
     if (chP) { P=chP;res=chRes;dd=chD;ee=chE;Np=chosenP; fitErr=chErr; }
@@ -953,8 +1035,9 @@ static int snp_fit(const char *snpfile, int *pN, int *pNp,
         snprintf(msg,(size_t)msglen,"the fit of %s has an rms relative error of %.2e (%d poles), above the limit of %.3g: "
                  "the model would not be the data -- a noisy or too coarse measurement, a delay-dominated block a "
                  "rational fit cannot follow, or a misread file (rdsnp shows what was read); accept it with "
-                 "-maxerr <x> or -force", snpfile, fitErr, Np, snp_maxerr);
-        free(Y); free(s); free(sn); free(F); free(elems); ts_free(&ts);
+                 "-maxerr <x> or -force%s", snpfile, fitErr, Np, snp_maxerr,
+                 snp_hit_cap ? "; the fit reached its order cap (raise it with -maxpoles <N>)" : "");
+        free(Y); free(s); free(sn); free(F); free(elems); free(elemNorm); ts_free(&ts);
         return 1;
     }
 
@@ -971,7 +1054,7 @@ static int snp_fit(const char *snpfile, int *pN, int *pNp,
     psd_project_E(ee, N);
 
     *pN = N; *pNp = Np; *pP = P; *pRes = res; *pD = dd; *pE = ee; *pErr = fitErr;
-    free(Y); free(s); free(sn); free(F); free(elems); ts_free(&ts);
+    free(Y); free(s); free(sn); free(F); free(elems); free(elemNorm); ts_free(&ts);
     return 0;
 }
 
@@ -1144,7 +1227,7 @@ int snp2va_convert(const char *snpfile, const char *vafile, const char *module,
     for (c=0;c<nchan;c++){ free(chW[c]); free(chU[c]); free(chV[c]); }
     free(chW); free(chU); free(chV); free(chMx); free(ch_lr); free(ch_r); free(ch_kind); free(ch_sec);
     free(sc_pole); free(sc_kind);
-    snprintf(msg,(size_t)msglen,"%d-port, %d poles, rms rel err %.2e%s", N, Np, bestErr<1e300?bestErr:0.0, snp_noise_note());
+    snprintf(msg,(size_t)msglen,"%d-port, %d poles, rms rel err %.2e%s%s", N, Np, bestErr<1e300?bestErr:0.0, snp_cap_note(), snp_noise_note());
     return 0;
 }
 
@@ -1185,7 +1268,7 @@ int snp2nport_convert(const char *snpfile, const char *nportfile,
             fprintf(fo, "  %.15e %.15e\n", creal(res[idx]), cimag(res[idx]));
         }
     fclose(fo);
-    snprintf(msg,(size_t)msglen,"%d-port, %d poles, rms rel err %.2e%s", N, Np, bestErr<1e300?bestErr:0.0, snp_noise_note());
+    snprintf(msg,(size_t)msglen,"%d-port, %d poles, rms rel err %.2e%s%s", N, Np, bestErr<1e300?bestErr:0.0, snp_cap_note(), snp_noise_note());
     return 0;
 }
 

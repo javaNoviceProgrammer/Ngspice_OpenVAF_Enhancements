@@ -87,6 +87,7 @@ void com_pre_snp(wordlist *wl)
     size_t cmdlen;
     int rc, native = 0;
     double maxerr = -1.0;               /* Enhancement-745: -1 = the default limit */
+    int maxpoles = 0, order = 0;        /* Enhancement-750: 0 = the default cap / climb */
 
     /* optional leading flags: -osdi (default) or -native; -maxerr <x> or -force */
     while (wl && wl->wl_word && wl->wl_word[0] == '-') {
@@ -103,23 +104,40 @@ void com_pre_snp(wordlist *wl)
                 return;
             }
         }
+        else if (eq(wl->wl_word, "-maxpoles") || eq(wl->wl_word, "-order")) {
+            const char *flag = wl->wl_word;
+            char *end = NULL;
+            long v;
+            wl = wl->wl_next;
+            v = (wl && wl->wl_word) ? strtol(wl->wl_word, &end, 10) : 0;
+            if (!wl || !wl->wl_word || end == wl->wl_word || *end || v <= 0 || v > 4096) {
+                fprintf(cp_err, "pre_snp: %s needs a positive pole count (the cap of the order climb, default %d, "
+                                "or the pinned order)\n", flag, snp2va_maxpoles_default());
+                return;
+            }
+            if (eq(flag, "-maxpoles")) maxpoles = (int) v; else order = (int) v;
+        }
         else { fprintf(cp_err, "pre_snp: unknown option '%s'\n", wl->wl_word); return; }
         wl = wl->wl_next;
     }
 
     if (!wl || !wl->wl_word) {
-        fprintf(cp_err, "usage: pre_snp [-osdi|-native] [-maxerr <x>|-force] <file.sNp> [module]\n"
+        fprintf(cp_err, "usage: pre_snp [-osdi|-native] [-maxerr <x>|-force] [-maxpoles <N>|-order <N>] <file.sNp> [module]\n"
                         "  -osdi   (default) Touchstone -> Verilog-A -> openvaf-r -> <file>.osdi,\n"
                         "                    then load with `pre_osdi <file>.osdi`.\n"
                         "  -native           Touchstone -> <file>.nport for the built-in n-port\n"
                         "                    device (no compiler); use it in the deck with\n"
                         "                    `N1 <ports..> <ref> m` / `.model m nport(file=\"<file>.nport\")`.\n"
                         "  -maxerr <x>       accept a fit whose rms relative error is up to x (default %g);\n"
-                        "  -force            accept any fit. A fit above the limit is refused, nothing written.\n",
-                snp2va_maxerr_default());
+                        "  -force            accept any fit. A fit above the limit is refused, nothing written.\n"
+                        "  -maxpoles <N>     the cap of the order climb (default %d poles; a fit that reaches it says so);\n"
+                        "  -order <N>        pin the pole count (rounded up to a pair) instead of climbing.\n",
+                snp2va_maxerr_default(), snp2va_maxpoles_default());
         return;
     }
     snp2va_set_maxerr(maxerr);
+    snp2va_set_maxpoles(maxpoles);
+    snp2va_set_order(order);
     snp = wl->wl_word;
     if (wl->wl_next && wl->wl_next->wl_word) {
         (void) snprintf(module, sizeof module, "%s", wl->wl_next->wl_word);
@@ -132,6 +150,8 @@ void com_pre_snp(wordlist *wl)
         with_ext(snp, ".nport", nport, sizeof nport);
         rc = snp2nport_convert(snp, nport, msg, sizeof msg);
         snp2va_set_maxerr(-1.0);
+        snp2va_set_maxpoles(0);
+        snp2va_set_order(0);
         if (rc) {
             fprintf(cp_err, "pre_snp: %s\n", msg);
             return;
@@ -151,6 +171,8 @@ void com_pre_snp(wordlist *wl)
     /* 1. Touchstone -> Verilog-A (the C converter) */
     rc = snp2va_convert(snp, va, module, msg, sizeof msg);
     snp2va_set_maxerr(-1.0);
+    snp2va_set_maxpoles(0);
+    snp2va_set_order(0);
     if (rc) {
         fprintf(cp_err, "pre_snp: %s\n", msg);
         return;

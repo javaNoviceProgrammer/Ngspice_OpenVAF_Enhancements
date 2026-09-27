@@ -47,7 +47,7 @@ vectors. The suite pins a full write-MA → read → compare round-trip at
 ## Run
 
 ```bash
-python3 verify_touchstone.py    # 26 checks
+python3 verify_touchstone.py    # 27 checks
 ```
 
 [1] `wrs2p` with no manual `Rbase` — header `R 50`, file S21 pairs equal
@@ -84,3 +84,10 @@ their own — `frequency` in Hz, `NFmin` in dB, `SOpt` complex, `Rn` in ohms
 publishes; the network plot stays current. A block that is not a whole
 number of rows of five is refused naming it. The E-744 refusal check became
 three: the v1 rows, a v2 section, a malformed block.
+
+## Round 5 (Enhancement-750) — a line of any length
+
+`rdsnp` read a line into a fixed 4 KB buffer; a 16-port frame written on one
+line is 513 numbers, over 8 KB, and a number cut at the boundary gave a wrong
+count or value in silence. The reader now grows its buffer; one check reads a
+16-port file with 8.7 KB lines and its last element as written.

@@ -78,7 +78,10 @@ unchanged.
 
 * The limit is a single number for the worst element; there is no per-band
   weighting and no passivity criterion (passivity is still checked and
-  reported, not enforced).
+  reported, not enforced). *(Update, E-750: the element's error is now
+  relative to the larger of its own size and a thousandth of the largest
+  element's, so a negligible element no longer decides; the refusal names
+  the order cap when the climb reached it.)*
 * The Python `snp2va.py` keeps its `--order` pin and reports its error as
   before.
 * A fit that is stable, below the limit and still wrong for the user's

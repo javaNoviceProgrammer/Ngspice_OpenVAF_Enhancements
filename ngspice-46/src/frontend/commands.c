@@ -367,7 +367,7 @@ struct comm spcp_coms[] = {
     { "snp", com_pre_snp, FALSE, TRUE,          /* Enhancement-200 (use as `pre_snp`) */
       { 040000, 040000, 040000, 040000 }, E_BEGINNING, 1, LOTS,
       NULL,
-      "[-osdi|-native] [-maxerr <x>|-force] file.sNp [module] : compile a Touchstone S-parameter file to a Verilog-A n-port OSDI model (or, -native, to a .nport fit file for the built-in device). Use as `pre_snp file.sNp` (runs before circuit parsing); load the .osdi it writes with `pre_osdi file.osdi`. A fit whose rms relative error is above 0.1 is refused and nothing is written; -maxerr <x> raises the limit, -force removes it." },
+      "[-osdi|-native] [-maxerr <x>|-force] [-maxpoles <N>|-order <N>] file.sNp [module] : compile a Touchstone S-parameter file to a Verilog-A n-port OSDI model (or, -native, to a .nport fit file for the built-in device). Use as `pre_snp file.sNp` (runs before circuit parsing); load the .osdi it writes with `pre_osdi file.osdi`. A fit whose rms relative error is above 0.1 is refused and nothing is written; -maxerr <x> raises the limit, -force removes it. The order climb stops at 128 poles by default and says so when it gets there; -maxpoles <N> sets the cap, -order <N> pins the pole count." },
 #ifdef DEVLIB
     { "use", com_use, FALSE, TRUE,
       { 040000, 040000, 040000, 040000 }, E_BEGINNING, 1, LOTS,

@@ -666,6 +666,29 @@ rdsnp_keyword(const char *p, char *kw, size_t kwlen)
     return rb + 1;
 }
 
+/* Enhancement-750: one line of any length into a growable buffer (a 16-port
+   frame on one line is over 8 KB; the fixed 4 KB buffer cut a number in two).
+   Returns 0 at end of file. */
+static int
+rdsnp_getline(FILE *fp, char **buf, size_t *cap)
+{
+    size_t len = 0;
+    if (!*buf) {
+        *cap = 4096;
+        *buf = TMALLOC(char, *cap);
+    }
+    (*buf)[0] = '\0';
+    for (;;) {
+        if (!fgets(*buf + len, (int) (*cap - len), fp))
+            return len > 0;
+        len += strlen(*buf + len);
+        if (len == 0 || (*buf)[len - 1] == '\n' || len + 1 < *cap)
+            return 1;
+        *cap *= 2;
+        *buf = TREALLOC(char, *buf, *cap);
+    }
+}
+
 /* append the numbers on `q` (at most `limit`, or all when limit < 0) */
 static int
 rdsnp_numbers(const char *q, double **data, size_t *ndata, size_t *adata, int limit)
@@ -688,7 +711,8 @@ void
 com_read_sparam(wordlist *wl)
 {
     FILE *fp;
-    char line[4096];
+    char *line = NULL;
+    size_t linecap = 0;
     char *file;
     int nports = 0, argports = 0, extports = 0;
     double fscale = 1e9, rbase = 50.0;      /* the specification's default: GHz S MA R 50 */
@@ -729,7 +753,7 @@ com_read_sparam(wordlist *wl)
         return;
     }
 
-    while (fgets(line, sizeof(line), fp)) {
+    while (rdsnp_getline(fp, &line, &linecap)) {
         char *t, *bang;
         lineno++;
         bang = strchr(line, '!');
@@ -871,6 +895,7 @@ com_read_sparam(wordlist *wl)
     }
     (void) fclose(fp);
     fp = NULL;
+    tfree(line);
 
     if (!have_opt_line)
         fprintf(stderr, "Warning: no '#' option line in %s; assuming the specification's default, GHz S MA R 50\n", file);
@@ -1096,6 +1121,7 @@ com_read_sparam(wordlist *wl)
 bad:
     if (fp)
         (void) fclose(fp);
+    tfree(line);
     tfree(data);
     tfree(zref);
     tfree(nz);
