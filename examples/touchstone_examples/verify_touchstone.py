@@ -33,6 +33,18 @@ Round 2 (Enhancement-72) adds output options and a READER:
     the .sp plot conventions, so measured data compares 1:1 against
     simulation. Round-trip write-MA -> read -> compare is pinned below.
 
+Enhancement-744 (Touchstone-import hunt F3, with F4's message and F8): the
+reader is version-aware. A Touchstone 2 keyword line was dropped whole (sscanf
+stops at the '['), so `[Two-Port Data Order] 12_21` was never seen and S12/S21
+came back swapped, `[Reference]` was lost and a v2 Y/Z file would have been
+de-normalized as v1. Now the keywords are read (per-port [Reference] published
+as the vector Zref, [Matrix Format] Lower/Upper mirrored, an information block
+skipped, [Noise Data]/[End] ending the data), [Mixed-Mode Order] and the G/H
+types are refused by name, a count that is not a whole number of frames names
+the count and the v1 noise-parameter rows as the usual cause, a v2 Y/Z file is
+absolute and a v1 one de-normalized, the port count comes from a .yNp/.zNp
+extension too, and a file with no option line takes the specification's default
+GHz S MA R 50 (this reader assumed Hz S RI). Section [9] pins each.
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
 import math
@@ -350,6 +362,88 @@ ok8 = (f0 is not None and abs(float(f0.group(1)) - 1e6) < 1e-3   # MHz -> Hz
        and abs(float(rows[0][3]) + 0.5) < 1e-9)                   #      -> -0.5j
 check("MHz scale + MA->RI conversion + 2-port column order", ok8,
       f"({len(rows)} rows)")
+
+print("[9] Enhancement-744: rdsnp reads Touchstone 2; the v1 noise rows, the no-option-line default")
+
+
+def rd(name, text, ctl, tag):
+    with open(os.path.join(HERE, name), "w") as fh:
+        fh.write(text)
+    return run_deck(f"_t9{tag}.cir", f"* rdsnp {name}\n.control\n{ctl}\nset numdgt=10\n.endc\n.end\n")
+
+
+def cx(log, name, k=0):
+    m = re.search(r"^" + re.escape(name) + r"\[" + str(k) + r"\] = (-?[0-9.eE+-]+),\s*(-?[0-9.eE+-]+)", log, re.M | re.I)
+    return complex(float(m.group(1)), float(m.group(2))) if m else None
+
+
+def val(log, expr):
+    m = re.search(r"^" + re.escape(expr) + r" = (-?[0-9.eE+-]+)", log, re.M | re.I)
+    return float(m.group(1)) if m else None
+
+
+# a non-reciprocal 2-port (S12 = 0.1*S21) so the two directions can be told apart
+V2 = """[Version] 2.0
+# Hz S MA
+[Number of Ports] 2
+[Two-Port Data Order] 12_21
+[Number of Frequencies] 2
+[Reference] 50
+   75
+[Begin Information]
+  1.5 2.5 3.5  numbers that are not data
+[End Information]
+[Network Data]
+1e6  0.3 0.0   0.05 -90.0   0.5 -90.0   0.4 180.0
+2e6  0.2 10.0  0.06 -80.0   0.6 -80.0   0.3 170.0
+[Noise Data]
+1e6 2.0 0.3 20 0.5
+[End]
+"""
+log = rd("_v2.s2p", V2, "rdsnp _v2.s2p\nprint S_2_1[0] S_1_2[0] Rbase Zref[0] Zref[1] length(frequency)", "a")
+s21, s12 = cx(log, "S_2_1"), cx(log, "S_1_2")
+check("a v2 two-port in 12_21 order: S21 = 0.5 at -90 deg and S12 = 0.05 at -90 deg, not swapped; announced as Touchstone 2",
+      s21 is not None and s12 is not None and abs(s21 - (-0.5j)) < 1e-9 and abs(s12 - (-0.05j)) < 1e-9
+      and "(Touchstone 2)" in log, f"(S21={s21} S12={s12})")
+check("[Reference] 50 / 75 over two lines: Rbase is port 1's 50, Zref = [50, 75], the note about per-port references; "
+      "the information block and the [Noise Data] section are skipped, 2 points",
+      val(log, "Rbase") == 50.0 and val(log, "Zref[0]") == 50.0 and val(log, "Zref[1]") == 75.0
+      and val(log, "length(frequency)") == 2.0 and "gives every port its own reference impedance" in log, log[-300:])
+Y2 = "[Version] 2.0\n# Hz Y RI\n[Number of Ports] 2\n[Two-Port Data Order] 12_21\n[Network Data]\n1e6 0.02 0 -0.02 0 -0.02 0 0.02 0\n2e6 0.02 0 -0.02 0 -0.02 0 0.02 0\n[End]\n"
+Y1 = "# Hz Y RI R 50\n1e6 1.0 0 -1.0 0 -1.0 0 1.0 0\n2e6 1.0 0 -1.0 0 -1.0 0 1.0 0\n"
+log = rd("_v2y.s2p", Y2, "rdsnp _v2y.s2p\nprint Y_1_1[0]", "b")
+y2 = cx(log, "Y_1_1")
+log1 = rd("_v1y.y2p", Y1, "rdsnp _v1y.y2p\nprint Y_1_1[0]", "c")
+y1 = cx(log1, "Y_1_1")
+check("a v2 Y file is absolute (Y11 = 0.02 S as written); a v1 .y2p carries Y*R and is de-normalized to the same 0.02 S -- "
+      "and its port count comes from the .y2p extension",
+      y2 is not None and y1 is not None and abs(y2 - 0.02) < 1e-12 and abs(y1 - 0.02) < 1e-12 and "cannot infer" not in log1,
+      f"(v2 {y2}, v1 {y1})")
+TS3 = "[Version] 2.0\n# GHz S RI R 50\n[Number of Ports] 3\n[Matrix Format] Lower\n[Network Data]\n1 0.1 0  0.2 0 0.3 0  0.4 0 0.5 0 0.6 0\n2 0.1 0  0.2 0 0.3 0  0.4 0 0.5 0 0.6 0\n[End]\n"
+log = rd("_v2low.ts", TS3, "rdsnp _v2low.ts\nprint S_1_2[0] S_2_1[0] S_3_1[0] S_3_3[0] frequency[0]", "d")
+check("a 3-port .ts in [Matrix Format] Lower: the triangle mirrored (S12 = S21 = 0.2, S31 = 0.4, S33 = 0.6), the port count from "
+      "[Number of Ports], GHz scaled",
+      cx(log, "S_1_2") == 0.2 and cx(log, "S_2_1") == 0.2 and cx(log, "S_3_1") == 0.4 and cx(log, "S_3_3") == 0.6
+      and val(log, "frequency[0]") == 1e9, log[-200:])
+V1N = "# MHz S MA R 50\n1.0 0.5 0.0 0.5 -90.0 0.5 -90.0 0.5 180.0\n2.0 0.4 10.0 0.6 -80.0 0.6 -80.0 0.4 170.0\n! noise parameters\n1.0 2.0 0.30 20 0.5\n2.0 2.5 0.35 40 0.6\n"
+log = rd("_v1n.s2p", V1N, "rdsnp _v1n.s2p", "e")
+check("a v1 file with noise-parameter rows after the network data is refused naming the count, the frame size and the rows "
+      "(it said 'wrong port count?')",
+      "28 numbers of network data, not a whole number of 2-port frames of 9" in log and "noise-parameter rows" in log, log[-300:])
+NOOPT = "1.0   0.5 0.0    0.5 -90.0   0.5 -90.0   0.5 180.0\n2.0   0.4 10.0   0.6 -80.0   0.6 -80.0   0.4 170.0\n"
+log = rd("_noopt.s2p", NOOPT, "rdsnp _noopt.s2p\nprint frequency[0] S_2_1[0]", "f")
+s21 = cx(log, "S_2_1")
+check("no option line: the specification's default GHz S MA R 50 -- frequency[0] = 1e9, S21 = 0.5 at -90 deg = -0.5j "
+      "(the reader assumed Hz S RI: 1 Hz and 0.5-90j)",
+      val(log, "frequency[0]") == 1e9 and s21 is not None and abs(s21 - (-0.5j)) < 1e-9 and "GHz S MA R 50" in log, f"(f0={val(log, 'frequency[0]')} S21={s21})")
+MM = V2.replace("[Network Data]", "[Mixed-Mode Order] D1,2 C1,2\n[Network Data]")
+NOORD = V2.replace("[Two-Port Data Order] 12_21\n", "")
+la = rd("_mm.s2p", MM, "rdsnp _mm.s2p", "g")
+lb = rd("_noord.s2p", NOORD, "rdsnp _noord.s2p", "h")
+lc = rd("_v2b.s2p", V2, "rdsnp _v2b.s2p 3", "i")
+check("refused by name: [Mixed-Mode Order]; a v2 two-port without [Two-Port Data Order]; a [Number of Ports] that disagrees with the count on the command",
+      "Mixed-Mode Order" in la and "without [Two-Port Data Order]" in lb and "disagrees with the 3 given on the command" in lc,
+      (la + lb + lc)[-300:])
 
 print(f"\n{'ALL PASS' if failed == 0 else 'FAILURES'}: {passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

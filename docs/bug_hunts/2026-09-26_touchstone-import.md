@@ -5,8 +5,9 @@
 Apple clang) and `OpenVAF-master-20260610/target/opt/openvaf-r`. **Status:
 open** — a survey and a set of probes, nothing in the repository was changed
 by the hunt itself; F1, F10 and F11 were folded afterwards as
-[E-741](../../enhancements_doc/Enhancement-741.md) and F2 became a refusal,
-marked in the table.
+[E-741](../../enhancements_doc/Enhancement-741.md) and F2 became a refusal;
+F3 and F8 as [E-744](../../enhancements_doc/Enhancement-744.md), which also
+gave F4's refusal its cause; marked in the table.
 Probe files and logs are under the session scratchpad `ts/`.
 
 The question was how ngspice handles RF work that starts from a Touchstone
@@ -28,12 +29,12 @@ each path.
 |---|---|---|
 | [F1](#f1--pre_snp-fits-a-touchstone-v2-file-to-garbage-silently) | *(fixed in [E-741](../../enhancements_doc/Enhancement-741.md): the converter's parser reads Touchstone 2, and refuses a number count that is not a whole number of frames)* `pre_snp` on a Touchstone v2 file keeps the numbers on the bracketed keyword lines as data, misaligns every frame and fits the result: 16 poles, rms error 5.9e-2, S21 = −66.7 where the v1 file of the same data gives 2 poles, 4e-4 and 0.4997; no message | **high** — silent wrong model |
 | [F2](#f2--pre_snp-fits-a-v1-noise-parameter-block-as-s-data-silently) | *(since [E-741](../../enhancements_doc/Enhancement-741.md) the file is refused, with the count and the noise rows named; reading the rows is still open)* a v1 `.s2p` with the noise-parameter rows the v1 spec allows after the network data is fitted with those rows as S-data: 6 poles, rms error 0.42, S21 = 0.975; no message | **high** — silent wrong model |
-| [F3](#f3--rdsnp-reads-a-v2-file-with-s12-and-s21-swapped-and-ignores-reference) | `rdsnp` drops every bracketed line whole, so a v2 file's `[Two-Port Data Order] 12_21` is not seen and S12 and S21 come back swapped; `[Reference]` per-port impedances are ignored and a v2 Y or Z file would be de-normalized as if v1 | **medium** — silent |
-| [F4](#f4--rdsnp-refuses-a-valid-v1-file-that-carries-noise-parameters) | the same noise-parameter file is refused with *holds 214 numbers, not a multiple of 9 — wrong port count?* | low — misleading refusal |
+| [F3](#f3--rdsnp-reads-a-v2-file-with-s12-and-s21-swapped-and-ignores-reference) | *(fixed in [E-744](../../enhancements_doc/Enhancement-744.md): the reader reads the v2 keywords, `Zref` carries per-port references, v2 Y/Z are absolute)* `rdsnp` drops every bracketed line whole, so a v2 file's `[Two-Port Data Order] 12_21` is not seen and S12 and S21 come back swapped; `[Reference]` per-port impedances are ignored and a v2 Y or Z file would be de-normalized as if v1 | **medium** — silent |
+| [F4](#f4--rdsnp-refuses-a-valid-v1-file-that-carries-noise-parameters) | *(since [E-744](../../enhancements_doc/Enhancement-744.md) the refusal names the count, the frame and the noise rows as the usual cause; reading the rows is still open)* the same noise-parameter file is refused with *holds 214 numbers, not a multiple of 9 — wrong port count?* | low — misleading refusal |
 | [F5](#f5--pre_snp-never-refuses-a-bad-fit) | the converter reports its rms error in an informational line and emits the model whatever the value; the 42 % fit of F2 was used | medium |
 | [F6](#f6--every-native-nport-instance-prints-509-lines-of-unconnected-terminal-warnings) | `N1 p1 p2 0 mm` on a native `nport` model prints E-481's warning with one line per terminal from 4 to 512; the suite's own deck prints 510 | low — diagnostics flood |
 | [F7](#f7--pz-aborts-on-a-circuit-with-a-native-nport-and-says-only-that-it-aborted) | `pz` with the native device prints *pz simulation(s) aborted* and nothing else; the OSDI route finds the RC pole at −1.00001e7 rad/s (plus the fit's own pole–zero pair) | medium — unsupported without a reason |
-| [F8](#f8--rdsnp-defaults-a-file-with-no-option-line-to-hz-s-ri-the-spec-and-the-converter-say-ghz-s-ma) | a v1 file without an option line is read by `rdsnp` as Hz and real/imaginary; the spec's default, which the converter applies, is GHz and magnitude/angle | low |
+| [F8](#f8--rdsnp-defaults-a-file-with-no-option-line-to-hz-s-ri-the-spec-and-the-converter-say-ghz-s-ma) | *(fixed in [E-744](../../enhancements_doc/Enhancement-744.md): the default is GHz S MA R 50, and the warning names it)* a v1 file without an option line is read by `rdsnp` as Hz and real/imaginary; the spec's default, which the converter applies, is GHz and magnitude/angle | low |
 | [F9](#f9--an-imported-lossy-block-is-noiseless) | neither backend has a noise entry: the native device's table has no `DEVnoise`, the emitted Verilog-A has no noise source; `.noise` through the RC two-port reports 3.4e-13 V/√Hz against the built-in's 1.09e-9, and the noise figure of `.sp` through a lossy filter or package is that of the rest of the circuit, silently | medium — wrong numbers, by design gap |
 | [F10](#f10--a-y2p-or-z2p-file-is-read-as-a-1-port) | *(fixed in [E-741](../../enhancements_doc/Enhancement-741.md): the port count is taken from a `.yNp`/`.zNp` extension too)* `pre_snp` on the `.y2p` and `.z2p` files `wrsnp` writes reports *1-port, 18 poles, rms rel err 4.2e-2*: the port count is inferred only from an `.sNp` extension and the fallback picks the first divisor, which is 1 for every two-port frame of 9 numbers | **medium** — silent wrong model |
 | [F11](#f11--pre_snp-takes-v1-y-and-z-data-as-absolute-the-spec-wrsnp-and-rdsnp-normalize-them-to-r) | *(fixed in [E-741](../../enhancements_doc/Enhancement-741.md): v1 Y and Z are de-normalized, v2's taken as absolute)* with the port count right, the same Y file gives S21 = 0.597 − j0.478 against 0.4997 − j0.0118: v1 Y and Z data are normalized to the reference resistance (`wrsnp` writes Y·R and Z/R, `rdsnp` undoes it) and the converter takes them as absolute; the Python original does the same | **medium** — silent wrong model |
@@ -111,6 +112,8 @@ and `[Reference]`, so per-port impedances are lost and `Rbase` falls back to
 the option line's `R` or 50. A v2 Y or Z file, which the v2 spec stores
 un-normalized, would be divided or multiplied by `Rbase` as if it were v1.
 
+*Fixed in [E-744](../../enhancements_doc/Enhancement-744.md).* The reader reads the v2 keywords; the file above now gives S21 = 0.49972 − j0.01178 and S12 = 0.049972 − j0.001178, the v1 numbers, announced as Touchstone 2. A per-port `[Reference]` is published as `Zref` with `Rbase` port 1's, a `Lower`/`Upper` matrix is mirrored, a v2 Y or Z file is taken as written, and mixed-mode order, the G/H types and a two-port without its data order are refused by name.
+
 ## F4 — `rdsnp` refuses a valid v1 file that carries noise parameters
 
 ```
@@ -119,6 +122,8 @@ Error: v1noise.s2p holds 214 numbers, not a multiple of 9 (1 + 2*2^2) -- wrong p
 
 The count check is right to fire; the message names a cause that is not the
 one, and the file is one every VNA can write.
+
+*Since [E-744](../../enhancements_doc/Enhancement-744.md)* the refusal reads: *holds 214 numbers of network data, not a whole number of 2-port frames of 9 (frequency + 4 pairs): a wrong port count, or Touchstone 1 noise-parameter rows after the network data, which rdsnp does not read -- remove them, or give the port count*. Reading the rows is still open, as it is for the converter (F2).
 
 ## F5 — `pre_snp` never refuses a bad fit
 
@@ -177,6 +182,8 @@ disagree on the same file. Measured on the two-port written in GHz and MA
 without its option line: `rdsnp` reports `frequency[0] = 1.0e-04` for the
 100 kHz point and `S_2_1[0] = 0.49986, -1.35`, the magnitude and the angle in
 degrees taken as real and imaginary parts.
+
+*Fixed in [E-744](../../enhancements_doc/Enhancement-744.md).* The default is the specification's, GHz S MA R 50, and the warning names it; the option-less file above now reads 100 kHz and 0.49972 − j0.01178.
 
 ## F9 — an imported lossy block is noiseless
 

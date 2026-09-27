@@ -248,7 +248,7 @@ Options (`ri|ma|db`, `s|y|z`, `hz|khz|mhz|ghz`) combine in any order; the
 2-port default output is byte-identical to the classic `wrs2p`, and N ≥ 3
 files use the spec's row-major layout.
 
-**Import** — `rdsnp` reads any Touchstone v1 file (yours or a VNA's) into a
+**Import** — `rdsnp` reads any Touchstone 1 or 2 file (yours or a VNA's) into a
 new plot with a Hz `frequency` scale and complex vectors matching the `.sp`
 conventions, so **measured data diffs against simulation in one
 expression**:
@@ -260,9 +260,15 @@ rdsnp measured.s2p           ; port count from the extension (or: rdsnp f 3)
 let err = maximum(mag(S_2_1 - {sp1}.s21sim))
 ```
 
-MA/DB files convert back to real/imaginary on read, Y/Z de-normalize to
-absolute values, and the imported plot's `Rbase` lets it round-trip back
-out through `wrsnp`. Pinned round-trip accuracy: 4×10⁻⁸ (the file's own
+MA/DB files convert back to real/imaginary on read, a v1 file's Y/Z
+de-normalize to absolute values (a v2 file's are stored absolute), and the
+imported plot's `Rbase` lets it round-trip back out through `wrsnp`. Since
+[E-744](../../enhancements_doc/Enhancement-744.md) the Touchstone 2 keywords
+are read — a per-port `[Reference]` lands in the vector `Zref`, a
+`Lower`/`Upper` matrix is mirrored, the noise and information sections are
+skipped — and what the reader cannot read (mixed-mode order, the G/H types, a
+v1 noise-parameter block after the network data) is refused by name; a file
+with no option line takes the specification's default, GHz S MA R 50. Pinned round-trip accuracy: 4×10⁻⁸ (the file's own
 6-digit precision is the limit). See
 [`examples/touchstone_examples/`](../../examples/touchstone_examples/).
 
@@ -276,8 +282,8 @@ section (skipped); `[Mixed-Mode Order]` and the G/H parameter types are
 refused by name, as is a file whose numbers are not a whole number of frames
 (a v1 file with noise-parameter rows after its network data says so). The v1
 `.yNp`/`.zNp` forms `wrsnp` writes are read with their port count and their
-Y·R, Z/R normalization undone; v2 Y and Z are absolute. `rdsnp` itself is
-still a v1 reader.
+Y·R, Z/R normalization undone; v2 Y and Z are absolute. `rdsnp` reads the
+same two versions since [E-744](../../enhancements_doc/Enhancement-744.md).
 
 ## 3.6 Monte Carlo
 

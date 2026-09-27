@@ -47,7 +47,7 @@ vectors. The suite pins a full write-MA → read → compare round-trip at
 ## Run
 
 ```bash
-python3 verify_touchstone.py    # 17 checks
+python3 verify_touchstone.py    # 24 checks
 ```
 
 [1] `wrs2p` with no manual `Rbase` — header `R 50`, file S21 pairs equal
@@ -55,3 +55,22 @@ the plot's `S_2_1`; [2] `let Rbase = 75` override honored; [3] 1-port
 `.s1p` with S11 = 1/3 exactly (pins the crash fix); [4] `.s3p` — 3
 frequency blocks × 9 pairs, all 1/3, each matrix row on its own line;
 [5] `.s5p` — 25 pairs of 1/5, rows wrapping at 4 pairs per line.
+
+## Round 3 (Enhancement-744) — `rdsnp` reads Touchstone 2
+
+The reader scanned data lines with `sscanf`, which stops at a `[`, so every
+Touchstone 2 keyword line was dropped whole: `[Two-Port Data Order] 12_21`
+was never seen and S12/S21 came back swapped, `[Reference]` was lost, and a
+v2 Y/Z file would have been de-normalized as v1. Now the keywords are read —
+a per-port `[Reference]` (continued over lines) is published as the vector
+`Zref` with `Rbase` port 1's, `[Matrix Format] Lower`/`Upper` is mirrored,
+an information block and a `[Noise Data]` section are skipped — and
+`[Mixed-Mode Order]`, the G/H types, an unknown keyword, a two-port without
+its data order and a port count that disagrees with the command or the
+extension are refused by name. A count that is not a whole number of frames
+names the count and the v1 noise-parameter rows as the usual cause (it said
+"wrong port count?"), a v2 Y/Z file is absolute and a v1 one de-normalized,
+the port count comes from a `.yNp`/`.zNp` extension too, and a file with no
+option line takes the specification's default `GHz S MA R 50` (the reader
+assumed `Hz S RI`). Section [9]: seven checks on hand-written files, each
+of these pinned.

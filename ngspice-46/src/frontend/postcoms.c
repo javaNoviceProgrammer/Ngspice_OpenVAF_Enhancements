@@ -626,25 +626,81 @@ done:
    row starting on a new line (the first row follows the frequency value);
    a 1-port is a single pair per line. (The classic 2-port S11 S21 S12 S22
    column order is handled by the original spar_write() path.) */
-/* Enhancement-72: `rdsnp <file> [nports]` -- read a Touchstone v1 file
-   into a new plot ("Touchstone import") holding a real `frequency` scale
-   in Hz plus complex `S_i_j` (or Y/Z) vectors matching the .sp plot's
-   conventions (Y/Z de-normalized back to absolute values), so imported
-   measurement data can be compared 1:1 against simulated vectors. The
-   port count comes from the `.sNp` extension unless given explicitly. */
+/* Enhancement-744 (Touchstone-import hunt F3, with F4's message and F8): the
+   reader is version-aware, as E-741 made the pre_snp converter. Before, a
+   line that was not `#` or `!` was scanned for numbers with sscanf, which
+   stops at a `[`, so every Touchstone 2 keyword line was dropped whole: the
+   frame count came out right, but `[Two-Port Data Order] 12_21` was never
+   seen and S12 and S21 came back swapped, `[Reference]` was lost and Rbase
+   fell back to the option line's R or 50, and a v2 Y or Z file, which the
+   v2 specification stores un-normalized, would have been divided or
+   multiplied by Rbase as if v1. Now the keywords are read ([Version],
+   [Number of Ports], [Two-Port Data Order], [Number of Frequencies],
+   [Number of Noise Frequencies], a per-port [Reference] continued over
+   lines, [Matrix Format] Full/Lower/Upper, [Begin Information]..[End
+   Information], [Network Data], [Noise Data], [End]); [Mixed-Mode Order],
+   the G and H types and an unknown keyword are refused by name; a count
+   that is not a whole number of frames names the count, the frame size and
+   the two usual causes (a wrong port count, or v1 noise-parameter rows,
+   which the reader does not read); a v1 file's Y and Z are de-normalized as
+   before, a v2 file's taken as given; per-port references are published as
+   the vector `Zref`, with `Rbase` port 1's; the port count comes from a
+   `.yNp`/`.zNp` extension as well as `.sNp`; and a file with no option line
+   is read with the specification's default, GHz S MA R 50, which the
+   converter has always applied, where this reader assumed Hz S RI. */
+static const char *
+rdsnp_keyword(const char *p, char *kw, size_t kwlen)
+{
+    const char *rb = strchr(p, ']');
+    size_t n = 0;
+    int sp = 0;
+    if (!rb)
+        return NULL;
+    for (p++; p < rb; p++) {
+        if (isspace_c(*p)) { sp = 1; continue; }
+        if (sp && n && n + 1 < kwlen) kw[n++] = ' ';
+        sp = 0;
+        if (n + 1 < kwlen) kw[n++] = tolower_c(*p);
+    }
+    kw[n] = '\0';
+    return rb + 1;
+}
+
+/* append the numbers on `q` (at most `limit`, or all when limit < 0) */
+static int
+rdsnp_numbers(const char *q, double **data, size_t *ndata, size_t *adata, int limit)
+{
+    double v;
+    int i, added = 0;
+    while ((limit < 0 || added < limit) && sscanf(q, " %lg%n", &v, &i) == 1) {
+        if (*ndata == *adata) {
+            *adata = *adata ? 2 * *adata : 1024;
+            *data = TREALLOC(double, *data, *adata);
+        }
+        (*data)[(*ndata)++] = v;
+        q += i;
+        added++;
+    }
+    return added;
+}
+
 void
 com_read_sparam(wordlist *wl)
 {
     FILE *fp;
     char line[4096];
     char *file;
-    int nports = 0;
-    double fscale = 1.0, rbase = 50.0;
-    char fmt = 'r', param = 's';
+    int nports = 0, argports = 0, extports = 0;
+    double fscale = 1e9, rbase = 50.0;      /* the specification's default: GHz S MA R 50 */
+    char fmt = 'm', param = 's';
     bool have_opt_line = FALSE;
+    int version = 1, order = 0, mformat = 0, kw_nports = 0, kw_nfreq = -1;
+    int in_info = 0, in_data = 1, want_zref = 0, lineno = 0;
+    double *zref = NULL;
+    size_t nzref = 0, azref = 0;
     double *data = NULL;
     size_t ndata = 0, adata = 0;
-    int per_block, npts, i, j, k;
+    int npairs, per_block, npts, i, j, k;
     struct plot *new;
     struct dvec *freqv, *last;
 
@@ -654,19 +710,15 @@ com_read_sparam(wordlist *wl)
     }
     file = wl->wl_word;
     if (wl->wl_next)
-        nports = atoi(wl->wl_next->wl_word);
-    if (nports <= 0) {
-        /* infer from the .sNp extension */
+        argports = atoi(wl->wl_next->wl_word);
+    {
+        /* the extension: .sNp, and (Enhancement-744) .yNp / .zNp as wrsnp writes them */
         char *dot = strrchr(file, '.');
-        if (dot && (dot[1] == 's' || dot[1] == 'S')) {
-            nports = atoi(dot + 2);
+        if (dot && dot[1] && strchr("sSyYzZ", dot[1]) && file[strlen(file) - 1] == 'p') {
+            extports = atoi(dot + 2);
+            if (extports > 512)
+                extports = 0;
         }
-    }
-    if (nports <= 0) {
-        fprintf(stderr,
-                "Error: cannot infer the port count from '%s'; use rdsnp <file> <nports>\n",
-                file);
-        return;
     }
 
     if ((fp = fopen(file, "r")) == NULL) {
@@ -675,8 +727,90 @@ com_read_sparam(wordlist *wl)
     }
 
     while (fgets(line, sizeof(line), fp)) {
-        char *t = skip_ws(line);
-        if (*t == '\0' || *t == '!')
+        char *t, *bang;
+        lineno++;
+        bang = strchr(line, '!');
+        if (bang)
+            *bang = '\0';               /* a comment, leading or trailing */
+        t = skip_ws(line);
+        if (*t == '\0')
+            continue;
+        if (*t == '[') {
+            char kw[64];
+            const char *rest = rdsnp_keyword(t, kw, sizeof kw);
+            if (!rest) {
+                fprintf(stderr, "Error: %s line %d: unclosed '[' keyword\n", file, lineno);
+                goto bad;
+            }
+            if (in_info) {
+                if (eq(kw, "end information"))
+                    in_info = 0;
+                continue;
+            }
+            if (version == 1) {
+                version = 2;
+                in_data = 0;
+            }
+            want_zref = 0;
+            if (eq(kw, "version")) {
+                /* 2.0 and 2.1 read alike here */
+            } else if (eq(kw, "number of ports")) {
+                kw_nports = atoi(rest);
+                if (kw_nports <= 0 || kw_nports > 512) {
+                    fprintf(stderr, "Error: %s line %d: [Number of Ports] must be 1 to 512\n", file, lineno);
+                    goto bad;
+                }
+            } else if (eq(kw, "two-port data order")) {
+                if (strstr(rest, "12_21"))
+                    order = 2;
+                else if (strstr(rest, "21_12"))
+                    order = 1;
+                else {
+                    fprintf(stderr, "Error: %s line %d: [Two-Port Data Order] must be 12_21 or 21_12\n", file, lineno);
+                    goto bad;
+                }
+            } else if (eq(kw, "number of frequencies")) {
+                kw_nfreq = atoi(rest);
+            } else if (eq(kw, "number of noise frequencies")) {
+                /* the noise block is not read */
+            } else if (eq(kw, "reference")) {
+                if (kw_nports <= 0) {
+                    fprintf(stderr, "Error: %s line %d: [Reference] before [Number of Ports]\n", file, lineno);
+                    goto bad;
+                }
+                want_zref = 1;
+                (void) rdsnp_numbers(rest, &zref, &nzref, &azref, (int) ((size_t) kw_nports - nzref));
+                if (nzref >= (size_t) kw_nports)
+                    want_zref = 0;
+            } else if (eq(kw, "matrix format")) {
+                const char *m = skip_ws((char *) rest);
+                if (ciprefix("full", m))
+                    mformat = 0;
+                else if (ciprefix("lower", m))
+                    mformat = 1;
+                else if (ciprefix("upper", m))
+                    mformat = 2;
+                else {
+                    fprintf(stderr, "Error: %s line %d: [Matrix Format] must be Full, Lower or Upper\n", file, lineno);
+                    goto bad;
+                }
+            } else if (eq(kw, "network data")) {
+                in_data = 1;
+            } else if (eq(kw, "noise data") || eq(kw, "end")) {
+                break;
+            } else if (eq(kw, "begin information")) {
+                in_info = 1;
+            } else if (eq(kw, "mixed-mode order")) {
+                fprintf(stderr, "Error: %s line %d: [Mixed-Mode Order] -- mixed-mode S-parameters are not supported; "
+                                "convert the file to single-ended (standard) order first\n", file, lineno);
+                goto bad;
+            } else {
+                fprintf(stderr, "Error: %s line %d: unknown Touchstone keyword [%s]\n", file, lineno, kw);
+                goto bad;
+            }
+            continue;
+        }
+        if (in_info)
             continue;
         if (*t == '#') {
             /* option line: [unit] [param] [format] [R n], any order */
@@ -694,6 +828,11 @@ com_read_sparam(wordlist *wl)
                     fscale = 1e9;
                 else if (cieq(tok, "s") || cieq(tok, "y") || cieq(tok, "z"))
                     param = (char) tolower_c(tok[0]);
+                else if (cieq(tok, "g") || cieq(tok, "h")) {
+                    fprintf(stderr, "Error: %s line %d: option line parameter type %s (hybrid parameters) "
+                                    "is not supported; use S, Y or Z\n", file, lineno, tok);
+                    goto bad;
+                }
                 else if (cieq(tok, "ri"))
                     fmt = 'r';
                 else if (cieq(tok, "ma"))
@@ -708,34 +847,77 @@ com_read_sparam(wordlist *wl)
             have_opt_line = TRUE;
             continue;
         }
-        /* data line: append every number */
-        {
-            char *q = t;
-            double v;
-            while (sscanf(q, " %lg%n", &v, &i) == 1) {
-                if (ndata == adata) {
-                    adata = adata ? 2 * adata : 1024;
-                    data = TREALLOC(double, data, adata);
-                }
-                data[ndata++] = v;
-                q += i;
-            }
+        if (want_zref) {            /* [Reference] values continued on the following line(s) */
+            (void) rdsnp_numbers(t, &zref, &nzref, &azref, (int) ((size_t) kw_nports - nzref));
+            if (nzref >= (size_t) kw_nports)
+                want_zref = 0;
+            continue;
         }
+        if (!in_data) {
+            fprintf(stderr, "Error: %s line %d: data before [Network Data]\n", file, lineno);
+            goto bad;
+        }
+        /* data line: append every number */
+        (void) rdsnp_numbers(t, &data, &ndata, &adata, -1);
     }
     (void) fclose(fp);
+    fp = NULL;
 
     if (!have_opt_line)
-        fprintf(stderr, "Warning: no '#' option line in %s; assuming Hz S RI R 50\n", file);
+        fprintf(stderr, "Warning: no '#' option line in %s; assuming the specification's default, GHz S MA R 50\n", file);
 
-    per_block = 1 + 2 * nports * nports;
+    if (version == 2) {
+        if (kw_nports <= 0) {
+            fprintf(stderr, "Error: %s is a Touchstone 2 file without [Number of Ports]\n", file);
+            goto bad;
+        }
+        if (argports > 0 && argports != kw_nports) {
+            fprintf(stderr, "Error: %s: [Number of Ports] %d disagrees with the %d given on the command\n",
+                    file, kw_nports, argports);
+            goto bad;
+        }
+        if (extports > 0 && extports != kw_nports) {
+            fprintf(stderr, "Error: %s: [Number of Ports] %d disagrees with the file's extension (%d ports)\n",
+                    file, kw_nports, extports);
+            goto bad;
+        }
+        nports = kw_nports;
+        if (nports == 2 && mformat == 0 && order == 0) {
+            fprintf(stderr, "Error: %s is a Touchstone 2 two-port file without [Two-Port Data Order]\n", file);
+            goto bad;
+        }
+        if (nzref > 0 && nzref < (size_t) nports) {
+            fprintf(stderr, "Error: %s: [Reference] gives %zu impedances for %d ports\n", file, nzref, nports);
+            goto bad;
+        }
+    } else {
+        nports = argports > 0 ? argports : extports;
+        order = 1;
+    }
+    if (nports <= 0) {
+        fprintf(stderr,
+                "Error: cannot infer the port count from '%s'; use rdsnp <file> <nports>\n",
+                file);
+        goto bad;
+    }
+
+    npairs = (mformat == 0) ? nports * nports : nports * (nports + 1) / 2;
+    per_block = 1 + 2 * npairs;
     if (ndata == 0 || ndata % (size_t) per_block != 0) {
         fprintf(stderr,
-                "Error: %s holds %zu numbers, not a multiple of %d (1 + 2*%d^2) -- wrong port count?\n",
-                file, ndata, per_block, nports);
-        tfree(data);
-        return;
+                "Error: %s holds %zu numbers of network data, not a whole number of %d-port frames of %d "
+                "(frequency + %d pairs): a wrong port count, or Touchstone 1 noise-parameter rows after the "
+                "network data, which rdsnp does not read -- remove them, or give the port count\n",
+                file, ndata, nports, per_block, npairs);
+        goto bad;
     }
     npts = (int) (ndata / (size_t) per_block);
+    if (kw_nfreq >= 0 && npts != kw_nfreq) {
+        fprintf(stderr, "Error: %s: [Number of Frequencies] says %d, the file holds %d frames\n", file, kw_nfreq, npts);
+        goto bad;
+    }
+    if (version == 2 && nzref == (size_t) nports)
+        rbase = zref[0];
 
     /* build the plot (same pattern as com_linearize) */
     new = plot_alloc("sp");
@@ -758,10 +940,18 @@ com_read_sparam(wordlist *wl)
             char nb[40];
             struct dvec *v;
             int pair;
-            /* position of pair (i,j) within a block, matching the writer */
-            if (nports == 2) {
-                static const int order[2][2] = {{0, 2}, {1, 3}};
-                pair = order[i][j];
+            /* position of pair (i,j) within a frame: the v1 two-port order
+               S11 S21 S12 S22 (and v2 21_12), v2 12_21 and every other port
+               count row-major; a triangle mirrored (Enhancement-744) */
+            if (mformat == 1) {                 /* lower: (r, c) with c <= r */
+                int r = i >= j ? i : j, c = i >= j ? j : i;
+                pair = r * (r + 1) / 2 + c;
+            } else if (mformat == 2) {          /* upper: (r, c) with c >= r */
+                int r = i <= j ? i : j, c = i <= j ? j : i;
+                pair = r * nports - r * (r - 1) / 2 + (c - r);
+            } else if (nports == 2 && order == 1) {
+                static const int ord[2][2] = {{0, 2}, {1, 3}};
+                pair = ord[i][j];
             } else {
                 pair = i * nports + j;
             }
@@ -780,11 +970,12 @@ com_read_sparam(wordlist *wl)
                     re = mag * cos(b * M_PI / 180.0);
                     im = mag * sin(b * M_PI / 180.0);
                 }
-                /* de-normalize back to absolute Y/Z (v1 files carry Y*R, Z/R) */
-                if (param == 'y') {
+                /* de-normalize back to absolute Y/Z: v1 files carry Y*R, Z/R;
+                   a Touchstone 2 file stores them as they are (Enhancement-744) */
+                if (version == 1 && param == 'y') {
                     re /= rbase;
                     im /= rbase;
-                } else if (param == 'z') {
+                } else if (version == 1 && param == 'z') {
                     re *= rbase;
                     im *= rbase;
                 }
@@ -802,11 +993,37 @@ com_read_sparam(wordlist *wl)
         rv->v_plot = new;
         rv->v_realdata[0] = rbase;
         last->v_next = rv;
+        last = rv;
+    }
+    /* Enhancement-744: a Touchstone 2 file's per-port references, as `Zref` */
+    if (version == 2 && nzref == (size_t) nports) {
+        struct dvec *zv = dvec_alloc(copy("Zref"), SV_NOTYPE, VF_REAL | VF_PERMANENT, nports, NULL);
+        bool differ = FALSE;
+        zv->v_plot = new;
+        for (k = 0; k < nports; k++) {
+            zv->v_realdata[k] = zref[(size_t) k];
+            if (zref[(size_t) k] != zref[0])
+                differ = TRUE;
+        }
+        last->v_next = zv;
+        last = zv;
+        if (differ)
+            fprintf(stdout, "Note: %s gives every port its own reference impedance (the vector Zref); "
+                            "Rbase is port 1's, and wrsnp, a Touchstone 1 writer, carries one value only\n", file);
     }
 
-    fprintf(stdout, "%d-port %c-parameters (%d points) read from %s into plot '%s'\n",
-            nports, toupper_c(param), npts, file, new->pl_typename);
+    fprintf(stdout, "%d-port %c-parameters (%d points) read from %s into plot '%s'%s\n",
+            nports, toupper_c(param), npts, file, new->pl_typename,
+            version == 2 ? " (Touchstone 2)" : "");
     tfree(data);
+    tfree(zref);
+    return;
+
+bad:
+    if (fp)
+        (void) fclose(fp);
+    tfree(data);
+    tfree(zref);
 }
 
 
