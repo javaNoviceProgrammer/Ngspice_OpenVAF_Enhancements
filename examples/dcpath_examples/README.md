@@ -32,7 +32,7 @@ Warning: no DC path from node 'x' to ground; gmin (1e-12 S) installed to provide
 python3 verify_dcpath.py
 ```
 
-69 checks per solver, all PASS (57 before [E-719](../../enhancements_doc/Enhancement-719.md), 52 before [E-679](../../enhancements_doc/Enhancement-679.md); this line had said 37 since E-575 while E-595's sections were added).
+84 checks per solver, all PASS (71 before [E-743](../../enhancements_doc/Enhancement-743.md), which this line had counted as 69; 57 before [E-719](../../enhancements_doc/Enhancement-719.md), 52 before [E-679](../../enhancements_doc/Enhancement-679.md); this line had said 37 since E-575 while E-595's sections were added).
 
 ## Enhancement-595 — the hold outside DC
 
@@ -45,3 +45,21 @@ keeps the hold. `dcpath=all` is Enhancement-575's whole-run hold; `.option dcpat
 combines it with a value (`dcpath=1n dcpathall`). Section [9] pins these, and the AC of
 a capacitor-only node on both solvers, since Sparse read only the real part of the AC
 row before (an Enhancement-571 slip fixed here).
+
+## Enhancement-743 — a current contribution to ground is a path
+
+An output stage written as `I(out) <+ (V(out) - y)/rout` conducts to the
+implicit ground, and ground is no node of the device, so its conductance shows
+only as the diagonal (out, out) — which "joins nothing new". A 1 S output
+stage driving a capacitor, nothing, or the next stage's probed input was named
+"without a DC path" and gmin-held, and `dcpath=error` refused the deck; the
+potential form `V(out) <+ y` was always a path. Now a resistive diagonal on a
+voltage node whose column holds no other resistive entry is read as the
+conductance to ground it must be (a branch to another device node that
+depended on V(out) would put an entry in that node's row), and the node is
+joined to ground; the reactive walk gets the same rule, so a `ddt()` to ground
+alone is held at DC only. Section [12] pins it with `gres.va` (linear and
+cubic), `gctl.va` (a controlled current with no V(out) term: still a current
+source, still held), `gddt.va` (the reactive twin) and `pc_gnd.va` (a guarded
+ground conductance on a terminal left off the instance line: E-719's hold
+still wins; connected, it is the path).

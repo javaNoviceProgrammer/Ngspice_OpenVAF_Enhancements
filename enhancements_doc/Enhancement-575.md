@@ -86,6 +86,15 @@ to ground; coupled to two, `V(p,n) <+ ...`, it joins them to each other, which t
 symmetric rule already does, and the pair floats or not with the rest of the circuit.
 That deck then runs with no warning and results byte-identical to `dcpath=off`.
 
+> **Update (E-743):** a *current* contribution to the implicit ground, `I(out) <+
+> (V(out) - y)/rout`, has no flow unknown and no second node, so its conductance
+> shows only as the diagonal (out, out), and "a diagonal joins nothing new" left
+> such a node unreached — a 1 S output stage driving a capacitor was named and
+> held. A resistive diagonal on a voltage node whose column holds no other
+> resistive entry is now read as the conductance to ground it must be, since a
+> branch to another device node that depended on V(out) would put an entry in
+> that node's row; see [Enhancement-743](Enhancement-743.md).
+
 The same deck found the walk's one performance trap: the node's name was fetched with
 `CKTnodName`, which walks the node list, for every unreached node before the
 internal-node test — quadratic on a deck with thousands of unreached device-internal

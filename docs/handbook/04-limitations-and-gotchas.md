@@ -244,3 +244,13 @@ scripting ngspice:
   a word; `.option silentports=ground`
   ([E-482](../../enhancements_doc/Enhancement-482.md)) grounds the terminal
   instead.
+- **An output stage written as a current into ground** — `I(out) <+ (V(out) -
+  y)/rout`, the usual way to give a block a finite output resistance — was
+  named "no DC path from node 'out'" and gmin-held whenever nothing else on
+  `out` conducted (a capacitor, nothing, the next stage's probed input), since
+  ground is no node of the device and the conductance shows only as a
+  diagonal. Since [E-743](../../enhancements_doc/Enhancement-743.md) the
+  `.option dcpath` walk reads a resistive diagonal with nothing else in the
+  node's column as the conductance to ground it is; the potential form
+  `V(out) <+ y` was always a path and still is. A controlled current with no
+  dependence on the node's own voltage is still a current source, and held.

@@ -1,0 +1,16 @@
+`include "disciplines.vams"
+// Enhancement-743: an output stage with a finite output resistance, written
+// as a current contribution to the implicit ground -- the form the DC-path
+// walk used to leave unreached. c3 adds a cubic term, a nonlinear conductance.
+module gres(in, out);
+    inout in, out;
+    electrical in, out;
+    parameter real gain = 2.0;
+    parameter real rout = 1.0;
+    parameter real c3 = 0.0;
+    real y;
+    analog begin
+        y = gain * V(in);
+        I(out) <+ (V(out) + c3 * V(out) * V(out) * V(out) - y) / rout;
+    end
+endmodule

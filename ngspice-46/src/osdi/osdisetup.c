@@ -736,6 +736,49 @@ void OSDIdcpathEdges(CKTcircuit *ckt, int type,
     }
   }
   tfree(pairs);
+  /* Enhancement-743: a CURRENT contribution to the implicit ground.
+   * `I(out) <+ (V(out) - y)/rout` -- the usual way to give an output stage a
+   * finite output resistance -- is a branch from out to ground, and ground is
+   * no node of the device, so the conductance shows only as the diagonal
+   * (out, out). "A diagonal joins nothing new" left such a node unreached: a
+   * 1 S output stage driving a capacitor, nothing, or another stage's probed
+   * input was named "without a DC path" and gmin-held. The pattern does say
+   * where that current goes: the diagonal on k is the sum over k's branches
+   * of dI/dV(k), and a branch (k, b) that depends on V(k) also puts (b, k)
+   * in k's column. A resistive diagonal on a VOLTAGE node whose column holds
+   * no other resistive entry is therefore a conductance whose other end is
+   * ground, and the node is joined to ground. A column with other entries
+   * cannot be told apart (the diagonal may be all branch shares), and stays
+   * with the symmetric rule; a controlled current `I(out) <+ f(V(in))` has
+   * no diagonal and stays unreached, a current source fixing no voltage.
+   * The reactive walk gets the same rule, so a ddt() to ground is a
+   * reactive path (held at DC only, as a capacitor to ground is). A terminal
+   * the instance line left out is skipped below as before (E-719). */
+  {
+    unsigned char *diag = TMALLOC(unsigned char, descr->num_nodes ? descr->num_nodes : 1);
+    unsigned char *col = TMALLOC(unsigned char, descr->num_nodes ? descr->num_nodes : 1);
+    memset(diag, 0, descr->num_nodes ? descr->num_nodes : 1);
+    memset(col, 0, descr->num_nodes ? descr->num_nodes : 1);
+    for (i = 0; i < n; i++) {
+      const OsdiJacobianEntry *e = &descr->jacobian_entries[i];
+      if (!(e->flags & want))
+        continue;
+      if (e->nodes.node_1 == e->nodes.node_2)
+        diag[e->nodes.node_1] = 1;
+      else
+        col[e->nodes.node_2] = 1;
+    }
+    for (k = 0; k < descr->num_nodes; k++) {
+      if (descr->nodes[k].is_flow || !diag[k] || col[k])
+        continue;
+      toground[k] = 1;
+      if (ft_ngdebug)
+        fprintf(stderr, "OSDI: dcpath%s %s node %s: a diagonal and nothing else in its column -- a conductance to ground\n",
+                reactive ? " (reactive walk)" : "", descr->name, descr->nodes[k].name);
+    }
+    tfree(diag);
+    tfree(col);
+  }
   /* A voltage contribution is a BRANCH: `V(x) <+ f(...)` adds a flow
    * unknown br with the symmetric pair (x, br), (br, x), and its other end
    * -- ground -- is implicit, appearing in no entry at all. Joining x to

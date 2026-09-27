@@ -44,6 +44,17 @@ analysis, and the message names it.
      dcpath=off, warn and error treat it as any node; an unguarded resistor to the
      open port is held all the same and follows v(a)
 
+ 12. Enhancement-743: a current contribution to the implicit ground,
+     `I(out) <+ (V(out) - y)/rout`, is a conductance to ground: its diagonal is the
+     only resistive entry in the node's column, since a branch to another device
+     node that depended on V(out) would put an entry in that node's row. Such a node
+     is joined to ground -- a 1 S output stage driving a capacitor, nothing, or the
+     next stage's probed input was named "without a DC path" and gmin-held before,
+     dcpath=error refused the deck. Linear and cubic conductances, a chain, and
+     dcpath=error are silent and exact; a controlled current with no V(out)
+     dependence (a current source) is still held; a ddt() to ground is a reactive
+     path, held at DC only; a guarded ground conductance on a terminal left off the
+     instance line is still held as an unconnected terminal (E-719's guard wins)
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
 import math
@@ -58,7 +69,8 @@ from _setup import VAF as OPENVAF, NG as NGSPICE
 from _setup import check_both_solvers as _check_both_solvers; _check_both_solvers(__file__)  # verify under BOTH KLU and Sparse solvers
 
 MODELS = ("vprobe", "vddt", "vres", "vrc", "th_rth", "th_pwr", "vdiff", "zddt", "vdelay", "vdelay2",
-          "pc_gate", "pc_res")   # Enhancement-719
+          "pc_gate", "pc_res",   # Enhancement-719
+          "gres", "gctl", "gddt", "pc_gnd")   # Enhancement-743
 
 
 def compile_va(m):
@@ -420,6 +432,55 @@ def main():
     v = values(out)
     check("(control) the port connected through 1k from a: no message, $port_connected reads 1, the guarded 1k branch is live -- v(c) = 0.5",
           "no DC path" not in out and SING not in out and v.get(NC) == 1 and near(v.get("v(c)"), 0.5, 1e-6), f"v(c)={v.get('v(c)')} cc={v.get(NC)}")
+
+    print("[12] Enhancement-743: a current contribution to the implicit ground is a conductance to ground")
+    GR = "pre_osdi gres.osdi\n"
+    out = ngspice(deck("gres cap load", "v1 a 0 0.3\nn1 a out mm\n.model mm gres\ncl out 0 1p", prints="v(out)", pre=GR))
+    v = values(out)
+    check("I(out) <+ (V(out)-2*V(in))/1 driving a capacitor: silent, v(out) = 0.6 exactly, no hold, 3 iterations",
+          "no DC path" not in out and SING not in out and near(v.get("v(out)"), 0.6, 1e-9) and iters(out) <= 5,
+          f"v(out)={v.get('v(out)')} iterations={iters(out)} {'HELD' if 'no DC path' in out else ''}")
+    out = ngspice(deck("gres nothing", "v1 a 0 0.3\nn1 a out mm\n.model mm gres", prints="v(out)", pre=GR))
+    v = values(out)
+    check("the same with NOTHING else on out: silent, v(out) = 0.6",
+          "no DC path" not in out and SING not in out and near(v.get("v(out)"), 0.6, 1e-9), f"v(out)={v.get('v(out)')}")
+    out = ngspice(deck("gres chain", "v1 a 0 0.3\nn1 a b mm\nn2 b c mm\n.model mm gres", prints="v(b) v(c)", pre=GR))
+    v = values(out)
+    check("a chain of two: the first stage drives the second's probed input; both silent, v(c) = 1.2",
+          "no DC path" not in out and near(v.get("v(b)"), 0.6, 1e-9) and near(v.get("v(c)"), 1.2, 1e-9), f"v(b)={v.get('v(b)')} v(c)={v.get('v(c)')}")
+    x = 0.6
+    for _ in range(50):
+        x -= (x + 0.1 * x ** 3 - 0.6) / (1 + 0.3 * x * x)
+    out = ngspice(deck("gres cubic", "v1 a 0 0.3\nn1 a out mm\n.model mm gres c3=0.1\ncl out 0 1p", prints="v(out)", pre=GR))
+    v = values(out)
+    check(f"a NONLINEAR ground conductance (v + 0.1 v^3 = 0.6): silent, v(out) = {x:.6f}",
+          "no DC path" not in out and SING not in out and near(v.get("v(out)"), x, 1e-6), f"v(out)={v.get('v(out)')}")
+    out = ngspice(deck("gres error mode", "v1 a 0 0.3\nn1 a out mm\n.model mm gres\ncl out 0 1p", prints="v(out)", pre=GR,
+                       opts=".option dcpath=error\n"))
+    v = values(out)
+    check("under dcpath=error the deck runs (it was refused for the output node before)",
+          "refus" not in out.lower() and near(v.get("v(out)"), 0.6, 1e-9), out[-300:] if v.get("v(out)") is None else "")
+    out = ngspice(deck("gctl", "v1 a 0 1n\nn1 a out mm\n.model mm gctl\ncl out 0 1p", prints="v(out)", pre="pre_osdi gctl.osdi\n"))
+    v = values(out)
+    check("a controlled current into ground with no V(out) dependence (no diagonal) is a current source: still held, "
+          "named, released outside DC by the capacitor; v(out) = -I/gmin = -2e3",
+          HELD.format("out") in out and "held at DC only" in out and near(v.get("v(out)"), -2e3, 1e-6), f"v(out)={v.get('v(out)')}")
+    out = ngspice(deck("gddt", "i1 0 out 1n\nn1 out mm\n.model mm gddt", prints="v(out)", pre="pre_osdi gddt.osdi\n"))
+    v = values(out)
+    check("a ddt() to ground alone: the reactive walk reaches it through the same rule -- held at DC only, released in "
+          "tran and ac (it was held in every mode), v(out) = I/gmin = 1e3",
+          HELD.format("out") in out and "held at DC only" in out and near(v.get("v(out)"), 1e3, 1e-6),
+          f"v(out)={v.get('v(out)')} {'no release suffix' if 'held at DC only' not in out else ''}")
+    out = ngspice(deck("pc_gnd open", "v1 a 0 1\nn1 a gm\n.model gm pc_gnd", prints="v(n1#c) i(v1)", pre="pre_osdi pc_gnd.osdi\n"))
+    v = values(out)
+    check("a guarded ground conductance on a terminal left OFF the instance line: the pattern has the diagonal, the guard "
+          "zeroes it at run time -- E-719's rule wins, n1#c is held and named as an unconnected terminal, 3 iterations",
+          "no DC path from node 'n1#c' to ground -- the terminal is not connected" in out and SING not in out
+          and near(v.get("i(v1)"), -1e-3) and iters(out) <= 5, f"i(v1)={v.get('i(v1)')} iterations={iters(out)} {out[-200:] if 'not connected' not in out else ''}")
+    out = ngspice(deck("pc_gnd connected", "v1 a 0 1\nn1 a c gm\n.model gm pc_gnd", prints="v(c) i(v1)", pre="pre_osdi pc_gnd.osdi\n"))
+    v = values(out)
+    check("(control) the same terminal connected to a lone net c: its guarded ground conductance is live and is a path -- silent, v(c) = 0",
+          "no DC path" not in out and SING not in out and near(v.get("v(c)"), 0.0, 1e-9) and near(v.get("i(v1)"), -1e-3), f"v(c)={v.get('v(c)')}")
 
     print("\nALL PASSED" if ok else "\nSOME FAILED")
     sys.exit(0 if ok else 1)

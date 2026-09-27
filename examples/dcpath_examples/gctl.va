@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+// Enhancement-743: a controlled CURRENT into the implicit ground with no
+// dependence on the node's own voltage -- a current source, not a path.
+module gctl(in, out);
+    inout in, out;
+    electrical in, out;
+    parameter real gain = 2.0;
+    parameter real rout = 1.0;
+    analog begin
+        I(out) <+ gain * V(in) / rout;
+    end
+endmodule

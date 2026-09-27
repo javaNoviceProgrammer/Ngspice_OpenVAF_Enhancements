@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+// Enhancement-743 against E-719: a ground conductance on a port that is
+// switched off when the port is left off the instance line. The pattern has
+// the diagonal; the guard makes the row zero at run time.
+module pc_gnd(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real r = 1e3;
+    analog begin
+        I(a) <+ V(a) / r;
+        if ($port_connected(c))
+            I(c) <+ V(c) / r;
+    end
+endmodule

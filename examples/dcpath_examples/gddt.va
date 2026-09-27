@@ -1,0 +1,11 @@
+`include "disciplines.vams"
+// Enhancement-743: a capacitor to the implicit ground written as a ddt()
+// contribution -- a reactive path only, held at DC and released outside it.
+module gddt(out);
+    inout out;
+    electrical out;
+    parameter real c = 1e-12;
+    analog begin
+        I(out) <+ ddt(c * V(out));
+    end
+endmodule
