@@ -159,7 +159,9 @@ the more drastic — it means zero devices in parallel and removes the instance.
 But Enhancement-426 examined exactly this and left it deliberately silent:
 `m=0` is the ordinary "disable this instance" idiom, its comment says so at the
 site, and its suite asserts the silence. Warning here would fire on decks that
-mean precisely what they wrote. Unchanged.
+mean precisely what they wrote. Unchanged. *Update
+([E-751](Enhancement-751.md)):* the compiled layer now says it, as a Note
+naming the instance; this parser-layer silence for the built-ins is kept.
 
 **`@r[resistance]` reporting the nominal value.** The temperature factor and
 `scale` are folded into the stored conductance while the nominal resistance is

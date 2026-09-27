@@ -179,8 +179,8 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
    * (a resistor model SOURCED 4 mA) and the compiled noise factor sqrt(m)
    * turned a .noise run into 'onoise_spectrum = nan' with no diagnostic on
    * either channel. Warn and keep the previous value on every route.
-   * ZERO stays silent and applied: Enhancement-426 established m=0 as the
-   * "disable this instance" idiom, exactly as for the built-ins. */
+   * ZERO is applied: Enhancement-426 established m=0 as the "disable this
+   * instance" idiom, exactly as for the built-ins. */
   if (!strcmp(descr->param_opvar[param].name[0], "$mfactor") &&
       value->rValue < 0.0) {
     fprintf(stderr,
@@ -189,6 +189,34 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
             "its noise NaN).\n",
             value->rValue);
     return (OK);
+  }
+
+  /* Enhancement-751 (options-and-convergence hunt F5): m=0 stays the idiom
+   * and is applied, but it is no longer silent. A compiled instance given
+   * m=0 -- on its line, as `_mfactor=0`, through a subcircuit called with
+   * m=0, from a `.model` card's `_mfactor=0` default, or by `alter` at run
+   * time, every route ends here -- vanished from the circuit without a word:
+   * v(a) rose to the source, @nr1[i] read 0, and nothing named the device.
+   * A multiplier that a parameter expression evaluated to zero looked exactly
+   * like one written on purpose. Said once per instance, as a Note (a deck
+   * that means it is not wrong), on stderr beside the multiplier warnings,
+   * and capped so a generator that disables a thousand devices gets ten
+   * lines and one more saying so. The built-ins keep E-426's silence: the
+   * parser-layer check in inpdpar.c is unchanged. */
+  if (!strcmp(descr->param_opvar[param].name[0], "$mfactor") &&
+      value->rValue == 0.0) {
+    static int e751_notes = 0;
+    const char *who = instPtr->GENname ? instPtr->GENname : "instance";
+    if (e751_notes < 10)
+      fprintf(stderr,
+              "Note: %s: m=0 disables the instance -- it stays in the "
+              "netlist and contributes nothing (a positive m re-enables "
+              "it).\n",
+              who);
+    else if (e751_notes == 10)
+      fprintf(stderr,
+              "Note: further instances disabled by m=0 are not listed.\n");
+    e751_notes++;
   }
 
   /* ROUND-3 AUDIT (2026-09-02) / LRM 9.18 Table 9-29: the rest of the

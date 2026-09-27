@@ -22,7 +22,7 @@ resistor — so a difference is the integration's, not the model's.
 | [F2](#f2--option-scale-is-not-applied-to-compiled-instances) | `.option scale=1e-6` with `w=1 l=0.1` gives the built-in the same point as `w=1u l=100n`; the compiled instance is simulated as a 1 m × 0.1 m device with no message | **medium** — silent |
 | [F3](#f3--the-operating-point-of-a-long-compiled-bsim4-chain-takes-24-the-built-ins-iterations-and-not-monotonically) | a common-source chain of N compiled BSIM4 stages converges its `op` in 9 iterations up to N = 500, then 100 at 700, 184 at 1 000, 135 at 2 000, 146 at 10 000 (built-in: 10, 46, 65); at 600 stages 73 under KLU and 363 under Sparse, COLAMD or `klu_btf=off` | medium — performance |
 | [F4](#f4--the-long-chain-transient-rejects-two-to-three-times-the-built-ins-timepoints) | on the 1 000-stage chain 21 of 177 timepoints are rejected against the built-in's 8 of 206; 53 against 16 at 10 000 stages; 1 207 against 1 123 at reltol 1e-6; the limiter is not the cause | low–medium — performance |
-| [F5](#f5--m0-deletes-a-compiled-instance-silently) | `m=0` or `_mfactor=0` on a compiled instance removes the device from the circuit with no message; a negative value is caught | low |
+| [F5](#f5--m0-deletes-a-compiled-instance-silently) | *(fixed in [E-751](../../enhancements_doc/Enhancement-751.md): the compiled layer prints one Note per instance naming it, on every route, capped at ten; the instance stays disabled and the built-ins stay silent)* `m=0` or `_mfactor=0` on a compiled instance removes the device from the circuit with no message; a negative value is caught | low |
 | [F6](#f6--the-negative-multiplier-check-prints-two-warnings-that-contradict-each-other) | the two warnings for `m=-1` say "the device's contribution is sign-inverted" and "the value is ignored"; measured, it is ignored | low — diagnostics |
 | [F7](#f7--a-compiled-model-that-owns-a-parameter-m-cannot-be-used-inside-a-subcircuit-called-with-m) | a compiled diode (`vadiode`, whose grading coefficient is `m`) inside a `.subckt` instantiated with `m=2` is refused — *unknown parameter (m): it is a model parameter of this device* — because the expansion appends `m=2` to the inner line; `_mfactor=3` on the inner line is refused too, as a double setting; the built-in diode multiplies | **medium** |
 | [F8](#f8--a-compiled-module-with-its-own-instance-parameter-m-is-not-multiplied-inside-a-subcircuit-called-with-m-its-parameter-is-overwritten) | a module declaring an instance parameter `m` of its own (`I <+ V/1k + m*1u`) inside a `.subckt` called with `m=2` reports 0.502 mA where a multiplied device gives 1.002 mA: the expansion's `m=2` sets the module's parameter and no multiplier is applied, with no message from ngspice (the compiler warns once at compile time) | **medium–high** — silent wrong result |
@@ -188,6 +188,15 @@ The built-ins are inconsistent about it — BSIM4 stops with *Fatal:
 multiplier = 0 is not positive*, the resistor and the diode accept it
 silently (the diode's node then floats into gmin stepping) — which is an
 argument for the compiled layer to take the strict side.
+
+*Fixed in [E-751](../../enhancements_doc/Enhancement-751.md).* Not the strict
+side: E-426 made `m=0` the "disable this instance" idiom and three suites
+assert it, so the instance stays disabled and the compiled layer's setter,
+where all five routes end (the line, `_mfactor=0`, the subcircuit's `m=0`,
+a card's `_mfactor=0` default, `alter`), prints one Note per instance naming
+it — `Note: nr1: m=0 disables the instance -- it stays in the netlist and
+contributes nothing (a positive m re-enables it).` — with ten lines at most
+and one saying the rest are not listed. The built-ins keep their silence.
 
 ## F6 — the negative-multiplier check prints two warnings that contradict each other
 

@@ -382,9 +382,48 @@ def main():
     for mm, label, want in (("m=1", "m=1", -5e-4), ("m=2", "m=2", -1e-3)):
         rc, out = run("* ig\n" + (MDEV % mm) + ctl("op\nprint i(v1)"))
         check(f"{label} unaffected", close(val(out, "i(v1)"), want, 1e-6))
+    # Enhancement-751 (options-and-convergence hunt F5): m=0 stays the
+    # "disable this instance" idiom and is applied, but the compiled layer now
+    # says so -- one Note per instance naming it, on every route that reaches
+    # the OSDI setter, never a Warning, and capped at ten lines. Built-ins keep
+    # E-426's silence (the parser-layer check is unchanged).
+    NOTE = "disables the instance"
     rc, out = run("* ig\n" + (MDEV % "m=0") + ctl("op\nprint i(v1)"))
-    check("m=0 stays SILENT -- it is the 'disable this instance' idiom",
-          "multiplier" not in out and close(val(out, "i(v1)"), 0.0, 1e-12))
+    check("[E-751] m=0 still disables the instance (0 A) and is now ANNOUNCED by a Note naming it",
+          close(val(out, "i(v1)"), 0.0, 1e-12) and "Note: n1: m=0 " + NOTE in out
+          and "Warning" not in out, out[-160:].replace("\n", " "))
+    rc, out = run("* ig\n" + (MDEV % "_mfactor=0") + ctl("op\nprint i(v1)"))
+    check("[E-751] `_mfactor=0`, the other spelling, is announced the same way",
+          close(val(out, "i(v1)"), 0.0, 1e-12) and "Note: n1: m=0 " + NOTE in out)
+    rc, out = run("* ig\nV1 a 0 dc 1\nX1 a 0 sub m=0\n.subckt sub p q\nN1 p q rm\n"
+                  ".model rm ig_res(r0=2000)\n.ends\n" + ctl("op\nprint i(v1)"))
+    check("[E-751] a subcircuit called with m=0 announces its compiled instance by its flattened name",
+          close(val(out, "i(v1)"), 0.0, 1e-12) and re.search(r"Note: \S*x1\.n1: m=0 " + NOTE, out) is not None,
+          out[-160:].replace("\n", " "))
+    rc, out = run("* ig\n" + (MDEV % "") + ctl("op\nprint i(v1)\nalter @n1[m] = 0\nop\nprint i(v1)\n"
+                                                 "alter @n1[m] = 2\nop\nprint i(v1)"))
+    iv = re.findall(r"i\(v1\)\s*=\s*(\S+)", out)
+    check("[E-751] `alter @n1[m] = 0` at run time is announced, and a positive m re-enables the device",
+          len(iv) == 3 and close(float(iv[0]), -5e-4, 1e-6) and close(float(iv[1]), 0.0, 1e-12)
+          and close(float(iv[2]), -1e-3, 1e-6) and out.count("Note: n1: m=0 " + NOTE) == 1,
+          f"{iv} notes={out.count(NOTE)}")
+    rc, out = run("* ig\nV1 a 0 dc 1\nN1 a 0 rm\nN2 a 0 rm\n.model rm ig_res(r0=2000 _mfactor=0)\n"
+                  + ctl("op\nprint i(v1)"))
+    check("[E-751] a card's `_mfactor=0` default announces each instance it disables",
+          close(val(out, "i(v1)"), 0.0, 1e-12) and "Note: n1: m=0 " + NOTE in out
+          and "Note: n2: m=0 " + NOTE in out)
+    many = "".join(f"N{k} a 0 rm m=0\n" for k in range(1, 13))
+    rc, out = run("* ig\nV1 a 0 dc 1\n" + many + ".model rm ig_res(r0=2000)\n" + ctl("op\nprint i(v1)"))
+    check("[E-751] twelve disabled instances: ten Notes, then one line saying the rest are not listed",
+          out.count(NOTE) == 10 and "further instances disabled by m=0 are not listed" in out
+          and close(val(out, "i(v1)"), 0.0, 1e-12), f"notes={out.count(NOTE)}")
+    rc, out = run("* ig\n" + (MDEV % "m=0.5") + ctl("op\nprint i(v1)"))
+    check("[E-751] m=0.5 (any positive value) stays silent",
+          NOTE not in out and "multiplier" not in out and close(val(out, "i(v1)"), -2.5e-4, 1e-6))
+    rc, out = run("* ig\nV1 a 0 dc 1\nR1 a 0 2k m=0\n"
+                  ".control\noption noacct\nop\nprint i(v1)\n.endc\n.end\n")
+    check("[E-751] m=0 on a BUILT-IN device keeps E-426's silence (the parser layer is unchanged)",
+          NOTE not in out and "multiplier" not in out and close(val(out, "i(v1)"), 0.0, 1e-12))
     for mm, label in (("m=-1", "m=-1"), ("m=-2.5", "m=-2.5"),
                       ("_mfactor=-1", "_mfactor=-1 (the other spelling)")):
         rc, out = run("* ig\n" + (MDEV % mm) + ctl("op\nprint i(v1)"))

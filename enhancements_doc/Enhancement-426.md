@@ -178,6 +178,10 @@ idiom and behaves cleanly. The "singular matrix" message that appears with some
 models is ngspice correctly reporting that `m=0` left an *internal* node
 unconnected, and it names the node.
 
+*Update ([E-751](Enhancement-751.md)):* the idiom stands, but a compiled
+instance given `m=0` is now announced by a Note naming it, on every route;
+the built-ins keep the silence described here.
+
 Two `.model` cards with one name were silently reduced to one, first wins.
 Warning, not error: three of ngspice's own shipped decks carry byte-identical
 duplicates, while two others carry duplicates with different values where the

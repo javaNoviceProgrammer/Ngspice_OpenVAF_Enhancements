@@ -135,7 +135,7 @@ check("[7] ...but a bare `area` after it is refused", refused(out) and "paramete
 out = run("n1 a 0 im w=2 m=3")
 check("[8] `w=2 m=3`: 6 mA", current(out) is not None and abs(current(out) + 6e-3) < 1e-9, f"{current(out)}")
 out = run("n1 a 0 im m=0")
-check("[8] `m=0` is the disable idiom (E-426): silent, 0 A", current(out) == 0.0 and "no value" not in out and "Warning" not in out, out[-120:])
+check("[8] `m=0` is the disable idiom (E-426): 0 A, no Warning, announced by E-751's Note", current(out) == 0.0 and "no value" not in out and "Warning" not in out and "disables the instance" in out, out[-120:])
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

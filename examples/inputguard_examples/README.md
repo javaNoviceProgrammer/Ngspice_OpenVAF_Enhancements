@@ -7,7 +7,7 @@ answers that followed.
 python3 verify_inputguard.py
 ```
 
-88 checks. Every one is measured as a number, and **every boundary is pinned
+100 checks. Every one is measured as a number, and **every boundary is pinned
 from both sides** — the refusals *and* the legitimate spellings that must keep
 working. That second half is the point of the suite: three proposed fixes were
 killed during review because they would have rejected something real.
