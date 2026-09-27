@@ -153,6 +153,8 @@ typedef struct {
 
 void NevalSrc (double *noise, double *lnNoise, CKTcircuit *ckt, int type, int node1, int node2, double param);
 void NevalSrc2 (double *, double *, CKTcircuit *, int, int, int, double, int, int, double, double);
+/* Enhancement-748: a correlated multi-node source, amp[k] at (nodes[k], ref), density psd */
+void NevalSrcVec (double *noise, double *lnNoise, CKTcircuit *ckt, int n, const int *nodes, int ref, const double *amp, double psd);
 void NevalSrcInstanceTemp (double *noise, double *lnNoise, CKTcircuit *ckt, int type, int node1, int node2, double param, double param2);
 double Nintegrate (double noizDens, double lnNdens, double lnNlstDens, Ndata *data);
 

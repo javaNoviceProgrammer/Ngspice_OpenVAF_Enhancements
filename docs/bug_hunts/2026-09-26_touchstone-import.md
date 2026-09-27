@@ -10,7 +10,9 @@ F3 and F8 as [E-744](../../enhancements_doc/Enhancement-744.md), which also
 gave F4's refusal its cause; F5 as
 [E-745](../../enhancements_doc/Enhancement-745.md); F6 as
 [E-746](../../enhancements_doc/Enhancement-746.md); F7 as
-[E-747](../../enhancements_doc/Enhancement-747.md); marked in the table.
+[E-747](../../enhancements_doc/Enhancement-747.md); F9 as
+[E-748](../../enhancements_doc/Enhancement-748.md) for the native backend;
+marked in the table.
 Probe files and logs are under the session scratchpad `ts/`.
 
 The question was how ngspice handles RF work that starts from a Touchstone
@@ -38,7 +40,7 @@ each path.
 | [F6](#f6--every-native-nport-instance-prints-509-lines-of-unconnected-terminal-warnings) | *(fixed in [E-746](../../enhancements_doc/Enhancement-746.md): the device carries `DEV_VARTERMS`, the dispatcher names and grounds nothing above the line's count, the short-line message gives both counts)* `N1 p1 p2 0 mm` on a native `nport` model prints E-481's warning with one line per terminal from 4 to 512; the suite's own deck prints 510 | low — diagnostics flood |
 | [F7](#f7--pz-aborts-on-a-circuit-with-a-native-nport-and-says-only-that-it-aborted) | *(fixed in [E-747](../../enhancements_doc/Enhancement-747.md): the device has a pz load, the AC stamp at the analysis's complex s)* `pz` with the native device prints *pz simulation(s) aborted* and nothing else; the OSDI route finds the RC pole at −1.00001e7 rad/s (plus the fit's own pole–zero pair) | medium — unsupported without a reason |
 | [F8](#f8--rdsnp-defaults-a-file-with-no-option-line-to-hz-s-ri-the-spec-and-the-converter-say-ghz-s-ma) | *(fixed in [E-744](../../enhancements_doc/Enhancement-744.md): the default is GHz S MA R 50, and the warning names it)* a v1 file without an option line is read by `rdsnp` as Hz and real/imaginary; the spec's default, which the converter applies, is GHz and magnitude/angle | low |
-| [F9](#f9--an-imported-lossy-block-is-noiseless) | neither backend has a noise entry: the native device's table has no `DEVnoise`, the emitted Verilog-A has no noise source; `.noise` through the RC two-port reports 3.4e-13 V/√Hz against the built-in's 1.09e-9, and the noise figure of `.sp` through a lossy filter or package is that of the rest of the circuit, silently | medium — wrong numbers, by design gap |
+| [F9](#f9--an-imported-lossy-block-is-noiseless) | *(fixed for the native backend in [E-748](../../enhancements_doc/Enhancement-748.md): 4kT·Re(Y) as correlated eigen-sources, in `.noise` and the `.sp` noise figure; the `-osdi` route is still noiseless)* neither backend has a noise entry: the native device's table has no `DEVnoise`, the emitted Verilog-A has no noise source; `.noise` through the RC two-port reports 3.4e-13 V/√Hz against the built-in's 1.09e-9, and the noise figure of `.sp` through a lossy filter or package is that of the rest of the circuit, silently | medium — wrong numbers, by design gap |
 | [F10](#f10--a-y2p-or-z2p-file-is-read-as-a-1-port) | *(fixed in [E-741](../../enhancements_doc/Enhancement-741.md): the port count is taken from a `.yNp`/`.zNp` extension too)* `pre_snp` on the `.y2p` and `.z2p` files `wrsnp` writes reports *1-port, 18 poles, rms rel err 4.2e-2*: the port count is inferred only from an `.sNp` extension and the fallback picks the first divisor, which is 1 for every two-port frame of 9 numbers | **medium** — silent wrong model |
 | [F11](#f11--pre_snp-takes-v1-y-and-z-data-as-absolute-the-spec-wrsnp-and-rdsnp-normalize-them-to-r) | *(fixed in [E-741](../../enhancements_doc/Enhancement-741.md): v1 Y and Z are de-normalized, v2's taken as absolute)* with the port count right, the same Y file gives S21 = 0.597 − j0.478 against 0.4997 − j0.0118: v1 Y and Z data are normalized to the reference resistance (`wrsnp` writes Y·R and Z/R, `rdsnp` undoes it) and the converter takes them as absolute; the Python original does the same | **medium** — silent wrong model |
 
@@ -211,6 +213,8 @@ cable therefore contributes no thermal noise to `.noise`, and the noise figure
 The physics is fixed by the data: a passive network at temperature T has the
 noise current spectrum 4kT·Re(Y), so both backends could add it from the
 fitted Y without new inputs.
+
+*Fixed for the native backend in [E-748](../../enhancements_doc/Enhancement-748.md).* The device forms 4kT·Re(Y(f)) from its fit at each frequency, decomposes it into independent eigen-sources and evaluates each through a new correlated multi-node source in the noise evaluator; the RC two-port above now gives the built-in's spectrum, and the `.sp` noise figure through a block equals its twin's. The `-osdi` route's Verilog-A has no noise source and stays noiseless; a block whose noise matters is imported with `pre_snp -native`.
 
 ## F10 — a `.y2p` or `.z2p` file is read as a 1-port
 

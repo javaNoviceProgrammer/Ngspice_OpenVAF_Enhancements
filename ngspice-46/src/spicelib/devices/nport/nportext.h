@@ -4,6 +4,7 @@
 
 extern int NPORTacLoad(GENmodel *, CKTcircuit *);
 extern int NPORTpzLoad(GENmodel *, CKTcircuit *, SPcomplex *);   /* Enhancement-747 */
+extern int NPORTnoise(int, int, GENmodel *, CKTcircuit *, Ndata *, double *);   /* Enhancement-748 */
 extern int NPORTdelete(GENinstance *);
 extern int NPORTload(GENmodel *, CKTcircuit *);
 extern int NPORTmParam(int, IFvalue *, GENmodel *);

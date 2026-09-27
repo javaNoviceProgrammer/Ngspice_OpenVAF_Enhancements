@@ -17,6 +17,7 @@ libnport_la_SOURCES =	\
 	nportload.c	\
 	nportmask.c	\
 	nportmpar.c	\
+	nportnoise.c	\
 	nportparam.c	\
 	nportpzld.c	\
 	nportread.c	\

@@ -67,7 +67,7 @@ SPICEdev NPORTinfo = {
     .DEVsenPrint    = NULL,
     .DEVsenTrunc    = NULL,
     .DEVdisto       = NULL,
-    .DEVnoise       = NULL,
+    .DEVnoise       = NPORTnoise,       /* Enhancement-748 */
     .DEVsoaCheck    = NULL,
 
     .DEVinstSize    = &NPORTiSize,

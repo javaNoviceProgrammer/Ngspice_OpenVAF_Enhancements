@@ -2,8 +2,8 @@
 
 A built-in ngspice device that realizes an arbitrary-port linear block **directly**
 from a pole/residue (vector-fitted) Y-parameter model — stamped into the sparse
-matrix for DC, AC, **and** transient — and, since E-747, pole-zero — with **no
-Verilog-A / OpenVAF compile step**:
+matrix for DC, AC, **and** transient — and, since E-747 and E-748, pole-zero
+and noise — with **no Verilog-A / OpenVAF compile step**:
 
 ```
 Y_ij(s) = d_ij + s*e_ij + sum_k  res_ijk / (s - p_k)        (shared poles)
@@ -84,3 +84,19 @@ The RLC check also pins a limit: its transfer zeros sit at the fit's own
 poles, which are poles of the stamped admittance rather than roots of a
 determinant, so a direct admittance stamp cannot report them (the OSDI route,
 with internal states, does). 12 checks per solver.
+
+## Enhancement-748 — thermal noise
+
+The device had no noise entry, so an imported lossy block contributed nothing
+to `.noise` or to the noise figure of `.sp`. A passive N-port at temperature
+T has the noise-current correlation matrix 4kT·Re(Y(f)) between its ports
+(Bosma's theorem); `NPORTnoise` decomposes it at each frequency into
+independent eigen-sources and evaluates each through `NevalSrcVec`, a new
+correlated multi-node source in the noise evaluator that serves `.noise` and
+the S-parameter noise path alike. Six checks against built-in twins of the
+same admittance: the RC one-port's spectrum, the Pi two-port's (the series
+resistor's fully correlated port currents, the off-diagonal carried), the
+RLC one-port's frequency-dependent Re Y, `.temp 77`, the summary vector
+`onoise_n1`, and the `.sp` noise figure through the Pi block. The `-osdi`
+route stays noiseless: its Verilog-A has no noise source. 18 checks per
+solver.

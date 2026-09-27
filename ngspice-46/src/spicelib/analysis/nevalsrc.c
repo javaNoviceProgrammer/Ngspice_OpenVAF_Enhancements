@@ -120,6 +120,68 @@ NevalSrc(double* noise, double* lnNoise, CKTcircuit* ckt, int type, int node1, i
 }
 
 /*
+ * Enhancement-748: NevalSrcVec -- a CORRELATED multi-node source. One noise
+ * process of spectral density `psd` (A^2/Hz) injects the current
+ * amp[k]*n(t) from node `ref` into node nodes[k] for every k: a rank-one
+ * correlation psd*amp*amp^T between the nodes. A full correlation matrix C
+ * (a passive N-port's 4kT*Re(Y), Bosma's theorem) is the sum of such sources
+ * over its eigenvectors, which is how the native n-port uses it. The output
+ * density is |sum_k amp_k*T_k|^2 * psd with T_k the adjoint transfer from
+ * (nodes[k], ref); under an S-parameter noise analysis the per-port
+ * machinery of NevalSrc above is applied to the summed source, and *noise
+ * is the source density, as there.
+ */
+void
+NevalSrcVec(double *noise, double *lnNoise, CKTcircuit *ckt, int n,
+            const int *nodes, int ref, const double *amp, double psd)
+{
+    int k;
+#ifdef RFSPICE
+    if (ckt->CKTcurrentAnalysis & DOING_SP) {
+        double inoise = sqrt(psd);
+        int s, d;
+        *noise = psd;
+        if (lnNoise)
+            *lnNoise = log(MAX(psd, N_MINLOG));
+        for (s = 0; s < ckt->CKTportCount; s++) {
+            cplx acc;
+            acc.re = 0.0;
+            acc.im = 0.0;
+            for (k = 0; k < n; k++) {
+                cplx t = csubco(ckt->CKTadjointRHS->d[s][nodes[k]], ckt->CKTadjointRHS->d[s][ref]);
+                acc.re += amp[k] * t.re;
+                acc.im += amp[k] * t.im;
+            }
+            vNoise->d[0][s] = cmultdo(acc, inoise);
+        }
+        for (d = 0; d < ckt->CKTportCount; d++) {
+            cplx in;
+            double yport = 1.0 / zref->d[d][d].re;
+            in.re = vNoise->d[0][d].re * yport;
+            in.im = vNoise->d[0][d].im * yport;
+            for (s = 0; s < ckt->CKTportCount; s++)
+                caddc(&in, in, cmultco(ckt->CKTYmat->d[d][s], vNoise->d[0][s]));
+            iNoise->d[0][d] = in;
+        }
+        for (d = 0; d < ckt->CKTportCount; d++)
+            for (s = 0; s < ckt->CKTportCount; s++)
+                ckt->CKTNoiseCYmat->d[d][s] = caddco(ckt->CKTNoiseCYmat->d[d][s], cmultco(iNoise->d[0][d], conju(iNoise->d[0][s])));
+        return;
+    }
+#endif
+    {
+        double re = 0.0, im = 0.0;
+        for (k = 0; k < n; k++) {
+            re += amp[k] * (ckt->CKTrhs[nodes[k]] - ckt->CKTrhs[ref]);
+            im += amp[k] * (ckt->CKTirhs[nodes[k]] - ckt->CKTirhs[ref]);
+        }
+        *noise = (re * re + im * im) * psd;
+        if (lnNoise)
+            *lnNoise = log(MAX(*noise, N_MINLOG));
+    }
+}
+
+/*
  * NevalSrc2 (noise, lnNoise, ckt, type, node1, node2, param, node3, node4, param2)
  *   This routine is a modified version of NevalSrc() that computes
  *   the output noise due to two fully-correlated noise sources. It is

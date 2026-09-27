@@ -29,6 +29,7 @@ is read into the model at temperature time.
 #include "ngspice/cktdefs.h"
 #include "ngspice/complex.h"
 #include "ngspice/klu.h"        /* BindElement (KLU CSC binding) */
+#include "ngspice/noisedef.h"   /* Enhancement-748: NSTATVARS */
 
 /* Max terminals accepted through the N dispatcher for an nport instance
  * (ports + 1 reference).  Sizing the generic GENnode array; instances that use
@@ -52,6 +53,7 @@ typedef struct sNPORTinstance {
 #define NPORTstate              gen.GENstate
 
     int  NPORTn;               /* number of ports on this instance (== model N) */
+    double NPORTnVar[NSTATVARS]; /* Enhancement-748: the noise analysis's per-instance state */
     int  NPORTrefNode;         /* reference node index (GENnode[N])             */
 
     /* Direct admittance (multi-terminal conductance) stamp -- no branch

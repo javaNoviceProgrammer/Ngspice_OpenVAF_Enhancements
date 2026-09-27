@@ -459,6 +459,96 @@ check("E-747: pz through the Pi two-port (off-diagonal coupling), g to p2: the t
       "aborted" not in out and same_roots(pn, want_pi) and zn == [],
       f"(poles {pn} want {want_pi}; zeros {zn})")
 
+# ------------------------------------------------ Enhancement-748: thermal noise
+# Touchstone-import hunt F9. The device had no noise entry, so an imported
+# lossy block contributed nothing to `.noise` and to the noise figure of `.sp`.
+# A passive N-port at temperature T has the noise-current correlation matrix
+# 4kT*Re(Y(f)) between its ports (Bosma's theorem); the device decomposes it
+# into independent eigen-sources. Each check compares the block with a
+# built-in twin of the same admittance, whose noise ngspice has always had.
+write_nport("rc.nport", 1, [], [1e-3], [1e-9], {(0, 0): []})
+write_nport("rlc.nport", 1, [(p1.real, p1.imag), (p2.real, p2.imag)],
+            [0.0], [0.0], {(0, 0): [(r1.real, r1.imag), (r2.real, r2.imag)]})
+write_nport("pi.nport", 2, [],
+            [1e-3, -1e-3, -1e-3, 1e-3], [1e-9, 0.0, 0.0, 2e-9],
+            {(0, 0): [], (0, 1): [], (1, 0): [], (1, 1): []})
+
+
+def onoise(deck_name, body, noise_cmd, out_name, vec="onoise_spectrum", opts=""):
+    """Run `noise_cmd` on `body`, return [(f, value)] of `vec` from the noise1 plot."""
+    deck = (f"* noise {deck_name}\n{opts}{body}\n.control\n{noise_cmd}\nsetplot noise1\n"
+            f"set filetype=ascii\nwrdata {out_name} {vec}\n.endc\n.end\n")
+    out = run_capture(deck_name, deck)
+    rows = []
+    path = os.path.join(HERE, out_name)
+    if os.path.exists(path):
+        for ln in open(path):
+            pp = ln.split()
+            if pp:
+                rows.append((float(pp[0]), float(pp[1])))
+    return rows, out
+
+
+def same_rows(a, b, tol):
+    return len(a) == len(b) > 0 and all(abs(fa - fb) < 1e-6 * fb and abs(va - vb) <= tol * abs(vb)
+                                        for (fa, va), (fb, vb) in zip(a, b))
+
+
+# RC one-port behind 1k, its built-in twin R||C
+NZ = "noise v(p1) Vin dec 1 1e5 1e7"
+rn, out = onoise("_e748a.cir", "Vin in 0 dc 0 ac 1\nR1 in p1 1k\nN1 p1 0 rcm\n.model rcm nport(file=\"rc.nport\")", NZ, "_e748a.dat")
+rt, _ = onoise("_e748b.cir", "Vin in 0 dc 0 ac 1\nR1 in p1 1k\nRg p1 0 1k\nC1 p1 0 1n", NZ, "_e748b.dat")
+check("E-748: .noise through the RC one-port (G = 1 mS, C = 1 nF): the output spectrum at 0.1, 1 and 10 MHz equals the "
+      "built-in R||C twin's to 1e-6 (the block was noiseless: the 1 mS share missing)",
+      same_rows(rn, rt, 1e-6), f"(block {rn}, twin {rt})")
+# the Pi two-port, g -> p2: the series 1k between the ports makes the two port currents fully correlated
+NZ2 = "noise v(p2) Vg dec 1 1e5 1e7"
+rn, out = onoise("_e748c.cir", "Vg g 0 dc 0 ac 1\nRs g p1 1k\nN1 p1 p2 0 pim\n.model pim nport(file=\"pi.nport\")\nRl p2 0 4k", NZ2, "_e748c.dat")
+rt, _ = onoise("_e748d.cir", "Vg g 0 dc 0 ac 1\nRs g p1 1k\nR12 p1 p2 1k\nC1 p1 0 1n\nC2 p2 0 2n\nRl p2 0 4k", NZ2, "_e748d.dat")
+check("E-748: the Pi two-port (Y12 = -1 mS: a series 1k whose noise current enters the two ports with opposite signs, "
+      "fully correlated): v(p2)'s spectrum equals the twin's to 1e-6 -- the off-diagonal of 4kT Re(Y) carried",
+      same_rows(rn, rt, 1e-6), f"(block {rn}, twin {rt})")
+# the RLC one-port (a rational Y): Re(Y(f)) varies with frequency; the twin is the series R-L-C
+NZ3 = "noise v(p1) Vin dec 2 1e5 1e6"
+rn, out = onoise("_e748e.cir", "Vin in 0 dc 0 ac 1\nR1 in p1 1k\nN1 p1 0 rlcm\n.model rlcm nport(file=\"rlc.nport\")", NZ3, "_e748e.dat")
+rt, _ = onoise("_e748f.cir", "Vin in 0 dc 0 ac 1\nR1 in p1 1k\nLs p1 x 1m\nCs x y 1n\nRr y 0 10", NZ3, "_e748f.dat")
+check("E-748: the RLC one-port (Re Y from the fit's pole pair, frequency-dependent): the spectrum around resonance "
+      "equals the series R-L-C twin's to 1e-5",
+      same_rows(rn, rt, 1e-5), f"(block {rn}, twin {rt})")
+# temperature: .temp 77 on both
+rn, out = onoise("_e748g.cir", "Vin in 0 dc 0 ac 1\nR1 in p1 1k\nN1 p1 0 rcm\n.model rcm nport(file=\"rc.nport\")", NZ, "_e748g.dat", opts=".temp 77\n")
+rt, _ = onoise("_e748h.cir", "Vin in 0 dc 0 ac 1\nR1 in p1 1k\nRg p1 0 1k\nC1 p1 0 1n", NZ, "_e748h.dat", opts=".temp 77\n")
+r27, _ = onoise("_e748i.cir", "Vin in 0 dc 0 ac 1\nR1 in p1 1k\nN1 p1 0 rcm\n.model rcm nport(file=\"rc.nport\")", NZ, "_e748i.dat")
+check("E-748: at .temp 77 the block follows the circuit temperature like the twin (equal to 1e-6), the spectrum "
+      "(an amplitude, V/sqrt(Hz)) scaled by sqrt((77+273.15)/(27+273.15)) from the 27 C run",
+      same_rows(rn, rt, 1e-6) and len(rn) == len(r27) == 3
+      and all(abs((v77 / v27) ** 2 - 350.15 / 300.15) < 1e-6 for (_, v77), (_, v27) in zip(rn, r27)), f"(block {rn}, twin {rt}, 27C {r27})")
+# the per-instance vector: with every resistor quiet, onoise_n1 is the whole spectrum
+rn, out = onoise("_e748j.cir", "Vin in 0 dc 0 ac 1\nR1 in p1 1k noisy=0\nN1 p1 0 rcm\n.model rcm nport(file=\"rc.nport\")",
+                 "noise v(p1) Vin dec 1 1e5 1e7 1", "_e748j.dat", vec="onoise_spectrum onoise_n1")
+rows_all = []
+path = os.path.join(HERE, "_e748j.dat")
+if os.path.exists(path):
+    for ln in open(path):
+        pp = ln.split()
+        if len(pp) >= 4:
+            rows_all.append((float(pp[1]), float(pp[3])))
+check("E-748: the summary vector onoise_n1 (the block's own share) exists and, with the resistor quiet, is the whole "
+      "output spectrum",
+      len(rows_all) == 3 and all(abs(a - b) <= 1e-9 * abs(a) and a > 0 for a, b in rows_all), f"({rows_all}) {out[-150:] if len(rows_all) != 3 else ''}")
+# .sp donoise: the noise figure through the Pi block equals the twin's
+SP = ".sp lin 1 1meg 1meg 1\n.control\nrun\nset numdgt=10\nprint NF\n.endc\n.end\n"
+o1 = run_capture("_e748k.cir", "* sp nf block\nV1 p1 0 dc 0 ac 1 portnum 1 z0 50\nN1 p1 p2 0 pim\n.model pim nport(file=\"pi.nport\")\n"
+                 "V2 p2 0 dc 0 ac 1 portnum 2 z0 50\n" + SP)
+o2 = run_capture("_e748l.cir", "* sp nf twin\nV1 p1 0 dc 0 ac 1 portnum 1 z0 50\nR12 p1 p2 1k\nC1 p1 0 1n\nC2 p2 0 2n\n"
+                 "V2 p2 0 dc 0 ac 1 portnum 2 z0 50\n" + SP)
+m1 = re.search(r"^nf = (-?[0-9.]+e[-+]?\d+|-?[0-9.]+)", o1, re.M | re.I)
+m2 = re.search(r"^nf = (-?[0-9.]+e[-+]?\d+|-?[0-9.]+)", o2, re.M | re.I)
+check("E-748: .sp donoise: the noise figure through the Pi block equals the twin's (the S-parameter noise path, the "
+      "correlation matrix accumulated per eigen-source), to 1e-6 dB",
+      m1 is not None and m2 is not None and abs(float(m1.group(1)) - float(m2.group(1))) < 1e-6 and float(m2.group(1)) > 1.0,
+      f"(block NF {m1.group(1) if m1 else '?'}, twin NF {m2.group(1) if m2 else '?'})")
+
 # ------------------------------------------------------------------ tidy temps
 # Every deck / data file / fit fixture is regenerated on each run, so leave the
 # committed directory as just this script + README.
