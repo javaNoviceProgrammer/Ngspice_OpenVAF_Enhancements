@@ -183,7 +183,7 @@ Two modes stamp those rows:
   constraints, repeat until the scan passes or a small number of rounds is spent, and
   report the size of the perturbation in the status line.
 
-The `.nport` file gains a form tag (`yform`, the current one, or `sform`), the port
+The `.nport` file gains a form tag (`ydomain`, the current one, or `sdomain`), the port
 references, and in table mode the samples themselves.
 
 ### 3. Delay extraction
@@ -218,12 +218,57 @@ as noise-wave sources on the branch rows through `NevalSrcVec` (E-748). A 2-port
 with noise rows (E-749 reads them) gets its correlation matrix from NFmin, Γopt and Rn by
 the standard chain-form relations, which closes the hunt's open item on active blocks.
 
+### 6. The flag, and the model line after it
+
+One word should give the whole of sections 2 to 5, so the user types
+
+    pre_snp -sdomain [-notable] [-nodelay] [-nopassive] [-dc <file>|open|short] file [module]
+
+and gets: the fit made of S with the per-frequency weighted measure, delays extracted
+first, a DC sample added, the fit scanned and clipped to passive; a `.nport` file in
+`sdomain` form carrying the samples beside the poles, so the device interpolates the
+table for ac, sp, noise and xf and integrates the rational model for tran and pz; and a
+status line with the per-point error, the largest singular value and its frequency, the
+delays extracted and S(0). The sub-flags opt out of one part each: `-notable` uses the
+rational model for AC too, wanted when an AC and a transient of one model are compared
+or when pz must agree with AC; `-nodelay` and `-nopassive` switch off extraction and
+clipping for diagnosis; `-dc` replaces the DC sample (section 4). `-sdomain` implies
+`-native`; `-osdi -sdomain` is refused by name, since the Verilog-A route cannot carry
+branch currents.
+
+**The name.** Every flag of the command says what it does (`-native`, `-osdi`,
+`-maxerr`, `-maxpoles`, `-order`), and what this one selects is the domain the model is
+built and stamped in; `sdomain` is also the form tag in the file, the word in the status
+line and the counterpart of `ydomain`, so one word serves everywhere. A vendor's name
+says who else does it, which stops being informative the day the behaviour diverges.
+`-spectre` is accepted as an alias of `-sdomain` on the same handler, as `writecorner`
+and `writecr` are of `writemc` (E-742), with the help text saying "the model Spectre's
+nport builds"; the documentation's canonical spelling is `-sdomain`.
+
+**The default stays `ydomain` for a while.** Everything converted so far, every suite
+and the example decks are Y-domain models. Once the S-domain path has run through the
+suites for a few enhancements, flipping the default and keeping `-ydomain` for the old
+form is a one-line change with a Note; nothing in this proposal depends on when.
+
+**The model line, after the flag.** The most Spectre-like spelling has no
+preprocessing command at all:
+
+    N1 p1 p2 p3 p4 0 m
+    .model m nport(file="bus.s4p" passive=1 dc="open" maxpoles=40)
+
+with the device reading the Touchstone file itself at setup and fitting on demand when
+a transient or pz asks for the rational model. Once the device has the S-domain path,
+that is a small addition, because the converter is by then a function the device can
+call with the same options as model parameters, and the fit's status goes to the log
+as a Note. `pre_snp` stays for the explicit workflow, where the model file is inspected
+or reused, and for the osdi route.
+
 ## What this does not change
 
 The Verilog-A route (`pre_snp -osdi`) cannot express branch currents as unknowns and
 keeps the Y-domain model as the portable form; it gains the refusals, the measure and
 the scan of section 1 and nothing else. `rdsnp` and the `.nport` reader keep reading
-every file they read today. The native device's four-corner Y stamp stays for `yform`
+every file they read today. The native device's four-corner Y stamp stays for `ydomain`
 models, so nothing already converted changes behaviour.
 
 ## Verification to pin (the suite)
@@ -245,13 +290,18 @@ models, so nothing already converted changes behaviour.
   the load voltage, and the Note fires when the extrapolation disagrees;
 * the active 2-port with noise rows: output noise from NFmin, Γopt, Rn matches the
   closed form within 1 percent;
+* `-spectre` and `-sdomain` write byte-identical model files; `-osdi -sdomain` is
+  refused naming the flag; a `ydomain` file still loads and runs as today;
 * the existing presnp, touchstone, nport_native, lowrank and snpfuzz suites unchanged.
 
 ## Where the code goes
 
 * `snp2va.c`: the refusals, the weighted fit and per-frequency measure, the passivity
-  scan and clipping, delay estimation, the DC sample, the `sform` emitter;
-  `com_presnp.c`: `-sform`, `-table`, `-passive`, `-dc`, `-nodelay`;
+  scan and clipping, delay estimation, the DC sample, the `sdomain` emitter;
+  `com_presnp.c`: `-sdomain` and its alias, `-notable`, `-nodelay`, `-nopassive`, `-dc`,
+  and `-passive` for the Y form;
+* `nport/nportmpar.c`, `nportsetup.c`: the model-line form (section 6), calling the
+  converter as a function;
 * `nport/nportsetup.c`: the branch unknowns (as `vsrc` allocates its current) and the
   row pointers; `nportload.c`, `nportacload.c`, `nportpzld.c`, `nportnoise.c`: the S-form
   paths beside the Y-form ones; `nportread.c`: the form tag, references, delays, samples;
@@ -266,7 +316,9 @@ models, so nothing already converted changes behaviour.
    explosion into a named refusal, makes the error figure honest, and reports
    passivity. Stands alone.
 2. One enhancement: the S-domain stamp with table AC and the rational transient
-   (section 2), including enforcement. This is where the Spectre-class behaviour comes
+   (section 2) behind `-sdomain` (section 6), including enforcement. This is where the Spectre-class behaviour comes
    from and the largest piece.
 3. One enhancement: delay extraction (section 3).
 4. One enhancement: DC control and 2-port noise parameters (sections 4 and 5).
+5. One enhancement: the model-line form (section 6), once the converter is callable
+   from the device.
