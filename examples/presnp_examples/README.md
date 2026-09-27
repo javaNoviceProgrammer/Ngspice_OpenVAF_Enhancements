@@ -128,3 +128,12 @@ above the default says so. The five `[E-745]` checks: a seeded random
 accepting it, `-maxerr abc`/`-maxerr 0` refused naming the flag, and
 `-maxerr 1e-9` refusing even the clean resonator. 24 checks in all; 19 of
 24 on the E-744 binary.
+
+## Round 6 (Enhancement-749) — the noise-parameter block is read
+
+A v1 file's noise rows after the network data (told by the frequency falling
+back) and a v2 `[Noise Data]` section are read instead of refused: the
+network converts as before and the status line says how many rows were read
+and that the model does not use them. The E-741 refusal check became two
+reading checks, and the v2 section's rows are counted. 26 checks in all; 23 of
+26 on the E-748 binary.

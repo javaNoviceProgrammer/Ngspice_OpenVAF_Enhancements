@@ -108,6 +108,8 @@ E-227) is unchanged.
 
 * The noise-parameter rows are refused, not read, in the reader as in the
   converter (F2, F4's second half). Nothing publishes NFmin, Γopt or rn.
+  *(Update, E-749: both readers read them now; `rdsnp` publishes NFmin,
+  SOpt and Rn in a plot of their own.)*
 * `wrsnp` stays a Touchstone 1 writer: it carries one reference, so a plot
   imported from a v2 file with differing `Zref` exports with port 1's.
 * Mixed-mode data, and the `G` and `H` types, are refused rather than

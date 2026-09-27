@@ -47,7 +47,7 @@ vectors. The suite pins a full write-MA → read → compare round-trip at
 ## Run
 
 ```bash
-python3 verify_touchstone.py    # 24 checks
+python3 verify_touchstone.py    # 26 checks
 ```
 
 [1] `wrs2p` with no manual `Rbase` — header `R 50`, file S21 pairs equal
@@ -74,3 +74,13 @@ the port count comes from a `.yNp`/`.zNp` extension too, and a file with no
 option line takes the specification's default `GHz S MA R 50` (the reader
 assumed `Hz S RI`). Section [9]: seven checks on hand-written files, each
 of these pinned.
+
+## Round 4 (Enhancement-749) — the noise-parameter block is read
+
+`rdsnp` reads a v1 file's noise rows (after the network data, where the
+frequency falls back) and a v2 `[Noise Data]` section into a second plot of
+their own — `frequency` in Hz, `NFmin` in dB, `SOpt` complex, `Rn` in ohms
+(a v1 file's de-normalized) — under the names the `.sp` noise analysis
+publishes; the network plot stays current. A block that is not a whole
+number of rows of five is refused naming it. The E-744 refusal check became
+three: the v1 rows, a v2 section, a malformed block.

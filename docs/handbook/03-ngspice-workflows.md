@@ -266,9 +266,12 @@ imported plot's `Rbase` lets it round-trip back out through `wrsnp`. Since
 [E-744](../../enhancements_doc/Enhancement-744.md) the Touchstone 2 keywords
 are read — a per-port `[Reference]` lands in the vector `Zref`, a
 `Lower`/`Upper` matrix is mirrored, the noise and information sections are
-skipped — and what the reader cannot read (mixed-mode order, the G/H types, a
-v1 noise-parameter block after the network data) is refused by name; a file
-with no option line takes the specification's default, GHz S MA R 50. Pinned round-trip accuracy: 4×10⁻⁸ (the file's own
+skipped — and what the reader cannot read (mixed-mode order, the G/H types)
+is refused by name; a file with no option line takes the specification's
+default, GHz S MA R 50. A noise-parameter block — a v1 file's rows after
+the network data, a v2 `[Noise Data]` section — lands in a second plot as
+`NFmin`, `SOpt` and `Rn` ([E-749](../../enhancements_doc/Enhancement-749.md)),
+and `pre_snp` reads the same rows and says the model does not use them. Pinned round-trip accuracy: 4×10⁻⁸ (the file's own
 6-digit precision is the limit). See
 [`examples/touchstone_examples/`](../../examples/touchstone_examples/).
 

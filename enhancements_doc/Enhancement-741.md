@@ -142,7 +142,8 @@ title also says 2-port). The `nport_native` suite (whose fourth check is a
   `12_21` file, `[Reference]` ignored), F4 (a noise-parameter file refused
   with *wrong port count?*) and F8 (the no-option-line default) are open.
 * The noise-parameter rows are refused, not read (F2). Nothing publishes
-  NFmin, Γopt or rn.
+  NFmin, Γopt or rn. *(Update, E-749: the rows are read now — counted on
+  the status line, not used by the model.)*
 * No fit-error threshold (F5); the rms error is still only reported.
 * The Python `snp2va.py` keeps its v1-only parser and its absolute reading of
   v1 Y and Z.

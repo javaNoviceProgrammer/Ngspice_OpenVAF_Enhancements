@@ -152,9 +152,14 @@ typedef struct {
     double *zref;     /* per-port reference impedance, length N (v2 [Reference], else z0) */
     char ptype;
     int version;      /* 1, or 2 when the file carries Touchstone 2 keywords */
+    int nnoise;       /* Enhancement-749: noise-parameter rows read (not used by the fit) */
+    double *noise;    /* nnoise x 5: f (Hz), NFmin (dB), |Gopt|, ang(Gopt) (deg), Rn (ohm) */
 } TS;
 
-static void ts_free(TS *t) { free(t->freqs); free(t->S); free(t->zref); }
+static void ts_free(TS *t) { free(t->freqs); free(t->S); free(t->zref); free(t->noise); }
+
+/* Enhancement-749: the last parse's noise-row count, for the status line */
+static int snp_last_noise = 0;
 
 /* Enhancement-741: a bracketed Touchstone 2 keyword, lower-cased with its inner
  * whitespace collapsed, so "[Number  of Ports]" and "[number of ports]" compare
@@ -224,8 +229,11 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
     int version = 1, kw_nports = 0, kw_nfreq = -1;
     int order = 0;          /* two-port data order: 0 unset, 1 = 21_12 (v1), 2 = 12_21 */
     int mformat = 0;        /* 0 full, 1 lower, 2 upper */
-    int in_info = 0, in_data = 1, want_zref = 0, lineno = 0;
+    int in_info = 0, in_data = 1, want_zref = 0, lineno = 0, in_noise = 0;
     double *zref = NULL; long zcap = 0, nzref = 0;
+    /* Enhancement-749: the noise-parameter rows (v2: the [Noise Data] section;
+     * v1: the rows after the network data, where the frequency falls back) */
+    double *nz = NULL; long nzcap = 0, nnz = 0;
     /* collect all numeric tokens after the '#' options line(s) */
     double *nums = NULL; long ncap = 0, nn = 0;
     char line[4096];
@@ -265,7 +273,8 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
                 else { snprintf(msg,(size_t)msglen,"line %d: [Matrix Format] must be Full, Lower or Upper", lineno); goto bad; }
             }
             else if (!strcmp(kw, "network data")) in_data = 1;
-            else if (!strcmp(kw, "noise data") || !strcmp(kw, "end")) break;
+            else if (!strcmp(kw, "noise data")) in_noise = 1;
+            else if (!strcmp(kw, "end")) break;
             else if (!strcmp(kw, "begin information")) in_info = 1;
             else if (!strcmp(kw, "mixed-mode order")) { snprintf(msg,(size_t)msglen,"line %d: [Mixed-Mode Order] -- mixed-mode S-parameters are not supported; convert the file to single-ended (standard) order first", lineno); goto bad; }
             else { snprintf(msg,(size_t)msglen,"line %d: unknown Touchstone keyword [%s]", lineno, kw); goto bad; }
@@ -292,6 +301,7 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
             if (nzref >= kw_nports) want_zref = 0;
             continue;
         }
+        if (in_noise) { ts_numbers(p, &nz, &nzcap, &nnz, -1); continue; }
         if (!in_data) { snprintf(msg,(size_t)msglen,"line %d: data before [Network Data]", lineno); goto bad; }
         /* numeric data line */
         ts_numbers(p, &nums, &ncap, &nn, -1);
@@ -316,16 +326,51 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
     } else {
         N = extN;
         if (N <= 0) {
+            /* the count fallback, allowing a v1 noise block (rows of five) after
+             * the frames: the first c whose frames end at a frequency drop with
+             * a remainder that is a whole number of noise rows */
             int c;
-            for (c = 1; c <= 512; c++) if (nn % (1 + 2*c*c) == 0) { N = c; break; }
+            for (c = 1; c <= 512; c++) {
+                long recc = 1 + 2L*c*c, r = 0, used = 0;
+                double prevf = -1.0;
+                while ((r + 1) * recc <= nn) {
+                    double f = nums[r * recc];
+                    if (r > 0 && f <= prevf) break;
+                    prevf = f; r++; used = r * recc;
+                }
+                if (r >= 2 && (nn - used) % 5 == 0) { N = c; break; }
+            }
         }
         order = 1;
     }
     if (N <= 0) { snprintf(msg,(size_t)msglen,"cannot determine port count"); goto bad; }
     int npairs = (mformat == 0) ? N*N : N*(N+1)/2;
     int rec = 1 + 2*npairs;
+    if (version == 1) {
+        /* Enhancement-749: a Touchstone 1 noise-parameter block follows the
+         * network data and is told by its frequency falling back below the
+         * last frame's; what follows the frames goes to the noise rows */
+        long r = 0; double prevf = -1.0;
+        while ((r + 1) * rec <= nn) {
+            double f = nums[r * rec];
+            if (r > 0 && f <= prevf) break;
+            prevf = f; r++;
+        }
+        if (r * rec < nn) {
+            long extra = nn - r * rec, i2;
+            for (i2 = 0; i2 < extra; i2++) {
+                if (nnz >= nzcap) { nzcap = nzcap ? nzcap*2 : 64; nz = (double*) realloc(nz, (size_t) nzcap*sizeof(double)); }
+                nz[nnz++] = nums[r * rec + i2];
+            }
+            nn = r * rec;
+        }
+    }
     if (nn == 0 || nn % rec != 0) {
-        snprintf(msg,(size_t)msglen,"%ld numbers of network data, not a whole number of %d-port frames of %d (frequency + %d pairs): a wrong port count, or Touchstone 1 noise-parameter rows after the network data, which are not read -- remove them", nn, N, rec, npairs);
+        snprintf(msg,(size_t)msglen,"%ld numbers of network data, not a whole number of %d-port frames of %d (frequency + %d pairs): a wrong port count, or a malformed file", nn, N, rec, npairs);
+        goto bad;
+    }
+    if (nnz % 5 != 0) {
+        snprintf(msg,(size_t)msglen,"%ld numbers in the noise-parameter block, not a whole number of rows of five (frequency, NFmin, |Gopt|, angle of Gopt, Rn)", nnz);
         goto bad;
     }
     int nf = (int)(nn / rec);
@@ -335,6 +380,15 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
     out->S = (cplx*) malloc((size_t) nf*N*N*sizeof(cplx));
     out->zref = (double*) malloc((size_t) N*sizeof(double));
     out->nf = nf; out->N = N; out->z0 = z0; out->ptype = ptype; out->version = version;
+    out->nnoise = (int)(nnz / 5); out->noise = NULL;
+    if (nnz > 0) {
+        /* frequency to Hz; Rn to ohms (v1 stores it normalized to R, v2 absolute) */
+        long q;
+        out->noise = (double*) malloc((size_t) nnz*sizeof(double));
+        for (q = 0; q < nnz; q++) out->noise[q] = nz[q];
+        for (q = 0; q < nnz; q += 5) { out->noise[q] *= fmul; if (version == 1) out->noise[q+4] *= z0; }
+    }
+    snp_last_noise = out->nnoise;
     {
         int i;
         for (i = 0; i < N; i++) out->zref[i] = (version == 2 && nzref == N) ? zref[i] : z0;
@@ -365,11 +419,11 @@ static int parse_touchstone(const char *fn, TS *out, char *msg, int msglen)
             for (i = 0; i < N; i++) for (j = i; j < N; j++) { M[i*N+j] = M[j*N+i] = pv[kk++]; }
         }
     }
-    free(pv); free(nums); free(zref);
+    free(pv); free(nums); free(zref); free(nz);
     return 0;
 bad:
     if (f) fclose(f);
-    free(nums); free(zref);
+    free(nums); free(zref); free(nz);
     return 1;
 }
 
@@ -783,6 +837,15 @@ void snp2va_set_maxerr(double x) { snp_maxerr = (x < 0) ? SNP_MAXERR_DEFAULT : x
 double snp2va_maxerr_default(void) { return SNP_MAXERR_DEFAULT; }
 double snp2va_last_err(void) { return snp_last_err; }
 
+/* Enhancement-749: the status line's note on noise-parameter rows read */
+static const char *snp_noise_note(void)
+{
+    static char buf[80];
+    if (snp_last_noise <= 0) return "";
+    snprintf(buf, sizeof buf, "; %d noise-parameter row%s read, not used by the model", snp_last_noise, snp_last_noise == 1 ? "" : "s");
+    return buf;
+}
+
 /* Shared front half: parse Touchstone, S->Y, common-pole vector fit with order
  * selection, reciprocal mirror, PSD-project E. On success returns 0 and hands the
  * caller freshly-owned fit arrays P[Np], res[N*N*Np], d[N*N], e[N*N] (caller frees
@@ -1081,7 +1144,7 @@ int snp2va_convert(const char *snpfile, const char *vafile, const char *module,
     for (c=0;c<nchan;c++){ free(chW[c]); free(chU[c]); free(chV[c]); }
     free(chW); free(chU); free(chV); free(chMx); free(ch_lr); free(ch_r); free(ch_kind); free(ch_sec);
     free(sc_pole); free(sc_kind);
-    snprintf(msg,(size_t)msglen,"%d-port, %d poles, rms rel err %.2e", N, Np, bestErr<1e300?bestErr:0.0);
+    snprintf(msg,(size_t)msglen,"%d-port, %d poles, rms rel err %.2e%s", N, Np, bestErr<1e300?bestErr:0.0, snp_noise_note());
     return 0;
 }
 
@@ -1122,7 +1185,7 @@ int snp2nport_convert(const char *snpfile, const char *nportfile,
             fprintf(fo, "  %.15e %.15e\n", creal(res[idx]), cimag(res[idx]));
         }
     fclose(fo);
-    snprintf(msg,(size_t)msglen,"%d-port, %d poles, rms rel err %.2e", N, Np, bestErr<1e300?bestErr:0.0);
+    snprintf(msg,(size_t)msglen,"%d-port, %d poles, rms rel err %.2e%s", N, Np, bestErr<1e300?bestErr:0.0, snp_noise_note());
     return 0;
 }
 

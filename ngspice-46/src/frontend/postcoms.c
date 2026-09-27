@@ -695,11 +695,14 @@ com_read_sparam(wordlist *wl)
     char fmt = 'm', param = 's';
     bool have_opt_line = FALSE;
     int version = 1, order = 0, mformat = 0, kw_nports = 0, kw_nfreq = -1;
-    int in_info = 0, in_data = 1, want_zref = 0, lineno = 0;
+    int in_info = 0, in_data = 1, want_zref = 0, lineno = 0, in_noise = 0;
     double *zref = NULL;
     size_t nzref = 0, azref = 0;
     double *data = NULL;
     size_t ndata = 0, adata = 0;
+    double *nz = NULL;            /* Enhancement-749: the noise-parameter rows */
+    size_t nnz = 0, anz = 0;
+    struct plot *netplot = NULL;
     int npairs, per_block, npts, i, j, k;
     struct plot *new;
     struct dvec *freqv, *last;
@@ -796,7 +799,9 @@ com_read_sparam(wordlist *wl)
                 }
             } else if (eq(kw, "network data")) {
                 in_data = 1;
-            } else if (eq(kw, "noise data") || eq(kw, "end")) {
+            } else if (eq(kw, "noise data")) {
+                in_noise = 1;               /* Enhancement-749: the rows follow */
+            } else if (eq(kw, "end")) {
                 break;
             } else if (eq(kw, "begin information")) {
                 in_info = 1;
@@ -853,6 +858,10 @@ com_read_sparam(wordlist *wl)
                 want_zref = 0;
             continue;
         }
+        if (in_noise) {
+            (void) rdsnp_numbers(t, &nz, &nnz, &anz, -1);
+            continue;
+        }
         if (!in_data) {
             fprintf(stderr, "Error: %s line %d: data before [Network Data]\n", file, lineno);
             goto bad;
@@ -903,12 +912,41 @@ com_read_sparam(wordlist *wl)
 
     npairs = (mformat == 0) ? nports * nports : nports * (nports + 1) / 2;
     per_block = 1 + 2 * npairs;
+    if (version == 1) {
+        /* Enhancement-749: a Touchstone 1 noise-parameter block follows the
+         * network data and is told by its frequency falling back below the
+         * last frame's; what follows the frames goes to the noise rows */
+        size_t r = 0;
+        double prevf = -1.0;
+        while ((r + 1) * (size_t) per_block <= ndata) {
+            double f = data[r * (size_t) per_block];
+            if (r > 0 && f <= prevf)
+                break;
+            prevf = f;
+            r++;
+        }
+        if (r * (size_t) per_block < ndata) {
+            size_t q, first = r * (size_t) per_block;
+            for (q = first; q < ndata; q++) {
+                if (nnz == anz) {
+                    anz = anz ? 2 * anz : 64;
+                    nz = TREALLOC(double, nz, anz);
+                }
+                nz[nnz++] = data[q];
+            }
+            ndata = first;
+        }
+    }
     if (ndata == 0 || ndata % (size_t) per_block != 0) {
         fprintf(stderr,
                 "Error: %s holds %zu numbers of network data, not a whole number of %d-port frames of %d "
-                "(frequency + %d pairs): a wrong port count, or Touchstone 1 noise-parameter rows after the "
-                "network data, which rdsnp does not read -- remove them, or give the port count\n",
+                "(frequency + %d pairs): a wrong port count, or a malformed file -- give the port count\n",
                 file, ndata, nports, per_block, npairs);
+        goto bad;
+    }
+    if (nnz % 5 != 0) {
+        fprintf(stderr, "Error: %s: %zu numbers in the noise-parameter block, not a whole number of rows of five "
+                        "(frequency, NFmin, |Gopt|, angle of Gopt, Rn)\n", file, nnz);
         goto bad;
     }
     npts = (int) (ndata / (size_t) per_block);
@@ -1015,8 +1053,44 @@ com_read_sparam(wordlist *wl)
     fprintf(stdout, "%d-port %c-parameters (%d points) read from %s into plot '%s'%s\n",
             nports, toupper_c(param), npts, file, new->pl_typename,
             version == 2 ? " (Touchstone 2)" : "");
+    netplot = new;
+
+    /* Enhancement-749: the noise-parameter rows, a plot of their own (their
+       frequencies are not the network data's): NFmin in dB, SOpt complex from
+       its magnitude and angle, Rn in ohms (a v1 file stores it normalized to
+       R, a v2 file absolute) -- the names the .sp noise analysis publishes.
+       The network plot stays current. */
+    if (nnz > 0) {
+        int nn = (int) (nnz / 5);
+        struct plot *np = plot_alloc("sp");
+        struct dvec *fv, *nfv, *sov, *rnv;
+        np->pl_name = tprintf("Touchstone noise import %s", file);
+        np->pl_title = copy(file);
+        plot_new(np);
+        fv = dvec_alloc(copy("frequency"), SV_FREQUENCY, VF_REAL | VF_PERMANENT, nn, NULL);
+        nfv = dvec_alloc(copy("NFmin"), SV_NOTYPE, VF_REAL | VF_PERMANENT, nn, NULL);
+        sov = dvec_alloc(copy("SOpt"), SV_NOTYPE, VF_COMPLEX | VF_PERMANENT, nn, NULL);
+        rnv = dvec_alloc(copy("Rn"), SV_NOTYPE, VF_REAL | VF_PERMANENT, nn, NULL);
+        fv->v_plot = nfv->v_plot = sov->v_plot = rnv->v_plot = np;
+        for (k = 0; k < nn; k++) {
+            const double *row = nz + 5 * (size_t) k;
+            fv->v_realdata[k] = row[0] * fscale;
+            nfv->v_realdata[k] = row[1];
+            sov->v_compdata[k].cx_real = row[2] * cos(row[3] * M_PI / 180.0);
+            sov->v_compdata[k].cx_imag = row[2] * sin(row[3] * M_PI / 180.0);
+            rnv->v_realdata[k] = (version == 1) ? row[4] * rbase : row[4];
+        }
+        np->pl_scale = np->pl_dvecs = fv;
+        fv->v_next = nfv;
+        nfv->v_next = sov;
+        sov->v_next = rnv;
+        fprintf(stdout, "%d noise-parameter point%s (NFmin, SOpt, Rn) read from %s into plot '%s'; plot '%s' stays current\n",
+                nn, nn == 1 ? "" : "s", file, np->pl_typename, netplot->pl_typename);
+        plot_setcur(netplot->pl_typename);
+    }
     tfree(data);
     tfree(zref);
+    tfree(nz);
     return;
 
 bad:
@@ -1024,6 +1098,7 @@ bad:
         (void) fclose(fp);
     tfree(data);
     tfree(zref);
+    tfree(nz);
 }
 
 

@@ -47,6 +47,7 @@ extension too, and a file with no option line takes the specification's default
 GHz S MA R 50 (this reader assumed Hz S RI). Section [9] pins each.
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
+import cmath
 import math
 import os
 import re
@@ -369,7 +370,7 @@ print("[9] Enhancement-744: rdsnp reads Touchstone 2; the v1 noise rows, the no-
 def rd(name, text, ctl, tag):
     with open(os.path.join(HERE, name), "w") as fh:
         fh.write(text)
-    return run_deck(f"_t9{tag}.cir", f"* rdsnp {name}\n.control\n{ctl}\nset numdgt=10\n.endc\n.end\n")
+    return run_deck(f"_t9{tag}.cir", f"* rdsnp {name}\n.control\nset numdgt=10\n{ctl}\n.endc\n.end\n")
 
 
 def cx(log, name, k=0):
@@ -426,10 +427,25 @@ check("a 3-port .ts in [Matrix Format] Lower: the triangle mirrored (S12 = S21 =
       cx(log, "S_1_2") == 0.2 and cx(log, "S_2_1") == 0.2 and cx(log, "S_3_1") == 0.4 and cx(log, "S_3_3") == 0.6
       and val(log, "frequency[0]") == 1e9, log[-200:])
 V1N = "# MHz S MA R 50\n1.0 0.5 0.0 0.5 -90.0 0.5 -90.0 0.5 180.0\n2.0 0.4 10.0 0.6 -80.0 0.6 -80.0 0.4 170.0\n! noise parameters\n1.0 2.0 0.30 20 0.5\n2.0 2.5 0.35 40 0.6\n"
-log = rd("_v1n.s2p", V1N, "rdsnp _v1n.s2p", "e")
-check("a v1 file with noise-parameter rows after the network data is refused naming the count, the frame size and the rows "
-      "(it said 'wrong port count?')",
-      "28 numbers of network data, not a whole number of 2-port frames of 9" in log and "noise-parameter rows" in log, log[-300:])
+log = rd("_v1n.s2p", V1N, "rdsnp _v1n.s2p\nprint S_2_1[0]\nsetplot sp2\nprint frequency[0] NFmin[0] NFmin[1] SOpt[0] Rn[0] Rn[1]", "e")
+s21 = cx(log, "S_2_1")
+sopt = cx(log, "SOpt")
+check("[E-749b] a v1 file with two noise-parameter rows after the network data (E-744 refused it): the network plot as "
+      "before (S21 = -0.5j, current after the read), and a second plot with NFmin (2.0, 2.5 dB), SOpt from magnitude "
+      "and angle (0.3 at 20 deg), Rn de-normalized (0.5*50 = 25 ohm, 0.6*50 = 30), frequency in Hz (1 MHz)",
+      s21 is not None and abs(s21 - (-0.5j)) < 1e-9 and "2 noise-parameter points" in log
+      and val(log, "NFmin[0]") == 2.0 and val(log, "NFmin[1]") == 2.5
+      and sopt is not None and abs(sopt - 0.3 * cmath.exp(1j * math.radians(20))) < 1e-9
+      and val(log, "Rn[0]") == 25.0 and val(log, "Rn[1]") == 30.0 and val(log, "frequency[0]") == 1e6, log[-400:])
+log = rd("_v2n.s2p", V2, "rdsnp _v2n.s2p\nsetplot sp2\nprint NFmin[0] Rn[0] length(frequency)", "e2")
+check("[E-749c] a v2 file's [Noise Data] section: its one row read into the noise plot, Rn absolute (0.5 ohm, not "
+      "normalized), the section no longer ending the read",
+      "1 noise-parameter point" in log and val(log, "NFmin[0]") == 2.0 and val(log, "Rn[0]") == 0.5
+      and val(log, "length(frequency)") == 1.0, log[-300:])
+BAD = V1N.replace("2.0 2.5 0.35 40 0.6\n", "2.0 2.5 0.35 40\n")
+log = rd("_v1nbad.s2p", BAD, "rdsnp _v1nbad.s2p", "e3")
+check("[E-749d] a malformed noise block (a row of four) is refused naming the block and the five columns",
+      "9 numbers in the noise-parameter block, not a whole number of rows of five" in log, log[-300:])
 NOOPT = "1.0   0.5 0.0    0.5 -90.0   0.5 -90.0   0.5 180.0\n2.0   0.4 10.0   0.6 -80.0   0.6 -80.0   0.4 170.0\n"
 log = rd("_noopt.s2p", NOOPT, "rdsnp _noopt.s2p\nprint frequency[0] S_2_1[0]", "f")
 s21 = cx(log, "S_2_1")

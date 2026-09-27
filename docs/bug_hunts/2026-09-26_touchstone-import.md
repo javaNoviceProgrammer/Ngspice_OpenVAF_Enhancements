@@ -12,7 +12,8 @@ gave F4's refusal its cause; F5 as
 [E-746](../../enhancements_doc/Enhancement-746.md); F7 as
 [E-747](../../enhancements_doc/Enhancement-747.md); F9 as
 [E-748](../../enhancements_doc/Enhancement-748.md) for the native backend;
-marked in the table.
+F2 and F4 as [E-749](../../enhancements_doc/Enhancement-749.md); marked in
+the table.
 Probe files and logs are under the session scratchpad `ts/`.
 
 The question was how ngspice handles RF work that starts from a Touchstone
@@ -33,9 +34,9 @@ each path.
 | # | finding | severity |
 |---|---|---|
 | [F1](#f1--pre_snp-fits-a-touchstone-v2-file-to-garbage-silently) | *(fixed in [E-741](../../enhancements_doc/Enhancement-741.md): the converter's parser reads Touchstone 2, and refuses a number count that is not a whole number of frames)* `pre_snp` on a Touchstone v2 file keeps the numbers on the bracketed keyword lines as data, misaligns every frame and fits the result: 16 poles, rms error 5.9e-2, S21 = −66.7 where the v1 file of the same data gives 2 poles, 4e-4 and 0.4997; no message | **high** — silent wrong model |
-| [F2](#f2--pre_snp-fits-a-v1-noise-parameter-block-as-s-data-silently) | *(since [E-741](../../enhancements_doc/Enhancement-741.md) the file is refused, with the count and the noise rows named; reading the rows is still open)* a v1 `.s2p` with the noise-parameter rows the v1 spec allows after the network data is fitted with those rows as S-data: 6 poles, rms error 0.42, S21 = 0.975; no message | **high** — silent wrong model |
+| [F2](#f2--pre_snp-fits-a-v1-noise-parameter-block-as-s-data-silently) | *(fixed in [E-749](../../enhancements_doc/Enhancement-749.md): the rows are read and counted, the network fitted; E-741 had made the file a refusal)* a v1 `.s2p` with the noise-parameter rows the v1 spec allows after the network data is fitted with those rows as S-data: 6 poles, rms error 0.42, S21 = 0.975; no message | **high** — silent wrong model |
 | [F3](#f3--rdsnp-reads-a-v2-file-with-s12-and-s21-swapped-and-ignores-reference) | *(fixed in [E-744](../../enhancements_doc/Enhancement-744.md): the reader reads the v2 keywords, `Zref` carries per-port references, v2 Y/Z are absolute)* `rdsnp` drops every bracketed line whole, so a v2 file's `[Two-Port Data Order] 12_21` is not seen and S12 and S21 come back swapped; `[Reference]` per-port impedances are ignored and a v2 Y or Z file would be de-normalized as if v1 | **medium** — silent |
-| [F4](#f4--rdsnp-refuses-a-valid-v1-file-that-carries-noise-parameters) | *(since [E-744](../../enhancements_doc/Enhancement-744.md) the refusal names the count, the frame and the noise rows as the usual cause; reading the rows is still open)* the same noise-parameter file is refused with *holds 214 numbers, not a multiple of 9 — wrong port count?* | low — misleading refusal |
+| [F4](#f4--rdsnp-refuses-a-valid-v1-file-that-carries-noise-parameters) | *(fixed in [E-749](../../enhancements_doc/Enhancement-749.md): the rows are read into a plot of their own as NFmin, SOpt and Rn; E-744 had given the refusal its cause)* the same noise-parameter file is refused with *holds 214 numbers, not a multiple of 9 — wrong port count?* | low — misleading refusal |
 | [F5](#f5--pre_snp-never-refuses-a-bad-fit) | *(fixed in [E-745](../../enhancements_doc/Enhancement-745.md): a fit above 0.1 rms relative error is refused with the number; `-maxerr <x>` and `-force` accept it)* the converter reports its rms error in an informational line and emits the model whatever the value; the 42 % fit of F2 was used | medium |
 | [F6](#f6--every-native-nport-instance-prints-509-lines-of-unconnected-terminal-warnings) | *(fixed in [E-746](../../enhancements_doc/Enhancement-746.md): the device carries `DEV_VARTERMS`, the dispatcher names and grounds nothing above the line's count, the short-line message gives both counts)* `N1 p1 p2 0 mm` on a native `nport` model prints E-481's warning with one line per terminal from 4 to 512; the suite's own deck prints 510 | low — diagnostics flood |
 | [F7](#f7--pz-aborts-on-a-circuit-with-a-native-nport-and-says-only-that-it-aborted) | *(fixed in [E-747](../../enhancements_doc/Enhancement-747.md): the device has a pz load, the AC stamp at the analysis's complex s)* `pz` with the native device prints *pz simulation(s) aborted* and nothing else; the OSDI route finds the RC pole at −1.00001e7 rad/s (plus the fit's own pole–zero pair) | medium — unsupported without a reason |
@@ -99,6 +100,8 @@ and the frames after the boundary are noise rows read as S-data.
 
 *Since [E-741](../../enhancements_doc/Enhancement-741.md)* the same file is refused: *214 numbers of network data, not a whole number of 2-port frames of 9 (frequency + 4 pairs): a wrong port count, or Touchstone 1 noise-parameter rows after the network data, which are not read -- remove them*. Reading the rows, and publishing the noise parameters, is still open.
 
+*Fixed in [E-749](../../enhancements_doc/Enhancement-749.md).* The parser walks the frames while the frequency rises and hands what follows the first fall to the noise block; the file above now fits to 2 poles and 4.04e-4 with *5 noise-parameter rows read, not used by the model* on the status line.
+
 ## F3 — `rdsnp` reads a v2 file with S12 and S21 swapped, and ignores `[Reference]`
 
 `rdsnp` on the v2 file of F1:
@@ -129,6 +132,8 @@ The count check is right to fire; the message names a cause that is not the
 one, and the file is one every VNA can write.
 
 *Since [E-744](../../enhancements_doc/Enhancement-744.md)* the refusal reads: *holds 214 numbers of network data, not a whole number of 2-port frames of 9 (frequency + 4 pairs): a wrong port count, or Touchstone 1 noise-parameter rows after the network data, which rdsnp does not read -- remove them, or give the port count*. Reading the rows is still open, as it is for the converter (F2).
+
+*Fixed in [E-749](../../enhancements_doc/Enhancement-749.md).* The same file now reads its 21 network points into one plot and its 5 noise-parameter points (NFmin, SOpt, Rn) into a second, the network plot staying current.
 
 ## F5 — `pre_snp` never refuses a bad fit
 

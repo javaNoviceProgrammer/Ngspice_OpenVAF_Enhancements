@@ -675,18 +675,19 @@ else:
 write_v2(os.path.join(HERE, "_v2noise.s2p"), freqs2, Y2, 2, order="21_12", noise=True)
 r, o = native2("_v2noise.s2p")
 err2(r, o, "[E-741d] a v2 file in 21_12 order with a [Noise Data] section after the "
-     "network data: the network is read, the noise rows are not, the block matches")
+     "network data: the network is read, the block matches (the two noise rows read, not used: E-749)")
+check("[E-749a] ... the v2 file's [Noise Data] rows are counted too", "2 noise-parameter rows read" in o, o[-200:])
 
-# [E-741e] a v1 file with noise-parameter rows is refused by name, nothing written
+# [E-749a] (was E-741e's refusal) a v1 file with noise-parameter rows after the network
+# data: the rows are read and reported, the network converts and matches
 src = open(os.path.join(HERE, "_resonator.s2p")).read()
 open(os.path.join(HERE, "_v1noise.s2p"), "w").write(
     src + "! noise parameters\n1e6 2.0 0.30 20 0.5\n2e6 2.5 0.35 40 0.6\n3e6 3.0 0.40 60 0.7\n")
-o = refusal("_v1noise.s2p")
-check("[E-741e] a v1 .s2p with noise-parameter rows after the network data is refused "
-      "with the count, the frame size and the rows named, and no .nport is written",
-      "noise-parameter rows" in o and "frames of 9" in o
-      and not os.path.exists(os.path.join(HERE, "_v1noise.nport")),
-      "" if "noise-parameter rows" in o else o[-300:])
+r, o = native2("_v1noise.s2p")
+err2(r, o, "[E-749a] a v1 .s2p with three noise-parameter rows after the network data (E-741 refused it): the "
+     "network converts and the block matches the resonator")
+check("[E-749a] ... and the status line says the three rows were read and are not used by the model",
+      "3 noise-parameter rows read, not used by the model" in o, o[-300:])
 
 # [E-741f, g] the v1 Y and Z forms `wrsnp` writes: port count from .y2p/.z2p,
 # the Y*R / Z/R normalization undone
