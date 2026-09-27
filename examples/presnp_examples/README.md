@@ -115,3 +115,16 @@ by name with nothing written; a `.y2p` and a `.z2p` as `wrsnp` writes them; a
 v2 Y file; and the three refusals (`[Mixed-Mode Order]`, a two-port without
 its data order, a `[Number of Frequencies]` that disagrees with the frames).
 19 checks in all; 9 of 19 on the E-739 binary.
+
+## Round 5 (Enhancement-745) — the fit's acceptance limit
+
+The converter reported its rms relative error and emitted the model whatever
+the value. Now a fit whose worst element's relative rms error is above 0.1
+is refused before anything is written, with the number, the pole count, the
+limit, the usual causes and the flags: `pre_snp -maxerr <x>` raises the
+limit for that command, `-force` removes it, and a fit accepted that way
+above the default says so. The five `[E-745]` checks: a seeded random
+(unfittable) file refused with nothing written, `-maxerr 2` and `-force`
+accepting it, `-maxerr abc`/`-maxerr 0` refused naming the flag, and
+`-maxerr 1e-9` refusing even the clean resonator. 24 checks in all; 19 of
+24 on the E-744 binary.

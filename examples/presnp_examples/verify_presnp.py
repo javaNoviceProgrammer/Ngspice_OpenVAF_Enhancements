@@ -45,6 +45,7 @@ import os
 import sys
 import math
 import cmath
+import re
 import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -143,7 +144,8 @@ for _b, _e in (("_resonator", "s2p"), ("_star", "s3p"),
     GENERATED += [f"{_b}.o{_i}" for _i in range(1, 9)]
 
 
-for _b, _e in (("_v2ord", "s2p"), ("_v2ref", "s2p"), ("_v2low", "ts"),
+for _b, _e in (("_noisy", "s2p"),                                # E-745
+               ("_v2ord", "s2p"), ("_v2ref", "s2p"), ("_v2low", "ts"),
                ("_v2noise", "s2p"), ("_v1noise", "s2p"), ("_v1y", "y2p"),
                ("_v1z", "z2p"), ("_v2y", "s2p"), ("_mm", "s2p"),
                ("_noord", "s2p"), ("_nfreq", "s2p")):        # E-741
@@ -722,6 +724,43 @@ check("[E-741i] [Mixed-Mode Order], a v2 two-port without [Two-Port Data Order],
       "[Number of Frequencies] that disagrees with the frames are each refused by name",
       ok_i, "" if ok_i else (o_mm[-150:] + o_no[-150:] + o_nf[-150:]))
 
+
+# ================= Enhancement-745: the fit's acceptance limit ==================
+# Touchstone-import hunt F5. The converter reported its rms relative error and
+# emitted the model whatever the value. A fit above 0.1 (the worst element's
+# relative rms error) is refused with the number, the limit and the flags that
+# accept it; -maxerr <x> raises the limit, -force removes it.
+import random
+_rng = random.Random(745)
+with open(os.path.join(HERE, "_noisy.s2p"), "w") as _f:
+    _f.write("# HZ S RI R 50\n")
+    for _fr in freqs2[::3]:
+        _f.write(f"{_fr:.7e} " + " ".join(f"{_rng.uniform(-0.7, 0.7):.6f}" for _ in range(8)) + "\n")
+o = refusal("_noisy.s2p")
+m = re.search(r"rms relative error of ([0-9.e+-]+) \((\d+) poles\), above the limit of 0\.1", o)
+check("[E-745a] a file of random S-parameters (unfittable) is refused: the fit's rms relative error, its pole count and "
+      "the limit named, the causes and the -maxerr/-force flags given, no .nport written",
+      m is not None and float(m.group(1)) > 0.1 and "-maxerr <x> or -force" in o
+      and not os.path.exists(os.path.join(HERE, "_noisy.nport")), o[-300:] if m is None else f"(err {m.group(1)}, {m.group(2)} poles)")
+_, o = run("* accept\nR1 a 0 1\nV1 a 0 1\n.control\npre_snp -native -maxerr 2 _noisy.s2p\n.endc\n.end\n")
+check("[E-745b] `-maxerr 2` accepts the same fit: the .nport is written and the run says it was accepted under -maxerr, "
+      "above the default limit",
+      os.path.exists(os.path.join(HERE, "_noisy.nport")) and "accepted under -maxerr, above the default limit of 0.1" in o, o[-300:])
+cleanup("_noisy.nport")
+_, o = run("* force\nR1 a 0 1\nV1 a 0 1\n.control\npre_snp -native -force _noisy.s2p\n.endc\n.end\n")
+check("[E-745c] `-force` accepts it too, saying so",
+      os.path.exists(os.path.join(HERE, "_noisy.nport")) and "accepted under -force" in o, o[-300:])
+cleanup("_noisy.nport")
+_, o1 = run("* bad maxerr\nR1 a 0 1\nV1 a 0 1\n.control\npre_snp -native -maxerr abc _noisy.s2p\n.endc\n.end\n")
+_, o2 = run("* bad maxerr\nR1 a 0 1\nV1 a 0 1\n.control\npre_snp -native -maxerr 0 _noisy.s2p\n.endc\n.end\n")
+check("[E-745d] `-maxerr abc` and `-maxerr 0` are refused naming the flag and the default; nothing written",
+      "-maxerr needs a positive number" in o1 and "-maxerr needs a positive number" in o2
+      and not os.path.exists(os.path.join(HERE, "_noisy.nport")), (o1 + o2)[-300:])
+cleanup("_v2ord.nport")                       # written by [E-741a] above
+_, o = run("* tight limit\nR1 a 0 1\nV1 a 0 1\n.control\npre_snp -native -maxerr 1e-9 _v2ord.s2p\n.endc\n.end\n")
+check("[E-745e] a limit tighter than a clean fit's error refuses even the resonator (the limit is the user's), and the "
+      "default limit does not touch the suite's clean fits (every check above ran under it)",
+      "above the limit of 1e-09" in o and not os.path.exists(os.path.join(HERE, "_v2ord.nport")), o[-300:])
 
 # tidy -- see tidy_all() above; the atexit hook makes this idempotent.
 tidy_all()

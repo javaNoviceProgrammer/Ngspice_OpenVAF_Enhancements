@@ -82,28 +82,44 @@ static void with_ext(const char *src, const char *ext, char *dst, size_t dstlen)
 
 void com_pre_snp(wordlist *wl)
 {
-    char module[256], va[1200], osdi[1200], nport[1200], msg[256], *snp, *ovf;
+    char module[256], va[1200], osdi[1200], nport[1200], msg[512], *snp, *ovf;
     char *cmd;
     size_t cmdlen;
     int rc, native = 0;
+    double maxerr = -1.0;               /* Enhancement-745: -1 = the default limit */
 
-    /* optional leading backend flag: -osdi (default) or -native */
+    /* optional leading flags: -osdi (default) or -native; -maxerr <x> or -force */
     while (wl && wl->wl_word && wl->wl_word[0] == '-') {
         if (eq(wl->wl_word, "-native"))    native = 1;
         else if (eq(wl->wl_word, "-osdi")) native = 0;
+        else if (eq(wl->wl_word, "-force")) maxerr = 0.0;
+        else if (eq(wl->wl_word, "-maxerr")) {
+            char *end = NULL;
+            wl = wl->wl_next;
+            maxerr = (wl && wl->wl_word) ? strtod(wl->wl_word, &end) : -1.0;
+            if (!wl || !wl->wl_word || end == wl->wl_word || *end || !(maxerr > 0)) {
+                fprintf(cp_err, "pre_snp: -maxerr needs a positive number, the rms relative error above which "
+                                "a fit is refused (default %g); -force removes the limit\n", snp2va_maxerr_default());
+                return;
+            }
+        }
         else { fprintf(cp_err, "pre_snp: unknown option '%s'\n", wl->wl_word); return; }
         wl = wl->wl_next;
     }
 
     if (!wl || !wl->wl_word) {
-        fprintf(cp_err, "usage: pre_snp [-osdi|-native] <file.sNp> [module]\n"
+        fprintf(cp_err, "usage: pre_snp [-osdi|-native] [-maxerr <x>|-force] <file.sNp> [module]\n"
                         "  -osdi   (default) Touchstone -> Verilog-A -> openvaf-r -> <file>.osdi,\n"
                         "                    then load with `pre_osdi <file>.osdi`.\n"
                         "  -native           Touchstone -> <file>.nport for the built-in n-port\n"
                         "                    device (no compiler); use it in the deck with\n"
-                        "                    `N1 <ports..> <ref> m` / `.model m nport(file=\"<file>.nport\")`.\n");
+                        "                    `N1 <ports..> <ref> m` / `.model m nport(file=\"<file>.nport\")`.\n"
+                        "  -maxerr <x>       accept a fit whose rms relative error is up to x (default %g);\n"
+                        "  -force            accept any fit. A fit above the limit is refused, nothing written.\n",
+                snp2va_maxerr_default());
         return;
     }
+    snp2va_set_maxerr(maxerr);
     snp = wl->wl_word;
     if (wl->wl_next && wl->wl_next->wl_word) {
         (void) snprintf(module, sizeof module, "%s", wl->wl_next->wl_word);
@@ -114,11 +130,16 @@ void com_pre_snp(wordlist *wl)
     /* -native: emit the compact .nport fit file; no Verilog-A / openvaf-r step. */
     if (native) {
         with_ext(snp, ".nport", nport, sizeof nport);
-        if (snp2nport_convert(snp, nport, msg, sizeof msg)) {
+        rc = snp2nport_convert(snp, nport, msg, sizeof msg);
+        snp2va_set_maxerr(-1.0);
+        if (rc) {
             fprintf(cp_err, "pre_snp: %s\n", msg);
             return;
         }
         fprintf(cp_out, "pre_snp: %s -> %s  (%s)\n", snp, nport, msg);
+        if (maxerr >= 0 && snp2va_last_err() > snp2va_maxerr_default())
+            fprintf(cp_out, "pre_snp: accepted under %s, above the default limit of %g\n",
+                    maxerr > 0 ? "-maxerr" : "-force", snp2va_maxerr_default());
         fprintf(cp_out, "pre_snp: use it with  `N1 <ports..> <ref> m`  and\n"
                         "                       `.model m nport(file=\"%s\")`\n", nport);
         return;
@@ -128,11 +149,16 @@ void com_pre_snp(wordlist *wl)
     with_ext(snp, ".osdi", osdi, sizeof osdi);
 
     /* 1. Touchstone -> Verilog-A (the C converter) */
-    if (snp2va_convert(snp, va, module, msg, sizeof msg)) {
+    rc = snp2va_convert(snp, va, module, msg, sizeof msg);
+    snp2va_set_maxerr(-1.0);
+    if (rc) {
         fprintf(cp_err, "pre_snp: %s\n", msg);
         return;
     }
     fprintf(cp_out, "pre_snp: %s -> %s  (%s, module '%s')\n", snp, va, msg, module);
+    if (maxerr >= 0 && snp2va_last_err() > snp2va_maxerr_default())
+        fprintf(cp_out, "pre_snp: accepted under %s, above the default limit of %g\n",
+                maxerr > 0 ? "-maxerr" : "-force", snp2va_maxerr_default());
 
     /* 2. compile with openvaf-r -> .osdi */
     ovf = osdi_find_openvaf();

@@ -284,6 +284,10 @@ refused by name, as is a file whose numbers are not a whole number of frames
 `.yNp`/`.zNp` forms `wrsnp` writes are read with their port count and their
 Y·R, Z/R normalization undone; v2 Y and Z are absolute. `rdsnp` reads the
 same two versions since [E-744](../../enhancements_doc/Enhancement-744.md).
+A fit whose worst element's rms relative error is above 0.1 is refused with
+the number and nothing is written ([E-745](../../enhancements_doc/Enhancement-745.md));
+`pre_snp -maxerr <x>` raises the limit for a noisy measurement, `-force`
+removes it.
 
 ## 3.6 Monte Carlo
 

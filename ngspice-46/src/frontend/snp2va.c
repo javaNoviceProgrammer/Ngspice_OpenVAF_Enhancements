@@ -769,6 +769,20 @@ static void emit_filter(FILE *fo, cplx pole, int kind)
 }
 
 /* ============================ public API ============================ */
+/* Enhancement-745 (Touchstone-import hunt F5): the fit's acceptance limit. The
+ * order selection reported its rms relative error in the status line and
+ * emitted the model whatever the value -- a 42 percent fit of a misread file
+ * was written and simulated. A fit whose worst element's relative rms error
+ * is above snp_maxerr is refused with the number, the limit and the usual
+ * causes; `pre_snp -maxerr <x>` raises the limit, `-force` removes it (0). */
+#define SNP_MAXERR_DEFAULT 0.1
+static double snp_maxerr = SNP_MAXERR_DEFAULT;
+static double snp_last_err = -1.0;
+
+void snp2va_set_maxerr(double x) { snp_maxerr = (x < 0) ? SNP_MAXERR_DEFAULT : x; }
+double snp2va_maxerr_default(void) { return SNP_MAXERR_DEFAULT; }
+double snp2va_last_err(void) { return snp_last_err; }
+
 /* Shared front half: parse Touchstone, S->Y, common-pole vector fit with order
  * selection, reciprocal mirror, PSD-project E. On success returns 0 and hands the
  * caller freshly-owned fit arrays P[Np], res[N*N*Np], d[N*N], e[N*N] (caller frees
@@ -808,7 +822,7 @@ static int snp_fit(const char *snpfile, int *pN, int *pNp,
     double fmin = ts.freqs[0], fmax = ts.freqs[nf-1], tol = 1e-3;
     cplx *bestP=NULL,*bestRes=NULL; double *bestD=NULL,*bestE=NULL; int bestNp=0; double bestErr=1e300;
     cplx *prevP=NULL,*prevRes=NULL; double *prevD=NULL,*prevE=NULL; int prevNp=0; double prevErr=-1, firstErr=-1;
-    int chosenP=0; cplx *chP=NULL,*chRes=NULL; double *chD=NULL,*chE=NULL;
+    int chosenP=0; cplx *chP=NULL,*chRes=NULL; double *chD=NULL,*chE=NULL; double chErr=-1;
     int npair;
     for (npair = 1; npair <= 12; npair++) {
         int Np = 2*npair;
@@ -853,10 +867,10 @@ static int snp_fit(const char *snpfile, int *pN, int *pNp,
             bestP=P;bestRes=res;bestD=dd;bestE=ee;bestNp=Np;bestErr=err;
         }
         if (!stable) { if(!keep_best){free(P);free(res);free(dd);free(ee);} break; }
-        if (err < tol) { chosenP=Np; chP=P;chRes=res;chD=dd;chE=ee; if(keep_best){/*owned by best too*/} break; }
+        if (err < tol) { chosenP=Np; chP=P;chRes=res;chD=dd;chE=ee; chErr=err; if(keep_best){/*owned by best too*/} break; }
         int near_floor = (err < 0.1*firstErr) || (err < 0.05);
         if (prevErr >= 0 && err > 0.7*prevErr && near_floor) {  /* knee at floor -> use prev */
-            chosenP=prevNp; chP=prevP;chRes=prevRes;chD=prevD;chE=prevE;
+            chosenP=prevNp; chP=prevP;chRes=prevRes;chD=prevD;chE=prevE; chErr=prevErr;
             if (!keep_best) { free(P);free(res);free(dd);free(ee); }
             break;
         }
@@ -865,10 +879,21 @@ static int snp_fit(const char *snpfile, int *pN, int *pNp,
         prevP=P;prevRes=res;prevD=dd;prevE=ee;prevNp=Np;prevErr=err;
     }
     /* pick chosen, else best, else prev */
-    cplx *P; cplx *res; double *dd,*ee; int Np;
-    if (chP) { P=chP;res=chRes;dd=chD;ee=chE;Np=chosenP; }
-    else if (bestP) { P=bestP;res=bestRes;dd=bestD;ee=bestE;Np=bestNp; }
-    else { P=prevP;res=prevRes;dd=prevD;ee=prevE;Np=prevNp; }
+    cplx *P; cplx *res; double *dd,*ee; int Np; double fitErr;
+    if (chP) { P=chP;res=chRes;dd=chD;ee=chE;Np=chosenP; fitErr=chErr; }
+    else if (bestP) { P=bestP;res=bestRes;dd=bestD;ee=bestE;Np=bestNp; fitErr=bestErr; }
+    else { P=prevP;res=prevRes;dd=prevD;ee=prevE;Np=prevNp; fitErr=prevErr; }
+    if (!(fitErr >= 0) || fitErr >= 1e300) fitErr = bestErr < 1e300 ? bestErr : 0.0;
+    snp_last_err = fitErr;
+    /* Enhancement-745: refuse a fit that is not the data (nothing is emitted) */
+    if (snp_maxerr > 0 && fitErr > snp_maxerr) {
+        snprintf(msg,(size_t)msglen,"the fit of %s has an rms relative error of %.2e (%d poles), above the limit of %.3g: "
+                 "the model would not be the data -- a noisy or too coarse measurement, a delay-dominated block a "
+                 "rational fit cannot follow, or a misread file (rdsnp shows what was read); accept it with "
+                 "-maxerr <x> or -force", snpfile, fitErr, Np, snp_maxerr);
+        free(Y); free(s); free(sn); free(F); free(elems); ts_free(&ts);
+        return 1;
+    }
 
     /* mirror the fitted upper triangle into the lower one (reciprocal case, Fix #2) */
     if (reciprocal) {
@@ -882,7 +907,7 @@ static int snp_fit(const char *snpfile, int *pN, int *pNp,
     /* force the improper (e*s) capacitance matrix passive so transient is stable */
     psd_project_E(ee, N);
 
-    *pN = N; *pNp = Np; *pP = P; *pRes = res; *pD = dd; *pE = ee; *pErr = bestErr;
+    *pN = N; *pNp = Np; *pP = P; *pRes = res; *pD = dd; *pE = ee; *pErr = fitErr;
     free(Y); free(s); free(sn); free(F); free(elems); ts_free(&ts);
     return 0;
 }
