@@ -9,7 +9,8 @@ by the hunt itself; F1, F10 and F11 were folded afterwards as
 F3 and F8 as [E-744](../../enhancements_doc/Enhancement-744.md), which also
 gave F4's refusal its cause; F5 as
 [E-745](../../enhancements_doc/Enhancement-745.md); F6 as
-[E-746](../../enhancements_doc/Enhancement-746.md); marked in the table.
+[E-746](../../enhancements_doc/Enhancement-746.md); F7 as
+[E-747](../../enhancements_doc/Enhancement-747.md); marked in the table.
 Probe files and logs are under the session scratchpad `ts/`.
 
 The question was how ngspice handles RF work that starts from a Touchstone
@@ -35,7 +36,7 @@ each path.
 | [F4](#f4--rdsnp-refuses-a-valid-v1-file-that-carries-noise-parameters) | *(since [E-744](../../enhancements_doc/Enhancement-744.md) the refusal names the count, the frame and the noise rows as the usual cause; reading the rows is still open)* the same noise-parameter file is refused with *holds 214 numbers, not a multiple of 9 — wrong port count?* | low — misleading refusal |
 | [F5](#f5--pre_snp-never-refuses-a-bad-fit) | *(fixed in [E-745](../../enhancements_doc/Enhancement-745.md): a fit above 0.1 rms relative error is refused with the number; `-maxerr <x>` and `-force` accept it)* the converter reports its rms error in an informational line and emits the model whatever the value; the 42 % fit of F2 was used | medium |
 | [F6](#f6--every-native-nport-instance-prints-509-lines-of-unconnected-terminal-warnings) | *(fixed in [E-746](../../enhancements_doc/Enhancement-746.md): the device carries `DEV_VARTERMS`, the dispatcher names and grounds nothing above the line's count, the short-line message gives both counts)* `N1 p1 p2 0 mm` on a native `nport` model prints E-481's warning with one line per terminal from 4 to 512; the suite's own deck prints 510 | low — diagnostics flood |
-| [F7](#f7--pz-aborts-on-a-circuit-with-a-native-nport-and-says-only-that-it-aborted) | `pz` with the native device prints *pz simulation(s) aborted* and nothing else; the OSDI route finds the RC pole at −1.00001e7 rad/s (plus the fit's own pole–zero pair) | medium — unsupported without a reason |
+| [F7](#f7--pz-aborts-on-a-circuit-with-a-native-nport-and-says-only-that-it-aborted) | *(fixed in [E-747](../../enhancements_doc/Enhancement-747.md): the device has a pz load, the AC stamp at the analysis's complex s)* `pz` with the native device prints *pz simulation(s) aborted* and nothing else; the OSDI route finds the RC pole at −1.00001e7 rad/s (plus the fit's own pole–zero pair) | medium — unsupported without a reason |
 | [F8](#f8--rdsnp-defaults-a-file-with-no-option-line-to-hz-s-ri-the-spec-and-the-converter-say-ghz-s-ma) | *(fixed in [E-744](../../enhancements_doc/Enhancement-744.md): the default is GHz S MA R 50, and the warning names it)* a v1 file without an option line is read by `rdsnp` as Hz and real/imaginary; the spec's default, which the converter applies, is GHz and magnitude/angle | low |
 | [F9](#f9--an-imported-lossy-block-is-noiseless) | neither backend has a noise entry: the native device's table has no `DEVnoise`, the emitted Verilog-A has no noise source; `.noise` through the RC two-port reports 3.4e-13 V/√Hz against the built-in's 1.09e-9, and the noise figure of `.sp` through a lossy filter or package is that of the rest of the circuit, silently | medium — wrong numbers, by design gap |
 | [F10](#f10--a-y2p-or-z2p-file-is-read-as-a-1-port) | *(fixed in [E-741](../../enhancements_doc/Enhancement-741.md): the port count is taken from a `.yNp`/`.zNp` extension too)* `pre_snp` on the `.y2p` and `.z2p` files `wrsnp` writes reports *1-port, 18 poles, rms rel err 4.2e-2*: the port count is inferred only from an `.sNp` extension and the fallback picks the first divisor, which is 1 for every two-port frame of 9 numbers | **medium** — silent wrong model |
@@ -177,6 +178,8 @@ contains the block, the output node hangs on its 1 GΩ load and the analysis
 gives up without naming the device. Its admittance helper already evaluates
 Y at a complex `s`, so a pz load is a stamp away. The OSDI route works, with
 the caveat that a rational fit brings its own poles and zeros.
+
+*Fixed in [E-747](../../enhancements_doc/Enhancement-747.md).* The device has a pz load: the AC stamp evaluated at the analysis's complex `s`. The probe above now reports `pole(1) = −1.00001e7` through the native block, the OSDI route's number, and the suite pins the RC, RLC and Pi networks against their closed forms. One limit stays and is pinned: a transfer zero at a pole of the block's admittance (the RLC one-port's resonance) is not a root of a determinant, so the native stamp does not report it; the OSDI route's internal states do.
 
 ## F8 — `rdsnp` defaults a file with no option line to Hz, S, RI; the spec and the converter say GHz, S, MA
 

@@ -2,7 +2,8 @@
 
 A built-in ngspice device that realizes an arbitrary-port linear block **directly**
 from a pole/residue (vector-fitted) Y-parameter model — stamped into the sparse
-matrix for DC, AC, **and** transient, with **no Verilog-A / OpenVAF compile step**:
+matrix for DC, AC, **and** transient — and, since E-747, pole-zero — with **no
+Verilog-A / OpenVAF compile step**:
 
 ```
 Y_ij(s) = d_ij + s*e_ij + sum_k  res_ijk / (s - p_k)        (shared poles)
@@ -69,3 +70,17 @@ above the line's count, and a line that is really short gets the device's own
 message with both counts. Three checks pin it: the RC line silent with its point
 unchanged, the short line's message, and `silentports=ground` leaving the point
 unchanged. 9 checks per solver.
+
+## Enhancement-747 — pole-zero analysis
+
+The device had a pz setup but no pz load, so a `pz` on a circuit with a
+native n-port never held the block and gave up with "pz simulation(s)
+aborted" and nothing else. `NPORTpzLoad` is the AC stamp with the analysis's
+complex `s` in place of jω. Three closed-form checks: the RC one-port's pole
+at −2e6 rad/s (the built-in R‖C twin agrees), the RLC one-port's transfer
+poles at the roots of its quadratic (its zeros, at the fit's own poles, are
+not reported: see below), and the Pi two-port's two poles at the roots of det(Y(s) + diag(Gs, Gl)).
+The RLC check also pins a limit: its transfer zeros sit at the fit's own
+poles, which are poles of the stamped admittance rather than roots of a
+determinant, so a direct admittance stamp cannot report them (the OSDI route,
+with internal states, does). 12 checks per solver.

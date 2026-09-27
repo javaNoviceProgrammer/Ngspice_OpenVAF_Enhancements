@@ -274,7 +274,8 @@ with no option line takes the specification's default, GHz S MA R 50. Pinned rou
 
 **As a device** — `pre_snp file.sNp` ([E-200](../../enhancements_doc/Enhancement-200.md))
 and `pre_snp -native file.sNp` ([E-242](../../enhancements_doc/Enhancement-242.md))
-vector-fit the file into an n-port block for DC, AC and transient. Since
+vector-fit the file into an n-port block for DC, AC, transient and, since
+[E-747](../../enhancements_doc/Enhancement-747.md), pole-zero analysis. Since
 [E-741](../../enhancements_doc/Enhancement-741.md) their parser reads
 Touchstone 2 as well as 1: the bracketed keywords, a per-port `[Reference]`,
 `[Matrix Format] Lower`/`Upper`, an information block, and a `[Noise Data]`

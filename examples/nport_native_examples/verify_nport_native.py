@@ -387,6 +387,78 @@ check("E-746: under `.option silentports=ground` the phantoms are not bound to n
       same_point(m) and "Error" not in out,
       out[-200:] if m is None else "")
 
+# ------------------------------------------------ Enhancement-747: pole-zero analysis
+# Touchstone-import hunt F7. The device had a pz setup but no pz load, so a
+# `pz` on a circuit with a native n-port hung its output node on whatever else
+# touched it and gave up with "pz simulation(s) aborted" and nothing else. The
+# load stamps Y(s) at the analysis's complex s, the AC stamp with s for jw.
+# Each check compares the reported poles (and zeros) with the closed form.
+write_nport("rc.nport", 1, [], [1e-3], [1e-9], {(0, 0): []})
+write_nport("rlc.nport", 1, [(p1.real, p1.imag), (p2.real, p2.imag)],
+            [0.0], [0.0], {(0, 0): [(r1.real, r1.imag), (r2.real, r2.imag)]})
+write_nport("pi.nport", 2, [],
+            [1e-3, -1e-3, -1e-3, 1e-3], [1e-9, 0.0, 0.0, 2e-9],
+            {(0, 0): [], (0, 1): [], (1, 0): [], (1, 1): []})
+
+
+def pz_roots(deck_name, deck):
+    """`print all` on the pz plot: `pole(1) = re,im` per vector -- except that a plot
+    holding ONE vector prints `all = re,im`, so `display` supplies the name then.
+    (`print pole(1)` is not usable: the parser takes it for a function call.)"""
+    out = run_capture(deck_name, deck)
+    names = re.findall(r"^\s*((?:pole|zero)\(\d+\))\s*:", out, re.M)
+    key = lambda z: (z.real, z.imag)
+    poles, zeros = [], []
+    for name, a, b in re.findall(r"^\s*((?:pole|zero)\(\d+\)|all) = (-?[0-9.]+e[-+]?\d+),(-?[0-9.]+e[-+]?\d+)", out, re.M):
+        if name == "all":
+            if len(names) != 1:
+                continue
+            name = names[0]
+        (poles if name.startswith("pole") else zeros).append(complex(float(a), float(b)))
+    return sorted(poles, key=key), sorted(zeros, key=key), out
+
+
+def same_roots(got, want, tol=1e-6):
+    got, want = sorted(got, key=lambda z: (z.real, z.imag)), sorted(want, key=lambda z: (z.real, z.imag))
+    return len(got) == len(want) and all(abs(g - w) <= tol * max(abs(w), 1.0) for g, w in zip(got, want))
+
+
+PRINTPZ = "set numdgt=10\ndisplay\nprint all\n"      # ten digits: the default six would not meet 1e-6
+PZ = ".control\npz in 0 p1 0 vol pz\n" + PRINTPZ + ".endc\n.end\n"
+# RC one-port through 1k: pole at -(1/R + G)/C = -2e6; the built-in twin agrees
+pn, zn, out = pz_roots("_e747a.cir", "* nport RC pz\nVin in 0 dc 0 ac 1\nR1 in p1 1k\nN1 p1 0 rcm\n"
+                       ".model rcm nport(file=\"rc.nport\")\n" + PZ)
+pb, zb, _ = pz_roots("_e747b.cir", "* built-in RC pz\nVin in 0 dc 0 ac 1\nR1 in p1 1k\nRg p1 0 1k\nC1 p1 0 1n\n" + PZ)
+check("E-747: pz through the RC one-port (Y = 1e-3 + s*1e-9 behind 1k): the pole at -2e6 rad/s, no zero, "
+      "no 'aborted' -- and the built-in R||C twin gives the same pole",
+      "aborted" not in out and same_roots(pn, [-2e6]) and zn == [] and same_roots(pb, [-2e6]),
+      f"(poles {pn}, zeros {zn}, twin {pb})" + (out[-200:] if "aborted" in out else ""))
+# RLC one-port through 1k: poles are the roots of s^2 + (R + 1k)/L s + 1/(LC), the zeros the fit's own poles
+qb, qc = (R + 1e3) / L, 1.0 / (L * C)
+qd = cmath.sqrt(complex(qb * qb - 4 * qc))
+want_p = [(-qb + qd) / 2, (-qb - qd) / 2]
+pn, zn, out = pz_roots("_e747c.cir", "* nport RLC pz\nVin in 0 dc 0 ac 1\nR1 in p1 1k\nN1 p1 0 rlcm\n"
+                       ".model rlcm nport(file=\"rlc.nport\")\n" + PZ)
+check("E-747: pz through the RLC one-port (a conjugate pole pair in the fit): the transfer's poles at the roots of "
+      "s^2 + (R+1k)/L s + 1/LC to 1e-6 -- and NO zeros: the transfer's zeros sit at the fit's own poles, which are "
+      "poles of the stamped admittance, not roots of a determinant, so a direct admittance stamp cannot report them "
+      "(the OSDI route, with internal states, reports them beside a cancelling pole pair)",
+      "aborted" not in out and same_roots(pn, want_p) and zn == [],
+      f"(poles {pn} want {want_p}; zeros {zn})")
+# Pi two-port, g -> p2 through Rs=1k and Rl=4k: poles are the roots of det(Y(s) + diag(Gs, Gl)), a quadratic
+a2 = 1e-9 * 2e-9
+a1 = 1e-9 * 1.25e-3 + 2e-9 * 2e-3
+a0 = 2e-3 * 1.25e-3 - 1e-6
+pd = cmath.sqrt(complex(a1 * a1 - 4 * a2 * a0))
+want_pi = [(-a1 + pd) / (2 * a2), (-a1 - pd) / (2 * a2)]
+pn, zn, out = pz_roots("_e747d.cir", "* nport Pi pz\nVg g 0 dc 0 ac 1\nRs g p1 1k\nN1 p1 p2 0 pim\n"
+                       ".model pim nport(file=\"pi.nport\")\nRl p2 0 4k\n"
+                       ".control\npz g 0 p2 0 vol pz\n" + PRINTPZ + ".endc\n.end\n")
+check("E-747: pz through the Pi two-port (off-diagonal coupling), g to p2: the two poles at the roots of "
+      "det(Y(s) + diag(Gs, Gl)), no zero",
+      "aborted" not in out and same_roots(pn, want_pi) and zn == [],
+      f"(poles {pn} want {want_pi}; zeros {zn})")
+
 # ------------------------------------------------------------------ tidy temps
 # Every deck / data file / fit fixture is regenerated on each run, so leave the
 # committed directory as just this script + README.

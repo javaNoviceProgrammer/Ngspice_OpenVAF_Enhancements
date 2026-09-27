@@ -3,6 +3,7 @@
 #define ngspice_NPORTEXT_H
 
 extern int NPORTacLoad(GENmodel *, CKTcircuit *);
+extern int NPORTpzLoad(GENmodel *, CKTcircuit *, SPcomplex *);   /* Enhancement-747 */
 extern int NPORTdelete(GENinstance *);
 extern int NPORTload(GENmodel *, CKTcircuit *);
 extern int NPORTmParam(int, IFvalue *, GENmodel *);
