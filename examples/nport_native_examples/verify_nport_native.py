@@ -28,6 +28,7 @@ so it runs anywhere and under BOTH linear solvers (KLU + Sparse 1.3):
 import cmath
 import math
 import os
+import re
 import subprocess
 import sys
 
@@ -338,6 +339,53 @@ mx = max(abs(v) for v in Va)
 err = max(abs(Vng[i] - Va[i]) for i in range(N)) / mx
 check(f"scaling N={N}: full N-port stamp (6 poles, full-rank) vs analytic solve",
       err < 1e-6, f"max rel err {err:.2e}")
+
+# ------------------------------------------------ Enhancement-746: no terminal flood
+# Touchstone-import hunt F6. The device declares 512 terminals as a maximum and
+# an instance uses N+1, so E-481's unconnected-terminal warning listed
+# terminals 4..512 as absent on every instance line (510 lines on the RC deck
+# above), and `.option silentports=ground` bound the phantoms to node 0. The
+# device now carries DEV_VARTERMS: the dispatcher names nothing, grounds
+# nothing, and a line that is really short gets the device's own message with
+# the counts.
+
+
+known_rc_Y = 1e-3 + 1j * 2 * math.pi * 2.0e6 * 1e-9      # the RC deck's Y at its 2 MHz point
+write_nport("rc.nport", 1, [], [1e-3], [1e-9], {(0, 0): []})   # the fixture again, whatever ran between
+
+
+def same_point(m):
+    """v(p1)[0] against 1/Y, relative: the deck's 1e9-ohm leak alone moves it by 1e-6."""
+    if m is None:
+        return False
+    v = complex(float(m.group(1)), float(m.group(2)))
+    return abs(v - 1.0 / known_rc_Y) / abs(1.0 / known_rc_Y) < 1e-5
+
+
+def run_capture(deck_name, deck):
+    open(os.path.join(HERE, deck_name), "w").write(deck)
+    r = subprocess.run([NGSPICE, "-b", deck_name], cwd=HERE, capture_output=True,
+                       text=True, timeout=120)
+    return r.stdout + r.stderr
+
+
+out = run_capture("_e746a.cir", rc_ac.replace(".end", ".control\nrun\nprint v(p1)[0]\n.endc\n.end"))
+m = re.search(r"v\(p1\)\[0\]\s*=\s*(-?[0-9.]+e[-+]?\d+),\s*(-?[0-9.]+e[-+]?\d+)", out)
+check("E-746: the RC one-port line `N1 p1 0 rcm` draws no unconnected-terminal warning (it listed terminals 3..512 as absent) "
+      "and the point is the same", "are not connected" not in out and "is absent" not in out and same_point(m),
+      f"({out.count('is absent')} absent lines)" if "is absent" in out else (out[-200:] if m is None else ""))
+short = rc_ac.replace("N1 p1 0 rcm", "N1 p1 rcm").replace(".end", ".control\nrun\n.endc\n.end")
+out = run_capture("_e746b.cir", short)
+check("E-746: a line that IS short (`N1 p1 rcm`, no reference) gets the device's own message with the counts -- "
+      "connects 1 node where the 1-port model needs 2 (1 port + the reference) -- and no terminal list",
+      "connects 1 node where the 1-port model 'rcm' needs 2 (1 port + the reference)" in out and "is absent" not in out,
+      out[-300:])
+out = run_capture("_e746c.cir", rc_ac.replace("* nport RC AC", "* nport RC AC\n.option silentports=ground")
+                  .replace(".end", ".control\nrun\nprint v(p1)[0]\n.endc\n.end"))
+m = re.search(r"v\(p1\)\[0\]\s*=\s*(-?[0-9.]+e[-+]?\d+),\s*(-?[0-9.]+e[-+]?\d+)", out)
+check("E-746: under `.option silentports=ground` the phantoms are not bound to node 0: the deck runs and the point is the same",
+      same_point(m) and "Error" not in out,
+      out[-200:] if m is None else "")
 
 # ------------------------------------------------------------------ tidy temps
 # Every deck / data file / fit fixture is regenerated on each run, so leave the

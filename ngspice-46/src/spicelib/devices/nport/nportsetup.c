@@ -81,9 +81,13 @@ NPORTsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt, int *states)
              * sparse builder (spGetElement assert / out-of-bounds) -- reject it. */
             for (i = 0; i <= N; i++) {
                 if (node[i] < 0) {
-                    fprintf(stderr, "nport: instance '%s' connects fewer nodes than the "
-                            "%d-port model '%s' needs (%d ports + reference)\n",
-                            here->NPORTname, N, model->NPORTmodName, N);
+                    /* Enhancement-746: the count the line connected (i: ports
+                     * 0..i-1 are bound), now that the parser no longer lists
+                     * the device's 512 declared terminals as absent */
+                    fprintf(stderr, "nport: instance '%s' connects %d node%s where the "
+                            "%d-port model '%s' needs %d (%d port%s + the reference)\n",
+                            here->NPORTname, i, i == 1 ? "" : "s", N, model->NPORTmodName,
+                            N + 1, N, N == 1 ? "" : "s");
                     return E_BADPARM;
                 }
             }

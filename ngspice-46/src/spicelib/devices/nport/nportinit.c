@@ -28,7 +28,7 @@ SPICEdev NPORTinfo = {
         .instanceParms    = NPORTpTable,
         .numModelParms    = &NPORTmPTSize,
         .modelParms       = NPORTmPTable,
-        .flags = 0,
+        .flags = DEV_VARTERMS,      /* Enhancement-746: terms is a maximum */
 
 #ifdef XSPICE
         .cm_func   = NULL,

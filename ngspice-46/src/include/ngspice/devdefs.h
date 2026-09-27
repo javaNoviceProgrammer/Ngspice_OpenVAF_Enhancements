@@ -200,5 +200,11 @@ extern int        DEVmaxnum;    /* size of DEVices array */
 
 
 #define DEV_DEFAULT	0x1
+/* Enhancement-746: the device's `terms` is a MAXIMUM, not a count -- an
+ * instance declares its own terminal count by the nodes on its line (the
+ * native n-port, whose port count is in its model's fit file). The N
+ * dispatcher then neither warns about the terminals above the line's count
+ * (E-481) nor grounds them under `.option silentports=ground`. */
+#define DEV_VARTERMS	0x2
 
 #endif

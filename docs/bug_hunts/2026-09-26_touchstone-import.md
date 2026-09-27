@@ -8,7 +8,8 @@ by the hunt itself; F1, F10 and F11 were folded afterwards as
 [E-741](../../enhancements_doc/Enhancement-741.md) and F2 became a refusal;
 F3 and F8 as [E-744](../../enhancements_doc/Enhancement-744.md), which also
 gave F4's refusal its cause; F5 as
-[E-745](../../enhancements_doc/Enhancement-745.md); marked in the table.
+[E-745](../../enhancements_doc/Enhancement-745.md); F6 as
+[E-746](../../enhancements_doc/Enhancement-746.md); marked in the table.
 Probe files and logs are under the session scratchpad `ts/`.
 
 The question was how ngspice handles RF work that starts from a Touchstone
@@ -33,7 +34,7 @@ each path.
 | [F3](#f3--rdsnp-reads-a-v2-file-with-s12-and-s21-swapped-and-ignores-reference) | *(fixed in [E-744](../../enhancements_doc/Enhancement-744.md): the reader reads the v2 keywords, `Zref` carries per-port references, v2 Y/Z are absolute)* `rdsnp` drops every bracketed line whole, so a v2 file's `[Two-Port Data Order] 12_21` is not seen and S12 and S21 come back swapped; `[Reference]` per-port impedances are ignored and a v2 Y or Z file would be de-normalized as if v1 | **medium** — silent |
 | [F4](#f4--rdsnp-refuses-a-valid-v1-file-that-carries-noise-parameters) | *(since [E-744](../../enhancements_doc/Enhancement-744.md) the refusal names the count, the frame and the noise rows as the usual cause; reading the rows is still open)* the same noise-parameter file is refused with *holds 214 numbers, not a multiple of 9 — wrong port count?* | low — misleading refusal |
 | [F5](#f5--pre_snp-never-refuses-a-bad-fit) | *(fixed in [E-745](../../enhancements_doc/Enhancement-745.md): a fit above 0.1 rms relative error is refused with the number; `-maxerr <x>` and `-force` accept it)* the converter reports its rms error in an informational line and emits the model whatever the value; the 42 % fit of F2 was used | medium |
-| [F6](#f6--every-native-nport-instance-prints-509-lines-of-unconnected-terminal-warnings) | `N1 p1 p2 0 mm` on a native `nport` model prints E-481's warning with one line per terminal from 4 to 512; the suite's own deck prints 510 | low — diagnostics flood |
+| [F6](#f6--every-native-nport-instance-prints-509-lines-of-unconnected-terminal-warnings) | *(fixed in [E-746](../../enhancements_doc/Enhancement-746.md): the device carries `DEV_VARTERMS`, the dispatcher names and grounds nothing above the line's count, the short-line message gives both counts)* `N1 p1 p2 0 mm` on a native `nport` model prints E-481's warning with one line per terminal from 4 to 512; the suite's own deck prints 510 | low — diagnostics flood |
 | [F7](#f7--pz-aborts-on-a-circuit-with-a-native-nport-and-says-only-that-it-aborted) | `pz` with the native device prints *pz simulation(s) aborted* and nothing else; the OSDI route finds the RC pole at −1.00001e7 rad/s (plus the fit's own pole–zero pair) | medium — unsupported without a reason |
 | [F8](#f8--rdsnp-defaults-a-file-with-no-option-line-to-hz-s-ri-the-spec-and-the-converter-say-ghz-s-ma) | *(fixed in [E-744](../../enhancements_doc/Enhancement-744.md): the default is GHz S MA R 50, and the warning names it)* a v1 file without an option line is read by `rdsnp` as Hz and real/imaginary; the spec's default, which the converter applies, is GHz and magnitude/angle | low |
 | [F9](#f9--an-imported-lossy-block-is-noiseless) | neither backend has a noise entry: the native device's table has no `DEVnoise`, the emitted Verilog-A has no noise source; `.noise` through the RC two-port reports 3.4e-13 V/√Hz against the built-in's 1.09e-9, and the noise figure of `.sp` through a lossy filter or package is that of the rest of the circuit, silently | medium — wrong numbers, by design gap |
@@ -157,6 +158,8 @@ device declares `NPORT_MAXTERMS` = 512 as its terminal count
 because its port count is only known from the model. The suite's own
 `_rc_ac.cir` prints 510 lines. The text about `$port_connected()` is written
 for compiled modules and means nothing here.
+
+*Fixed in [E-746](../../enhancements_doc/Enhancement-746.md).* A device flag, `DEV_VARTERMS`, marks a terminal count that is a maximum; the native n-port carries it, and the dispatcher's E-481 warning and its `silentports=ground` binding skip such a device. A line with too few nodes gets the device's own message: *connects 1 node where the 1-port model 'rcm' needs 2 (1 port + the reference)*.
 
 ## F7 — `pz` aborts on a circuit with a native `nport`, and says only that it aborted
 

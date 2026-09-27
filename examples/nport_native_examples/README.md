@@ -57,3 +57,15 @@ Run it directly:
 ```
 python3 verify_nport_native.py
 ```
+
+## Enhancement-746 — no terminal flood
+
+The device declares 512 terminals as a maximum, and E-481's unconnected-terminal
+warning compared an instance line's node count with that number: every
+`N1 p1 p2 0 mm` listed terminals 4 to 512 as absent (510 lines on the RC deck
+above), and `.option silentports=ground` bound the phantoms to node 0. The
+device now carries `DEV_VARTERMS`, the dispatcher names and grounds nothing
+above the line's count, and a line that is really short gets the device's own
+message with both counts. Three checks pin it: the RC line silent with its point
+unchanged, the short line's message, and `silentports=ground` leaving the point
+unchanged. 9 checks per solver.

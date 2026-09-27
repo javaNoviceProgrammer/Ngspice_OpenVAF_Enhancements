@@ -243,7 +243,10 @@ scripting ngspice:
   ([E-481](../../enhancements_doc/Enhancement-481.md)) installs the hold without
   a word; `.option silentports=ground`
   ([E-482](../../enhancements_doc/Enhancement-482.md)) grounds the terminal
-  instead.
+  instead. The native `nport` device declares 512 terminals as a maximum and
+  is exempt since [E-746](../../enhancements_doc/Enhancement-746.md): an
+  `N1 p1 p2 0 mm` line names nothing, and a line with too few nodes gets the
+  device's own message with both counts.
 - **An output stage written as a current into ground** — `I(out) <+ (V(out) -
   y)/rout`, the usual way to give a block a finite output resistance — was
   named "no DC path from node 'out'" and gmin-held whenever nothing else on

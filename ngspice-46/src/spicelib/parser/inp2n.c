@@ -1211,7 +1211,14 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
    * mid-parse warn about a terminal it then grounds, or the reverse. */
   sp_mode = silentports_mode();
 
-  if (numnodes < *dev->terms && sp_mode == SP_OFF) {
+  /* Enhancement-746 (Touchstone-import hunt F6): a device whose `terms` is a
+   * maximum (DEV_VARTERMS -- the native n-port declares 512 and an instance
+   * uses N+1 of them, N from its model's fit file) has no absent terminals to
+   * name: every `N1 p1 p2 0 mm` line printed E-481's warning with a line per
+   * terminal from 4 to 512, and `.option silentports=ground` bound the 509
+   * phantoms to node 0. Its own setup names a line that connects fewer nodes
+   * than the model's ports need. */
+  if (numnodes < *dev->terms && sp_mode == SP_OFF && !(dev->flags & DEV_VARTERMS)) {
     int missing;
     fprintf(stderr,
             "\nWarning: instance %s: %d of the %d terminals of model type '%s' "
@@ -1241,7 +1248,7 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
           token = gettok_instance(&line);
           INPtermInsert(ckt, &token, tab, &node); // Consumes token
           IFC(bindNode, (ckt, fast, i + 1, node));
-      } else if (sp_mode == SP_GROUND) {
+      } else if (sp_mode == SP_GROUND && !(dev->flags & DEV_VARTERMS)) {
           /* Enhancement-481: `.option silentports` -- bind what the line left
            * out to node 0. `copy` because INPtermInsert consumes the token:
            * it either takes ownership or frees it against the existing entry,

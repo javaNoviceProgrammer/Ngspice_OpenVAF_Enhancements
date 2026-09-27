@@ -71,8 +71,9 @@ out, rc = run_batch(
     "_ub.cir")
 check("[nport] under-bound instance -> clean error, no crash", not _is_crash(rc, out),
       f"rc={rc}")
-check("[nport] under-bound instance is diagnosed", "connects fewer nodes" in out or
-      "fewer" in out.lower(), "no diagnostic")
+check("[nport] under-bound instance is diagnosed (E-746: with the counts -- connects 2 nodes where the 2-port model "
+      "needs 3)", "connects 2 nodes where the 2-port model 'mod' needs 3 (2 ports + the reference)" in out
+      or "connects fewer nodes" in out, "no diagnostic")
 
 # (b) port count beyond the device maximum
 over = "NPORT 1\nnports 900\nnpoles 0\nd\n" + \
