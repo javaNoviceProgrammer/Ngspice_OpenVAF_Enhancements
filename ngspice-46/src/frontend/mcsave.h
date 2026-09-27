@@ -61,6 +61,8 @@ extern int MCSAVEappend(const char *name, double value);
 
 /* the `writemc` command: writemc [name=]<expr> ... */
 extern void com_writemc(wordlist *wl);
+extern void com_writecorner(wordlist *wl);   /* Enhancement-742: the alias */
+extern void com_writecr(wordlist *wl);       /* Enhancement-742: its short form */
 struct plot;
 extern int MCSAVEappendPlot(struct plot *pl, const char *name, double value); /* E-666 */
 

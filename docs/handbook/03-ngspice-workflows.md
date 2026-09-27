@@ -779,7 +779,11 @@ parameter (each parameter carrying a `corner` attribute, read off the devices
 as `@rm[rsh]` / `@n1[w]`: the corner's value under a corner, the nominal at
 `tt`), then what the run computed: the `corners -output` values, `writemc`'s
 (on an `autocorner` combined plot evaluated on every corner's own plot and put
-on that corner's row), and under `corners -mc N` the montecarlo's `yield`,
+on that corner's row) — or `writecorner`'s (short form `writecr`), the same
+command under the corner file's name with its messages under that name
+([E-742](../../enhancements_doc/Enhancement-742.md); the two are kept as
+separate entry points so they can diverge later) — and under `corners -mc N`
+the montecarlo's `yield`,
 `npass`, `nsamples` and `nfailed` as one summary row per corner, a drawn
 parameter's cell left empty. A loop command's samples make no rows
 (`montecarlo`, `sweep`, `optimize`, `wcd`, `highsigma` — savemc's business);

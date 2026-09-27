@@ -38,4 +38,16 @@ a corner has nothing to record, said once.
 .option savecorner=corners.csv          * with `corners -output v(out) gain=v(out)/v(in)`
 ```
 
-Run `python3 verify_savecorner.py` — 29 checks, both solvers.
+## `writecorner` and `writecr` (Enhancement-742)
+
+`writecorner [name=]<expression> ...` — and its short form `writecr` — is
+`writemc` under the corner file's name: a second entry point on the same handler, so the values land on the same
+rows (both files, when both are set; every corner's own row on an `autocorner`
+combined plot) and the fixed columns are refused the same way — but every
+message names the command that was typed, and the nothing-recorded note names
+both options. Section [13] pins it: the plain-run row, the autocorner rows,
+the refusals and the note, each under `writecorner:` (or `writecr:`) with
+nothing saying `writemc:`. The names are kept separate so they can diverge
+later.
+
+Run `python3 verify_savecorner.py` — 34 checks, both solvers.

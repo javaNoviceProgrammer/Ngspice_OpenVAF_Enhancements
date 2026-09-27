@@ -39,6 +39,10 @@ Checks (per solver):
        refused for the savecorner row by name
   [12] savecorner_font / savecorner_model set the workbook's fonts, and a
        savemc_font is the fallback
+  [13] writecorner and its short form writecr (E-742): writemc under the
+       corner file's name -- the plain-run row, every corner's row under
+       autocorner, the refusals, the nothing-recorded note and the bare
+       refusal, each under its own name
 """
 import glob
 import os
@@ -339,6 +343,34 @@ rc, out = run("corners -output v(out)", "c12b", ".option savecorner=G.xlsx savem
 fx = xlsx_fonts(os.path.join(WORK, "G.xlsx"))
 check("a savemc font option is the fallback: Verdana, and savemc_writemc styles the output column navy",
       fx.get("corner", (0, 0, "", 0))[2] == "Verdana" and fx.get("v(out)", (0, None))[1] == "000080", str(fx))
+
+# ---- [13] writecorner (Enhancement-742) --------------------------------------------
+print("\n[13] writecorner")
+rc, out = run("op\nwritecorner vo=v(out)\nwritecorner corner=7 status=1", "c13", ".option savecorner=c13.csv corner=ff")
+hdr, rows = rows_of("c13.csv")
+check("writecorner after a plain run puts the value on that run's row, as writemc does",
+      len(rows) == 1 and near(rows[0].get("vo"), 0.5) and near(rows[0].get(RSH), 88), str(rows))
+check("`writecorner corner=...` and `status=...` are refused under the command's own name, and nothing says writemc",
+      out.count("writecorner: `corner` is one of the savecorner row's fixed columns") == 1
+      and out.count("writecorner: `status` is one of the savecorner row's fixed columns") == 1
+      and "writemc:" not in out, out[-400:])
+rc, out = run("op\nwritecorner vout=v(out) g=v(out)/v(in)", "c13b", ".option savecorner=c13b.csv autocorner")
+hdr, rows = rows_of("c13b.csv")
+check("writecorner on an autocorner combined plot: each value on every corner's own row, the note under its name",
+      hdr == FIXED + [RSH, K, VTH, "vout", "g"] and len(rows) == 3
+      and all(near(r["vout"], 0.5) and near(r["g"], 0.5) for r in rows)
+      and "writecorner: " in out and "is the corner pass's combined plot" in out and "writemc:" not in out, str(hdr) + out[-300:])
+rc, out = run("op\nwritecr vo=v(out)\nwritecr corner=7", "c13d", ".option savecorner=c13d.csv corner=ss")
+hdr, rows = rows_of("c13d.csv")
+check("writecr, the short form: the value on the run's row, the fixed-column refusal under its own name, nothing saying writemc or writecorner",
+      len(rows) == 1 and near(rows[0].get("vo"), 0.5) and near(rows[0].get(RSH), 115)
+      and out.count("writecr: `corner` is one of the savecorner row's fixed columns") == 1
+      and "writemc:" not in out and "writecorner" not in out, str(rows) + out[-300:])
+rc, out = run("op\nwritecorner x=v(out)\nwritecorner", "c13c", "")
+check("with neither recorder set, writecorner says so once under its own name, naming both options; bare, the "
+      "dispatcher's too-few-args refusal is under its name too",
+      "writecorner: nothing is recorded -- neither `.option savemc` nor `.option savecorner` is set" in out
+      and "writecorner: too few args" in out and "writemc" not in out.replace("savemc", ""), out[-400:])
 
 print(f"\n{'ALL PASS' if checks == passed else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if checks == passed else 1)

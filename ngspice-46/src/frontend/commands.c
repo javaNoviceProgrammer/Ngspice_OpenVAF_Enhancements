@@ -520,6 +520,18 @@ struct comm spcp_coms[] = {
       "[name=]<expression> ... : put each value (a scalar, evaluated on the current plot) onto the row "
       "`.option savemc` wrote for the last analysis run -- a value computed in the .control block, beside "
       "the draws behind it; a column is added on first use." },
+    { "writecorner", com_writecorner, FALSE, FALSE,   /* Enhancement-742 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "[name=]<expression> ... : the same as writemc, under the corner file's name: put each value (a scalar, "
+      "evaluated on the current plot) onto the row `.option savecorner` -- and `.option savemc`, when set -- "
+      "wrote for the last analysis run; on an autocorner combined plot each value goes onto every corner's own "
+      "row. One command serves both recorders today; the name is separate so the two can diverge." },
+    { "writecr", com_writecr, FALSE, FALSE,       /* Enhancement-742 */
+      { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
+      NULL,
+      "[name=]<expression> ... : short for writecorner -- writemc under the corner file's name: each value onto "
+      "the row `.option savecorner` (and `.option savemc`, when set) wrote for the last analysis run." },
     { "sweep", com_sweep, TRUE, FALSE,           /* Enhancement-146 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,

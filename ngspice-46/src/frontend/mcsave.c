@@ -46,6 +46,7 @@
 #include "cornersave.h"     /* Enhancement-701: writemc feeds the savecorner rows too */
 extern char *spice_analysis_get_name(int index);
 #include <time.h>
+#include <stdarg.h>         /* Enhancement-742: wm_msg */
 #include <ctype.h>
 #include <math.h>
 #ifdef HAVE_UNISTD_H
@@ -1753,6 +1754,23 @@ mcs_split_item(const char *word, char **name, char **expr)
     *expr = copy(word);
 }
 
+/* Enhancement-742: `writecorner` (and its short form `writecr`) is `writemc`
+ * under the corner file's name. One handler serves both recorders (E-701
+ * already routes every value to the savecorner row as well as the savemc
+ * row); the names are separate entry points so they can diverge later. Every
+ * message names the command that was typed, through wm_msg. */
+static const char *wm_cmd = "writemc";
+
+static void
+wm_msg(FILE *f, const char *fmt, ...)
+{
+    va_list ap;
+    fprintf(f, "%s: ", wm_cmd);
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+}
+
 void
 com_writemc(wordlist *wl)
 {
@@ -1760,15 +1778,15 @@ com_writemc(wordlist *wl)
     wordlist *w;
 
     if (!wl) {
-        fprintf(cp_err, "Usage: writemc [name=]<expression> ... -- each value onto the "
-                        "savemc row of the last analysis run\n");
+        fprintf(cp_err, "Usage: %s [name=]<expression> ... -- each value onto the "
+                        "savemc / savecorner row of the last analysis run\n", wm_cmd);
         return;
     }
     /* Enhancement-701: `.option savecorner` rows take the values too */
     if (!MCSAVEactive() && !CSAVEactive()) {
         if (!said_off)
-            fprintf(cp_err, "writemc: nothing is recorded -- `.option savemc` is not set "
-                            "(said once)\n");
+            wm_msg(cp_err, "nothing is recorded -- neither `.option savemc` nor "
+                           "`.option savecorner` is set (said once)\n");
         said_off = 1;
         return;
     }
@@ -1785,7 +1803,7 @@ com_writemc(wordlist *wl)
             int c;
             if (said_for != plot_cur) {
                 said_for = plot_cur;
-                fprintf(cp_out, "writemc: %s is the corner pass's combined plot: each value is "
+                wm_msg(cp_out, "%s is the corner pass's combined plot: each value is "
                                 "evaluated on every corner's own plot and put on that corner's "
                                 "row\n", plot_cur->pl_typename);
             }
@@ -1800,27 +1818,27 @@ com_writemc(wordlist *wl)
                     int r;
                     plot_cur = cps[c];
                     if (!mcs_eval_scalar(expr, &v, &why)) {
-                        fprintf(cp_err, "writemc: %s on %s: %s\n", expr, cps[c]->pl_typename,
+                        wm_msg(cp_err, "%s on %s: %s\n", expr, cps[c]->pl_typename,
                                 why ? why : "?");
                         tfree(why);
                         if (++nbad == ncp)
-                            fprintf(cp_err, "writemc: a corner's own plot holds its vectors under "
+                            wm_msg(cp_err, "a corner's own plot holds its vectors under "
                                             "their plain names (v(out), not v(out_<corner>))\n");
                         continue;
                     }
                     (void) CSAVEappendPlot(cps[c], name, v);   /* Enhancement-701 */
                     r = MCSAVEappendPlot(cps[c], name, v);
                     if (r == -5)
-                        fprintf(cp_err, "writemc: no row is %s's run; %s is not put on one\n",
+                        wm_msg(cp_err, "no row is %s's run; %s is not put on one\n",
                                 cps[c]->pl_typename, name);
                     else if (r == -4) {
-                        fprintf(cp_err, "writemc: `%s` is one of the row's fixed columns (trial, "
+                        wm_msg(cp_err, "`%s` is one of the row's fixed columns (trial, "
                                         "analysis, status, corner); give the value another name\n",
                                 name);
                         break;
                     }
                     else if (r == -3 && !said_nofile)
-                        fprintf(cp_err, "writemc: savemc could not open a file for this circuit "
+                        wm_msg(cp_err, "savemc could not open a file for this circuit "
                                         "(said above), so %s is not recorded (said once)\n", name);
                     if (r == -3)
                         said_nofile = 1;
@@ -1838,7 +1856,7 @@ com_writemc(wordlist *wl)
          * plot; the row must be that plot's run */
         char *why = NULL;
         if (!MCSAVEplotIsRow(&why)) {
-            fprintf(cp_err, "writemc: %s; nothing is put on that row\n", why);
+            wm_msg(cp_err, "%s; nothing is put on that row\n", why);
             tfree(why);
             mc_on = 0;
         }
@@ -1846,7 +1864,7 @@ com_writemc(wordlist *wl)
     if (cs_on) {
         char *why = NULL;
         if (!CSAVEplotIsRow(&why)) {
-            fprintf(cp_err, "writemc: %s; nothing is put on that savecorner row\n", why);
+            wm_msg(cp_err, "%s; nothing is put on that savecorner row\n", why);
             tfree(why);
             cs_on = 0;
         }
@@ -1860,25 +1878,25 @@ com_writemc(wordlist *wl)
         mcs_split_item(tok, &name, &expr);
         tfree(tok);
         if (!mcs_eval_scalar(expr, &v, &why)) {
-            fprintf(cp_err, "writemc: %s: %s\n", expr, why ? why : "?");
+            wm_msg(cp_err, "%s: %s\n", expr, why ? why : "?");
             tfree(why);
         } else {
             if (cs_on && CSAVEappend(name, v) == -4)     /* Enhancement-701 */
-                fprintf(cp_err, "writemc: `%s` is one of the savecorner row's fixed columns "
+                wm_msg(cp_err, "`%s` is one of the savecorner row's fixed columns "
                                 "(corner, analysis, status); give the value another name\n", name);
             r = mc_on ? MCSAVEappend(name, v) : -2;
             if (r == -1 && ran_no_row)          /* Enhancement-634 (hunt D7) */
-                fprintf(cp_err, "writemc: the last run made no row -- this circuit has no "
+                wm_msg(cp_err, "the last run made no row -- this circuit has no "
                                 "parameter with statistics to record (said above) -- so there "
                                 "is no row to put %s on\n", name);
             else if (r == -1)
-                fprintf(cp_err, "writemc: no analysis has run yet, so there is no row to "
+                wm_msg(cp_err, "no analysis has run yet, so there is no row to "
                                 "put %s on\n", name);
             else if (r == -4)                   /* Enhancement-634 (hunt D3) */
-                fprintf(cp_err, "writemc: `%s` is one of the row's fixed columns (trial, analysis, "
+                wm_msg(cp_err, "`%s` is one of the row's fixed columns (trial, analysis, "
                                 "status); give the value another name\n", name);
             else if (r == -3 && !said_nofile)
-                fprintf(cp_err, "writemc: savemc could not open a file for this circuit "
+                wm_msg(cp_err, "savemc could not open a file for this circuit "
                                 "(said above), so %s is not recorded (said once)\n", name);
             if (r == -3)
                 said_nofile = 1;
@@ -1886,4 +1904,21 @@ com_writemc(wordlist *wl)
         tfree(name);
         tfree(expr);
     }
+}
+
+/* Enhancement-742: the alias entry points (see wm_cmd above). */
+void
+com_writecorner(wordlist *wl)
+{
+    wm_cmd = "writecorner";
+    com_writemc(wl);
+    wm_cmd = "writemc";
+}
+
+void
+com_writecr(wordlist *wl)
+{
+    wm_cmd = "writecr";
+    com_writemc(wl);
+    wm_cmd = "writemc";
 }
