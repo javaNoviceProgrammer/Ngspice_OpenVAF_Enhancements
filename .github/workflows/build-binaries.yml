@@ -45,7 +45,11 @@ jobs:
         include:
           - { name: linux-intel,         os: ubuntu-latest,    container: "ubuntu:22.04", bin: linux/intel }
           - { name: linux-arm,           os: ubuntu-24.04-arm, container: "ubuntu:22.04", bin: linux/arm }
-          - { name: macos-apple-silicon, os: macos-14,         bin: macos/apple-silicon }
+          # macos-15: Homebrew treats the macos-14 image as Tier 3 since
+          # 2026-09 (no bottles for new formula versions), and two runs in a row
+          # died in the dependency step there (see that step). The binary's
+          # minimum macOS stays 14.0 through MACOSX_DEPLOYMENT_TARGET.
+          - { name: macos-apple-silicon, os: macos-15,         bin: macos/apple-silicon }
           # macos-13 (the old Intel-macOS image) was scarce/deprecated and never
           # got scheduled, which used to stall the whole matrix. macos-26-intel
           # (macOS 26 "Tahoe" on Intel, still in beta as of writing) is the
@@ -111,7 +115,7 @@ jobs:
           # Silence two CI warnings from the runner image: it ships an
           # untrusted third-party tap (aws/tap) that brew now warns about,
           # and a pre-installed LLVM (llvm@15 on macos-14, llvm@20 on
-          # macos-26-intel -- varies by image), which makes the llvm@18
+          # macos-26-intel, whatever macos-15 ships -- varies by image), which makes the llvm@18
           # install warn "installed but not linked" (brew's check is on
           # INSTALLED versions, so a mere unlink is not enough -- remove
           # every non-18 llvm). None of this is used by the build: openvaf
@@ -121,6 +125,22 @@ jobs:
           for f in $(brew list --formula 2>/dev/null | grep '^llvm' | grep -v '^llvm@18$'); do
             brew uninstall --ignore-dependencies "$f" 2>/dev/null || true
           done
+          # Never touch what we did not ask for. On the Tier 3 macos-14 image a
+          # `brew install` of our dependencies rebuilt the image's unrelated
+          # dependents of them from source (readline -> pipx -> openssl@3), and
+          # that openssl's `brew link` failed, ending the job before anything of
+          # ours compiled (E-753's and E-754's runs, 2026-09-28). The two
+          # variables stop the dependents check and the upgrade of anything
+          # already installed; exported for this step and put in the job's
+          # environment for the brew calls that follow.
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
+          export HOMEBREW_NO_INSTALL_UPGRADE=1
+          echo "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1" >> "$GITHUB_ENV"
+          echo "HOMEBREW_NO_INSTALL_UPGRADE=1" >> "$GITHUB_ENV"
+          # The binary's minimum macOS: what the macos-14 image gave it by
+          # default, kept explicit now that the image is macos-15.
+          echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
+          export MACOSX_DEPLOYMENT_TARGET=14.0
           brew update
           brew install llvm@18 automake autoconf libtool bison flex readline ncurses
           # belt-and-braces: make llvm@18 the linked default too (the build
