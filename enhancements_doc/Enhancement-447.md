@@ -208,3 +208,5 @@ conventions left alone are pinned as controls too:
 
 **Full regression 359/359**, both solvers — including Enhancement-426's own
 suite, which is what caught the two conventions above.
+
+**Update ([E-755](Enhancement-755.md)).** "A negative multiplier still warns" holds, once per instance: on a compiled instance the warning is the OSDI setter's (the value is ignored), naming the instance, and the parser's sign-inverted sentence is kept for the built-ins alone.

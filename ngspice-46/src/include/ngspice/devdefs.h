@@ -206,5 +206,12 @@ extern int        DEVmaxnum;    /* size of DEVices array */
  * dispatcher then neither warns about the terminals above the line's count
  * (E-481) nor grounds them under `.option silentports=ground`. */
 #define DEV_VARTERMS	0x2
+/* Enhancement-755: the device is a COMPILED (OSDI) module. Its instance
+ * setter, osdi/osdiparam.c, rules on the multiplier itself -- a negative m is
+ * warned there and IGNORED, the instance keeping the multiplier it had
+ * (E-529) -- so the parser-layer check in spicelib/parser/inpdpar.c leaves
+ * the negative case to it rather than announce the sign-inversion that only
+ * a built-in device performs. */
+#define DEV_OSDI	0x4
 
 #endif

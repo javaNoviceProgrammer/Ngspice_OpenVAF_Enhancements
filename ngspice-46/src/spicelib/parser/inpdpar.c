@@ -22,6 +22,7 @@ Author: 1985 Thomas L. Quarles
 #include "ngspice/cpdefs.h"
 #include "ngspice/fteext.h"
 #include "inpxx.h"
+#include "ngspice/devdefs.h"   /* Enhancement-755: DEV_OSDI */
 
 static IFparm *
 find_instance_parameter(char *name, IFdevice *device)
@@ -54,7 +55,16 @@ find_instance_parameter(char *name, IFdevice *device)
  * "this makes a passive device active" is not by itself grounds for refusing a
  * value here; and E-361/362 recorded that clamping a bad number can be worse
  * than the number. m == 0 is NOT diagnosed: it is the ordinary "disable this
- * instance" idiom and behaves cleanly. */
+ * instance" idiom and behaves cleanly.
+ *
+ * Enhancement-755: the negative case is reported here for the BUILT-INS only.
+ * A compiled (OSDI) instance's setter refuses a negative m and keeps the
+ * multiplier it had (E-529), so the sentence below -- the device's
+ * contribution is sign-inverted -- described what does not happen there, and
+ * `nr1 a 0 nmod m=-1` printed it beside the setter's "the value is ignored":
+ * two warnings contradicting each other on one line (options-and-convergence
+ * hunt F6, workflows hunt F10). The device table's DEV_OSDI flag (devdefs.h)
+ * tells the two apart; the OSDI layer says it once, naming the instance. */
 static int
 e426_multiplier_id(IFdevice *device)
 {
@@ -88,13 +98,18 @@ e426_check_multiplier(IFdevice *device, GENinstance *fast, IFparm *p,
                 "operating point cannot converge.\n",
                 fast && fast->GENname ? fast->GENname : device->name,
                 p->keyword, v);
-    else if (v < 0.0)
+    else if (v < 0.0) {
+        /* Enhancement-755: a compiled instance's own setter warns and
+           ignores the value (osdi/osdiparam.c); see the comment above. */
+        if (device && (device->flags & DEV_OSDI))
+            return;
         fprintf(stderr,
                 "Warning: %s: multiplier %s=%g is negative; the device's "
                 "contribution is sign-inverted (a passive device becomes "
                 "active) and any noise contribution becomes NaN.\n",
                 fast && fast->GENname ? fast->GENname : device->name,
                 p->keyword, v);
+    }
     /* Enhancement-447 considered warning on m=0 as well, since zero deletes the
        instance outright while a NEGATIVE multiplier was already reported. It is
        deliberately left silent here: Enhancement-426 established m=0 as the

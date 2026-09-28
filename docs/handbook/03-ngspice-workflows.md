@@ -24,8 +24,8 @@ n1 in out mymod          ; instance (ports in declaration order)
 - **Instance-line parameters** (`n1 in out mymod r=2k`) work for parameters
   the model marks `(* type="instance" *)` — plus the built-in `m=<mult>`
   device multiplicity, which correctly scales currents, charges, and noise
-  (`$mfactor` in the model's own source). A **negative** `m` is warned and
-  ignored on every route — `alter` included, which used to apply it
+  (`$mfactor` in the model's own source). A **negative** `m` is warned once (one line
+  naming the instance, since E-755) and ignored on every route — `alter` included, which used to apply it
   silently, flipping the device's current and making `.noise` spectra NaN
   through the compiled `sqrt(m)` factor — while `m=0` stays the
   "disable this instance" idiom, exactly as for built-ins, announced since

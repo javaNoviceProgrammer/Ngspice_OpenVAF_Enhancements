@@ -36,7 +36,7 @@ by `.nodeset v(q)=0` settles in the opposite state from the built-in one.
 | [F7](#f7--the-verbose-report-is-keyed-by-compiled-file-not-by-model-card-and-lives-for-the-process) | one line per `.osdi` file, so the PMOS card's polarity is never reported; silent after a re-`source`; silent when `noosdilim` is set; BJT line says *threshold 0 V* | low — diagnostic |
 | [F8](#f8--a-model-parameter-on-an-instance-line-is-refused-as-unknown-parameter) | `nr1 a 0 rmod r=2k` fails with *unknown parameter (r)* though `r` is a parameter the model knows, on its card | low — misleading text |
 | [F9](#f9--pre_osdi-cannot-take-a-path-with-a-space) | quotes are kept literally, an escaped space splits the argument | low |
-| [F10](#f10--m-1-prints-two-contradictory-warnings) | *sign-inverted* and *ignored* on the same line; acts as `m=1` | low |
+| [F10](#f10--m-1-prints-two-contradictory-warnings) | *(fixed in [E-755](../../enhancements_doc/Enhancement-755.md): one warning, the OSDI setter's, naming the instance)* *sign-inverted* and *ignored* on the same line; acts as `m=1` | low |
 | [F11](#f11--sens-vector-names-mix-two-separators) | `n1:r` beside `n1__mfactor`, `n1_dt`, `n1_temp` | cosmetic |
 | [F12](#f12--hisim2-is-never-limited-its-internal-nodes-are-named-dpsp) | the recognizer knows `gp` for the gate but not `dp`/`sp`/`bp`, and HiSIM2's noise node `n` is live: a 20-stage HiSIM2 chain takes 258 iterations with gmin stepping, limiter or not | low — E-543's claim does not reach HiSIM2 |
 | [F13](#f13--an-absent-terminal-is-warned-about-per-instance-then-left-floating) | BSIMBULK (`d,g,s,b,t`) written with four nodes: 40 three-line warnings name the absent `t`, then the thermal node floats and the DC operating point fails after 373 iterations and three stepping strategies without referring back; with `t` grounded, 11 iterations | low — diagnostic |
@@ -301,6 +301,10 @@ split into three arguments. No spelling loads the file.
 
 `n1 … m=-1` warns *sign-inverted* and *ignored* on the same instance and
 simulates as `m=1`. One of the two is true.
+
+*Fixed in [E-755](../../enhancements_doc/Enhancement-755.md).* The *ignored* one; it is now the only one, and it
+names the instance. The parser's *sign-inverted* sentence is kept for the
+built-ins, which do invert.
 
 ## F11 — `sens` vector names mix two separators
 

@@ -431,6 +431,46 @@ def main():
     rc, out = run("* ig\nV1 a 0 dc 1\nR1 a 0 2k m=-1\n"
                   ".control\noption noacct\nop\nprint i(v1)\n.endc\n.end\n")
     check("a negative m on a BUILT-IN device is reported too", "is negative" in out)
+    # Enhancement-755 (options-and-convergence hunt F6, workflows hunt F10): a
+    # compiled instance's negative m used to draw TWO warnings that contradicted
+    # each other -- the parser's built-in sentence ("the device's contribution
+    # is sign-inverted") and the OSDI setter's ("the value is ignored") -- and
+    # only the setter's was true. The parser now leaves a DEV_OSDI device's
+    # negative m to the setter, which says it once, naming the instance; the
+    # built-ins keep the parser's sentence, and do invert.
+    IGN = "is negative; the value is ignored and the instance keeps the multiplier it had"
+    rc, out = run("* ig\n" + (MDEV % "m=-1") + ctl("op\nprint i(v1)"))
+    check("[E-755] m=-1 on a compiled instance draws ONE warning, naming it, saying the value is ignored",
+          out.count("is negative") == 1 and ("Warning: n1: multiplier m=-1 " + IGN) in out
+          and "sign-inverted (a passive" not in out, f"warnings={out.count('is negative')}")
+    check("[E-755] ...and the instance runs at the multiplier it had (m=1: 0.5 mA)",
+          close(val(out, "i(v1)"), -5e-4, 1e-6))
+    rc, out = run("* ig\n" + (MDEV % "_mfactor=-2.5") + ctl("op\nprint i(v1)"))
+    check("[E-755] the `_mfactor=-2.5` spelling: the same one warning",
+          out.count("is negative") == 1 and ("Warning: n1: multiplier m=-2.5 " + IGN) in out
+          and close(val(out, "i(v1)"), -5e-4, 1e-6))
+    rc, out = run("* ig\nV1 a 0 dc 1\n.subckt sub p q\nN1 p q rm\n.ends\nX1 a 0 sub m=-1\n"
+                  ".model rm ig_res(r0=2000)\n" + ctl("op\nprint i(v1)"))
+    check("[E-755] a subcircuit called with m=-1: one warning naming the flattened instance",
+          out.count("is negative") == 1 and ("Warning: n.x1.n1: multiplier m=-1 " + IGN) in out
+          and close(val(out, "i(v1)"), -5e-4, 1e-6), out[-160:].replace("\n", " "))
+    rc, out = run("* ig\nV1 a 0 dc 1\nN1 a 0 rm\nN2 a 0 rm\n.model rm ig_res(r0=2000 _mfactor=-1)\n"
+                  + ctl("op\nprint i(v1)"))
+    check("[E-755] a card's `_mfactor=-1` default: one warning per instance, both at m=1",
+          out.count("is negative") == 2 and ("Warning: n1: multiplier m=-1 " + IGN) in out
+          and ("Warning: n2: multiplier m=-1 " + IGN) in out
+          and close(val(out, "i(v1)"), -1e-3, 1e-6))
+    rc, out = run("* ig\n" + (MDEV % "m=2") + ctl("op\nprint i(v1)\nalter @n1[m]=-1\nop\nprint i(v1)"))
+    iv = re.findall(r"i\(v1\)\s*=\s*(\S+)", out)
+    check("[E-755] `alter @n1[m]=-1` at run time: one warning, and the instance keeps m=2",
+          out.count("is negative") == 1 and ("Warning: n1: multiplier m=-1 " + IGN) in out
+          and len(iv) == 2 and close(float(iv[0]), -1e-3, 1e-6)
+          and close(float(iv[1]), -1e-3, 1e-6), f"{iv}")
+    rc, out = run("* ig\nV1 a 0 dc 1\nR1 a 0 2k m=-1\n"
+                  ".control\noption noacct\nop\nprint i(v1)\n.endc\n.end\n")
+    check("[E-755] a BUILT-IN device keeps the parser's sentence and does invert (one warning, +0.5 mA)",
+          out.count("is negative") == 1 and "sign-inverted (a passive device becomes active)" in out
+          and close(val(out, "i(v1)"), 5e-4, 1e-6))
     rc, out = run("* ig\nV1 a 0 dc 1\nR1 a 0 rmod 2k\n.model rmod r(m=3)\n"
                   ".control\noption noacct\nop\nprint i(v1) @r1[m]\n.endc\n.end\n")
     check("`m` on a .model card is announced, and still ignored",

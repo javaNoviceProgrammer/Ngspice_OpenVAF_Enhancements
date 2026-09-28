@@ -68,6 +68,13 @@ idiom shared with the built-ins — the first cut of this guard refused it
 and the `inputguard`/`instknobs` suites caught the over-reach immediately,
 which is exactly what they are for.
 
+**Update ([E-755](Enhancement-755.md)).** This warning names the instance and
+says the instance keeps the multiplier it had, and it is now the only warning a
+compiled instance's negative `m` draws on any route: the parser-layer sentence
+(E-426, "the device's contribution is sign-inverted") is withdrawn for
+`DEV_OSDI` devices, since it described the built-in's behaviour, not this
+refusal.
+
 ## Documented
 
 README_OSDI's new section records the v0.3 removal, the ⚠️ `$bound_step`

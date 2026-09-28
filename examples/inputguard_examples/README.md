@@ -7,7 +7,7 @@ answers that followed.
 python3 verify_inputguard.py
 ```
 
-100 checks. Every one is measured as a number, and **every boundary is pinned
+107 checks. Every one is measured as a number, and **every boundary is pinned
 from both sides** — the refusals *and* the legitimate spellings that must keep
 working. That second half is the point of the suite: three proposed fixes were
 killed during review because they would have rejected something real.
@@ -43,3 +43,12 @@ own `$finish`/`$stop` Notes to stdout while the OSDI log callback writes
 WARN/ERR/FATAL to stderr — a check that watches one stream scores the other as
 silent, which is exactly how the original report came to claim `$finish` printed
 nothing.
+
+## Enhancement-755
+
+Seven checks on a compiled instance's negative `m`: one warning per route (the
+line, `_mfactor=`, a subcircuit's `m=`, a card default, `alter`), naming the
+instance and saying the value is ignored, the instance running at the
+multiplier it had; and the built-in control, which keeps the parser's
+sign-inverted sentence and does invert. Five of the seven fail on the E-754
+binary, which printed two contradicting warnings.

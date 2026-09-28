@@ -306,3 +306,5 @@ the stage the input actually feeds — the same lesson as round 32.
 re-measurement**, four of them because of a harness artefact rather than
 anything in ngspice: a `"Note:"` filter, a single-row `print` regex, a physical
 0.15 K read as nonsense, and documented scale-factor behaviour read as a bug.
+
+**Update ([E-755](Enhancement-755.md)).** The multiplier check's negative branch now reports built-in devices only. A compiled (OSDI) instance's setter refuses the value ([E-529](Enhancement-529.md)) and says so itself, naming the instance, so the "sign-inverted" sentence, which describes what a built-in does, no longer precedes that on a compiled instance's line. The non-finite branch is unchanged for both.

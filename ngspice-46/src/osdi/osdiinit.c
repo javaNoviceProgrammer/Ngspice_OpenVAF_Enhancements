@@ -388,7 +388,7 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
       .instanceParms = instance_para_names,
       .numModelParms = num_model_para_names,
       .modelParms = model_para_names,
-      .flags = DEV_DEFAULT,
+      .flags = DEV_DEFAULT | DEV_OSDI, /* Enhancement-755: see devdefs.h */
       .registry_entry = (void *)entry,
   };
 

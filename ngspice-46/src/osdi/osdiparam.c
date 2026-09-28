@@ -180,14 +180,22 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
    * turned a .noise run into 'onoise_spectrum = nan' with no diagnostic on
    * either channel. Warn and keep the previous value on every route.
    * ZERO is applied: Enhancement-426 established m=0 as the "disable this
-   * instance" idiom, exactly as for the built-ins. */
+   * instance" idiom, exactly as for the built-ins.
+   * Enhancement-755: this is the ONE warning a compiled instance gets. The
+   * parser layer used to print its built-in sentence first ("the device's
+   * contribution is sign-inverted"), which is what a built-in does and this
+   * setter does not, so `nr1 a 0 nmod m=-1` carried two warnings that
+   * contradicted each other; inpdpar.c now leaves a DEV_OSDI device's
+   * negative m to this line, which names the instance and says what is
+   * done. */
   if (!strcmp(descr->param_opvar[param].name[0], "$mfactor") &&
       value->rValue < 0.0) {
     fprintf(stderr,
-            "Warning: multiplier m=%g is negative; the value is ignored "
-            "(a negative multiplicity sign-inverts the device and makes "
-            "its noise NaN).\n",
-            value->rValue);
+            "Warning: %s: multiplier m=%g is negative; the value is ignored "
+            "and the instance keeps the multiplier it had (a negative "
+            "multiplicity would sign-invert the device and make its noise "
+            "NaN).\n",
+            instPtr->GENname ? instPtr->GENname : "instance", value->rValue);
     return (OK);
   }
 
