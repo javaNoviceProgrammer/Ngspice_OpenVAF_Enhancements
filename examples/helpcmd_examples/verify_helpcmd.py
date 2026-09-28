@@ -250,5 +250,37 @@ seen = [k for k in ("while", "if", "goto", "settype", "fopen", "linearize", "dev
 check("[8] `newhelp` at the advanced level lists the control keywords and the commands below them (it cut the table the same way)",
       len(seen) == 7, f"{seen}")
 
+# ------------------------------------------------------------------- [9]
+# The internals document (docs/internals/ngspice_internals/ngspice_commands.md)
+# ends with a table of every command `help all` prints, generated from the
+# binary by make_commands_table.py in the same folder. A command added to the
+# table in commands.c without rerunning that script shows up here.
+print("\n[9] the internals document lists every command `help all` prints")
+DOC = os.path.join(HERE, "..", "..", "docs", "internals", "ngspice_internals", "ngspice_commands.md")
+doc = open(DOC).read()
+seg = doc[doc.find("<!-- helpall:begin -->"):doc.find("<!-- helpall:end -->")]
+rows = re.findall(r"^\| `([a-z_0-9]+)` \| (.*?) \| (.*) \|$", seg, re.M)
+names_doc = [r[0] for r in rows]
+names_bin = [l.split(" ", 1)[0] for l in (lst or []) if re.match(r"^[a-z_0-9]+\s", l)]
+check("[9] the document's table names exactly the commands `help all` lists, once each",
+      names_doc and sorted(names_doc) == sorted(names_bin) and len(names_doc) == len(set(names_doc)),
+      f"doc {len(names_doc)} / binary {len(names_bin)}; missing {sorted(set(names_bin) - set(names_doc))[:5]}, "
+      f"extra {sorted(set(names_doc) - set(names_bin))[:5]}")
+
+
+def norm(s):
+    return s.replace("\\|", "|").replace("`", "").strip()
+
+
+bin_desc = {}
+for l in (lst or []):
+    m = re.match(r"^([a-z_0-9]+)\s(.*?)\s*:\s(.*)$", l)
+    if m:
+        bin_desc[m.group(1)] = norm(m.group(3))
+doc_desc = {r[0]: norm(r[2]) for r in rows}
+bad = [n for n in names_doc if doc_desc.get(n) != bin_desc.get(n)]
+check("[9] ...and each description is the one the command table carries (rerun make_commands_table.py otherwise)",
+      not bad, f"differs for {bad[:5]}")
+
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

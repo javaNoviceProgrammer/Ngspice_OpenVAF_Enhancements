@@ -4,7 +4,7 @@
 python3 verify_helpcmd.py
 ```
 
-18 checks. Not a circuit simulation, so the dual-solver harness does not apply.
+20 checks (the last two hold the internals document `ngspice_commands.md` to the binary's `help all`). Not a circuit simulation, so the dual-solver harness does not apply.
 
 **[1]–[4], [E-174](../../enhancements_doc/Enhancement-174.md): `help` must not
 crash.** Each help string is passed to printf as the format, so a bare `%` in
