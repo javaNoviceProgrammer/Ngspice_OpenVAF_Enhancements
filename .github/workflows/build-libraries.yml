@@ -51,7 +51,13 @@ jobs:
         include:
           - { name: linux-intel,         os: ubuntu-latest,    container: "ubuntu:22.04", lib: linux/intel }
           - { name: linux-arm,           os: ubuntu-24.04-arm, container: "ubuntu:22.04", lib: linux/arm }
-          - { name: macos-apple-silicon, os: macos-14,         lib: macos/apple-silicon }
+          # macos-15: Homebrew treats the macos-14 image as Tier 3 since
+          # 2026-09 (no bottles for new formula versions), and the Build
+          # binaries workflow died twice in its dependency step there; this
+          # workflow's brew step is moved with it before it goes the same way
+          # (see that step). The dylib's minimum macOS stays 12.0 through
+          # MACOSX_DEPLOYMENT_TARGET below.
+          - { name: macos-apple-silicon, os: macos-15,         lib: macos/apple-silicon }
           # macos-26-intel: the current standard-tier Intel macOS image (see the
           # note in build-binaries.yml; Intel macOS runners retire in 2027).
           - { name: macos-intel,         os: macos-26-intel,   lib: macos/intel }
@@ -84,6 +90,18 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew untap aws/tap 2>/dev/null || true
+          # Never touch what we did not ask for. On the Tier 3 macos-14 image a
+          # `brew install` of the Build binaries workflow's dependencies rebuilt
+          # the image's unrelated dependents of them from source (readline ->
+          # pipx -> openssl@3), and that openssl's `brew link` failed, ending
+          # the job before anything of ours compiled (2026-09-28). The same two
+          # variables as there: no dependents check, no upgrade of anything
+          # already installed; exported for this step and put in the job's
+          # environment for the brew calls that follow.
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
+          export HOMEBREW_NO_INSTALL_UPGRADE=1
+          echo "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1" >> "$GITHUB_ENV"
+          echo "HOMEBREW_NO_INSTALL_UPGRADE=1" >> "$GITHUB_ENV"
           brew update
           brew install automake autoconf libtool bison flex
           echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
