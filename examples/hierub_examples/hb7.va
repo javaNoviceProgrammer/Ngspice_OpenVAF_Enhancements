@@ -1,0 +1,9 @@
+`include "disciplines.vams"
+module leafr(p, n); inout p, n; electrical p, n;
+analog I(p,n) <+ V(p,n)/500;
+endmodule
+module hb7(p, n); inout p, n; electrical p, n;
+(* desc="own" *) real iop;
+leafr l1(p, n);
+analog iop = I(p,n);
+endmodule

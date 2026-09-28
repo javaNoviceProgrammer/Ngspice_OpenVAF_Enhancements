@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+module srcleaf(p, n); inout p, n; electrical p, n;
+analog V(p,n) <+ 1.0;
+endmodule
+module resleaf(p, n); inout p, n; electrical p, n;
+analog I(p,n) <+ V(p,n)/500;
+endmodule
+module hb11(p, n); inout p, n; electrical p, n;
+srcleaf s1(p, n); resleaf r1(p, n);
+endmodule
+module hb12(p, n); inout p, n; electrical p, n;
+resleaf r1(p, n); srcleaf s1(p, n);
+endmodule

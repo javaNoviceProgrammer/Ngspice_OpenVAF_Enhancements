@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module sw(p, n); inout p, n; electrical p, n; parameter integer on = 1;
+analog if (on) V(p,n) <+ 0.0; else I(p,n) <+ 0.0;
+endmodule
+module swh(p, n); inout p, n; electrical p, n; parameter integer on = 1;
+sw #(.on(on)) s1(p, n);
+analog I(p,n) <+ V(p,n)/1M;
+endmodule

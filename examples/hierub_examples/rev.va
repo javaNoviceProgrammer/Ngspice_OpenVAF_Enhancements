@@ -1,0 +1,18 @@
+`include "disciplines.vams"
+module leafrev(p, n); inout p, n; electrical p, n;
+(* desc="rev probe" *) real irev;
+analog begin I(p,n) <+ V(p,n)/1k; irev = I(n,p); end
+endmodule
+module revc(p, n); inout p, n; electrical p, n;
+analog I(n,p) <+ -V(p,n)/1k;
+endmodule
+module revv(p, n); inout p, n; electrical p, n;
+analog V(n,p) <+ -1.0;
+endmodule
+module rev(p, n); inout p, n; electrical p, n, x, y;
+(* desc="child rev probe" *) real irev;
+leafrev l1(p, n);
+revc l2(x, n);
+revv l3(y, n);
+analog begin I(p,x) <+ V(p,x)/1k; I(p,y) <+ V(p,y)/1k; irev = l1.irev; end
+endmodule

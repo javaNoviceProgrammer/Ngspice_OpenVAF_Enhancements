@@ -43,6 +43,7 @@
 //! bus port's base name and replacing the *whole* sequence, turning it
 //! into an ordinary hole for `render_with_holes`.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
@@ -3115,6 +3116,9 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
         hier_param_errors: Vec::new(),
         abs_prefixes: Rc::new(AbsPrefixes::default()),
         port_ammeters: HashMap::new(),
+        ub_requests: HashMap::new(),
+        ground_finals: HashSet::new(),
+        ub_flips: Rc::new(RefCell::new(HashSet::new())),
         flow_access: flow_access_names(&tree),
         access_names: tree
             .data
@@ -3158,7 +3162,7 @@ pub(crate) fn elaborate_instantiations(db: &mut CompilationDB) -> anyhow::Result
                 let text = module_ast.syntax().text().to_string();
                 let anchor = anchor_maps.iter().find(|(anchor_name, map)| {
                     *anchor_name != name
-                        && !find_instance_path_holes(&text, map, &AbsPrefixes::default()).is_empty()
+                        && !find_instance_path_holes(&text, map, &AbsPrefixes::default(), &HashSet::new(), &RefCell::new(HashSet::new())).is_empty()
                 });
                 if let Some((anchor_name, _)) = anchor {
                     out.push_str(&format!(
@@ -3496,6 +3500,22 @@ struct ElabCtx<'a> {
     /// `<chain>.branch(<port>)` — collected by a pre-scan over every
     /// module's text before the top module renders.
     port_ammeters: HashMap<String, BTreeSet<String>>,
+    /// Enhancement-757: `I(<chain>.branch(a, b))` flow probes of a child's
+    /// UNNAMED branch, pre-scanned like the port probes above, so the child
+    /// declares that branch (prefix -> canonical, sorted net pairs) even when
+    /// its own body never accesses the pair.
+    ub_requests: HashMap<String, BTreeSet<Vec<String>>>,
+    /// Enhancement-757: the FINAL flattened names of every `ground`-declared
+    /// net under the top module being flattened (the top's own, and each
+    /// inlined child's as `<prefix><net>`). A synthesized unnamed-branch
+    /// declaration never puts one of these first: `branch (gnd, a)` is not a
+    /// branch to ground in the compiler (only `(a, gnd)` and `(a)` are), so
+    /// the pair is declared the other way round and every access negated.
+    ground_finals: HashSet<String>,
+    /// Enhancement-757: the synthesized branches declared the other way round
+    /// (see `ground_finals`), shared with every scope of this flatten so the
+    /// `I(<chain>.branch(a, b))` rewrite negates them too.
+    ub_flips: Rc<RefCell<HashSet<String>>>,
     /// Access-function names of every FLOW nature (`I` for `Current`, plus
     /// any derived nature whose parent chain reaches one), resolved from the
     /// item tree's discipline `flow` bindings. Used by the `#(.$mfactor(n))`
@@ -3714,7 +3734,13 @@ fn hier_sys_override_holes(
                 continue;
             }
             let Some(ast::Expr::Call(target)) = assign.lval() else { continue };
-            lhs_ranges.push(rel_range(base, target.syntax().text_range()));
+            let target_range = rel_range(base, target.syntax().text_range());
+            lhs_ranges.push(target_range.clone());
+            // Enhancement-757: a reversed-order child contribution already
+            // carries its `<+`/`;` holes, with this multiplier folded in
+            if excluded.iter().any(|r| *r == target_range) {
+                continue;
+            }
             let is_flow = callee(&target).is_some_and(|(n, _)| flow_access.contains(&n));
             if !is_flow {
                 continue;
@@ -4012,6 +4038,13 @@ struct Scope {
     /// position -- LRM 9.4.4's hierarchical name -- instead of naming the top
     /// instance for every child.
     hier_path: String,
+    /// Enhancement-757: the flow access names, for `find_instance_path_holes`
+    /// to tell `I(<chain>.branch(a, b))` (the child's own unnamed branch, a
+    /// per-instance named branch after flattening) from `V(...)` of the same
+    /// pair (the node potentials, which stay the flattened net pair).
+    flow_access: Rc<HashSet<String>>,
+    /// Enhancement-757: see `ElabCtx::ub_flips`.
+    ub_flips: Rc<RefCell<HashSet<String>>>,
 }
 
 /// Tries to constant-fold a `[msb:lsb]` instance-array range, mirroring
@@ -4159,10 +4192,144 @@ fn find_port_branch_probes(
     out
 }
 
+/// Enhancement-757: the name of a child instance's own unnamed branch over the
+/// child's nets `canon` (its OWN net names, sorted: one or two of them).
+fn ub_branch_name(prefix: &str, canon: &[String]) -> String {
+    format!("{prefix}ub__{}", canon.join("__"))
+}
+
+/// Enhancement-757: finds `<flow>(<chain>.branch(a[, b]))` -- a flow probe of a
+/// child's unnamed branch over its nets -- in raw module text, so the child
+/// declares the per-instance branch the probe reads whatever order the bodies
+/// render in. Returns (instance prefix, sorted net names) per hit.
+fn find_unnamed_branch_flow_probes(
+    text: &str,
+    prefixes: &HashMap<String, String>,
+    flow_access: &HashSet<String>,
+) -> Vec<(String, Vec<String>)> {
+    let mut spans = Vec::new();
+    let mut pos = 0usize;
+    for tok in lexer::tokenize(text) {
+        let start = pos;
+        let end = pos + usize::from(tok.len);
+        pos = end;
+        spans.push((start, end, tok.kind));
+    }
+    let next_sig = |mut j: usize| {
+        while j < spans.len() && is_trivia(spans[j].2) {
+            j += 1;
+        }
+        j
+    };
+    let prev_sig = |j: usize| -> Option<usize> {
+        let mut j = j.checked_sub(1)?;
+        while is_trivia(spans[j].2) {
+            j = j.checked_sub(1)?;
+        }
+        Some(j)
+    };
+    let txt = |j: usize| &text[spans[j].0..spans[j].1];
+
+    let mut out = Vec::new();
+    for i in 0..spans.len() {
+        if spans[i].2 != TokenKind::SimpleIdent || txt(i) != "branch" {
+            continue;
+        }
+        let Some(dot) = prev_sig(i) else { continue };
+        if spans[dot].2 != TokenKind::Dot {
+            continue;
+        }
+        let op = next_sig(i + 1);
+        if spans.get(op).map(|s| s.2) != Some(TokenKind::OpenParen) {
+            continue;
+        }
+        let a = next_sig(op + 1);
+        if spans.get(a).map(|s| s.2) != Some(TokenKind::SimpleIdent) {
+            continue;
+        }
+        let mut nets = vec![txt(a).to_owned()];
+        let mut q = next_sig(a + 1);
+        if spans.get(q).map(|s| s.2) == Some(TokenKind::Comma) {
+            let b = next_sig(q + 1);
+            if spans.get(b).map(|s| s.2) != Some(TokenKind::SimpleIdent) {
+                continue;
+            }
+            nets.push(txt(b).to_owned());
+            q = next_sig(b + 1);
+        }
+        if spans.get(q).map(|s| s.2) != Some(TokenKind::CloseParen) {
+            continue;
+        }
+        let outer = next_sig(q + 1);
+        if spans.get(outer).map(|s| s.2) != Some(TokenKind::CloseParen) {
+            continue;
+        }
+
+        // walk LEFT from the dot collecting `ident` / `ident[int]` segments
+        let mut segs: Vec<String> = Vec::new();
+        let mut cursor = dot;
+        loop {
+            let Some(seg_end) = prev_sig(cursor) else { break };
+            let seg = if spans[seg_end].2 == TokenKind::CloseBracket {
+                let Some(litj) = prev_sig(seg_end) else { break };
+                let Some(obj) = prev_sig(litj) else { break };
+                let Some(idj) = prev_sig(obj) else { break };
+                if !matches!(spans[litj].2, TokenKind::Literal { .. })
+                    || spans[obj].2 != TokenKind::OpenBracket
+                    || spans[idj].2 != TokenKind::SimpleIdent
+                {
+                    break;
+                }
+                cursor = idj;
+                format!("{}[{}]", txt(idj), txt(litj))
+            } else if spans[seg_end].2 == TokenKind::SimpleIdent {
+                cursor = seg_end;
+                txt(seg_end).to_owned()
+            } else if spans[seg_end].2 == TokenKind::SystemCallIdent && txt(seg_end) == "$root" {
+                segs.push("$root".to_owned());
+                cursor = seg_end;
+                break;
+            } else {
+                break;
+            };
+            segs.push(seg);
+            let Some(dj) = prev_sig(cursor) else { break };
+            if spans[dj].2 != TokenKind::Dot {
+                break;
+            }
+            cursor = dj;
+        }
+        // the access call around the chain: `<flow> (` ... `)`
+        let Some(op2) = prev_sig(cursor) else { continue };
+        if spans[op2].2 != TokenKind::OpenParen {
+            continue;
+        }
+        let Some(callee) = prev_sig(op2) else { continue };
+        if spans[callee].2 != TokenKind::SimpleIdent || !flow_access.contains(txt(callee)) {
+            continue;
+        }
+        segs.reverse();
+        if segs.first().map(String::as_str) == Some("$root") {
+            segs.remove(0);
+        }
+        if segs.is_empty() {
+            continue;
+        }
+        let chain = segs.join(".");
+        if let Some(prefix) = prefixes.get(&chain) {
+            nets.sort();
+            out.push((prefix.clone(), nets));
+        }
+    }
+    out
+}
+
 fn find_instance_path_holes(
     text: &str,
     inst_prefixes: &HashMap<String, String>,
     abs: &AbsPrefixes,
+    flow_access: &HashSet<String>,
+    ub_flips: &RefCell<HashSet<String>>,
 ) -> Vec<(Range<usize>, String)> {
     if inst_prefixes.is_empty() && abs.map.is_empty() {
         return Vec::new();
@@ -4194,6 +4361,13 @@ fn find_instance_path_holes(
             j += 1;
         }
         j
+    };
+    let prev_sig = |j: usize| -> Option<usize> {
+        let mut j = j.checked_sub(1)?;
+        while is_trivia(spans[j].2) {
+            j = j.checked_sub(1)?;
+        }
+        Some(j)
     };
     // reads one path segment at spans[i]: `ident` or `ident [ int ]`;
     // returns (segment text, index just past it)
@@ -4326,8 +4500,39 @@ fn find_instance_path_holes(
                     Some(TokenKind::SimpleIdent) => {
                         let x = &text[spans[a].0..spans[a].1];
                         let q = next_sig(a + 1);
+                        // Enhancement-757: a FLOW probe of the child's unnamed
+                        // branch reads the per-instance named branch the
+                        // child's render declares for that pair
+                        // (`child_branch_holes`), negated when the probe's
+                        // order is the reverse of the canonical sorted one; a
+                        // potential probe keeps reading the flattened nets.
+                        let flow_call = |cp: usize| -> Option<(usize, usize)> {
+                            let outer_rp = next_sig(cp + 1);
+                            if spans.get(outer_rp).map(|s| s.2) != Some(TokenKind::CloseParen) {
+                                return None;
+                            }
+                            let before = if root_skipped { i } else { chain_start_idx };
+                            let op = prev_sig(before)?;
+                            if spans[op].2 != TokenKind::OpenParen {
+                                return None;
+                            }
+                            let callee = prev_sig(op)?;
+                            if spans[callee].2 != TokenKind::SimpleIdent
+                                || !flow_access.contains(&text[spans[callee].0..spans[callee].1])
+                            {
+                                return None;
+                            }
+                            Some((callee, outer_rp))
+                        };
                         match spans.get(q).map(|s| s.2) {
                             Some(TokenKind::CloseParen) => {
+                                if let Some((callee, rp)) = flow_call(q) {
+                                    let acc = &text[spans[callee].0..spans[callee].1];
+                                    let name = render_name(&ub_branch_name(prefix, &[x.to_owned()]));
+                                    holes.push((spans[callee].0..spans[rp].1, format!("{acc}({name})")));
+                                    i = rp + 1;
+                                    continue;
+                                }
                                 holes.push((
                                     hole_start..spans[q].1,
                                     render_name(&format!("{prefix}{x}")),
@@ -4343,6 +4548,23 @@ fn find_instance_path_holes(
                                         == Some(TokenKind::CloseParen)
                                 {
                                     let y = &text[spans[yj].0..spans[yj].1];
+                                    if let Some((callee, rp)) = flow_call(cp) {
+                                        let acc = &text[spans[callee].0..spans[callee].1];
+                                        let mut canon = vec![x.to_owned(), y.to_owned()];
+                                        canon.sort();
+                                        let raw_name = ub_branch_name(prefix, &canon);
+                                        let reversed =
+                                            (canon[0] != x) ^ ub_flips.borrow().contains(&raw_name);
+                                        let name = render_name(&raw_name);
+                                        let rep = if reversed {
+                                            format!("(-{acc}({name}))")
+                                        } else {
+                                            format!("{acc}({name})")
+                                        };
+                                        holes.push((spans[callee].0..spans[rp].1, rep));
+                                        i = rp + 1;
+                                        continue;
+                                    }
                                     holes.push((
                                         hole_start..spans[cp].1,
                                         format!(
@@ -4467,7 +4689,7 @@ fn render_name(name: &str) -> String {
 
 fn render_with_holes(text: &str, holes: &[(Range<usize>, String)], scope: &Scope) -> String {
     let mut all_holes = find_bus_port_holes(text, &scope.bus_ports);
-    all_holes.extend(find_instance_path_holes(text, &scope.inst_prefixes, &scope.abs));
+    all_holes.extend(find_instance_path_holes(text, &scope.inst_prefixes, &scope.abs, &scope.flow_access, &scope.ub_flips));
     all_holes.extend(holes.iter().cloned());
     all_holes.sort_by_key(|(r, _)| r.start);
 
@@ -5466,6 +5688,57 @@ impl ElabCtx<'_> {
     /// composed flattening prefix of that instance's locals, rooted at
     /// `outer_prefix`. Drives the hierarchical-reference rewrite in
     /// `find_instance_path_holes`.
+    /// Enhancement-757: the final flattened names of every `ground` net under
+    /// `module_id` rendered with `prefix` (recursing into its instances the
+    /// way `collect_inst_prefixes` composes their prefixes).
+    fn collect_ground_finals(&mut self, module_id: ItemTreeId<TreeModule>, prefix: &str) {
+        let module = &self.tree[module_id];
+        let mut found: Vec<String> = module
+            .nodes
+            .iter()
+            .filter(|n| n.is_gnd(self.tree))
+            .map(|n| format!("{prefix}{}", n.name))
+            .collect();
+        let mut children: Vec<(ItemTreeId<TreeModule>, String)> = Vec::new();
+        for item in &module.items {
+            let ModuleItem::Instantiation(id) = item else { continue };
+            let inst = &self.tree[*id];
+            let Some(&target) = self.by_name.get(&inst.module) else { continue };
+            let name = inst.name.to_string();
+            let base = match name.find('[') {
+                Some(i) => name[..i].to_owned(),
+                None => name.clone(),
+            };
+            let pfx = match inst.array_index {
+                Some(i) => format!("{prefix}{base}_{i}__"),
+                None => format!("{prefix}{base}__"),
+            };
+            children.push((target, pfx));
+        }
+        self.ground_finals.extend(found.drain(..));
+        for (target, pfx) in children {
+            if pfx.len() < 4096 {
+                self.collect_ground_finals(target, &pfx);
+            }
+        }
+    }
+
+    /// Enhancement-757: how a child's unnamed branch over its nets `canon`
+    /// (sorted) is declared once the nets are final: the endpoint text and
+    /// whether the declaration is the other way round (a ground net can only
+    /// be the LOW endpoint), or `None` when every endpoint is ground.
+    fn ub_declaration(&self, canon: &[String], scope: &Scope) -> Option<(String, bool)> {
+        let finals: Vec<String> = canon.iter().map(|n| apply_rename(n, scope)).collect();
+        let gnd: Vec<bool> = finals.iter().map(|f| self.ground_finals.contains(f)).collect();
+        match (finals.len(), gnd.as_slice()) {
+            (1, [false]) => Some((finals[0].clone(), false)),
+            (2, [false, false]) => Some((finals.join(", "), false)),
+            (2, [false, true]) => Some((finals[0].clone(), false)),
+            (2, [true, false]) => Some((finals[1].clone(), true)),
+            _ => None,
+        }
+    }
+
     fn collect_inst_prefixes(
         &self,
         module_id: ItemTreeId<TreeModule>,
@@ -5609,7 +5882,7 @@ impl ElabCtx<'_> {
                 if txt.contains(".branch(") || txt.contains('<') {
                     return None;
                 }
-                if !find_instance_path_holes(&txt, &scope.inst_prefixes, &scope.abs).is_empty() {
+                if !find_instance_path_holes(&txt, &scope.inst_prefixes, &scope.abs, &scope.flow_access, &scope.ub_flips).is_empty() {
                     // only a hierarchical NET reference creates the new branch;
                     // a child's named branch merges (5.6.8.2), and anything
                     // unresolvable keeps its existing diagnostics
@@ -5729,6 +6002,168 @@ impl ElabCtx<'_> {
         (holes, touched)
     }
 
+    /// Enhancement-757 (hierarchy hunt F1): a child's UNNAMED branch is the
+    /// child's own. LRM 5.5: the unnamed branch `(a, b)` is a per-module
+    /// object -- every `I(a,b)`/`V(a,b)` inside one module names the same
+    /// branch, but a child instance wired to the same two nets owns its own.
+    /// The flattening spelled the child's `(p, n)` with the parent's net names,
+    /// so it BECAME the parent's branch: a leaf `V(p,n) <+ 1.0` under a
+    /// parent `I(p,n) <+ V(p,n)/2k` drew L022 and lost the source (1.333 V
+    /// where 1.0 V is right), a parent's `I(p,n)` probe read the child's
+    /// current too, two sibling leaves answered by the order they were
+    /// written, and two ideal sources summed.
+    ///
+    /// Every access of this instance's body over its own nets that names a
+    /// branch -- a contribution target, or a FLOW probe -- is rewritten onto
+    /// a per-instance named branch `<prefix>ub__<a>__<b>` (nets in sorted
+    /// order; `<prefix>ub__<a>` for the ground branch `(a)`), declared over
+    /// the FINAL flattened nets; a potential probe reads the nodes and is
+    /// left alone. An access in the reverse order negates: a probe becomes
+    /// `(-I(name))`, a direct contribution `V(name) <+ -(rhs)` (with the
+    /// `#(.$mfactor(n))` factor folded in for a flow, and the target handed
+    /// to `hier_sys_override_holes` as excluded so it is not wrapped twice);
+    /// an indirect target (`V(b,a): f == 0`) needs no sign. Named branches,
+    /// port-branch probes, hierarchical arguments (`hier_contrib_holes`) and
+    /// bus-bit arguments are untouched.
+    fn child_branch_holes(
+        &self,
+        item: &syntax::SyntaxNode,
+        module: ItemTreeId<TreeModule>,
+        scope: &Scope,
+        prefix: &str,
+        decls: &mut Vec<String>,
+        declared: &mut HashSet<String>,
+        sys: &[(ParamSysFun, String)],
+    ) -> (Vec<(Range<usize>, String)>, Vec<Range<usize>>) {
+        let base = item.text_range().start();
+        let nets: HashSet<String> = self.tree[module]
+            .nodes
+            .iter()
+            .map(|n| n.name.to_string())
+            .filter(|n| !n.contains('['))
+            .collect();
+        let m_text =
+            sys.iter().find(|(s, _)| *s == ParamSysFun::mfactor).map(|(_, v)| v.clone());
+        let mut holes: Vec<(Range<usize>, String)> = Vec::new();
+        let mut excluded: Vec<Range<usize>> = Vec::new();
+
+        // contribution targets: call range -> (direct?, `<+` range, `;` range)
+        let mut targets: HashMap<Range<usize>, (bool, Option<Range<usize>>, Option<Range<usize>>)> =
+            HashMap::new();
+        for node in item.descendants() {
+            let Some(assign) = ast::Assign::cast(node) else { continue };
+            let direct = match assign.op() {
+                Some(ast::AssignOp::Contribute) => true,
+                Some(ast::AssignOp::IndirectBranch) => false,
+                _ => continue,
+            };
+            let Some(ast::Expr::Call(t)) = assign.lval() else { continue };
+            let op = assign
+                .syntax()
+                .children_with_tokens()
+                .filter_map(|el| el.into_token())
+                .find(|t| t.kind() == syntax::SyntaxKind::CONTR)
+                .map(|t| rel_range(base, t.text_range()));
+            let semi = assign
+                .syntax()
+                .parent()
+                .and_then(ast::AssignStmt::cast)
+                .and_then(|s| s.semicolon_token())
+                .map(|t| rel_range(base, t.text_range()));
+            targets.insert(rel_range(base, t.syntax().text_range()), (direct, op, semi));
+        }
+
+        for node in item.descendants() {
+            let Some(call) = ast::Call::cast(node) else { continue };
+            let Some(acc) = call.function_ref().and_then(|f| match f {
+                ast::FunctionRef::Path(p) => p.as_raw_ident().map(|t| t.text().to_string()),
+                _ => None,
+            }) else {
+                continue;
+            };
+            if !self.access_names.contains(&acc) {
+                continue;
+            }
+            let Some(arg_list) = call.arg_list() else { continue };
+            let args: Vec<ast::Expr> = arg_list.args().collect();
+            if args.is_empty() || args.len() > 2 {
+                continue;
+            }
+            let mut names: Vec<String> = Vec::new();
+            for a in &args {
+                let t = a.syntax().text().to_string();
+                match as_plain_ident(&t) {
+                    Some(n) if nets.contains(n) => names.push(n.to_owned()),
+                    _ => {
+                        names.clear();
+                        break;
+                    }
+                }
+            }
+            if names.is_empty() {
+                continue;
+            }
+            let call_range = rel_range(base, call.syntax().text_range());
+            let is_flow = self.flow_access.contains(&acc);
+            let target = targets.get(&call_range).cloned();
+            if target.is_none() && !is_flow {
+                continue; // a potential probe reads the nodes; it names no branch
+            }
+            let mut canon = names.clone();
+            canon.sort();
+            let Some((endpoints, flip)) = self.ub_declaration(&canon, scope) else {
+                continue; // every endpoint is ground: no branch
+            };
+            let reversed = (canon != names) ^ flip;
+            let name = ub_branch_name(prefix, &canon);
+            if flip {
+                self.ub_flips.borrow_mut().insert(name.clone());
+            }
+            let args_range = rel_range(
+                base,
+                TextRange::new(
+                    args.first().unwrap().syntax().text_range().start(),
+                    args.last().unwrap().syntax().text_range().end(),
+                ),
+            );
+            let mut new_holes: Vec<(Range<usize>, String)> = Vec::new();
+            match target {
+                Some((direct, op, semi)) => {
+                    new_holes.push((args_range, name.clone()));
+                    if reversed && direct {
+                        let (Some(op), Some(semi)) = (op, semi) else { continue };
+                        let (open, close) = match (&m_text, is_flow) {
+                            (Some(m), true) => (format!("<+ ({m})*(-("), "));".to_owned()),
+                            _ => ("<+ -(".to_owned(), ");".to_owned()),
+                        };
+                        new_holes.push((op, open));
+                        new_holes.push((semi, close));
+                        excluded.push(call_range);
+                    }
+                }
+                None => {
+                    if reversed {
+                        let rep = match &m_text {
+                            Some(m) => format!("((-{acc}({name}))/({m}))"),
+                            None => format!("(-{acc}({name}))"),
+                        };
+                        new_holes.push((call_range.clone(), rep));
+                        excluded.push(call_range);
+                    } else {
+                        new_holes.push((args_range, name.clone()));
+                    }
+                }
+            }
+            if declared.insert(name.clone()) {
+                decls.push(format!(
+                    "branch ({endpoints}) {name}; // Enhancement-757: the instance's own unnamed branch"
+                ));
+            }
+            holes.extend(new_holes);
+        }
+        (holes, excluded)
+    }
+
     /// Enhancement-58: scan one module's `defparam` statements and record each
     /// as `flattened_target_name -> override_value_text`. The target path is
     /// resolved through the same instance-chain rewrite E-49 uses for ordinary
@@ -5758,7 +6193,7 @@ impl ElabCtx<'_> {
                 // `defparam` path is a single `chain.member`, so the rewrite
                 // (when the chain resolves) yields exactly one hole whose
                 // replacement is the flattened target name.
-                let holes = find_instance_path_holes(path_text, &scope.inst_prefixes, &scope.abs);
+                let holes = find_instance_path_holes(path_text, &scope.inst_prefixes, &scope.abs, &scope.flow_access, &scope.ub_flips);
                 let flat = match holes.first() {
                     Some((_, repl)) => repl.clone(),
                     // single-segment (same-module) target, or a chain that did
@@ -5798,6 +6233,31 @@ impl ElabCtx<'_> {
         // (key: final renamed argument pair -> branch name).
         let mut hier_branches: HashMap<String, String> = HashMap::new();
         let mut hier_pairs: Vec<(Vec<String>, String)> = Vec::new();
+        // Enhancement-757: this instance's own unnamed branches, one named
+        // branch per net pair, declared once; the pairs a sibling's
+        // `I(<chain>.branch(a, b))` asked for are declared up front.
+        let mut ub_declared: HashSet<String> = HashSet::new();
+        if !prefix.is_empty() {
+            if let Some(reqs) = self.ub_requests.get(prefix).cloned() {
+                let nets: HashSet<String> =
+                    self.tree[target_id].nodes.iter().map(|n| n.name.to_string()).collect();
+                for canon in reqs {
+                    if !canon.iter().all(|n| nets.contains(n)) {
+                        continue;
+                    }
+                    let name = ub_branch_name(prefix, &canon);
+                    let Some((endpoints, flip)) = self.ub_declaration(&canon, scope) else { continue };
+                    if flip {
+                        self.ub_flips.borrow_mut().insert(name.clone());
+                    }
+                    if ub_declared.insert(name.clone()) {
+                        implicit_decls.push(format!(
+                            "branch ({endpoints}) {name}; // Enhancement-757: probed from outside"
+                        ));
+                    }
+                }
+            }
+        }
 
         for item in target_ast.module_items() {
             match item {
@@ -5851,6 +6311,19 @@ impl ElabCtx<'_> {
                         );
                         holes.extend(h);
                         excluded = ex;
+                        if !prefix.is_empty() {
+                            let (h2, ex2) = self.child_branch_holes(
+                                node,
+                                target_id,
+                                scope,
+                                prefix,
+                                &mut implicit_decls,
+                                &mut ub_declared,
+                                sys_overrides,
+                            );
+                            holes.extend(h2);
+                            excluded.extend(ex2);
+                        }
                     }
                     if !sys_overrides.is_empty() {
                         holes.extend(hier_sys_override_holes(
@@ -6258,6 +6731,8 @@ impl ElabCtx<'_> {
     ) -> String {
         let target = self.tree[target_id].clone();
         let mut scope = Scope::default();
+        scope.flow_access = Rc::new(self.flow_access.clone());
+        scope.ub_flips = Rc::clone(&self.ub_flips);
         // Enhancement-49: the child's own hierarchical references into ITS
         // sub-instances rewrite through the composed prefixes
         self.collect_inst_prefixes(target_id, prefix, "", &mut scope.inst_prefixes);
@@ -6519,6 +6994,12 @@ impl ElabCtx<'_> {
         // the `<top>` alias entries make `$root.`-anchored and top-qualified
         // spellings resolve identically to the unqualified ones.
         let mut scope = Scope::default();
+        scope.flow_access = Rc::new(self.flow_access.clone());
+        // Enhancement-757: the ground nets of this flatten, and a fresh flip set
+        self.ground_finals.clear();
+        self.collect_ground_finals(module_id, "");
+        self.ub_flips = Rc::new(RefCell::new(HashSet::new()));
+        scope.ub_flips = Rc::clone(&self.ub_flips);
         self.collect_inst_prefixes(module_id, "", "", &mut scope.inst_prefixes);
         let top_name = self.tree[module_id].name.to_string();
         let alias: Vec<(String, String)> = scope
@@ -6546,11 +7027,18 @@ impl ElabCtx<'_> {
         // targeted instances synthesize their 0V ammeter regardless of the
         // order the referencing bodies render in.
         self.port_ammeters.clear();
+        self.ub_requests.clear();
         for item in self.parse.tree().items() {
             let ast::Item::ModuleDecl(m) = item else { continue };
             let text = m.syntax().text().to_string();
             for (prefix, port) in find_port_branch_probes(&text, &scope.inst_prefixes) {
                 self.port_ammeters.entry(prefix).or_default().insert(port);
+            }
+            // Enhancement-757: flow probes of a child's unnamed branch by net pair
+            for (prefix, nets) in
+                find_unnamed_branch_flow_probes(&text, &scope.inst_prefixes, &self.flow_access)
+            {
+                self.ub_requests.entry(prefix).or_default().insert(nets);
             }
         }
 

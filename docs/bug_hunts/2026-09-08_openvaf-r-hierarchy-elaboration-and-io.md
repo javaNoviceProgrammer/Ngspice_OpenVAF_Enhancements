@@ -16,7 +16,7 @@ hierarchy edge cases, file I/O, and the compiler's command line.
 
 | # | Finding | Severity |
 |---|---|---|
-| F1 | Hierarchical elaboration merges every unnamed branch that lands on the same two nodes, across modules: an ideal-source leaf beside a resistor leaf gives 0.667 V or 1.0 V depending only on which instance is written first, a child's source is dropped when the parent adds a parallel conductance (1.333 V where 1.0 V is right), a parent's `I(p,n)` probe reads the child's current, and a probe-only parent branch no longer shorts. Named branches are safe. | wrong answer |
+| F1 | *(fixed in [E-757](../../enhancements_doc/Enhancement-757.md): every access of a child over its own nets that names a branch gets a per-instance named branch, so a child's unnamed branch is its own; the cross-instance flow probe reads it)* Hierarchical elaboration merges every unnamed branch that lands on the same two nodes, across modules: an ideal-source leaf beside a resistor leaf gives 0.667 V or 1.0 V depending only on which instance is written first, a child's source is dropped when the parent adds a parallel conductance (1.333 V where 1.0 V is right), a parent's `I(p,n)` probe reads the child's current, and a probe-only parent branch no longer shorts. Named branches are safe. | wrong answer |
 | F2 | Every diagnostic inside a module that instantiates a child or runs a genvar loop points into a file that does not exist (`he9.va__elaborated.va:144:18`, `gv2.va__generated.va:145:10`) with no excerpt, and mangled names (`l1__p`, `l2__r`) leak into messages; a user parameter named `l1__r` collides with the child's mangled name. | usability |
 | F3 | An array parameter is invisible to every other parameter-level declaration: `aliasparam`, a scalar default `b = a[1]`, a range bound `from [0:a[1]]`, a `localparam` and another array's default all fail with "'a' was not found in the current scope", while the analog block sees it. | wrong refusal, misleading diagnostic |
 | F4 | Every `$table_model` file failure (missing, empty, one column, NaN) carries the same explanatory note about non-finite values; only the NaN case earns it. | misleading diagnostic |
@@ -126,6 +126,16 @@ behaves like the flat control (0 V closed, 2.0 V open), because L022's
 potential-vs-flow across the module boundary and to probe values. Idiomatic leaf
 modules (an ideal source, a switch, a capacitor) under a parent that adds its own
 conductance or reads `I(p,n)` are exactly the affected shape.
+
+*Fixed in [E-757](../../enhancements_doc/Enhancement-757.md).* Every contribution target and flow probe of a child's body
+over its own nets is rewritten onto a per-instance named branch
+(`l1__ub__n__p`, sorted nets, the reverse order negated), declared over the
+final flattened nets, so (a) the source holds at 1.0 V without L022, (b)
+`iop` reads the parent's own 1 mA, (c) the probe-only parent branch shorts
+again, (d) both sibling orders give 1.0 V (and 1.0 V, 0 at 1 MHz with the
+capacitor leaf), (e) the conditional parent gives 1.0 V and two sources in
+parallel are reported singular rather than summed; the `hierub` suite pins
+each. The E-86 net-pair flow probe now names the child's branch.
 
 ## F2 — diagnostics in an elaborated or genvar-expanded module point into a file that does not exist
 

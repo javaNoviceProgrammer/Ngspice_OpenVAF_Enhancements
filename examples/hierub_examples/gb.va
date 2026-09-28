@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+module g2(a); inout a; electrical a; electrical gnd; ground gnd; branch (a, gnd) b;
+analog I(b) <+ V(b)/1k;
+endmodule
+module g3(a); inout a; electrical a; electrical gnd; ground gnd;
+analog I(gnd, a) <+ V(gnd, a)/1k;
+endmodule

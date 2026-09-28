@@ -553,3 +553,5 @@ happened to name their module `diode` (`openvaf/test_data/ui/{ddx,
 formatting,function}.va`) and in this enhancement's own `resistor`-named
 examples — all expected `.log` snapshots were updated to include the new
 warning (`UPDATE_EXPECT=1`), zero other regressions.
+
+**Update ([E-757](Enhancement-757.md)).** The inlining keeps a child instance's unnamed branches as its own: its contribution targets and flow probes are rewritten onto per-instance named branches, so a leaf module's ideal source, switch or capacitor under a parent that contributes to the same nodes no longer merges with the parent's branch.

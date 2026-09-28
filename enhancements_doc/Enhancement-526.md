@@ -83,3 +83,5 @@ only in the genvar `analog_for`), `do…while` (absent from Annex
 A.6.8), the generalized indirect-equality LHS, the L017-warned
 both-natures probe read, and upward/absolute hierarchical signal paths
 being out of scope for the single-design OSDI target.
+
+**Update ([E-757](Enhancement-757.md)).** The mirror case is closed: a CHILD's own unnamed branch over its ports used to land on the parent's branch after flattening (hierarchy hunt F1), so a leaf's `V(p,n) <+ 1.0` under a parent `I(p,n)` drew this transform's L022 and lost its source; every child access that names a branch now gets a per-instance named branch of its own, the same shape as this enhancement's `__hierbrN` branches.

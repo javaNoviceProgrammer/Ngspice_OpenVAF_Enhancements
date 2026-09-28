@@ -1,0 +1,10 @@
+`include "disciplines.vams"
+module leafm(p, n); inout p, n; electrical p, n;
+(* desc="per copy" *) real ic;
+analog begin I(n,p) <+ -V(p,n)/1k; ic = I(n,p); end
+endmodule
+module mf(p, n); inout p, n; electrical p, n;
+(* desc="per copy" *) real ic;
+leafm #(.$mfactor(2)) l1(p, n);
+analog begin I(p,n) <+ V(p,n)/1k; ic = l1.ic; end
+endmodule

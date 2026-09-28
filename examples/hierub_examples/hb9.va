@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module leafd(p, n); inout p, n; electrical p, n;
+analog V(p,n) <+ 1.0;
+endmodule
+module hb9(p, n); inout p, n; electrical p, n, m;
+leafd l1(p, m);
+analog begin I(p,m) <+ V(p,m)/2k; I(m,n) <+ V(m,n)/1k; end
+endmodule

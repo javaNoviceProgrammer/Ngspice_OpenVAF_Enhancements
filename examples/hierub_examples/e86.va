@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module leaf2(p, n); inout p, n; electrical p, n, m;
+analog begin I(p,m) <+ V(p,m)/1k; I(m,n) <+ V(m,n)/1k; end
+endmodule
+module e86(p, n, o); inout p, n; output o; electrical p, n, o;
+leaf2 d1(p, n);
+analog V(o) <+ 1000.0 * I(e86.d1.branch(p, m));
+endmodule

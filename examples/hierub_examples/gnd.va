@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+module leafg(p); inout p; electrical p;
+analog V(p) <+ 1.0;
+endmodule
+module gnd(p); inout p; electrical p;
+leafg l1(p);
+analog I(p) <+ V(p)/1k;
+endmodule

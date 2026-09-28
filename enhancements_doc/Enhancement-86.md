@@ -107,3 +107,5 @@ inlined copies can resolve.
 - ngspice caches nothing across processes, but STALE .osdi artifacts
   during compiler debugging absolutely do (two rounds of confusion in
   this enhancement — recompile before every ngspice probe).
+
+**Update ([E-757](Enhancement-757.md)).** `I(<chain>.branch(a, b))` — a flow probe of a child's *unnamed* branch by net pair — now reads the per-instance named branch the child's flattening declares for that pair (negated for the reverse order, a port net accepted), since E-757 made a child's unnamed branch its own rather than the flattened node pair; `V(<chain>.branch(a, b))` keeps reading the nets, and the port form `branch(<p>)` is unchanged.

@@ -892,7 +892,18 @@ impl Branch {
             hir_ty::lower::BranchKind::PortFlow(node) => BranchKind::PortFlow(Node { id: node }),
             hir_ty::lower::BranchKind::NodeGnd(node) => BranchKind::NodeGnd(Node { id: node }),
             hir_ty::lower::BranchKind::Nodes(hi, lo) => {
-                BranchKind::Nodes(Node { id: hi }, Node { id: lo })
+                let (hi, lo) = (Node { id: hi }, Node { id: lo });
+                // Enhancement-757: `branch (a, gnd) b;` over a `ground`-declared net
+                // is the branch from `a` to ground -- `gnd` used to stay a node of
+                // its own that nothing else touched (the simulator reported it
+                // floating and the matrix singular), while the unnamed `I(a, gnd)`
+                // was folded onto ground by `hir_lower`'s node lookup. The reverse
+                // orientation `(gnd, a)` is left as written.
+                if lo.is_gnd(db) && !hi.is_gnd(db) {
+                    BranchKind::NodeGnd(hi)
+                } else {
+                    BranchKind::Nodes(hi, lo)
+                }
             }
         }
     }
