@@ -36,7 +36,7 @@ named like a built-in, the same module from two files), and the batch dot cards.
 | [D1](#d1--an-operating-point-variable-named-temp-draws-a-wrong-duplicate-parameter-warning) | *(fixed in [E-731](../../enhancements_doc/Enhancement-731.md): the check reads the module's own rows only)* a module whose operating-point *variable* is called `temp` draws, beside the correct "the simulator's own parameter wins" warning, a second one that the *instance parameter* `temp` "is declared more than once differing only in case" — there is no such parameter and no case difference | a diagnostic slip |
 | [D2](#d2--a-stop-condition-on-an-unsaved-operating-point-variable-says-no-such-node-at-every-step) | *(fixed in [E-732](../../enhancements_doc/Enhancement-732.md): the variable is read live; a missing name is said once per run)* `stop when @n1[vm] > 0.3` with the variable not in the save set prints `Error: @n1[vm]: no such node` at every accepted point and never stops, while `print @n1[vm]` reads the live value and `save @n1[vm]` makes the condition work | the wrong message, once per step |
 | [D3](#d3--the-model-wildcard-alter-on-an-instance-parameter-is-silent-when-a-built-in-device-is-in-the-deck) | *(fixed in [E-733](../../enhancements_doc/Enhancement-733.md): what the model wildcard could not reach is named, bystander or not)* `alter @*[r]=2k` (the model wildcard) on an OSDI instance parameter says "no loaded model has parameter 'r', but a loaded instance does -- use the instance wildcard '@#*[r]'" in a deck of OSDI devices, and nothing at all once a built-in resistor is in the deck; either way nothing changes | a message that depends on a bystander |
-| [N1](#n1-not-osdi--reset-drops-a-control-block-set-temp) | (not OSDI) `set temp=100` in the control block is honoured by the next `op`, but after a `reset` the run is back at the deck's temperature, `set temp` still set and silent; `unset temp` does not give the deck's temperature back either | an ngspice-core inconsistency, seen through `$temperature` |
+| [N1](#n1-not-osdi--reset-drops-a-control-block-set-temp) | *(fixed in [E-756](../../enhancements_doc/Enhancement-756.md): the options the user set onto the circuit survive every reset, and `unset` gives the deck's value back)* (not OSDI) `set temp=100` in the control block is honoured by the next `op`, but after a `reset` the run is back at the deck's temperature, `set temp` still set and silent; `unset temp` does not give the deck's temperature back either | an ngspice-core inconsistency, seen through `$temperature` |
 
 Smaller notes are at the end: what `alter n1 r=[1k 2k]` does (nothing, in silence, for
 built-ins too), the loaded raw file's spelling of a branch current, `trace` in batch
@@ -336,6 +336,13 @@ at.
 it put the deck's temperature back.
 
 **Kind.** An ngspice-core inconsistency.
+
+*Fixed in [E-756](../../enhancements_doc/Enhancement-756.md).* `set temp` means the same thing before and after
+`reset` (the recorded set options are snapshotted and re-set after the reload,
+the loop commands' internal resets included), and `unset temp` gives the deck's
+temperature back -- its `.option temp`, its `.temp` card, else 27 -- instead of
+re-applying the value being removed; the fifth row of the table above now reads
+40 then 27, and an unset after a reset no longer runs at 0 °C.
 
 ## What held
 

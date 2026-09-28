@@ -540,6 +540,15 @@ cp_usrset(struct variable *var, bool isset)
     if (ft_nutmeg)
         return (US_OK);
 
+    /* Enhancement-756: `unset <option>` used to reach if_option() below with
+     * the variable's OLD value -- the circuit kept what was being removed --
+     * and never gave the deck's value back. The option block is rebuilt
+     * without it instead (spiceif.c). */
+    if (!isset && ft_curckt && ft_curckt->ci_ckt && if_is_task_option(var->va_name)) {
+        if (if_option_rebuild(ft_curckt->ci_ckt, var->va_name))
+            return US_SIMVAR;
+    }
+
     /* Now call the interface option routine. */
     switch (var->va_type) {
     case CP_BOOL:
@@ -568,8 +577,12 @@ cp_usrset(struct variable *var, bool isset)
     }
 
     if (ft_curckt && ft_curckt->ci_ckt) {
-        if (if_option(ft_curckt->ci_ckt, var->va_name, var->va_type, vv))
+        if (if_option(ft_curckt->ci_ckt, var->va_name, var->va_type, vv)) {
+            /* Enhancement-756: recorded, so a `reset` re-applies it */
+            if (isset && if_is_task_option(var->va_name))
+                if_option_note_set(var->va_name, TRUE);
             return US_SIMVAR;
+        }
     } else {
         if (if_option(NULL, var->va_name, var->va_type, vv))
             return US_NOSIMVAR;

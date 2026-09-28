@@ -66,6 +66,11 @@ struct circ {
        before it runs again. The path names the reloaded object. */
     bool ci_osdi_stale;
     char *ci_osdi_stale_path;
+    /* Enhancement-756: the deck's own `.temp` card, kept here because the
+       card is implemented as a `set temp` (inp.c) and so lives in the SAME
+       variable a user's `set temp` overwrites; `unset temp` gives it back. */
+    bool ci_deck_temp_given;
+    double ci_deck_temp;
 
     int ci_dicos;               /* index to the numparam dicoS structure
                                    for this circuit */

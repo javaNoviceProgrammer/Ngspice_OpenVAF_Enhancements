@@ -772,17 +772,17 @@ void cp_remvar(char *varname)
         break;
 
     case US_SIMVAR:
-        /* variables processed by if_option(ft_curckt->ci_ckt, ...) */
-        fprintf(stderr, "it's a US_SIMVAR!\n");
-        if (ft_curckt) {
-            for (p = &ft_curckt->ci_vars; *p; p = &(*p)->va_next)
-                if (eq(varname, (*p)->va_name))
-                    break;
-            if (*p) {
-                struct variable *u = *p;
-                *p = u->va_next;
-                tfree(u);
-            }
+        /* variables processed by if_option(ft_curckt->ci_ckt, ...).
+         * Enhancement-756: this used to announce itself with a leftover
+         * "it's a US_SIMVAR!" on stderr and then unlink only a SAME-NAMED
+         * entry of the deck's .options list, leaving the variable the user
+         * set (found in `variables` above) in place -- `unset temp` printed
+         * the line and `temp` stayed set. The node that was found is the one
+         * removed, wherever it lives; cp_usrset() has already put the
+         * circuit's option back to what it was without it. */
+        if (*p) {
+            *p = v->va_next;
+            free_v = TRUE;
         }
         break;
 

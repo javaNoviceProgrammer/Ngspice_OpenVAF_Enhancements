@@ -4,8 +4,8 @@
 python3 verify_sweeptemp.py
 ```
 
-20 checks, a few seconds. **10/20** against the pre-fix binary — **10** checks
-discriminate.
+29 checks, a few seconds. **10/20** against the pre-fix binary — **10** checks
+discriminate; checks [19]–[27] are Enhancement-756 (below).
 
 ## What it is
 
@@ -91,3 +91,14 @@ temperature.
 `sweep`'s other unresolvable knobs — a bogus name, a missing device, a missing
 parameter — still warn and then sweep flat. Only `temp` is fixed, because only
 `temp` names something that exists.
+
+## Enhancement-756: `set temp` survives `reset`, and `unset temp` gives the deck's value back
+
+Checks [19]–[27]. A `set temp=100` (or any simulator option set as a variable:
+`tnom`, `reltol`, ...) used to be dropped by every `reset` — the variable stayed
+set, the rebuilt circuit never read it — and `unset temp` re-applied the value
+being removed (40 stayed 40) or, after a reset, ran the next analysis at 0 C
+behind a stray "it's a US_SIMVAR!" line. Now the option variables the user set
+onto the circuit survive its resets, and `unset` puts the deck's value back
+(its `.option temp=`, its `.temp` card) or the application default. Eight of the
+nine fail on the E-755 binary; [25] is the control.

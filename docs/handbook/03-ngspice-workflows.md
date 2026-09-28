@@ -336,6 +336,11 @@ end
 .endc
 ```
 
+A `set temp=100` (or any simulator option set as a variable: `tnom`,
+`reltol`, ...) survives every `reset` in such a loop, and the sampling
+commands' internal resets too, and `unset temp` puts the deck's temperature
+back (E-756); a `set` typed before the circuit is loaded still reaches none.
+
 **The `alter` idiom** — draw in the control language and `alter` the
 parameter (no re-parse, and matched devices can share one draw):
 

@@ -193,8 +193,16 @@ com_rset(wordlist *wl)
         aging_forget_writes();
         alter_journal_forget();      /* Enhancement-544: and the user's alters */
     }
-    com_remcirc(NULL);
-    inp_source_recent();
+    /* Enhancement-756: the option variables the user set onto this circuit
+     * (`set temp=100` ...) survive the reload -- a user's reset and the loop
+     * commands' internal ones alike. Snapshot before the circuit goes, re-set
+     * after it is back (spiceif.c). */
+    {
+        struct variable *keep = if_option_vars_snapshot();
+        com_remcirc(NULL);
+        inp_source_recent();
+        if_option_vars_restore(keep);
+    }
 }
 
 

@@ -117,7 +117,7 @@ and a never-run deck on `montecarlo`'s fast path draws on its first sample
 (the first run's new circuit pointer used to restart the count at the
 baseline). The plain run after a loop command is a fresh trial as before.
 
-`verify_mcpolicy.py` (46 checks, both solvers) pins each behavior with
+`verify_mcpolicy.py` (47 checks, both solvers; the 47th is Enhancement-756: `set temp` survives the per-sample resets) pins each behavior with
 closed-form expectations computed from the same run's parameter readbacks —
 `v(2) = 1k/(r+dr+1k)` against `@mm[r]`/`@n1[dr]` — plus the deterministic
 mcseed-7 montecarlo discriminators for the init-resident and preserve legs,

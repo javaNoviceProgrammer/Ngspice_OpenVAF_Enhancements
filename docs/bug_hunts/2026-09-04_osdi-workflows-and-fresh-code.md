@@ -40,7 +40,7 @@ by `.nodeset v(q)=0` settles in the opposite state from the built-in one.
 | [F11](#f11--sens-vector-names-mix-two-separators) | `n1:r` beside `n1__mfactor`, `n1_dt`, `n1_temp` | cosmetic |
 | [F12](#f12--hisim2-is-never-limited-its-internal-nodes-are-named-dpsp) | the recognizer knows `gp` for the gate but not `dp`/`sp`/`bp`, and HiSIM2's noise node `n` is live: a 20-stage HiSIM2 chain takes 258 iterations with gmin stepping, limiter or not | low — E-543's claim does not reach HiSIM2 |
 | [F13](#f13--an-absent-terminal-is-warned-about-per-instance-then-left-floating) | BSIMBULK (`d,g,s,b,t`) written with four nodes: 40 three-line warnings name the absent `t`, then the thermal node floats and the DC operating point fails after 373 iterations and three stepping strategies without referring back; with `t` grounded, 11 iterations | low — diagnostic |
-| [F14](#f14--set-temp-is-dropped-by-every-reset-the-sampling-commands-internal-ones-included) | `set temp=127` then `wcd`/`highsigma`/`montecarlo` (reset path): every sample runs at the deck's temperature; a user `reset` drops it too; pre-existing, found while fixing F3 | medium-low — silent wrong temperature |
+| [F14](#f14--set-temp-is-dropped-by-every-reset-the-sampling-commands-internal-ones-included) | *(fixed in [E-756](../../enhancements_doc/Enhancement-756.md): the set options survive every reset, the sampling commands' internal ones included)* `set temp=127` then `wcd`/`highsigma`/`montecarlo` (reset path): every sample runs at the deck's temperature; a user `reset` drops it too; pre-existing, found while fixing F3 | medium-low — silent wrong temperature |
 
 Three observations that are design limits rather than defects, and three
 things that are not OSDI-specific, follow the findings.
@@ -357,6 +357,11 @@ up. The sampling commands' internal resets are the same reset, so a
 samples at the deck's temperature and says so only in the per-sample
 *Doing analysis at TEMP* line that `ft_optimizing` silences. `.temp` or
 `.option temp` on the deck survive, being deck text. Not fixed here.
+
+*Fixed in [E-756](../../enhancements_doc/Enhancement-756.md).* The options the user set onto the circuit are recorded,
+snapshotted before a reset and re-set after it, so `set temp=127` holds
+through `montecarlo`, `wcd` and `highsigma` and the run after them; `unset`
+gives the deck's value back.
 
 ---
 

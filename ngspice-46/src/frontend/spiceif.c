@@ -524,6 +524,192 @@ static char *obsolete[] = {
  * deck path in inp.c can use this to say so. Without it a misspelling was
  * silently inert: `.options reltoll=1e-12` left reltol at its default while the
  * user believed the tolerance had been tightened. */
+/* Enhancement-756 (plumbing hunt N1, workflows hunt F14): a `set temp` (or
+ * any other simulator option set as a variable) was dropped by every `reset`,
+ * the loop commands' internal ones included, and an `unset` of it re-applied
+ * the value being removed rather than give the deck's back.
+ *
+ * `set temp=100` reaches the circuit through cp_usrset() -> if_option(), which
+ * writes the circuit's DEFAULT option block (ci_defOpt, the CDHW note above);
+ * `reset` frees the circuit and rebuilds that block from the deck alone, and
+ * although the variable is still set nothing looked at it again -- the next
+ * `op` ran at the deck's temperature while `echo $temp` still said 100. And
+ * `unset temp` went through the same cp_usrset() with the variable's OLD
+ * value, so the circuit kept it (40 stayed 40), or worse.
+ *
+ * The record below names the option variables the user has set onto the
+ * loaded circuit (kept by cp_usrset when if_option() accepts one; emptied when
+ * a new deck is loaded). `reset` snapshots those variables before the circuit
+ * goes and re-applies the snapshot -- through cp_vset(), so the VARIABLE is
+ * restored too, which matters for a deck whose `.temp` card is itself a
+ * cp_vset("temp") and would otherwise overwrite the user's value on the
+ * reload -- and `unset` rebuilds the option block from scratch: application
+ * defaults, then the deck's `.options` cards and its `.temp`, then the other
+ * recorded variables, everything but the one being removed.
+ *
+ * Only what the user set onto THIS circuit is replayed: a `set temp` typed
+ * before any circuit was loaded (a .spiceinit, an interactive session) has
+ * never reached a circuit and still does not, on a source or a reset alike. */
+static wordlist *e756_set_names = NULL;
+
+int
+if_is_task_option(const char *name)
+{
+    int which = ft_find_analysis("options");
+    IFparm *p = (which == -1) ? NULL : ft_find_analysis_parm(which, (char *) name);
+    return p && (p->dataType & IF_SET);
+}
+
+void
+if_option_note_set(const char *name, bool isset)
+{
+    wordlist *w, *prev = NULL;
+    for (w = e756_set_names; w; prev = w, w = w->wl_next)
+        if (eq(w->wl_word, name))
+            break;
+    if (isset) {
+        if (!w)
+            e756_set_names = wl_cons(copy(name), e756_set_names);
+    } else if (w) {
+        if (prev)
+            prev->wl_next = w->wl_next;
+        else
+            e756_set_names = w->wl_next;
+        if (w->wl_next)
+            w->wl_next->wl_prev = prev;
+        w->wl_next = NULL;
+        wl_free(w);
+    }
+}
+
+void
+if_option_forget_sets(void)
+{
+    wl_free(e756_set_names);
+    e756_set_names = NULL;
+}
+
+static void
+e756_apply_var(CKTcircuit *ckt, struct variable *v)
+{
+    bool one;
+    switch (v->va_type) {
+    case CP_BOOL:
+        one = v->va_bool ? TRUE : FALSE;
+        if_option(ckt, v->va_name, CP_BOOL, &one);
+        break;
+    case CP_NUM:
+        if_option(ckt, v->va_name, CP_NUM, &v->va_num);
+        break;
+    case CP_REAL:
+        if_option(ckt, v->va_name, CP_REAL, &v->va_real);
+        break;
+    case CP_STRING:
+        if_option(ckt, v->va_name, CP_STRING, v->va_string);
+        break;
+    default:
+        break;
+    }
+}
+
+/* the recorded variables, copied, most recently recorded last */
+struct variable *
+if_option_vars_snapshot(void)
+{
+    struct variable *keep = NULL, *v;
+    wordlist *w;
+    for (w = e756_set_names; w; w = w->wl_next) {
+        /* cp_vset() stores an option variable in the circuit's own list
+           (ci_vars), where it dies with the circuit; the front-end list is
+           the fallback */
+        for (v = ft_curckt ? ft_curckt->ci_vars : NULL; v; v = v->va_next)
+            if (eq(v->va_name, w->wl_word))
+                break;
+        if (!v)
+            for (v = variables; v; v = v->va_next)
+                if (eq(v->va_name, w->wl_word))
+                    break;
+        if (!v)
+            continue;
+        switch (v->va_type) {
+        case CP_BOOL:   keep = var_alloc_bool(copy(v->va_name), v->va_bool, keep); break;
+        case CP_NUM:    keep = var_alloc_num(copy(v->va_name), v->va_num, keep); break;
+        case CP_REAL:   keep = var_alloc_real(copy(v->va_name), v->va_real, keep); break;
+        case CP_STRING: keep = var_alloc_string(copy(v->va_name), copy(v->va_string), keep); break;
+        default: break;
+        }
+    }
+    return keep;
+}
+
+/* re-set each copy (so the variable and the circuit agree again) and free it */
+void
+if_option_vars_restore(struct variable *keep)
+{
+    struct variable *v;
+    if (ft_curckt && ft_curckt->ci_ckt)
+        for (v = keep; v; v = v->va_next)
+            switch (v->va_type) {
+            case CP_BOOL:   cp_vset(v->va_name, CP_BOOL, &v->va_bool); break;
+            case CP_NUM:    cp_vset(v->va_name, CP_NUM, &v->va_num); break;
+            case CP_REAL:   cp_vset(v->va_name, CP_REAL, &v->va_real); break;
+            case CP_STRING: cp_vset(v->va_name, CP_STRING, v->va_string); break;
+            default: break;
+            }
+    free_struct_variable(keep);
+}
+
+/* `unset <option>`: the option block as if `except` had never been set --
+ * the deck's value (its `.options` cards, re-read, since a user's `set`
+ * replaced the deck's entry in ci_vars; its `.temp`), else the application
+ * default; and the other variables the user set stay in force. */
+int
+if_option_rebuild(CKTcircuit *ckt, const char *except)
+{
+    TSKtask *fresh = NULL, *def = ft_curckt ? ft_curckt->ci_defTask : NULL;
+    struct variable *v, *cards = NULL;
+    wordlist *w;
+    JOB head;
+    JOB *jobs;
+    char *name;
+
+    if (!ckt || !def)
+        return 0;
+    if (ft_sim->newTask(ckt, &fresh, "e756_defaults", NULL) != OK || !fresh)
+        return 0;
+    /* application defaults into the default block; keep its identity */
+    head = def->taskOptions;
+    jobs = def->jobs;
+    name = def->TSKname;
+    *def = *fresh;
+    def->taskOptions = head;
+    def->jobs = jobs;
+    def->TSKname = name;
+    ft_sim->deleteTask(ckt, fresh);
+    /* the deck's cards, and its .temp */
+    inp_parse_option_cards(ft_curckt->ci_options, &cards);
+    for (v = cards; v; v = v->va_next)
+        if (if_is_task_option(v->va_name))
+            e756_apply_var(ckt, v);
+    free_struct_variable(cards);
+    if (ft_curckt->ci_deck_temp_given) {
+        static char tname[] = "temp";
+        if_option(ckt, tname, CP_REAL, &ft_curckt->ci_deck_temp);
+    }
+    /* the other variables the user set onto this circuit */
+    for (w = e756_set_names; w; w = w->wl_next) {
+        if (eq(w->wl_word, except))
+            continue;
+        for (v = ft_curckt->ci_vars; v; v = v->va_next)
+            if (eq(v->va_name, w->wl_word)) {
+                e756_apply_var(ckt, v);
+                break;
+            }
+    }
+    if_option_note_set(except, FALSE);
+    return 1;
+}
+
 int
 if_is_option(const char *name)
 {

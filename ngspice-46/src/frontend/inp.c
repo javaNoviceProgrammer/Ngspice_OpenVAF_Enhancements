@@ -716,6 +716,54 @@ inp_mc_free(void)
     }
 }
 
+/* Enhancement-756: the deck's .option cards parsed into variables, appended
+ * to *head -- inp_dodeck's own loop, factored out so an `unset` of an option
+ * can put the DECK's value back (spiceif.c, if_option_rebuild): a user's
+ * `set temp` replaces the deck's entry in ci_vars, so the cards are the only
+ * record of what the deck said. */
+static void inp_opt_pair_prune(struct variable **pp, const char *const *partners);
+
+void
+inp_parse_option_cards(struct card *options, struct variable **head)
+{
+    struct variable *eev;
+    for (; options; options = options->nextcard) {
+        char *s = skip_non_ws(options->line);
+        bool ii = cp_interactive;
+        wordlist *wl;
+        cp_interactive = FALSE;
+        wl = cp_lexer(s);
+        cp_interactive = ii;
+        if (!wl || !wl->wl_word || !*wl->wl_word)
+            continue;
+        {
+            /* Enhancement-670 (hunt F17): the later spelling of an
+             * option pair wins (`.option autocorner noautocorner` left
+             * both set and the loop on). cp_setparse lists a card's
+             * words LAST first, so for each word its partners further
+             * down this list, and every partner an earlier card set,
+             * are the earlier spellings: they go. */
+            struct variable *card = cp_setparse(wl);
+            struct variable *a;
+            for (a = card; a; a = a->va_next) {
+                const char *const *other = cp_off_partners(a->va_name);
+                if (!other)
+                    continue;
+                inp_opt_pair_prune(&a->va_next, other);
+                inp_opt_pair_prune(head, other);
+            }
+            eev = *head;                    /* the pruning may have taken the tail */
+            while (eev && eev->va_next)
+                eev = eev->va_next;
+            if (eev)
+                eev->va_next = card;
+            else
+                *head = card;
+        }
+        wl_free(wl);
+    }
+}
+
 /* called by com_rset: reload most recent circuit */
 void
 inp_source_recent(void) {
@@ -2028,7 +2076,14 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
                 fprintf(stderr, "Warning: Could not set temperature to %s\n   Set to default 27 C instead.\n", temperature);
                 temperature_value = 27;
             }
+            /* Enhancement-756: remembered as the deck's temperature, so an
+             * `unset temp` after a user's `set temp` can restore it. */
+            if (ft_curckt) {
+                ft_curckt->ci_deck_temp = temperature_value;
+                ft_curckt->ci_deck_temp_given = TRUE;
+            }
             cp_vset("temp", CP_REAL, &temperature_value);
+            if_option_note_set("temp", FALSE);   /* the deck's, not the user's */
             txfree(temperature);
         }
 
@@ -2277,47 +2332,11 @@ inp_dodeck(
     /* Read the options, create variables and store them
        in ftcurckt->ci_vars */
     if (!noparse) {
-        char* s;
-        bool ii;
-        wordlist* wl;
         struct card* opt_beg = options;
-        for (; options; options = options->nextcard) {
-            s = skip_non_ws(options->line);
-
-            ii = cp_interactive;
-            cp_interactive = FALSE;
-            wl = cp_lexer(s);
-            cp_interactive = ii;
-            if (!wl || !wl->wl_word || !*wl->wl_word)
-                continue;
-            {
-                /* Enhancement-670 (hunt F17): the later spelling of an
-                 * option pair wins (`.option autocorner noautocorner` left
-                 * both set and the loop on). cp_setparse lists a card's
-                 * words LAST first, so for each word its partners further
-                 * down this list, and every partner an earlier card set,
-                 * are the earlier spellings: they go. */
-                struct variable *card = cp_setparse(wl);
-                struct variable *a;
-                for (a = card; a; a = a->va_next) {
-                    const char *const *other = cp_off_partners(a->va_name);
-                    if (!other)
-                        continue;
-                    inp_opt_pair_prune(&a->va_next, other);
-                    inp_opt_pair_prune(&ct->ci_vars, other);
-                }
-                eev = ct->ci_vars;              /* the pruning may have taken the tail */
-                while (eev && eev->va_next)
-                    eev = eev->va_next;
-                if (eev)
-                    eev->va_next = card;
-                else
-                    ct->ci_vars = eev = card;
-            }
-            wl_free(wl);
-            while (eev && (eev->va_next))
-                eev = eev->va_next;
-        }
+        inp_parse_option_cards(options, &ct->ci_vars);   /* Enhancement-756 */
+        eev = ct->ci_vars;
+        while (eev && eev->va_next)
+            eev = eev->va_next;
         for (eev = ct->ci_vars; eev; eev = eev->va_next) {
             switch (eev->va_type) {
             case CP_BOOL:
@@ -2576,6 +2595,7 @@ inp_dodeck(
          *         eev = eev->va_next;
          * }
         */
+        if_option_forget_sets();      /* Enhancement-756: a new circuit */
         for (eev = ct->ci_vars; eev; eev = eev->va_next) {
             bool one = TRUE;   /* FIXME, actually eev->va_bool should be TRUE anyway */
             /* Enhancement-438: on a `.options` card the name is meant to BE an

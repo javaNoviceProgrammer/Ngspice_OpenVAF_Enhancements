@@ -57,3 +57,5 @@ broadened accordingly.
 | a journaled write replaced by a later one to the same target | one entry, the later value |
 | `reset` typed by the user | the journal is empty |
 | `mcpolicy_examples` | 41 / 41, both solvers |
+
+**Update ([E-756](Enhancement-756.md)).** F14 is fixed: the simulator options the user sets onto the circuit (`set temp` first among them) are snapshotted by `reset` and re-set after the reload, the loop commands' internal resets included, beside this enhancement's alter journal; and `unset` of an option gives the deck's value back.

@@ -221,6 +221,66 @@ b = col(run(TC, "set reusesetup=0\nsweep @R2[resistance] list 1k 2k -vs temp "
 check("[18] ...and as the OUTER knob",
       len(a) == 2 and a == b and len(set(a)) == 2, f"{a}")
 
+# ------------------------------------------------ E-756: set temp across reset
+# Enhancement-756 (plumbing hunt N1, workflows hunt F14): `set temp=100` was
+# dropped by every `reset` -- the variable stayed, the rebuilt circuit never
+# read it -- and `unset temp` re-applied the value being removed (40 stayed
+# 40) or, after a reset, ran the next analysis at 0 C. Now the option
+# variables the user set onto the circuit survive its resets, and `unset`
+# gives the deck's value back (its `.option temp`, its `.temp` card), or the
+# application default. The divider moves with the temperature: R1 is
+# 1k (1 + 0.01 (T - 27)), so v(a) = 1k / (R1 + 1k).
+print("\nE-756: a set option survives reset, and unset gives the deck's value back")
+
+
+def vas(out):
+    return [float(x) for x in re.findall(r"(?m)^\s*v\(a\)\s*=\s*(-?[\d.]+(?:[eE][-+]?\d+)?)", out)]
+
+
+def temps(out):
+    # the batch run (`-r /dev/null`) appends one operating point of its own
+    # after the control block: its TEMP line is dropped
+    return [float(x) for x in re.findall(r"TEMP = ([\d.]+)", out)][:-1]
+
+
+def near(got, want):
+    return len(got) == len(want) and all(abs(g - w) < 1e-5 for g, w in zip(got, want))
+
+
+V27, V40, V60, V100 = 0.5, 1000 / 2130, 1000 / 2330, 1000 / 2730
+out = run(TC, "set temp=100\nop\nprint v(a)\nreset\nop\nprint v(a)\nop\nprint v(a)", "e756a")
+check("[19] `set temp=100` survives a `reset`: the runs before and after it are at 100 C",
+      temps(out) == [100.0] * 3 and near(vas(out), [V100] * 3), f"{temps(out)} {vas(out)}")
+SEQ = "op\nprint v(a)\nset temp=100\nop\nprint v(a)\nreset\nop\nprint v(a)\nunset temp\nop\nprint v(a)"
+out = run(TC + ".option temp=60\n", SEQ, "e756b")
+check("[20] over a deck `.option temp=60`: set 100, reset keeps 100, `unset temp` gives 60 back",
+      temps(out) == [60.0, 100.0, 100.0, 60.0] and near(vas(out), [V60, V100, V100, V60]),
+      f"{temps(out)}")
+out = run(TC + ".temp 60\n", SEQ, "e756c")
+check("[21] over a deck `.temp 60` card: the same",
+      temps(out) == [60.0, 100.0, 100.0, 60.0] and near(vas(out), [V60, V100, V100, V60]),
+      f"{temps(out)}")
+out = run(TC, "set temp=40\nop\nprint v(a)\nunset temp\nop\nprint v(a)", "e756d")
+check("[22] `unset temp` with no reset gives the default 27 C back (it used to keep 40)",
+      temps(out) == [40.0, 27.0] and near(vas(out), [V40, V27]), f"{temps(out)}")
+out = run(TC, "set temp=100\nop\nreset\nunset temp\nop\nprint v(a)", "e756e")
+check("[23] `unset temp` after a reset gives 27 C back (it used to run at 0 C)",
+      temps(out) == [100.0, 27.0] and near(vas(out), [V27]), f"{temps(out)}")
+out = run(TC, "set tnom=100\nop\nreset\nop\nunset tnom\nop", "e756f")
+tn = re.findall(r"TNOM = ([\d.]+)", out)[:-1]     # the batch run's own op again
+check("[24] `set tnom=100` survives a reset too, and `unset tnom` gives 27 back",
+      tn == ["100.000000", "100.000000", "27.000000"], f"{tn}")
+out = run(TC + ".option temp=60\n", "op\nreset\nop", "e756g")
+check("[25] control: with nothing set, a reset keeps the deck's 60 C",
+      temps(out) == [60.0, 60.0], f"{temps(out)}")
+out = run(TC, "set reltol=1e-6\nop\nreset\nop\noption\nunset reltol\nop\noption", "e756h")
+rt = re.findall(r"reltol\s+\(current\)\s*=\s*(\S+)", out)
+check("[26] any option: `set reltol=1e-6` survives a reset, and unset restores 0.001",
+      rt == ["1e-06", "0.001"], f"{rt}")
+out = run(TC, "set temp=40\nunset temp\nop", "e756i")
+check("[27] `unset` of an option says nothing (the stray \"it's a US_SIMVAR!\" line is gone)",
+      "US_SIMVAR" not in out and temps(out) == [27.0], out[-100:].replace("\n", " "))
+
 for f in os.listdir(HERE):
     if f.startswith("_st_"):
         try:

@@ -739,6 +739,16 @@ def main():
           rc == 0 and len(noms) >= 2 and all(n == 1000.0 for n in noms),
           f"nominals seen={sorted(set(noms))}")
 
+    # Enhancement-756 (workflows hunt F14, plumbing hunt N1): a `set temp` was
+    # dropped by every reset, the loop commands' internal ones included, so the
+    # samples ran at the deck's temperature and so did everything after them.
+    # The temperature the loop leaves behind is the one the user set.
+    rc, out = run("mcres", "set temp=100\nmontecarlo 2 -analysis op -spec v(2) -max 0.9\nop")
+    tl = re.findall(r"TEMP = ([\d.]+)", out)
+    check("`set temp=100` survives montecarlo's per-sample resets: the run after "
+          "it is at 100 C (E-756)",
+          rc == 0 and len(tl) >= 1 and tl[-1] == "100.000000", f"TEMP lines={tl}")
+
     rc, out = run("mcres", "optimize -param r1 1k 500 3k -analysis op "
                            "-target v(2) 0.6 -maxiter 40\nprint @r1[resistance]\n"
                            "montecarlo 2 -analysis op -spec v(2) -max 0.9\n"
