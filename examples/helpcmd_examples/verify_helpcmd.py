@@ -27,6 +27,22 @@ Two checks:
          one '%s'), so a future unescaped '%' is caught even if that specific
          command is never exercised at runtime.
 
+Enhancement-753 adds the listing itself (batch mode):
+  [5] every line of the `help all` list has the form `name args : text.` -- no
+      continuation line (setscale's second half printed as one), no blank line
+      inside the list (deftype ended in a newline), the separator (remzerovec,
+      sysinfo lacked it), a final period, one space after the name, no trailing
+      space; the list is sorted
+  [6] completeness: the listed names are exactly the names in commands.c's table
+      that `help <name>` answers in this build. `help all` and `newhelp` counted
+      the table to the first entry WITHOUT A HANDLER instead of to its
+      terminator; the control keywords have none, so the 28 commands from
+      `while` down (the keywords, settype, strcmp, fopen, linearize, cutout,
+      devhelp, inventory, check_ifparm ...) were never listed
+  [7] `help setscale` is one line; `help` alone and an unknown name answer as
+      before; the manual links still follow the list
+  [8] `newhelp` at the advanced level lists the keywords and what follows them
+
 Not a circuit simulation, so the dual-solver harness does not apply.
 """
 import os
@@ -34,6 +50,7 @@ import pty
 import re
 import select
 import signal
+import subprocess
 import sys
 import time
 
@@ -136,6 +153,102 @@ else:
     # source not present (running against a packaged binary only) -- skip, don't fail
     check("[4] static help-string scan (source not present -- skipped)", True,
           "(commands.c not found)")
+
+# ---------------------------------------------------------------- E-753
+MISSING_BEFORE = ["while", "repeat", "dowhile", "foreach", "if", "else", "end", "break",
+                  "continue", "label", "goto", "cdump", "mdump", "mrdump", "settype", "strcmp",
+                  "strstr", "strslice", "fopen", "fread", "fclose", "linearize", "cutout",
+                  "devhelp", "inventory", "optran", "wrnodev", "check_ifparm"]
+
+
+def run_batch(control):
+    p = os.path.join(HERE, "_h.cir")
+    open(p, "w").write("* helpcmd\n.control\n" + control + "\nquit\n.endc\n.end\n")
+    r = subprocess.run([NGSPICE, "-b", "_h.cir"], cwd=HERE, capture_output=True, text=True,
+                       timeout=120, errors="replace")
+    os.remove(p)
+    return r.stdout
+
+
+def the_list(out):
+    """The command list: from the first `name ...` line after the circuit banner
+    to the blank line before the manual links."""
+    L = out.split("\n")
+    try:
+        i1 = next(i for i, l in enumerate(L) if l.startswith("For further details"))
+    except StopIteration:
+        return None, L
+    i0 = next(i for i, l in enumerate(L) if l.startswith("Circuit:")) + 2
+    return L[i0:i1 - 1], L
+
+
+
+# ------------------------------------------------------------------- [5]
+print("\n[5] the form of every line")
+out = run_batch("help all")
+lst, L = the_list(out)
+if lst is None:
+    check("[5] `help all` prints a list followed by the manual links", False, out[-200:])
+    lst = []
+else:
+    cont = [l for l in lst if l[:1] in (" ", "\t")]
+    blank = [i for i, l in enumerate(lst) if l == ""]
+    nosep = [l for l in lst if l and l[0] not in " \t" and not re.match(r"^\S+ (.* )?:( |$)", l)]
+    noper = [l for l in lst if l and l[0] not in " \t" and not l.endswith(".")]
+    dbl = [l for l in lst if re.match(r"^\S+  ", l)]
+    trail = [l for l in lst if l != l.rstrip()]
+    check("[5] no continuation line (setscale's second half printed as one)", not cont, f"{cont[:2]}")
+    check("[5] no blank line inside the list (deftype's text ended in a newline)", not blank,
+          f"after {[lst[i - 1][:30] for i in blank][:3]}")
+    check("[5] every line has the `name args : text` separator (remzerovec, sysinfo lacked it)", not nosep, f"{nosep[:3]}")
+    check("[5] every line ends with a period (where, inventory, fopen, fread, strslice ... did not)", not noper, f"{[l[-40:] for l in noper[:3]]}")
+    check("[5] one space after the name, no trailing space (linearize, cutout, optran, wrnodev)", not dbl and not trail, f"{dbl[:2]} {trail[:2]}")
+    names = [l.split(" ", 1)[0] for l in lst if l and l[0] not in " \t"]
+    check("[5] the list is sorted by name", names == sorted(names), "")
+
+# ------------------------------------------------------------------- [6]
+print("\n[6] completeness against the command table")
+src = open(os.path.join(REPO, "ngspice-46", "src", "frontend", "commands.c")).read()
+table = src[src.index("struct comm spcp_coms[]"):src.index("struct comm nutcp_coms[]")]
+tnames = sorted(set(re.findall(r'\{\s*"([^"]+)",\s*\w+,\s*(?:TRUE|FALSE),', table)))
+out2 = run_batch("help " + " ".join(tnames))
+answered = set()
+for l in out2.split("\n"):
+    m = re.match(r"^(\S+) ", l)
+    if m and m.group(1) in tnames and not l.startswith("Sorry"):
+        answered.add(m.group(1))
+listed = set(l.split(" ", 1)[0] for l in lst if l)
+check(f"[6] the listed names are exactly the table's names that `help <name>` answers in this build ({len(answered)})",
+      listed == answered and len(listed) > 150,
+      f"listed-not-answered {sorted(listed - answered)[:5]} answered-not-listed {sorted(answered - listed)[:5]}")
+miss = [n for n in MISSING_BEFORE if n not in listed]
+check(f"[6] the {len(MISSING_BEFORE)} commands below `while` in the table are listed (the control keywords and settype ... wrnodev)",
+      not miss, f"missing {miss[:6]}")
+ctrl = ["while", "repeat", "dowhile", "foreach", "if", "else", "end", "break", "continue", "label", "goto"]
+check("[6] the eleven control keywords each have their line", all(any(l.startswith(k + " ") for l in lst) for k in ctrl))
+
+# ------------------------------------------------------------------- [7]
+print("\n[7] the single-command forms")
+out3 = run_batch("help setscale\necho ====\nhelp\necho ====\nhelp nosuchcmd")
+parts = out3.split("====")
+first = [l for l in parts[0].split("\n") if l.strip() and not l.startswith(("Circuit", "Warning"))]
+one_line = (len(first) >= 1
+            and first[0].startswith("setscale [vecname [vecname]] : Change default scale of current working plot, or set/clear")
+            and (len(first) == 1 or not first[1].startswith(" ")))
+check("[7] `help setscale` is one line", one_line, f"{first[:2]}")
+check("[7] `help` alone still prints the short pointer to `help all`",
+      len(parts) > 1 and 'For a list of all commands type "help all"' in parts[1])
+check("[7] an unknown name still answers `Sorry, no help for nosuchcmd.`",
+      len(parts) > 2 and "Sorry, no help for nosuchcmd." in parts[2])
+check("[7] the manual links still follow the list (their indented URLs are deliberate)",
+      "  https://ngspice.sourceforge.io/docs/ngspice-manual.pdf" in out)
+
+# ------------------------------------------------------------------- [8]
+print("\n[8] newhelp")
+out4 = run_batch("set level=a\nnewhelp")
+seen = [k for k in ("while", "if", "goto", "settype", "fopen", "linearize", "devhelp") if re.search(r"^" + k + " ", out4, re.M)]
+check("[8] `newhelp` at the advanced level lists the control keywords and the commands below them (it cut the table the same way)",
+      len(seen) == 7, f"{seen}")
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

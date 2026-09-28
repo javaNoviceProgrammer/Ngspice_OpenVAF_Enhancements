@@ -41,8 +41,17 @@ void com_help(wordlist *wl)
             return;
         }
 
-        /* Count the number of commands */
-        for (numcoms = 0; cp_coms[numcoms].co_func != NULL; numcoms++) {
+        /* Count the number of commands.
+         *
+         * Enhancement-753: to the table's terminator, the entry whose NAME is
+         * NULL. The loop used to stop at the first entry whose HANDLER is
+         * NULL, and the control keywords (while, repeat, dowhile, foreach, if,
+         * else, end, break, continue, label, goto) have none -- the control
+         * parser runs them -- so `help all` listed nothing after `while`: 28
+         * commands, the keywords and everything below them in commands.c
+         * (settype, strcmp, fopen, linearize, cutout, devhelp, inventory ...).
+         * `help <name>` walked by name and always found them. */
+        for (numcoms = 0; cp_coms[numcoms].co_comname != NULL; numcoms++) {
             ;
         }
         if (numcoms > N_CMD_DFLT) {
@@ -53,7 +62,7 @@ void com_help(wordlist *wl)
         }
 
         /* Sort the commands */
-        for (numcoms = 0; cp_coms[numcoms].co_func != NULL; numcoms++) {
+        for (numcoms = 0; cp_coms[numcoms].co_comname != NULL; numcoms++) {
             ccc[numcoms] = &cp_coms[numcoms];
         }
         qsort(ccc, (size_t) numcoms, sizeof(struct comm *), hcomp);

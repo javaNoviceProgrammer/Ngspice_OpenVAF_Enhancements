@@ -60,8 +60,10 @@ com_ahelp(wordlist *wl)
     out_printf(
         "description of \"command\", type \"help command\".\n");
 
-    /* sort the commands */
-    for (n = 0; cp_coms[n].co_func != NULL; n++)
+    /* sort the commands -- Enhancement-753: to the table's terminator (a NULL
+       name), not the first entry without a handler, which cut the list at the
+       control keywords; bounded by the array */
+    for (n = 0; cp_coms[n].co_comname != NULL && n < (int) NUMELEMS(cc); n++)
         cc[n] = &cp_coms[n];
 
     qsort(cc, (size_t) n, sizeof(struct comm *), hcomp);

@@ -67,3 +67,9 @@ with two layers:
 The static guard flags the pre-fix string and passes the fix; the runtime guard
 crashes on the pre-fix binary and passes on the fixed one. Full example
 regression: 137/137.
+
+*Update ([E-753](Enhancement-753.md)):* the same suite now also checks the
+listing itself. `help all` stopped at the first command without a handler, so
+the control keywords and the seventeen commands after them were never listed,
+and a few texts broke the one-line form; both are fixed and pinned in sections
+[5] to [8].
