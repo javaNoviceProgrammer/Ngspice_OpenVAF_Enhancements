@@ -18,6 +18,7 @@ VSRCdelete(GENinstance *gen_inst)
     FREE(inst->VSRCcoeffs);
     trnoise_state_free(inst->VSRCtrnoise_state);
     FREE(inst->VSRCtrrandom_state);
+    FREE(inst->VSRCprbs_state);        /* Enhancement-752 */
 
     return OK;
 }

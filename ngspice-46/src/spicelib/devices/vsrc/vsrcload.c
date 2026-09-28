@@ -463,6 +463,15 @@ VNoi3 3 0  DC 0 TRNOISE(0 0 0 0 15m 22u 50u) : generate RTS noise
                     }
                     break;
 
+                    case PRBS: {
+                        /* Enhancement-752: a pure function of the time; the
+                           analysis's step stands in for a tr/tf of 0 or less
+                           as it does for PULSE. */
+                        value = prbs_value(here->VSRCprbs_state, time,
+                                           ckt->CKTstep);
+                    }
+                    break;
+
 #ifdef SHARED_MODULE
                     case EXTERNAL: {
                         value = getvsrcval(time, here->VSRCname);

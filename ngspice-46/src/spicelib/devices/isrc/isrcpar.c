@@ -289,6 +289,26 @@ ISRCparam(int param, IFvalue *value, GENinstance *inst, IFvalue *select)
         }
         break;
 
+        case ISRC_PRBS:
+        case ISRC_PAM4: {
+            /* Enhancement-752: prbs(v1 v2 tbit [td [tr [tf [order [seed]]]]])
+               and pam4(v1 v2 tsym ...), checked by name before anything is
+               stored; an `alter` re-initialises the register from the new
+               list. */
+            struct prbs_state *ps = prbs_state_init(value->v.vec.rVec,
+                                                    value->v.numValue,
+                                                    "current", here->ISRCname,
+                                                    param == ISRC_PAM4 ? 4 : 2);
+            if (!ps)
+                return(E_BADPARM);
+            here->ISRCfunctionType = PRBS;
+            here->ISRCfuncTGiven = TRUE;
+            copy_coeffs(here, value);
+            tfree(here->ISRCprbs_state);
+            here->ISRCprbs_state = ps;
+        }
+        break;
+
 #ifdef SHARED_MODULE
         case ISRC_EXTERNAL: {
             here->ISRCfunctionType = EXTERNAL;

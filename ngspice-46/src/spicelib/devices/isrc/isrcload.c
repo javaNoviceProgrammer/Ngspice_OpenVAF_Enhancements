@@ -402,6 +402,13 @@ INoi1 1 0  DC 0 TRNOISE(0n 0.5n 1 10n) : generate 1/f noise
                     }
                     break;
 
+                    case PRBS: {
+                        /* Enhancement-752 */
+                        value = prbs_value(here->ISRCprbs_state, time,
+                                           ckt->CKTstep);
+                    }
+                    break;
+
 #ifdef SHARED_MODULE
                     case EXTERNAL: {
                         value = getisrcval(time, here->ISRCname);

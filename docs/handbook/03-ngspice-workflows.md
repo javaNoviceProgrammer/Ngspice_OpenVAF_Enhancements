@@ -228,6 +228,18 @@ of everything beyond op/dc/ac/tran:
 Details and the exact pinned numbers: [`examples/analyses_examples/`](../../examples/analyses_examples/)
 and [`examples/rfanalyses_examples/`](../../examples/rfanalyses_examples/).
 
+**A data stream for a link.** Since [E-752](../../enhancements_doc/Enhancement-752.md)
+the independent sources have a built-in bit sequence,
+`Vtx tx 0 PRBS(v1 v2 tbit [td [tr [tf [order [seed]]]]])` (and the same on a
+current source): a shift register with the standard maximal-length taps, so
+`order` 7, 9, 11, 15, 23 or 31 is the PRBS a pattern generator sends, every
+transition a breakpoint, the stream a pure function of time. `PAM4(v1 v2 tsym
+...)` reads the same register two bits per symbol, Gray coded, which at order
+13 and 31 is IEEE 802.3's PRBS13Q and PRBS31Q. Pair it with
+the `eye` command ([E-207](../../enhancements_doc/Enhancement-207.md)) for an
+eye diagram; `examples/prbs_examples/` drives a PRBS7 through an RC channel
+into it.
+
 ## 3.5 S-parameters and Touchstone files
 
 Ports for `.sp` are voltage sources tagged with a port number and reference

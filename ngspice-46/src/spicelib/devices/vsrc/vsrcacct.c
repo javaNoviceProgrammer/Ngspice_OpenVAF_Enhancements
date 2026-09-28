@@ -326,6 +326,25 @@ VSRCaccept(CKTcircuit *ckt, GENmodel *inModel)
                     }
                     break;
 
+                    case PRBS: {
+                        /* Enhancement-752: schedule the bit stream's next
+                           corner (a transition's start or end) the way PULSE
+                           schedules its edges; a run of equal bits has none. */
+                        struct prbs_state *ps = here->VSRCprbs_state;
+                        if (ckt->CKTtime >= here->VSRCbreak_time) {
+                            double next = prbs_next_edge(ps,
+                                    ckt->CKTtime + ckt->CKTminBreak,
+                                    ckt->CKTstep);
+                            if (next < ckt->CKTfinalTime) {
+                                error = CKTsetBreak(ckt, next);
+                                if (error)
+                                    return error;
+                            }
+                            here->VSRCbreak_time = next - ckt->CKTminBreak;
+                        }
+                    }
+                    break;
+
 #ifdef SHARED_MODULE
                     case EXTERNAL: {
                         /* no  breakpoints (yet) */

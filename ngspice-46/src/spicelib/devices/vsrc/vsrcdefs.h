@@ -9,6 +9,7 @@ Author: 1985 Thomas L. Quarles
 #include "ngspice/ifsim.h"
 #include "ngspice/cktdefs.h"
 #include "ngspice/gendefs.h"
+#include "ngspice/prbs.h"      /* Enhancement-752 */
 #include "ngspice/complex.h"
 
 struct trnoise_state;
@@ -68,6 +69,7 @@ typedef struct sVSRCinstance {
 
     struct trnoise_state *VSRCtrnoise_state; /* transient noise */
     struct trrandom_state *VSRCtrrandom_state; /* transient random source */
+    struct prbs_state *VSRCprbs_state; /* Enhancement-752: PRBS bit-sequence source */
 
     double VSRCr;           /* pwl repeat */
     double VSRCrdelay;     /* pwl delay period */
@@ -155,7 +157,8 @@ enum {
     AM,
     TRNOISE,
     TRRANDOM,
-    EXTERNAL
+    EXTERNAL,
+    PRBS        /* Enhancement-752; the same value in isrcdefs.h */
 #ifdef RFSPICE
     ,
     PORT
@@ -200,6 +203,8 @@ enum {
     VSRC_TRNOISE,
     VSRC_TRRANDOM,
     VSRC_EXTERNAL,
+    VSRC_PRBS,      /* Enhancement-752 */
+    VSRC_PAM4,      /* Enhancement-752 */
 };
 
 /* model parameters */

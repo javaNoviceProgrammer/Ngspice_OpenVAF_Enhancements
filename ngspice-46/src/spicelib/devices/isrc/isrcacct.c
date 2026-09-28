@@ -306,6 +306,26 @@ ISRCaccept(CKTcircuit *ckt, GENmodel *inModel)
                     }
                     break;
 
+                    case PRBS: {
+                        /* Enhancement-752: the bit stream's next corner, as
+                           the voltage source schedules it; the current source
+                           has no per-instance break time, so the state holds
+                           it (re-armed per run by ISRCtemp). */
+                        struct prbs_state *ps = here->ISRCprbs_state;
+                        if (ckt->CKTtime >= ps->break_time) {
+                            double next = prbs_next_edge(ps,
+                                    ckt->CKTtime + ckt->CKTminBreak,
+                                    ckt->CKTstep);
+                            if (next < ckt->CKTfinalTime) {
+                                error = CKTsetBreak(ckt, next);
+                                if (error)
+                                    return error;
+                            }
+                            ps->break_time = next - ckt->CKTminBreak;
+                        }
+                    }
+                    break;
+
 #ifdef SHARED_MODULE
                     case EXTERNAL: {
                         /* no  breakpoints (yet) */

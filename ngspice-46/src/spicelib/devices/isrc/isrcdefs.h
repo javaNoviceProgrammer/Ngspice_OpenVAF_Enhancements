@@ -9,6 +9,7 @@ Author: 1985 Thomas L. Quarles
 #include "ngspice/ifsim.h"
 #include "ngspice/cktdefs.h"
 #include "ngspice/gendefs.h"
+#include "ngspice/prbs.h"      /* Enhancement-752 */
 #include "ngspice/complex.h"
 
 /*
@@ -50,6 +51,7 @@ typedef struct sISRCinstance {
 
     struct trnoise_state *ISRCtrnoise_state; /* transient noise */
     struct trrandom_state *ISRCtrrandom_state; /* transient random source */
+    struct prbs_state *ISRCprbs_state; /* Enhancement-752: PRBS bit-sequence source */
 
     /* needed for outputting results */
     double ISRCcurrent; /* current value */
@@ -96,6 +98,7 @@ enum {
     TRNOISE,
     TRRANDOM,
     EXTERNAL,
+    PRBS,       /* Enhancement-752; the same value in vsrcdefs.h */
 };
 
 #endif
@@ -133,6 +136,8 @@ enum {
     ISRC_R,             /* Enhancement-447: pwl repeat -- diagnosed, not implemented */
     ISRC_TD,            /* Enhancement-447: pwl delay  -- diagnosed, not implemented */
     ISRC_EXTERNAL,
+    ISRC_PRBS,      /* Enhancement-752 */
+    ISRC_PAM4,      /* Enhancement-752 */
 };
 
 /* model parameters */

@@ -318,6 +318,29 @@ VSRCparam(int param, IFvalue *value, GENinstance *inst, IFvalue *select)
         }
         break;
 
+        case VSRC_PRBS:
+        case VSRC_PAM4: {
+            /* Enhancement-752: prbs(v1 v2 tbit [td [tr [tf [order [seed]]]]])
+               and pam4(v1 v2 tsym ...), the same register read one or two bits
+               per symbol. The list is checked by name (a missing bit time, a
+               non-positive one, an edge longer than the bit, an order outside
+               2..31, a zero seed) before anything is stored; an `alter`
+               re-initialises the register from the new list, as trrandom
+               rebuilds its state. */
+            struct prbs_state *ps = prbs_state_init(value->v.vec.rVec,
+                                                    value->v.numValue,
+                                                    "voltage", here->VSRCname,
+                                                    param == VSRC_PAM4 ? 4 : 2);
+            if (!ps)
+                return(E_BADPARM);
+            here->VSRCfunctionType = PRBS;
+            here->VSRCfuncTGiven = TRUE;
+            copy_coeffs(here, value);
+            tfree(here->VSRCprbs_state);
+            here->VSRCprbs_state = ps;
+        }
+        break;
+
 #ifdef SHARED_MODULE
         case VSRC_EXTERNAL: {
             here->VSRCfunctionType = EXTERNAL;

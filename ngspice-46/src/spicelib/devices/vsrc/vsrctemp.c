@@ -61,6 +61,8 @@ VSRCtemp(GENmodel *inModel, CKTcircuit *ckt)
              * on a `resume`, so this re-arms exactly when a new analysis starts
              * and leaves a continued run alone. */
             here->VSRCbreak_time = -1.0;
+            if (here->VSRCprbs_state)      /* Enhancement-752: same per-run re-arm */
+                prbs_state_reset(here->VSRCprbs_state);
 
             if(here->VSRCacGiven && !here->VSRCacMGiven) {
                 here->VSRCacMag = 1;

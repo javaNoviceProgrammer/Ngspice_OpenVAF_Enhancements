@@ -1,5 +1,9 @@
 # Enhancement-207 — eye diagram / jitter analysis (`eye`)
 
+*Since [E-752](../../enhancements_doc/Enhancement-752.md) a data stream needs no
+PWL list: `Vtx tx 0 PRBS(0 1 0.5n 0 20p 20p 7)` is a PRBS7 at 2 Gb/s, and
+`examples/prbs_examples/` feeds one to `eye`.*
+
 The core measurement for serial links / SerDes: fold a received data waveform modulo
 the unit interval (bit period) and read out the **eye** and its quality metrics.
 

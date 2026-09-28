@@ -18,6 +18,7 @@ ISRCdelete(GENinstance *gen_inst)
     FREE(inst->ISRCcoeffs);
     trnoise_state_free(inst->ISRCtrnoise_state);
     FREE(inst->ISRCtrrandom_state);
+    FREE(inst->ISRCprbs_state);        /* Enhancement-752 */
 
     return OK;
 }

@@ -23,6 +23,8 @@ IFparm VSRCpTable[] = { /* parameters */
  IOP ("am",      VSRC_AM,        IF_REALVEC,"Amplitude modulation description"),
  IOP ("trnoise", VSRC_TRNOISE,   IF_REALVEC,"Transient noise description"),
  IOP ("trrandom", VSRC_TRRANDOM, IF_REALVEC,"random source description"),
+ IOP ("prbs",    VSRC_PRBS,      IF_REALVEC,"PRBS bit-sequence description (Enhancement-752)"),
+ IOP ("pam4",    VSRC_PAM4,      IF_REALVEC,"PAM4 symbol-sequence description (Enhancement-752)"),
 #ifdef SHARED_MODULE
  IOP ("external", VSRC_EXTERNAL, IF_STRING,"external source description"),
 #endif

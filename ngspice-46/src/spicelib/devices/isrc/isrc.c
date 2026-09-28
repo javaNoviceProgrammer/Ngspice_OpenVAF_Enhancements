@@ -25,6 +25,8 @@ IFparm ISRCpTable[] = { /* parameters */
  IOP ("am",      ISRC_AM,        IF_REALVEC,"Amplitude modulation description"),
  IOP ("trnoise", ISRC_TRNOISE,   IF_REALVEC,"Transient noise description"),
  IOP ("trrandom", ISRC_TRRANDOM, IF_REALVEC,"random source description"),
+ IOP ("prbs",    ISRC_PRBS,      IF_REALVEC,"PRBS bit-sequence description (Enhancement-752)"),
+ IOP ("pam4",    ISRC_PAM4,      IF_REALVEC,"PAM4 symbol-sequence description (Enhancement-752)"),
  /* Enhancement-447: `r` and `td` are voltage-source-only pwl options. They were
     not declared here at all, so `I1 0 a pwl(... r=0)` failed with the generic
     "unknown parameter (r)" -- which reads like a typo rather than a feature that
