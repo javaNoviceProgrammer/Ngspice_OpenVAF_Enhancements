@@ -93,3 +93,8 @@ the fourteen suites; the sweep.
   two existing suites showed the shape is the ordinary one for two instances of one
   model; a refusal would have unadapted decks that adapt today. The name order keeps
   them adapted and says so.
+
+*Update ([E-754](Enhancement-754.md)):* the note is no longer printed in the
+quiet default mode, where a generated deck got one line per shared node; it is
+said under `set ngdebug` (before the parse) or `autoadapt=debug`. The rule and
+the `.adapt b:n2` override are unchanged.

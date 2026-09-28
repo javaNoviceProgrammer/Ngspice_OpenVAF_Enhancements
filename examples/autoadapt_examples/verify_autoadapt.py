@@ -247,8 +247,27 @@ check("[E-729] the tie goes to n1 by name order, said, with the way to make the 
 _rc, out = run(TIE_REV, "tie_rev", opts=".option autobus\n" + AUTO2)
 check("[E-729] ...and the two lines the other way round give the same n1 answer (deck order used to decide: 0.2890173 against 0.2881844)",
       NOTE in out and "b_f (n1 port 0)" in out and vals(out) == v1, f"{vals(out)[4:]}")
+# Enhancement-754: the note is no longer said in the quiet default mode -- a
+# generated deck whose buses all tie at the same port index got one line per
+# shared node -- but under `set ngdebug` (a .spiceinit, or an interactive
+# session before `source`; a .control block runs after the parse) and under
+# autoadapt=debug it still is, per node. The choice itself is unchanged.
 _rc, out = run(TIE_REV, "tie_quiet", opts=".option autobus\n.option autoadapt adapter=amod2\n")
-check("[E-729] ...said in the quiet default mode too", NOTE in out and vals(out) == v1, out[-300:].replace("\n", "|"))
+check("[E-754] the quiet default mode makes the same choice in silence (E-729 said it there too)",
+      "Note: autoadapt" not in out and vals(out) == v1, out[-300:].replace("\n", "|"))
+_spiceinit = os.path.join(HERE, ".spiceinit")
+try:
+    with open(_spiceinit, "w") as f:
+        f.write("set ngdebug\n")
+    _rc, out = run(TIE_REV, "tie_ngdebug", opts=".option autobus\n.option autoadapt adapter=amod2\n")
+finally:
+    if os.path.exists(_spiceinit):
+        os.remove(_spiceinit)
+    for _junk in os.listdir(HERE):          # ngdebug dumps the deck as debug-out*.txt
+        if _junk.startswith("debug-out") and _junk.endswith(".txt"):
+            os.remove(os.path.join(HERE, _junk))
+check("[E-754] ...and says it under `set ngdebug` (a .spiceinit here), the same answer",
+      NOTE in out and vals(out) == v1, out[-300:].replace("\n", "|"))
 _rc, out = run(TIE + "\n.adapt b:n2", "tie_n2", opts=".option autobus\n" + AUTO2)
 check("[E-729] `.adapt b:n2` names n2 the forward device: the hand-written n2 answer, no note",
       "b_f (n2 port 0)" in out and vals(out) == v2 and "Note: autoadapt" not in out, f"{vals(out)[4:]}")

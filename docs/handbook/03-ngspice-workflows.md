@@ -752,7 +752,9 @@ alone by the under-connection warning ([E-730](../../enhancements_doc/Enhancemen
 `autoadapt` orients the adapter it injects by port index, the higher forward; when
 the shared node sits at the same port index on both devices the instance names
 decide, the one that sorts first forward, whatever the deck order, and a note says
-so; `.adapt b:n2` names the forward device outright, tie or no tie
+so under `set ngdebug` or `autoadapt=debug` (in every mode until
+[E-754](../../enhancements_doc/Enhancement-754.md), one line per shared node on a
+generated deck); `.adapt b:n2` names the forward device outright, tie or no tie
 ([E-729](../../enhancements_doc/Enhancement-729.md)).
 An operating-point variable named `temp`, `m` or `dt` draws E-505's line alone at load: the
 case-collision check reads the module's own declarations, not the loader's rows

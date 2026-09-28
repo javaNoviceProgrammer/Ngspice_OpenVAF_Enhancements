@@ -1856,13 +1856,21 @@ INPadapt(CKTcircuit *ckt, struct card *deck, INPtables *tab)
                 } else {
                     f = &k->use[1]; rr = &k->use[0];
                 }
-                fprintf(stdout, "Note: autoadapt: node '%s' sits at port %d on both "
-                        "%s and %s, so the port rule cannot orient the adapter; %s "
-                        "takes the forward side (%s_f, the adapter's first port) by "
-                        "name order, whatever the deck order -- `.adapt %s:%s` puts "
-                        "%s there instead, or split the node by hand.\n",
-                        k->node, f->port, f->inst, rr->inst, f->inst, k->node,
-                        k->node, rr->inst, rr->inst);
+                /* Enhancement-754: said under `set ngdebug` or `autoadapt=debug`
+                   only. E-729 printed this in every mode, and a generated deck
+                   whose buses all sit at the same port index on both devices
+                   -- the ordinary shape -- got one line per shared node, a
+                   flood that said the same thing each time. The choice is
+                   still deterministic (name order) and `.adapt b:n2` still
+                   overrides it; the debug modes still say it per node. */
+                if (verbose || ft_ngdebug)
+                    fprintf(stdout, "Note: autoadapt: node '%s' sits at port %d on both "
+                            "%s and %s, so the port rule cannot orient the adapter; %s "
+                            "takes the forward side (%s_f, the adapter's first port) by "
+                            "name order, whatever the deck order -- `.adapt %s:%s` puts "
+                            "%s there instead, or split the node by hand.\n",
+                            k->node, f->port, f->inst, rr->inst, f->inst, k->node,
+                            k->node, rr->inst, rr->inst);
             }
         }
         nf = tprintf("%s_f", k->node);
