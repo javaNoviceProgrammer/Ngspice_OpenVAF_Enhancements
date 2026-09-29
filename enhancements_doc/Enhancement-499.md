@@ -171,3 +171,5 @@ A legal `-seed` still pins the run.
 which fail without the fix** (36 under KLU). Full regression 413/413.
 
 **Update ([E-762](Enhancement-762.md)).** The two situations these NOTEs describe are now also the line's own verdict: an objective equal at every evaluation reads `unchanged -- nothing was optimised` (the NOTE still says why), and a search the iteration cap ended reads `stopped at -maxiter ... NOT converged` with its own NOTE. The bound NOTE is unchanged.
+
+**Update ([E-763](Enhancement-763.md)).** The strict rule now covers everything the command takes: a knob's `<init> <lo> <hi>`, a `-target`'s value and weight (which must be positive: the `-target x 0.4 0` case above is refused before the search instead of annotated after it), a bare option flag, an unrecognised token, a second objective under a scalar method, a duplicate knob, an init outside its box; a `-swarmsize` raised to a method's minimum prints a NOTE. The `loopguard` check that provoked this NOTE with a zero weight expects the refusal now.

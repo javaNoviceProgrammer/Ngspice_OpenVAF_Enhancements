@@ -155,7 +155,10 @@ check("[8] a built-in device declines the reuse for the whole circuit",
 a = run("V1 in 0 dc 1\nNcgm in out cgm\nRl out 0 1k\n.param rv=agauss(0,20,3)\n"
         ".model cgm cs_thresh rd='600+rv' rth=100\n",
         "optimize -mparam " + AT + "cgm[g] 1m 0.5m 2m -analysis op -center "
-        "-spec v(out) -min 0.3 -max 0.6 -nsamples 6 -maxiter 4", "op5")
+        "-spec v(out) -min 0.3 -max 0.6 -samples 6 -maxiter 4", "op5")
+# (E-763: this deck said `-nsamples`, which is not an option; the lenient parser
+# skipped it and the run used the default 100 samples. The strict parser refuses
+# an unknown token, which is how the typo surfaced.)
 check("[9] -center, whose inner Monte Carlo resets per sample, keeps nothing",
       decision(a) == (0, 0), f"{decision(a)}")
 

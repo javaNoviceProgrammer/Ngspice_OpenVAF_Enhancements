@@ -83,3 +83,5 @@ and optimizing `.param` values directly (which needs a re-source that does not
 re-run the analysis).
 
 **Update ([E-762](Enhancement-762.md)).** The report's last line now says why the search stopped: `converged` (unchanged) on the simplex's own tolerance, `stopped at -maxiter (N iterations) -- NOT converged` with a NOTE when the cap ran out first, `NO SOLUTION -- no evaluation solved`, `unchanged -- nothing was optimised`; `optimize_status`, `optimize_converged`, `optimize_cost` and `optimize_evals` are published for a `.control` script.
+
+**Update ([E-763](Enhancement-763.md)).** The parser refuses what it cannot mean: a bound or init that is not a number, an init outside `[lo, hi]`, a bare `-method`, a stray token, a knob named twice; an objective that begins with `-` must be quoted (`-minimize "-v(out)"`) or written `0-v(out)`, and the message says so.

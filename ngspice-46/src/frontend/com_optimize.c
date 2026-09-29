@@ -302,16 +302,9 @@ static int opt_run_failed(void)
 }
 
 
-/* parse a SPICE-style number (understands k / meg / u / n / p ... suffixes) */
-static double optnum(const char *w)
-{
-    char *s = (char *) w;
-    double v = 0.0;
-    if (ft_numparse(&s, FALSE, &v) < 0)
-        v = atof(w);
-    return v;
-}
-
+/* (E-763: optnum(), the lenient SPICE-number parser that took `abc` as 0 and
+ * `10o` as 10, is gone -- every number the command takes goes through
+ * opt_strictnum() below) */
 
 /* Enhancement-499: parse a NUMERIC OPTION the way this command already parses
  * every other number it is given.
@@ -1716,13 +1709,46 @@ void com_optimize(wordlist *wl)
                 fprintf(cp_err, "optimize: %s needs <name> <init> <lo> <hi>\n", w);
                 goto cleanup;
             }
+            /* Enhancement-763 (optimize hunt F2 of 2026-09-29): the knob's
+             * three numbers get the rule E-499 gave the options. optnum()
+             * took `abc` as 0 and `10o` as 10 in silence, so a typo moved a
+             * search bound without a word; an init outside the box was
+             * clamped to a bound, also in silence; a knob named twice was
+             * altered twice with the last value winning. */
+            {
+                int dup;
+                for (dup = 0; dup < c.np; dup++)
+                    if (eq(c.name[dup], a->wl_word)) {
+                        fprintf(cp_err, "optimize: %s '%s' given twice\n", w, a->wl_word);
+                        goto cleanup;
+                    }
+                if (!opt_strictnum(b->wl_word, &c.x0[c.np])) {
+                    fprintf(cp_err, "optimize: %s %s: <init> needs a number, not '%s'\n",
+                            w, a->wl_word, b->wl_word);
+                    goto cleanup;
+                }
+                if (!opt_strictnum(d->wl_word, &c.lo[c.np])) {
+                    fprintf(cp_err, "optimize: %s %s: <lo> needs a number, not '%s'\n",
+                            w, a->wl_word, d->wl_word);
+                    goto cleanup;
+                }
+                if (!opt_strictnum(e->wl_word, &c.hi[c.np])) {
+                    fprintf(cp_err, "optimize: %s %s: <hi> needs a number, not '%s'\n",
+                            w, a->wl_word, e->wl_word);
+                    goto cleanup;
+                }
+            }
             c.name[c.np] = copy(a->wl_word);
             c.kind[c.np] = knd;
-            c.x0[c.np]   = optnum(b->wl_word);
-            c.lo[c.np]   = optnum(d->wl_word);
-            c.hi[c.np]   = optnum(e->wl_word);
             if (c.hi[c.np] <= c.lo[c.np]) {
                 fprintf(cp_err, "optimize: param '%s' needs hi > lo\n", c.name[c.np]);
+                tfree(c.name[c.np]);
+                goto cleanup;
+            }
+            if (c.x0[c.np] < c.lo[c.np] || c.x0[c.np] > c.hi[c.np]) {
+                fprintf(cp_err, "optimize: %s %s: init %g lies outside [%g, %g]; the search "
+                                "starts inside its own range\n",
+                        w, c.name[c.np], c.x0[c.np], c.lo[c.np], c.hi[c.np]);
                 tfree(c.name[c.np]);
                 goto cleanup;
             }
@@ -1787,13 +1813,42 @@ void com_optimize(wordlist *wl)
                 fprintf(cp_err, "optimize: -target needs <expr> <value> [<weight>]\n");
                 goto cleanup;
             }
-            c.tgt[c.nt].expr   = copy(a->wl_word);
-            c.tgt[c.nt].target = optnum(b->wl_word);
+            /* Enhancement-763: the value and the weight are numbers or the
+             * command is refused -- `-target v(out) - v(in) 0.4` (an expression
+             * with a space) took `-` as a value of 0 and fitted to it, and a
+             * weight of 0 or -1 was accepted (0 made the residual identically
+             * zero, E-499's NOTE said "nothing was optimised" afterwards). */
+            {
+                double tv;
+                if (!opt_strictnum(b->wl_word, &tv)) {
+                    fprintf(cp_err, "optimize: -target %s: <value> needs a number, not '%s' "
+                                    "(an expression with spaces must be one token: "
+                                    "v(out)-v(in), not v(out) - v(in))\n",
+                            a->wl_word, b->wl_word);
+                    goto cleanup;
+                }
+                c.tgt[c.nt].expr   = copy(a->wl_word);
+                c.tgt[c.nt].target = tv;
+            }
             c.tgt[c.nt].weight = 1.0;
             c.tgt[c.nt].stage  = c.ns - 1;
             wl = b->wl_next;
             if (wl && !is_flag(wl->wl_word) && is_number_token(wl->wl_word)) {
-                c.tgt[c.nt].weight = optnum(wl->wl_word);
+                double wv;
+                if (!opt_strictnum(wl->wl_word, &wv)) {
+                    fprintf(cp_err, "optimize: -target %s: the weight needs a number, not '%s'\n",
+                            a->wl_word, wl->wl_word);
+                    c.nt++;                      /* the expr is owned: let cleanup free it */
+                    goto cleanup;
+                }
+                if (wv <= 0.0) {
+                    fprintf(cp_err, "optimize: -target %s: the weight must be positive (got %s); "
+                                    "a zero weight fits nothing and a negative one is the "
+                                    "positive one squared\n", a->wl_word, wl->wl_word);
+                    c.nt++;
+                    goto cleanup;
+                }
+                c.tgt[c.nt].weight = wv;
                 wl = wl->wl_next;
             }
             c.nt++;
@@ -1821,7 +1876,10 @@ void com_optimize(wordlist *wl)
                 }
                 wl = wl->wl_next->wl_next;
             } else {
-                wl = NULL;
+                /* Enhancement-763: a bare option flag used to fall off the end
+                 * of the command in silence and the default ran */
+                fprintf(cp_err, "optimize: -method needs nm, lm, pso, de, sa or nsga2\n");
+                goto cleanup;
             }
         } else if (eq(w, "-swarmsize") || eq(w, "-swarm") || eq(w, "-npart")) {
             if (wl->wl_next) {
@@ -1829,7 +1887,7 @@ void com_optimize(wordlist *wl)
                     goto cleanup;                        /* Enhancement-499 */
                 wl = wl->wl_next->wl_next;
             }
-            else wl = NULL;
+            else { fprintf(cp_err, "optimize: %s needs a value\n", w); goto cleanup; }
         } else if (eq(w, "-seed")) {
             if (wl->wl_next) {
                 /* Enhancement-499: same rule as montecarlo's -seed and as
@@ -1841,21 +1899,21 @@ void com_optimize(wordlist *wl)
                 c.seed = (unsigned long) sv;
                 wl = wl->wl_next->wl_next;
             }
-            else wl = NULL;
+            else { fprintf(cp_err, "optimize: -seed needs a value\n"); goto cleanup; }
         } else if (eq(w, "-maxiter") || eq(w, "-n")) {
             if (wl->wl_next) {
                 if (!opt_intopt(wl->wl_next->wl_word, "-maxiter", 1, &c.maxiter))
                     goto cleanup;                        /* Enhancement-499 */
                 wl = wl->wl_next->wl_next;
             }
-            else wl = NULL;
+            else { fprintf(cp_err, "optimize: %s needs a value\n", w); goto cleanup; }
         } else if (eq(w, "-tol") || eq(w, "-t")) {
             if (wl->wl_next) {
                 if (!opt_realopt(wl->wl_next->wl_word, "-tol", &c.tol))
                     goto cleanup;                        /* Enhancement-499 */
                 wl = wl->wl_next->wl_next;
             }
-            else wl = NULL;
+            else { fprintf(cp_err, "optimize: %s needs a value\n", w); goto cleanup; }
         } else if (eq(w, "-verbose") || eq(w, "-v")) {
             c.verbose = 1;
             wl = wl->wl_next;
@@ -1868,7 +1926,7 @@ void com_optimize(wordlist *wl)
                     goto cleanup;                        /* Enhancement-499 */
                 wl = wl->wl_next->wl_next;
             }
-            else wl = NULL;
+            else { fprintf(cp_err, "optimize: %s needs a value\n", w); goto cleanup; }
         } else if (eq(w, "-lhs")) {
             c.lhs = 1;
             wl = wl->wl_next;
@@ -1904,12 +1962,25 @@ void com_optimize(wordlist *wl)
             c.spec[c.nspec - 1].hasmin = 1;
             wl = wl->wl_next;
         } else {
-            fprintf(cp_err, "optimize: unrecognized token '%s'\n", w);
-            wl = wl->wl_next;
+            /* Enhancement-763: the command used to go on past it -- `-maxiter5`
+             * ran with the default cap, a stray word after a -target ran a fit
+             * to the wrong target -- and report as if nothing had happened */
+            fprintf(cp_err, "optimize: unrecognized token '%s'; the command is refused "
+                            "(an expression or command that begins with '-' must be "
+                            "quoted, a -target expression must be one token)\n", w);
+            goto cleanup;
         }
     }
 
     /* --- validate --- */
+    /* Enhancement-763: several -minimize/-maximize are NSGA-II objectives; a
+     * scalar method used the first and dropped the rest in silence */
+    if (c.method != 6 && c.nobj > 1) {
+        fprintf(cp_err, "optimize: %d objectives were given (-minimize/-maximize); a scalar "
+                        "method minimises one -- give one, or -method nsga2 for a Pareto "
+                        "front\n", c.nobj);
+        goto cleanup;
+    }
     if (c.np < 1 || c.ns < 1 || (!c.objective && c.nt == 0 && !c.center)) {
         fprintf(cp_err, "usage: optimize (-param|-mparam|-dparam) <name> <init> "
                         "<lo> <hi> [...] -analysis <cmd> (-minimize <expr> | -target "
@@ -2008,9 +2079,15 @@ void com_optimize(wordlist *wl)
         if (c.swarmsize <= 0) {
             c.swarmsize = 20 + 4 * c.np;
             if (c.swarmsize > 200) c.swarmsize = 200;
+        } else if (c.swarmsize < 8 || (c.swarmsize % 2)) {
+            /* Enhancement-763: raised in silence before */
+            int asked = c.swarmsize;
+            if (c.swarmsize < 8) c.swarmsize = 8;
+            if (c.swarmsize % 2) c.swarmsize++;      /* even for pairwise breeding */
+            fprintf(cp_out, "optimize: NOTE -- -swarmsize %d raised to %d (NSGA-II breeds "
+                            "in pairs from a population of at least eight)\n",
+                    asked, c.swarmsize);
         }
-        if (c.swarmsize < 8) c.swarmsize = 8;
-        if (c.swarmsize % 2) c.swarmsize++;          /* even for pairwise breeding */
         fprintf(cp_out, "optimize: NSGA-II -- %d parameter%s, %d objectives, "
                         "population %d, seed %lu, up to %d generations\n",
                 c.np, c.np == 1 ? "" : "s", c.nobj, c.swarmsize, c.seed, c.maxiter);
@@ -2037,8 +2114,13 @@ void com_optimize(wordlist *wl)
         if (c.swarmsize <= 0) {
             c.swarmsize = 10 + 4 * c.np;
             if (c.swarmsize > 256) c.swarmsize = 256;
+        } else if (c.swarmsize < 5) {
+            /* Enhancement-763: raised in silence before */
+            fprintf(cp_out, "optimize: NOTE -- -swarmsize %d raised to 5 (%s)\n", c.swarmsize,
+                    use_de ? "differential evolution needs four distinct members besides the target"
+                           : "particle swarm needs five particles");
+            c.swarmsize = 5;
         }
-        if (c.swarmsize < 5) c.swarmsize = 5;
     }
 
     {

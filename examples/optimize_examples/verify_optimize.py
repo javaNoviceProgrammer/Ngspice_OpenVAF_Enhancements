@@ -59,6 +59,13 @@ command reaches it:
       converged line unchanged, "NO SOLUTION", "unchanged", "cooling schedule
       complete"; optimize_status / optimize_converged / optimize_cost /
       optimize_evals published and equal to the line.
+  Enhancement-763 (optimize hunt F2 of 2026-09-29): a strict parser.
+  [20] a bound that is not a number, an init outside the box, a zero or negative
+      weight, a -target expression with spaces, a bare -method/-maxiter, two
+      -minimize under a scalar method, a knob given twice and a stray token are
+      refused with a message; suffixes, a negative target and a raised
+      population (with a NOTE) still work; `-minimize -v(out)` is refused with
+      the quoting hint and the quoted form runs (hunt F3).
   [19] `-mparam` is the in-place fast path: it does NOT re-source (0 "Reset
       re-loads" banners), unlike -dparam.
   [20] all three knob kinds (`-dparam` + `-mparam` + `-param`) coexist in one run
@@ -517,6 +524,57 @@ o = run(DIVD + "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)
 rl, st = report_line(o), status_of(o)
 check("[19] simulated annealing reports 'cooling schedule complete (10 levels)' and optimize_status=completed, optimize_converged=1",
       rl is not None and rl[0] == "cooling schedule complete (10 levels)" and st == ("completed", 1, rl[2]), f"{rl} {st}")
+
+# ---- [20] Enhancement-763 (optimize hunt F2 of 2026-09-29): a strict parser ------
+# The knob's <init> <lo> <hi>, a -target's value and weight went through a
+# lenient number parser (`abc` was 0), an init outside the box was clamped in
+# silence, a bare option flag ran the default, a stray token was skipped, a
+# second scalar objective was dropped, a duplicate knob was altered twice and
+# a raised population said nothing. Every one is refused (or said) now.
+print("\nEnhancement-763: the knobs, targets and options are refused when they are not what they must be")
+def refused(ctl, needle):
+    o = run(DIVD + ctl + "\n.endc\n.end\n")
+    return (needle in o) and ("optimize: 1 parameter" not in o) and ("converged" not in o), o
+for label, ctl, needle in (
+    ("a bound that is not a number (`abc`) is refused, not taken as 0",
+     "optimize -param R2 1k abc 10k -analysis op -minimize (v(out)-0.9)^2", "<lo> needs a number, not 'abc'"),
+    ("an init outside [lo, hi] is refused, not clamped to a bound in silence",
+     "optimize -param R2 5k 10 1k -analysis op -minimize (v(out)-0.9)^2", "init 5000 lies outside [10, 1000]"),
+    ("a -target weight of 0 is refused (it fitted nothing)",
+     "optimize -param R2 1k 10 10k -analysis op -target v(out) 0.9 0", "the weight must be positive (got 0)"),
+    ("a -target weight of -1 is refused (the sign vanished in the square)",
+     "optimize -param R2 1k 10 10k -analysis op -target v(out) 0.9 -1", "the weight must be positive (got -1)"),
+    ("a -target expression with spaces is refused with the one-token hint (it fitted to a target of 0)",
+     "optimize -param R2 1k 10 10k -analysis op -target v(out) - v(in) 0.4", "<value> needs a number, not '-'"),
+    ("a bare -method is refused (it ran the default)",
+     "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2 -method", "-method needs nm, lm, pso, de, sa or nsga2"),
+    ("a bare -maxiter is refused",
+     "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2 -maxiter", "-maxiter needs a value"),
+    ("two -minimize under a scalar method are refused (the second was dropped)",
+     "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2 -minimize (v(out)-0.1)^2", "2 objectives were given"),
+    ("a knob given twice is refused",
+     "optimize -param R2 1k 10 10k -param R2 2k 10 10k -analysis op -minimize (v(out)-0.9)^2", "'r2' given twice"),
+    ("a stray token (`-maxiter5`) refuses the command instead of running with the default",
+     "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2 -maxiter5", "unrecognized token '-maxiter5'; the command is refused"),
+):
+    ok, o = refused(ctl, needle)
+    check(f"[20] {label}", ok, o.strip().splitlines()[-1][:100] if o.strip() else "no output")
+# what must still pass: SPICE suffixes, a negative target value, a unit letter
+o = run(DIVD + "optimize -param R2 1k 10 1meg -analysis op -target v(out) 0.9 1k\n.endc\n.end\n")
+check("[20] SPICE suffixes on a bound (1meg) and a weight (1k) still parse and the fit converges",
+      "converged" in o and optval(o, "R2") is not None and abs(optval(o, "R2") - 9000) / 9000 < 1e-3, str(optval(o, "R2")))
+o = run("opt neg\nV1 in 0 dc -1\nR1 in out 1k\nR2 out 0 1k\n.control\noptimize -param R2 1k 10 10k -analysis op -target v(out) -0.9\n.endc\n.end\n")
+check("[20] a negative -target value (-0.9) is a number, not a flag", "converged" in o and optval(o, "R2") is not None and abs(optval(o, "R2") - 9000) / 9000 < 1e-3, str(optval(o, "R2")))
+o = run(DIVD + "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2 -method de -swarmsize 3 -seed 1\n.endc\n.end\n")
+check("[20] a population below the method's minimum is raised WITH a NOTE (-swarmsize 3 -> 5 for differential evolution)",
+      "-swarmsize 3 raised to 5" in o and "converged" in o, o.strip().splitlines()[-1][:80])
+# hunt F3: an objective that begins with a minus sign
+ok, o = refused("optimize -param R2 1k 10 10k -analysis op -minimize -v(out)", "must be quoted")
+check("[20] `-minimize -v(out)` is refused with the quoting hint (it printed the usage line and, in batch mode, 'incomplete or empty netlist')", ok,
+      o.strip().splitlines()[-1][:100] if o.strip() else "no output")
+o = run(DIVD + 'optimize -param R2 1k 10 10k -analysis op -minimize "-v(out)"\n.endc\n.end\n')
+check("[20] ... and the quoted form `-minimize \"-v(out)\"` runs: v(out) maximised to the upper bound (R2 = 10k)",
+      "converged" in o and optval(o, "R2") is not None and abs(optval(o, "R2") - 10000) / 10000 < 1e-3, str(optval(o, "R2")))
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

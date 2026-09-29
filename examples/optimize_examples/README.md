@@ -1,10 +1,10 @@
-# optimize_examples — the built-in `optimize` command (Enhancements 130, 143, 144, 145, 322, 323, 762)
+# optimize_examples — the built-in `optimize` command (Enhancements 130, 143, 144, 145, 322, 323, 762, 763)
 
 ```
 python3 verify_optimize.py
 ```
 
-54 checks, one solver (a front-end command; the linear solver does not enter). 44 of 54 on
+69 checks, one solver (a front-end command; the linear solver does not enter). 47 of 69 on
 the E-761 binary.
 
 Sections [1]–[18] are the command's original coverage: analytic optima reached by
@@ -28,3 +28,12 @@ apart. The methods now record why they stopped and the report opens with it:
 
 `optimize_cost` and `optimize_evals` are published beside them (vectors and shell
 variables), equal to the numbers on the line.
+
+Section [20] is Enhancement-763 (F2 and F3 of the same hunt): the parser refuses what it
+cannot mean instead of running with a guess. A bound that is not a number (`abc` was 0),
+an init outside `[lo, hi]` (it was clamped), a zero or negative weight, a `-target`
+expression with spaces (it fitted to a target of 0), a bare `-method` or `-maxiter`, two
+`-minimize` under a scalar method, a knob given twice and a stray token each print a
+message and no run follows; SPICE suffixes, a negative target value and a raised
+population (with a NOTE) still work; `-minimize -v(out)` is refused with the quoting hint
+and `-minimize "-v(out)"` runs.

@@ -245,8 +245,11 @@ check("[10] a result that finished ON a bound is called out",
 
 _, o = run(deck(DIV, "optimize -param R1 1k 100 10k -analysis op -target v(out) 0.4 0"
                      " -maxiter 200 -tol 1e-16\n"), "w0")
-check("[11] a zero-weight target no longer reads as a perfect fit",
-      "nothing was optimised" in o, o.strip().splitlines()[-1][:60])
+# E-763: a zero weight is refused before the search (it fitted nothing and
+# E-499's NOTE said so afterwards); the command does not run
+check("[11] a zero-weight target is refused up front (E-763), not fitted and annotated after",
+      "the weight must be positive (got 0)" in o and "converged" not in o,
+      o.strip().splitlines()[-1][:80])
 
 _, o = run(deck(DIV, "optimize -param R1 1k 100 10k -analysis op"
                      " -minimize (v(out)-0.4)^2 -maxiter 300 -tol 1e-16\n"), "good")

@@ -235,6 +235,13 @@ line opens with why the search stopped, and `optimize_status` (a string variable
 | `unchanged -- nothing was optimised` | `unchanged` | 0 |
 | `INTERRUPTED -- best point so far` | `interrupted` | 0 |
 
+Since [E-763](../../enhancements_doc/Enhancement-763.md) the command refuses what it
+cannot mean instead of running with a guess: a bound or init that is not a number, an
+init outside `[lo, hi]`, a weight that is not positive, a bare option flag, an unknown
+token, a second `-minimize` under a scalar method, a knob named twice. An expression that
+begins with `-` must be quoted (`-minimize "-v(out)"`) or written `0-v(out)`, and a
+`-target` expression must be one token (`v(out)-v(in)`).
+
 `examples/optimize_examples/`, `examples/pareto_examples/`, `examples/dcenter_examples/`.
 The write-ups: [E-130](../../enhancements_doc/Enhancement-130.md),
 [E-143](../../enhancements_doc/Enhancement-143.md), [E-144](../../enhancements_doc/Enhancement-144.md),

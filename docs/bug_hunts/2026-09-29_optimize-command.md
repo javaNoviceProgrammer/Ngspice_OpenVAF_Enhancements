@@ -11,8 +11,8 @@ its reproduction.
 | id | finding | severity |
 |---|---|---|
 | [F1](#f1--every-stop-is-reported-as-converged) | *(fixed in [E-762](../../enhancements_doc/Enhancement-762.md): the methods record their stop, the line opens with it, `optimize_status` and three result vectors are published)* every stop is reported as "converged": at `-maxiter`, after all evaluations failed, when LM could not reduce; only the interrupt is told apart | **high** — the one word a script or a reader acts on |
-| [F2](#f2--the-knob-and-target-numbers-are-lenient) | `-param R2 1k abc 10k` takes `abc` as 0 and `10o` as 10 in silence; an init outside `[lo, hi]` is clamped without a word; a `-target` weight of −1 is accepted; a bare `-method`, a second `-minimize` under a scalar method and `-swarmsize 3` are absorbed in silence | **medium** — E-499 made the options strict and left the knobs and targets as they were |
-| [F3](#f3--an-expression-or-command-that-begins-with-a-minus-sign-is-read-as-a-flag) | `-minimize -v(out)` and `-target v(out) - v(in) 0.4` are torn apart at the `-`: the first ends in "incomplete or empty netlist", the second fits to a target of 0 and answers a different question | **medium** — a negated objective is the natural way to maximise |
+| [F2](#f2--the-knob-and-target-numbers-are-lenient) | *(fixed in [E-763](../../enhancements_doc/Enhancement-763.md): every number strict, an init inside the box, a positive weight, bare flags, stray tokens, extra objectives and duplicate knobs refused, a raised population announced)* `-param R2 1k abc 10k` takes `abc` as 0 and `10o` as 10 in silence; an init outside `[lo, hi]` is clamped without a word; a `-target` weight of −1 is accepted; a bare `-method`, a second `-minimize` under a scalar method and `-swarmsize 3` are absorbed in silence | **medium** — E-499 made the options strict and left the knobs and targets as they were |
+| [F3](#f3--an-expression-or-command-that-begins-with-a-minus-sign-is-read-as-a-flag) | *(fixed in [E-763](../../enhancements_doc/Enhancement-763.md): the bare form is refused with the quoting hint, `-minimize "-v(out)"` and `0-v(out)` run, a spaced target is refused)* `-minimize -v(out)` and `-target v(out) - v(in) 0.4` are torn apart at the `-`: the first ends in "incomplete or empty netlist", the second fits to a target of 0 and answers a different question | **medium** — a negated objective is the natural way to maximise |
 | [F4](#f4--simulated-annealing-seeds-its-temperature-from-the-failure-penalty) | a start inside the failing region gives `T0 = 7.9e29`; after 40 cooling levels T is still `1e26`, every uphill move is accepted, the schedule is meaningless | **medium** |
 | [F5](#f5--nsga-ii-ignores-failed-evaluations) | a design the model refuses (`g = −0.0011`) sits on the reported Pareto front with a neighbour's objectives; no NOTE; E-438's check and E-472's reuse are missing from the multi-objective path | **high** — the front is the answer |
 | [F6](#f6--a-search-started-inside-a-failing-region-never-leaves-it) | NM stops after 3 evaluations and LM after 15, both "converged" at the failing start; LM's residual vector is left uninitialised on a failed stage | **high** |
@@ -94,6 +94,13 @@ the bound); refuse a weight that is not positive; refuse a bare `-method`; refus
 `-minimize`/`-maximize` unless the method is `nsga2`; say when a population is raised to
 its minimum.
 
+*Fixed in [E-763](../../enhancements_doc/Enhancement-763.md).* As sketched, with one
+correction to the table: `10o` is SPICE's 10 with a unit letter (as `10ohm`), accepted as
+`10k` is, so that typo is not caught. An unrecognised token now refuses the command, which
+turned up a `-nsamples` in the `reuseloops` suite that had been skipped for months (the
+centering ran 100 samples for the 6 asked). `loopguard`'s zero-weight check expects the
+refusal now.
+
 ## F3 — an expression or command that begins with a minus sign is read as a flag
 
 **Observed.** `-minimize -v(out)` (the natural way to maximise `v(out)`) prints
@@ -112,6 +119,12 @@ for `-`.
 `collect_until_flag` already unquotes), and say so in the message: "an expression that
 begins with `-` must be quoted, or written as `0-v(out)`"; a `-target` value that is not
 a number is refused (F2's rule), which stops the spaced expression from running.
+
+*Fixed in [E-763](../../enhancements_doc/Enhancement-763.md).* The quoted form already
+worked (the lexer keeps `"..."` and the collector unquotes it): what was missing was the
+message. The bare form now refuses the command with "an expression or command that
+begins with '-' must be quoted"; the spaced `-target` is refused by the value check with
+the one-token hint. `-minimize "-v(out)"` and `-minimize 0-v(out)` both maximise `v(out)`.
 
 ## F4 — simulated annealing seeds its temperature from the failure penalty
 
