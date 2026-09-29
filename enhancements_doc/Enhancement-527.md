@@ -94,3 +94,5 @@ in-model seed advance that does not exist was rewritten to the documented
 pure-(seed, salt) contract.
 
 **Update ([E-758](Enhancement-758.md)).** The `cwd` entry this audit added to `$simparam$str` was refreshed with a `getcwd()` on every load call, which on macOS opens and stats the directory chain: ~12 µs on every Newton iteration of every deck with a compiled model. It is cached now and re-read after the `cd` command; the served value is unchanged.
+
+**Update ([E-760](Enhancement-760.md)).** `$simparam("simulatorVersion")` is parsed from the version string once, and `$simparam("scale")` is re-read from the `scale` variable only when the variable state stamp changes, not on every load call; a `set scale=` or a deck's `.option scale=` still reaches the next run (the `lrmkernel` suite's section [7]).

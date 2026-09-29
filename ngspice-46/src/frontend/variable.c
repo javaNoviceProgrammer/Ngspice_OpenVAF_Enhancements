@@ -126,6 +126,29 @@ const char *const *cp_off_partners(const char *name)
     return NULL;
 }
 
+/* Enhancement-760: the state of the variable lists a cp_getvar() consults,
+ * for a caller that looks a name up on a hot path and wants to re-read it
+ * only when an answer could have changed. A set or unset advances the
+ * generation; a change of the current circuit or plot, or of the head of any
+ * of the four lists (a list rebuilt behind cp_vset's back, as `reset` does
+ * with the circuit's option variables), shows in the pointers. */
+static unsigned long cp_var_generation = 1;
+
+bool cp_var_state_refresh(struct cp_var_state *st)
+{
+    struct cp_var_state now;
+    now.gen = cp_var_generation;
+    now.p[0] = variables;
+    now.p[1] = plot_cur;
+    now.p[2] = plot_cur ? plot_cur->pl_env : NULL;
+    now.p[3] = ft_curckt;
+    now.p[4] = ft_curckt ? ft_curckt->ci_vars : NULL;
+    if (memcmp(&now, st, sizeof now) == 0)
+        return FALSE;
+    *st = now;
+    return TRUE;
+}
+
 void cp_vset(const char *varname, enum cp_types type,
         const void *value)
 {
@@ -133,6 +156,8 @@ void cp_vset(const char *varname, enum cp_types type,
     int i;
     bool alreadythere = FALSE, v_free = FALSE;
     char *copyvarname;
+
+    cp_var_generation++;   /* Enhancement-760 */
 
     /* varname = cp_unquote(varname);  DG: Memory leak old varname is lost*/
 
@@ -686,6 +711,8 @@ void cp_remvar(char *varname)
      * which cp_usrset reports as read-only or don't-record) abort in malloc.
      */
     bool free_v = FALSE;
+
+    cp_var_generation++;   /* Enhancement-760 */
 
     /* as in cp_getvar(): only the name being removed can match here */
     uv1 = cp_usrvar(varname);

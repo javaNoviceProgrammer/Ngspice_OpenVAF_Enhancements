@@ -1,0 +1,12 @@
+`include "disciplines.vams"
+// Enhancement-760: the load path reads its option variables once per change
+// of the variable lists, not once per Newton iteration. This probe reports
+// the geometry scale $simparam("scale") sees, so a `set scale=` or `.option
+// scale=` between two runs must still reach the next run.
+module optprobe(p, n);
+  inout p, n; electrical p, n;
+  analog begin
+    @(initial_step) $strobe("scale=%g", $simparam("scale", 1.0));
+    I(p, n) <+ V(p, n) / 1k;
+  end
+endmodule

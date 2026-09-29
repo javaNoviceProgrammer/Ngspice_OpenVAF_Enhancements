@@ -802,17 +802,39 @@ static const char *osdi_analysis_name(const CKTcircuit *ckt) {
 }
 
 /* values returned by $simparam*/
+/* Enhancement-760 (speed hunt O1 of 2026-09-28): the option variables the
+ * load path reads -- `noosdilim`, `osdilim_verbose` (E-543's limiter knobs)
+ * and `scale` (the geometry scale $simparam("scale") reports) -- were looked
+ * up by name on every OSDIload call: three cp_getvar() walks of the variable
+ * lists and their `cp_usrvar` probe, a third of the fixed cost that remained
+ * after E-758. They are re-read only when the variable state stamp changes
+ * (a set or unset, a change of circuit or plot, a rebuilt list), which never
+ * happens inside an analysis. The simulator version is parsed once. */
+static struct cp_var_state osdi_opt_state;
+static double osdi_geom_scale = 1.0;
+static bool osdi_lim_disabled; /* `.option noosdilim` (E-543) */
+static bool osdi_lim_verbose;  /* `set osdilim_verbose`: say, once per model, what was decided */
+static void osdi_options_refresh(void) {
+  if (!cp_var_state_refresh(&osdi_opt_state))
+    return;
+  osdi_lim_disabled = cp_getvar("noosdilim", CP_BOOL, NULL, 0);
+  osdi_lim_verbose = cp_getvar("osdilim_verbose", CP_BOOL, NULL, 0);
+  if (!cp_getvar("scale", CP_REAL, &osdi_geom_scale, 0))
+    osdi_geom_scale = 1.0;
+}
+
 OsdiSimParas get_simparams(const CKTcircuit *ckt) {
-  double simulatorVersion = strtod(PACKAGE_VERSION, NULL);
+  static double simulatorVersion = -1.0;
+  if (simulatorVersion < 0.0)
+    simulatorVersion = strtod(PACKAGE_VERSION, NULL);
   double gdev = ckt->CKTgmin;
   double sourceScaleFactor = ckt->CKTsrcFact;
   double gmin = ((ckt->CKTgmin) > (ckt->CKTdiagGmin)) ? (ckt->CKTgmin)
                                                       : (ckt->CKTdiagGmin);
   double initializeLimiting = (ckt->CKTmode & MODEINITJCT) ? 1 : 0;
 
-  double geom_scale;
-  if (!cp_getvar("scale", CP_REAL, &geom_scale, 0))
-    geom_scale = 1.0;
+  osdi_options_refresh();
+  double geom_scale = osdi_geom_scale;
 
   double sim_param_vals_[NUM_SIM_PARAMS] = {
       // Verilog-A tnom is in degrees Celsius
@@ -1000,8 +1022,8 @@ typedef struct {
   int n;
 } OsdiLimPatch;
 
-static bool osdi_lim_disabled; /* `.option noosdilim`, read once per load */
-static bool osdi_lim_verbose;  /* `set osdilim_verbose`: say, once per model, what was decided */
+/* (E-760: `osdi_lim_disabled` and `osdi_lim_verbose` are declared beside
+ * osdi_options_refresh, which reads them once per variable-state change) */
 static const OsdiDescriptor *osdi_lim_reported[32];
 static int osdi_lim_nreported;
 
@@ -1691,8 +1713,7 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
   GENinstance *gen_inst;
 
   osdi_note_iteration(ckt);
-  osdi_lim_disabled = cp_getvar("noosdilim", CP_BOOL, NULL, 0);   /* F1 */
-  osdi_lim_verbose = cp_getvar("osdilim_verbose", CP_BOOL, NULL, 0);
+  osdi_options_refresh(); /* E-760: noosdilim, osdilim_verbose, scale (was three lookups per call) */
 
   bool is_init_smsig = ckt->CKTmode & MODEINITSMSIG;
   bool is_dc = ckt->CKTmode & (MODEDCOP | MODEDCTRANCURVE);

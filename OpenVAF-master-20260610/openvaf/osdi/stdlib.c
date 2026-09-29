@@ -816,6 +816,12 @@ typedef struct {
 } OsdiPendingWrite;
 OSDI_SHARED OsdiPendingWrite *volatile osdi_pending_writes;
 OSDI_SHARED int volatile osdi_pending_len;
+// Enhancement-760 (speed hunt O1 of 2026-09-28): whether any slot may hold a
+// readable stream. `osdi_io_iter_begin` runs on every Newton iteration of
+// every analysis with a compiled model and walked all 64 slots each time; a
+// model that never opens a file -- nearly all of them -- now returns at
+// once. Set wherever a stream becomes readable, recomputed by the flush.
+OSDI_SHARED char volatile osdi_readable_any;
 OSDI_SHARED int volatile osdi_pending_cap;
 OSDI_SHARED int volatile osdi_io_managed;
 
@@ -1035,6 +1041,9 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
           osdi_file_table[i] = nf;
         }
         osdi_file_readable[i] = (char)readable;
+        if (readable) {
+          osdi_readable_any = 1;
+        }
         osdi_file_writable[i] = (char)writable;
         osdi_file_basepos[i] = ftell(osdi_file_table[i]);
         osdi_file_close_req[i] = 0;
@@ -1051,6 +1060,7 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
         osdi_close_deferred(enc, 1);
         fseek(osdi_file_table[i], 0, SEEK_SET);
         osdi_file_readable[i] = 1;
+        osdi_readable_any = 1;
         osdi_file_basepos[i] = 0;
         osdi_file_close_req[i] = 0;
         return enc;
@@ -1073,6 +1083,9 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
         }
         osdi_file_table[i] = nf;
         osdi_file_readable[i] = (char)readable;
+        if (osdi_file_readable[i]) {
+          osdi_readable_any = 1;
+        }
         osdi_file_writable[i] = (char)writable;
         osdi_file_basepos[i] = ftell(nf);
       }
@@ -1107,6 +1120,9 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
       }
       osdi_file_names[i] = copy;
       osdi_file_readable[i] = (mode[0] == 'r' || strchr(mode, '+') != NULL);
+      if (osdi_file_readable[i]) {
+        osdi_readable_any = 1;
+      }
       osdi_file_writable[i] =
           (mode[0] == 'w' || mode[0] == 'a' || strchr(mode, '+') != NULL);
       osdi_file_close_req[i] = 0;
@@ -1182,6 +1198,9 @@ OSDI_NOINLINE void osdi_fputs(int fd, const char *s, int immediate) {
 // rewind every stream's read position to its accepted baseline (LRM 9.5.9).
 OSDI_EXPORT void osdi_io_iter_begin(void) {
   osdi_io_managed = 1;
+  if (osdi_pending_len == 0 && !osdi_readable_any) {
+    return; // E-760: nothing deferred, no stream to rewind
+  }
   for (int i = 0; i < osdi_pending_len; i++) {
     if (osdi_pending_writes[i].s != NULL) {
       free(osdi_pending_writes[i].s);
@@ -1208,6 +1227,7 @@ OSDI_EXPORT void osdi_io_flush(void) {
     }
   }
   osdi_pending_len = 0;
+  char any_readable = 0;
   for (int i = 1; i < OSDI_MAX_FILES; i++) {
     void *f = osdi_file_table[i];
     if (f != NULL && osdi_file_readable[i]) {
@@ -1217,7 +1237,11 @@ OSDI_EXPORT void osdi_io_flush(void) {
       osdi_file_close_req[i] = 0;
       osdi_fclose_now((int)(OSDI_FD_BIT | (unsigned)i));
     }
+    if (osdi_file_table[i] != NULL && osdi_file_readable[i]) {
+      any_readable = 1;
+    }
   }
+  osdi_readable_any = any_readable; // E-760: recomputed once per accepted point
 }
 
 static int osdi_fclose_now(int fd) {

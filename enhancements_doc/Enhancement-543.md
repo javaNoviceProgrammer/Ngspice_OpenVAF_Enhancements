@@ -122,3 +122,5 @@ Four things cost time or misled at scale, all fixed:
 | operating points after the limiter | identical to 1e-16 at every node |
 | 3 200-device grid, model chatter | 12 lines (was 6 400) |
 | full sweep | 453 of 453 suites, both solvers |
+
+**Update ([E-760](Enhancement-760.md)).** Two of this enhancement's per-iteration costs are hoisted: the repeated-message ring (F4) keeps a count of live slots and its summary at the start of a Newton iteration returns at once when no text is held (it walked all 64 slots and freed two NULL pointers per slot on every iteration), and `noosdilim` / `osdilim_verbose` are re-read only when the variable state stamp changes (a `set`, an `unset`, a change of circuit or plot) instead of by name on every load call. A `set osdilim_verbose` between two runs still reaches the second run; the `lrmkernel` suite checks it.

@@ -74,9 +74,19 @@ typedef struct {
 } OsdiRepeat;
 static OsdiRepeat rep_ring[OSDI_REPEAT_RING];
 static int rep_next; /* the slot a new text takes (round robin) */
+/* Enhancement-760 (speed hunt O1 of 2026-09-28): the slots holding a text.
+ * The summary at every Newton iteration walked all 64 slots and freed two
+ * NULL pointers per slot -- 128 calls that did nothing, on every iteration
+ * of every run with a compiled model, most of the fixed cost the load path
+ * had left after E-758. With the count the walk happens only while a text
+ * is held, which is only while messages are being coalesced. */
+static int rep_live;
 
 static void osdi_repeat_summarize(OsdiRepeat *r) {
-  if (r->body != NULL && r->seen > OSDI_REPEAT_SHOW) {
+  if (r->body == NULL) {
+    return; /* a free slot: nothing to report, nothing to release */
+  }
+  if (r->seen > OSDI_REPEAT_SHOW) {
     int stream = r->to_err ? 1 : 0;
     FILE *dst = r->to_err ? stderr : stdout;
     const char *b = r->body;
@@ -103,11 +113,14 @@ static void osdi_repeat_summarize(OsdiRepeat *r) {
   r->body = NULL;
   r->last_head = NULL;
   r->seen = 0;
+  rep_live--;
 }
 
 void osdi_display_repeat_summary(void) {
-  for (int i = 0; i < OSDI_REPEAT_RING; i++) {
-    osdi_repeat_summarize(&rep_ring[i]);
+  if (rep_live > 0) {
+    for (int i = 0; i < OSDI_REPEAT_RING; i++) {
+      osdi_repeat_summarize(&rep_ring[i]);
+    }
   }
   rep_next = 0;
 }
@@ -144,6 +157,7 @@ static bool osdi_repeat_suppress(const char *text, int head_len, bool to_err) {
   rep_next = (rep_next + 1) % OSDI_REPEAT_RING;
   osdi_repeat_summarize(r); /* an evicted text reports its count now */
   r->body = TMALLOC(char, n + 1);
+  rep_live++;
   memcpy(r->body, body, n + 1);
   r->seen = 1;
   r->to_err = to_err;

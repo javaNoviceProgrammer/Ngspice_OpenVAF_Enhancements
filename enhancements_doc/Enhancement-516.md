@@ -138,3 +138,5 @@ Compiler: `hir_lower/src/{callbacks,ctx,expr,fmt,stmt}.rs`,
 ngspice: `src/osdi/{osdicallbacks,osdiload,osdiaccept,osdiregistry}.c`,
 `src/osdi/osdidefs.h`, `src/include/ngspice/osdiitf.h`,
 `src/spicelib/analysis/dctrcurv.c`. New suite: `examples/lrmsysio_examples/`.
+
+**Update ([E-760](Enhancement-760.md)).** `osdi_io_iter_begin` returns at once when no stream is readable and nothing is deferred (`osdi_readable_any`, set wherever a slot becomes readable and recomputed by `osdi_io_flush` at each accepted point); it walked the 64 file slots on every Newton iteration of every analysis with a compiled model, whether or not the model ever opened a file. The rewind and the replay of a rejected iteration's reads are unchanged when a readable stream is open.

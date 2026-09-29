@@ -28,7 +28,16 @@ undisclosed gaps across `$bound_step`, `$table_model`, the distributions,
   **`$vt`** uses the 2019 exact SI k/q — equal to `` `P_K*T/`P_Q ``
   exactly under `` `define PHYSICAL_CONSTANTS_NIST2018 ``.
 
-Run `python3 verify_lrmkernel.py` — 48 checks, both solvers. The last five are
-Enhancement-758: `$simparam$str("cwd")` is read once and re-read after `cd`, not
-with a `getcwd()` on every Newton iteration (`cwdprobe.va` strobes it; one instance
-must load in under 6 µs per iteration, where the E-757 binary took 12–14 µs).
+Run `python3 verify_lrmkernel.py` — 53 checks, both solvers (52 of 53 on the E-759
+toolchain). Section [6] is Enhancement-758: `$simparam$str("cwd")` is read once and
+re-read after `cd`, not with a `getcwd()` on every Newton iteration (`cwdprobe.va`
+strobes it; one instance must load in under 6 µs per iteration, where the E-757 binary
+took 12–14 µs). Section [7] is Enhancement-760: the rest of the load path's fixed
+per-iteration bookkeeping is hoisted — the repeated-message summary's 64-slot walk, the
+three option lookups by name (`noosdilim`, `osdilim_verbose`, `scale`), the version
+string parse and the compiled runtime's file-slot walk. `optprobe.va` strobes
+`$simparam("scale")` at its initial step: `set scale=2.5` and `unset scale` between runs
+reach the next run (1, 2.5, 1), a deck's `.option scale=4` is what the first run reads,
+`set osdilim_verbose` between two runs reports the limiter decision only after the set,
+and one compiled instance's load per iteration is under 4× a built-in resistor's over
+20 000 iterations (0.16 against 0.12 µs; the E-759 binary took 0.57–0.66 µs, 5×).

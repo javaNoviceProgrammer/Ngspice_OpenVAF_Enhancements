@@ -169,6 +169,14 @@ extern char *span_var_expr(char *t);
 /* var2.c */
 extern void cp_vprint(void);
 extern bool cp_getvar(char *name, enum cp_types type, void *retval, size_t rsize);
+/* Enhancement-760: a stamp of the variable lists cp_getvar() consults; a
+ * caller keeps one (zeroed) and re-reads its variables when the refresh
+ * returns true. */
+struct cp_var_state {
+    unsigned long gen;
+    const void *p[5];
+};
+extern bool cp_var_state_refresh(struct cp_var_state *st);
 
 /* cpinterface.c etc -- stuff CP needs from FTE */
 

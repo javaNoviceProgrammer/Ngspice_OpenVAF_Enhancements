@@ -72,3 +72,5 @@ built in; 1.0 µs against 0.54 µs for BSIM4) and the per-iteration hooks are as
 the hunt's O1 and O2 record them. Linux pays a cheaper `getcwd()` (one syscall) and gains
 less. A directory change made by anything other than `cd` — there is no such thing in
 ngspice today — would not be seen until the next `cd`.
+
+**Update ([E-760](Enhancement-760.md)).** The rest of the fixed per-iteration cost (O1 of the same hunt) is hoisted: the repeated-message summary's ring walk, the three option lookups by name, the version string parse and the runtime's file-slot walk. One compiled instance's load is 0.11 µs per iteration now, 1.3× the built-in resistor; the `prof` deck's transient runs in 1.32 s against 2.12 s at E-759 and 14.4 s at E-757.

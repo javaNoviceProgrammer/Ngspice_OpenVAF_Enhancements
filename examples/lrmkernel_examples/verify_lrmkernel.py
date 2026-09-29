@@ -295,5 +295,55 @@ if rc == 0:
           per_iter is not None and per_iter < 6e-6,
           f"{per_iter * 1e6:.2f} us/iter over {m_i.group(1) if m_i else '?'} iterations")
 
+# ---- [7] Enhancement-760: the load path's bookkeeping is hoisted -------------
+# After E-758 one compiled instance still cost ~0.6 us of load per Newton
+# iteration against 0.08 us built in, none of it model evaluation: the
+# repeated-message summary walked its 64-slot ring and freed 128 NULL pointers
+# on every iteration, `noosdilim`, `osdilim_verbose` and `scale` were looked
+# up by name on every load call (three list walks and a cp_usrvar probe each),
+# the simulator version was re-parsed from its string, and the compiled
+# runtime's file hook walked its 64 file slots. The options are re-read only
+# when the variable lists' state stamp changes, so a `set` between runs must
+# still reach the next run; the summary and the file hook return at once when
+# nothing is held.
+print("\nload-path bookkeeping hoisted (Enhancement-760):")
+rc, out, osdi = compile_file("optprobe.va")
+check("optprobe.va compiles", rc == 0, out.strip()[-120:])
+if rc == 0:
+    sim = run("V1 in 0 1.0\nN1 in 0 m1\n.model m1 optprobe",
+              "op\nset scale=2.5\nop\nunset scale\nop", "opt", osdi)
+    seen = [l.split("scale=", 1)[1].strip() for l in sim.splitlines() if "scale=" in l]
+    check("$simparam(\"scale\") reads 1 before, 2.5 after `set scale=2.5`, 1 again after `unset scale` -- a set between runs reaches the next run",
+          len(seen) >= 3 and [float(x) for x in seen[:3]] == [1.0, 2.5, 1.0], str(seen[:3]))
+    sim = run("V1 in 0 1.0\nN1 in 0 m1\n.model m1 optprobe\n.option scale=4",
+              "op", "optcard", osdi)
+    seen = [l.split("scale=", 1)[1].strip() for l in sim.splitlines() if "scale=" in l]
+    check("a deck's `.option scale=4` (the circuit's own variable list) is what the first run reads",
+          len(seen) >= 1 and float(seen[0]) == 4.0, str(seen[:1]))
+    # `set osdilim_verbose` between two runs: the limiter decision is reported
+    # only after the set (the verbose flag was read per load call; it is read
+    # per variable-state change now, and the set is one)
+    sim = run("V1 in 0 1.0\nN1 in 0 m1\n.model m1 optprobe",
+              "op\necho MARK\nset osdilim_verbose\nop", "optv", osdi)
+    before, after = sim.split("MARK", 1) if "MARK" in sim else (sim, "")
+    check("`set osdilim_verbose` between two runs: the limiter decision is reported after the set, not before",
+          "no simulator-side limiting" not in before and "no simulator-side limiting" in after,
+          f"before={'yes' if 'no simulator-side limiting' in before else 'no'} after={'yes' if 'no simulator-side limiting' in after else 'no'}")
+    # the cost, against the built-in resistor in the same circuit shape: one
+    # compiled instance over ~20 000 Newton iterations cost 8x the built-in
+    # load per iteration before this enhancement (0.6 us against 0.08) and
+    # ~1.5-2.5x after; the ratio holds on a loaded machine, where both grow
+    def load_per_iter(dev, tag):
+        sim = run(f"V1 in 0 pulse(0 1 1n 0.1n 0.1n 50n 100n)\n{dev}\nC1 out 0 1p",
+                  "tran 0.1n 1u\nrusage all", tag, osdi)
+        m_l = re.search(r"Transient load time = ([\d.eE+-]+)", sim)
+        m_i = re.search(r"Transient iterations = (\d+)", sim)
+        return (float(m_l.group(1)) / int(m_i.group(1)), int(m_i.group(1))) if (m_l and m_i and int(m_i.group(1)) > 0) else (None, 0)
+    c_it, c_n = load_per_iter("N1 in out m1\n.model m1 optprobe", "optt")
+    b_it, b_n = load_per_iter("R1 in out 1k", "optb")
+    check("[speed] one compiled instance's load per Newton iteration is under 4x a built-in resistor's (was 8x: ~0.6 us of bookkeeping against 0.08 us)",
+          c_it is not None and b_it is not None and b_it > 0 and c_it < 4.0 * b_it and c_it < 1e-6,
+          f"compiled {c_it * 1e6:.3f} us/iter over {c_n}, built-in {b_it * 1e6:.3f} us/iter over {b_n}" if (c_it and b_it) else "no timing")
+
 print(f"\n{'ALL PASS' if checks == passed else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if checks == passed else 1)
