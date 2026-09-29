@@ -95,3 +95,5 @@ one — in `CKTdump → OUTpData`: a free-memory query (`host_statistics` and a 
 trap on macOS) and a `clock()` (a `getrusage` call) on every accepted point, plus a
 `cp_getvar("no_mem_check")`. About 1 µs per point, paid by every transient regardless of
 its devices. That is the hunt page's F3, not part of this enhancement.
+
+**Update ([E-761](Enhancement-761.md)).** The variable state stamp has a second user: `OUTpD_memory()` in the output path re-reads `no_mem_check` through it instead of looking the variable up by name on every accepted point.

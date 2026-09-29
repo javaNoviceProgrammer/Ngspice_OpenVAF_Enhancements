@@ -149,3 +149,5 @@ pre-fix binary the same suite scores **5/18**, and the five that pass are exactl
 the "must not change" checks.
 
 Full regression, both solvers. ngspice-only.
+
+**Update ([E-761](Enhancement-761.md)).** The intra-point refresh (driver A) is driven by the same throttle, which now reads the wall clock. E-761 also made the output path twice as fast, so the `loopbar` suite's sweep runs a 1.2 M-point inner transient (was 300 000) to keep each point longer than the two refreshes check [5] needs.

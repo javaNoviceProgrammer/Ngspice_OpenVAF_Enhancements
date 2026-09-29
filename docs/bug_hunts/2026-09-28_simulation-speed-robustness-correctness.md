@@ -18,7 +18,7 @@ their built-in twins and against closed-form answers in `op`, `dc`, `ac`, `noise
 | [F1](#f1--every-newton-iteration-with-a-compiled-model-calls-getcwd) | *(fixed in [E-758](../../enhancements_doc/Enhancement-758.md): the cwd is cached and re-read after `cd`; 0.63 µs per iteration, the PRBS run 0.28 s)* every Newton iteration with a compiled model calls `getcwd()` — 12 µs of the 14.4 s of a 1.2 M-iteration run were spent there (89 %); a 10 Gb/s PRBS through a compiled RC takes 3.07 s where the built-in RC takes 0.14 s; caching it (scratch experiment) gives 0.29 s | **high** — speed, every deck with a compiled model |
 | [F2](#f2--cross-does-not-control-the-timestep) | *(fixed in [E-759](../../enhancements_doc/Enhancement-759.md): the event lands the step on the interpolated crossing; 0.04 ns at a 100 ns step, 0.001 ns with `time_tol = 1p`, exact counts under the 500 MHz drive)* `@(cross(...))` does not control the timestep: the crossing is resolved only to the step grid (11–20 ns error at a 100 ns step, the same as a plain `if` and as the built-in switch), the `time_tol` argument is ignored; `$discontinuity(0)` in the event body brings the error to 1.2 ns, `$bound_step` to 0.1 ns at 30× the points | **medium** — LRM 5.10.3, timing accuracy of every event-driven model |
 | [O1](#observations) | *(fixed in [E-760](../../enhancements_doc/Enhancement-760.md): the repeat-ring walk, the three option lookups, the version parse and the runtime's file walk are hoisted; 0.11 µs per iteration, 1.3× built in)* the compiled load path's remaining fixed cost after F1 is ~1 µs per iteration (built-in: 0.06 µs); per instance ~14–20 ns against 9 ns built in | observation |
-| [F3](#f3--the-output-path-queries-free-memory-and-the-clock-on-every-accepted-point) | `OUTpData` calls `getAvailableMemorySize()` (a Mach `host_statistics` and a port trap on macOS), `clock()` (a `getrusage`) and `cp_getvar("no_mem_check")` on every accepted point: about 1 µs per point, 48 % of a 600 000-point transient, compiled or built in | **medium** — every transient with many points, any device set |
+| [F3](#f3--the-output-path-queries-free-memory-and-the-clock-on-every-accepted-point) | *(fixed in [E-761](../../enhancements_doc/Enhancement-761.md): the memory check runs at vector growth only, the variable is cached, the throttle reads a wall clock; the small transient 1.20 → 0.54 s)* `OUTpData` calls `getAvailableMemorySize()` (a Mach `host_statistics` and a port trap on macOS), `clock()` (a `getrusage`) and `cp_getvar("no_mem_check")` on every accepted point: about 1 µs per point, 48 % of a 600 000-point transient, compiled or built in | **medium** — every transient with many points, any device set |
 | [O2](#observations) | BSIM4: compiled 1.00 µs per device-iteration against 0.54 built in, and 39 % more Newton iterations per transient timepoint, independent of the simulator-side limiter (which halves the operating point's) | observation (options hunt F3/F4) |
 | [O3](#observations) | a bare `exp()` diode without `$limit` needs gmin stepping and 2178 iterations at the operating point where `$limit(..., "pnjlim")` needs 8 and the built-in 6; `limexp` needs 42 at 2 V through 1 Ω | observation, model-side |
 | [O4](#observations) | the compiled capacitor's truncation-error step costs 2.4× the built-in's (47 ns against 20 ns per state per timepoint) | observation |
@@ -145,6 +145,13 @@ state stamp, and throttle the clock read itself (every 256 points, or by the poi
 against the last draw). Expected: about half the transient time of a small circuit at a
 fine step, compiled or built in.
 
+*Fixed in [E-761](../../enhancements_doc/Enhancement-761.md).* As sketched, except that
+the throttle keeps reading a clock — the wall clock through `seconds()`, a commpage read
+of some 30 ns, instead of `clock()`'s `getrusage`. The built-in transient 1.20 → 0.54 s,
+its compiled twin 1.32 → 0.65 s, the PRBS run 0.156 → 0.087 s, the 500 MHz switching run
+0.074 → 0.042 s; the 300-stage RC ladder, 2033 points, unchanged. The output path fell
+from 48 % of the samples to 3 %.
+
 ## Observations
 
 **O1 — the fixed per-iteration cost after F1.** 1.08 µs for one instance against
@@ -162,6 +169,12 @@ stamp (the options re-read only when a `set`, `unset`, circuit or plot changes),
 version and an early return in the hook: 0.11 µs per iteration, 1.3× the built-in
 resistor; the `prof` transient 1.32 s against 2.12 s (built in 1.20 s), the PRBS run
 0.155 s, the 500 MHz switching run 0.073 s.
+
+**O7 — the statistics timers.** After F3 the profile of the one-instance transient is
+a third `seconds()`: `CKTload` and `NIiter` read the clock six times per Newton
+iteration for the `rusage` phase times (`clock_gettime` served from the commpage, some
+30 ns each, about 80 ns an iteration). Visible only because everything else in this
+trivial circuit is now cheaper; nothing for a real one. Left as it is.
 
 **O2 — BSIM4.** A 100-stage common-source chain, 1 ns steps over 1 µs: compiled 1.00 µs
 per device-iteration, built-in `level=54` 0.54 µs; timepoints identical (1008), Newton

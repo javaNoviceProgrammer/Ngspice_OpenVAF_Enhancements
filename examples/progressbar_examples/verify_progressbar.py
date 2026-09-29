@@ -135,5 +135,37 @@ check("op: no progress bar for a non-sweep analysis", len(rows) == 0,
       f"{len(rows)} bar lines")
 check("op: still produces its result (v(2)=2.5)", "2.500000e+00" in out)
 
+# [6] Enhancement-761 (speed hunt F3 of 2026-09-28): the output path used to
+# query the free memory (a Mach host_statistics call and a port trap on macOS),
+# read clock() (a getrusage system call) for this line's quarter-second
+# throttle, and look the `no_mem_check` variable up by name on EVERY accepted
+# point -- about a microsecond a point, 48 % of a 600 000-point transient,
+# compiled or built in. The memory check now runs only when the output vectors
+# are about to grow (a chunk boundary, a few times per run), the variable is
+# re-read when the variable lists change, and the throttle reads the wall
+# clock through seconds() (a commpage read). The line's cadence is unchanged.
+print("\n[6] Enhancement-761: the per-point output cost is gone, the cadence stays")
+fast_deck = ("progressbar fast\nV1 in 0 pulse(0 1 1n 0.1n 0.1n 50n 100n)\nR1 in out 1k\nC1 out 0 1p\n"
+             ".control\ntran 0.1n 120u\nrusage all\n.endc\n.end\n")
+rows, out = run_bar_lines(fast_deck)
+def rus(name):
+    m = re.search(name + r"\s*=\s*([\d.eE+-]+)", out)
+    return float(m.group(1)) if m else None
+total, load, fact, solve, trunc, pts = (rus("Total analysis time \\(seconds\\)"), rus("Transient load time"),
+                                        rus("Transient factor time"), rus("Transient solve time"),
+                                        rus("Transient trunc time"), rus("Accepted timepoints"))
+timed = (load or 0) + (fact or 0) + (solve or 0) + (trunc or 0)
+rest = (total - timed) if total is not None else None
+check("[6] a 1.2 M-point built-in RC transient: the time outside the timed phases (load, factor, solve, trunc) "
+      "is under 3x their sum (it was 4.6x: the free-memory query, the clock and the lookup on every point)",
+      rest is not None and timed > 0 and rest < 3.0 * timed,
+      f"total {total} s, timed {timed:.3f} s, rest {rest:.3f} s over {pts} points" if rest is not None else out[-300:])
+check("[6] ...and under 1.5 us per accepted point (was ~1.5-1.7 us)",
+      rest is not None and pts and rest / pts < 1.5e-6,
+      f"{rest / pts * 1e6:.2f} us per point" if (rest is not None and pts) else "no rusage")
+check("[6] the throttled progress line still appears at its quarter-second cadence: between 2 and 12 frames "
+      "over a run of about a second (a frame per point would be a million)",
+      2 <= len(rows) <= 12, f"{len(rows)} frames, total {total} s")
+
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

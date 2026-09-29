@@ -27,6 +27,7 @@ Modified: 2000 AlansFixes, 2013/2015 patch by Krzysztof Blaszkowski
 #include "circuits.h"
 #include "outitf.h"
 #include "variable.h"
+#include "ngspice/cpextern.h"   /* Enhancement-761: cp_var_state */
 #include <fcntl.h>
 #include "ngspice/cktdefs.h"
 #include "ngspice/acdefs.h"          /* Enhancement: ACAN for the sweep progress bar */
@@ -525,7 +526,23 @@ int fixme_inoise_type = SV_NOTYPE;
 #define DOUBLE_PRECISION    15
 
 
-static clock_t lastclock, currclock, startclock;
+static clock_t startclock;
+/* Enhancement-761 (speed hunt F3 of 2026-09-28): the progress print's
+ * quarter-second throttle read clock() -- a getrusage() system call -- on
+ * every accepted point, which at 600 000 points cost more than the prints it
+ * throttled (12 % of a small transient). The throttle reads the wall clock
+ * through seconds() (a commpage read, some 30 ns) and, since it is a display
+ * cadence, wall time is the right clock for it anyway. */
+static double outp_ref_last;
+static bool outp_ref_due(void)
+{
+    double now = seconds();
+    if (now - outp_ref_last > 0.25) {
+        outp_ref_last = now;
+        return TRUE;
+    }
+    return FALSE;
+}
 static double *rowbuf;
 static size_t column, rowbuflen;
 
@@ -1357,12 +1374,39 @@ addSpecialDesc(runDesc *run, char *name, char *devname, char *param, int depind,
 }
 
 
+/* Enhancement-761 (speed hunt F3 of 2026-09-28): the free-memory check ran on
+ * EVERY accepted point -- a `no_mem_check` lookup by name and a
+ * getAvailableMemorySize(), which on macOS is a Mach host_statistics query
+ * plus a port trap: about a microsecond a point, a third of a 600 000-point
+ * transient, compiled or built in. The vectors only grow at a chunk boundary
+ * (AddRealValueToVector extends by vlength2delta when v_length reaches
+ * v_alloc_length), so that is the only point at which the next chunk's memory
+ * is about to be claimed and the only point the check has to run; the
+ * variable is re-read when the variable lists change (E-760's stamp). */
+static struct cp_var_state outp_mem_state;
+static bool outp_no_mem_check;
+
+static bool
+outp_vectors_about_to_grow(runDesc *run)
+{
+    int i;
+    for (i = 0; i < run->numData; i++) {
+        struct dvec *v = run->data[i].vec;
+        if (v)
+            return v->v_length >= v->v_alloc_length;
+    }
+    return TRUE; /* no vector yet: check as before */
+}
+
 static void
 OUTpD_memory(runDesc *run, IFvalue *refValue, IFvalue *valuePtr)
 {
     int i, n = run->numData;
 
-    if (!cp_getvar("no_mem_check", CP_BOOL, NULL, 0)) {
+    if (cp_var_state_refresh(&outp_mem_state))
+        outp_no_mem_check = cp_getvar("no_mem_check", CP_BOOL, NULL, 0);
+
+    if (!outp_no_mem_check && outp_vectors_about_to_grow(run)) {
         /* Estimate the required memory */
         size_t memrequ = (size_t)n * vlength2delta(0) * sizeof(double);
         size_t memavail = getAvailableMemorySize();
@@ -1474,11 +1518,8 @@ OUTpData(runDesc *plotPtr, IFvalue *refValue, IFvalue *valuePtr)
                     too much CPU time  */
 #ifndef HAS_WINGUI
                 if (!orflag && !ft_norefprint && !cp_background) {
-                    currclock = clock();
-                    if ((currclock-lastclock) > (0.25*CLOCKS_PER_SEC)) {
+                    if (outp_ref_due())
                         outp_print_reference(run, refValue->cValue.real);
-                        lastclock = currclock;
-                    }
                 }
 #endif
             }
@@ -1486,11 +1527,8 @@ OUTpData(runDesc *plotPtr, IFvalue *refValue, IFvalue *valuePtr)
                 fileAddRealValue(run->fp, run->binary, refValue->rValue);
 #ifndef HAS_WINGUI
                 if (!orflag && !ft_norefprint && !cp_background) {
-                    currclock = clock();
-                    if ((currclock-lastclock) > (0.25*CLOCKS_PER_SEC)) {
+                    if (outp_ref_due())
                         outp_print_reference(run, refValue->rValue);
-                        lastclock = currclock;
-                    }
                 }
 #endif
             }
@@ -1585,13 +1623,10 @@ OUTpData(runDesc *plotPtr, IFvalue *refValue, IFvalue *valuePtr)
 
 #ifndef HAS_WINGUI
         if (!orflag && !ft_norefprint && !cp_background) {
-            currclock = clock();
-            if ((currclock-lastclock) > (0.25*CLOCKS_PER_SEC)) {
+            if (outp_ref_due())
                 outp_print_reference(run, run->isComplex
                                      ? (refValue ? refValue->cValue.real : NAN)
                                      : (refValue ? refValue->rValue : NAN));
-                lastclock = currclock;
-            }
         }
 #endif
 
@@ -1684,7 +1719,7 @@ fileInit(runDesc *run)
     int i;
     size_t n;
 
-    lastclock = clock();
+    outp_ref_last = seconds();   /* E-761: the progress print's cadence */
 
     /* This is a hack. */
     run->isComplex = FALSE;
@@ -2445,11 +2480,8 @@ InterpFileAdd(runDesc *run, IFvalue *refValue, IFvalue *valuePtr)
         }
 #ifndef HAS_WINGUI
         if (!orflag && !ft_norefprint && !cp_background) {
-            currclock = clock();
-            if ((currclock-lastclock) > (0.25*CLOCKS_PER_SEC)) {
+            if (outp_ref_due())
                 outp_print_reference(run, refValue->rValue);
-                lastclock = currclock;
-            }
         }
 #endif
 
@@ -2612,11 +2644,8 @@ InterpPlotAdd(runDesc *run, IFvalue *refValue, IFvalue *valuePtr)
 
 #ifndef HAS_WINGUI
     if (!orflag && !ft_norefprint && !cp_background) {
-        currclock = clock();
-        if ((currclock-lastclock) > (0.25*CLOCKS_PER_SEC)) {
+        if (outp_ref_due())
             outp_print_reference(run, refValue->rValue);
-            lastclock = currclock;
-        }
     }
 #endif
 

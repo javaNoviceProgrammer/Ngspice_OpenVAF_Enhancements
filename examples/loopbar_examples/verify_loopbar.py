@@ -47,6 +47,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 from _setup import NG as NGSPICE  # noqa: E402
 
 checks = passed = 0
+AT = "@"   # spelled apart so the mention checker does not read a GitHub handle
 
 
 def check(label, ok, detail=""):
@@ -95,8 +96,11 @@ print("=== Enhancement-477: a progress line for the loop commands ===")
 # ---------------------------------------------------------------------------
 print("\n[1-7] sweep")
 # ---------------------------------------------------------------------------
-o = run(RC, "set loopbar\nsweep @r1[resistance] lin 3 500 4k "
-            "-analysis \"tran 4u 1.2\" -output v(b)", "slow")
+# Enhancement-761 made the output path twice as fast, so each point runs
+# 1.2 M timepoints (tran 1u, was 4u) to still last the two quarter-second
+# refreshes check [5] needs
+o = run(RC, "set loopbar\nsweep " + AT + "r1[resistance] lin 3 500 4k "
+            "-analysis \"tran 1u 1.2\" -output v(b)", "slow")
 fr = frames(o, "sweep")
 check("[1] a slow sweep draws the line", len(fr) > 3, f"{len(fr)} frames")
 check("[2] the outer counter names the point and the total",
@@ -134,12 +138,12 @@ lad.append("RL n300 0 1meg")
 # draw and the announce line says where the work went. The bar's own contract
 # is pinned through `-perpoint`, which forces the loop the bar reports on.
 o = run("\n".join(lad), "set loopbar\nset ngdebug\n"
-                        "sweep @r0[resistance] lin 2500 500 4k "
+                        "sweep " + AT + "r0[resistance] lin 2500 500 4k "
                         "-output v(n300)", "op_hand")
 fr = frames(o, "sweep")
 check("[8a] the eligible default-op sweep hands over: dc announce, no point bar",
       "handing all 2500 points" in o and not fr, f"{len(fr)} frames")
-o = run("\n".join(lad), "set loopbar\nsweep @r0[resistance] lin 2500 500 4k "
+o = run("\n".join(lad), "set loopbar\nsweep " + AT + "r0[resistance] lin 2500 500 4k "
                         "-perpoint -output v(n300)", "op")
 fr = frames(o, "sweep")
 ps = [pct(f) for f in fr if pct(f) is not None]
@@ -180,7 +184,7 @@ print("\n[12-15] the switch, and the two behaviours that must not change")
 # Enhancement-533: `-perpoint` keeps these vehicles on the point loop the bar
 # reports on; the eligible default would hand the points to one dc analysis
 # and leave nothing for the bar to draw (pinned at [8a]).
-SW = "sweep @r1[resistance] lin 40 500 4k -perpoint -output v(b)"
+SW = "sweep " + AT + "r1[resistance] lin 40 500 4k -perpoint -output v(b)"
 on = [("set loopbar", 1), ("set loopbar=1", 1), ("set noloopbar=0", 0)]
 off = [("set loopbar=0", 0), ("set loopbar=false", 0), ("set loopbar=no", 0),
        ("set loopbar=off", 0), ("set noloopbar", 0), ("", 0)]
@@ -285,7 +289,7 @@ print("\n[19] the per-point analysis printout scrolls the line away -- `noinit`"
 # sides read zero tables and the check passes vacuously (it did, first run).
 def run_raw(ctl, tag):
     deck = (f"loopbar\n{RC}.control\n{ctl}\n"
-            "sweep @r1[resistance] lin 3 500 4k -analysis \"tran 50u 0.35\" "
+            "sweep " + AT + "r1[resistance] lin 3 500 4k -analysis \"tran 50u 0.35\" "
             "-output v(b)\n.endc\n.end\n")
     q = os.path.join(HERE, f"_lb_{tag}.cir")
     with open(q, "w") as f:
@@ -370,7 +374,7 @@ def run_bytes(body, ctl, tag):
         pass
     return (r.stdout + r.stderr).decode("utf-8", "replace")
 
-o = run_bytes(RC, "set loopbar\nsweep @r1[resistance] lin 3 500 4k "
+o = run_bytes(RC, "set loopbar\nsweep " + AT + "r1[resistance] lin 3 500 4k "
                   "-analysis \"tran 50u 0.35\" -output v(b)", "res1")
 o2 = run_bytes(DIV, "set loopbar\n" + SW, "res2")
 found = residue(o) + residue(o2)

@@ -4,7 +4,7 @@
 python3 verify_loopbar.py
 ```
 
-18 checks, one solver (this is a front-end output feature; the bar bytes do not
+21 checks, one solver (this is a front-end output feature; the bar bytes do not
 depend on the linear solver, and `[16]` pins that the numbers do not change).
 
 ## The problem
@@ -132,3 +132,4 @@ bar line. Getting that check to *fail* on the broken build took two attempts:
 Both earlier versions passed against the build that had the bug. A check that
 cannot be made to fail on the defect it targets is not evidence of anything.
 
+**Update ([E-761](../../enhancements_doc/Enhancement-761.md)).** The sweep of checks [1]–[7] runs a 1.2 M-point inner transient (`tran 1u 1.2`, was `tran 4u 1.2`): E-761 made the output path twice as fast, and check [5] needs each point to last the two quarter-second refreshes that show the outer bar advancing within a point. The throttle behind that refresh now reads the wall clock.

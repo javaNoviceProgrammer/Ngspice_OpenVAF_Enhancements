@@ -67,3 +67,5 @@ Covers the four swept analyses (DC, AC, transient, noise); non-swept analyses ar
 untouched. A natural follow-up is a bar for the periodic-steady-state shooting
 loop (`.pss` and the RF suite built on it), whose progress is the shooting-iteration
 count rather than a swept reference variable.
+
+**Update ([E-761](Enhancement-761.md)).** The quarter-second throttle of the "Reference value" line reads the wall clock through `seconds()` instead of `clock()`: the `getrusage` behind `clock()` cost more per accepted point than the line it throttled (a 600 000-point transient read it 600 000 times), and the CPU clock stood still while the process waited. The cadence is unchanged; the `progressbar` suite's section [6] counts the frames.
