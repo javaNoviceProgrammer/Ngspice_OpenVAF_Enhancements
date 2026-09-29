@@ -208,6 +208,41 @@ tracked vector stacked into a plot of its own, `track1` (§3.6). The loop remain
 form for a trial that does more than one analysis per draw. In every track plot a dc
 sweep's scale is spelled `v_sweep` (E-584): `v-sweep` is a subtraction to `print`.
 
+### Fitting and optimizing: `optimize`
+
+`optimize` varies a set of knobs, re-runs one or more analyses and drives an objective to
+a minimum: `optimize (-param|-mparam|-dparam) <name> <init> <lo> <hi> [...] -analysis <cmd>
+(-minimize <expr> | -target <expr> <value> [<weight>] ...) [-method nm|lm|pso|de|sa|nsga2]
+[-maxiter N] [-tol T] [-seed s] [-verbose]`. A `-param` is an `alter` target (a device or
+`@inst[param]`), a `-mparam` a `.model` parameter (`@model[param]`, via `altermod`), a
+`-dparam` a deck `.param` (`alterparam` and a re-source, or the in-place fast path on a
+large deck). Nelder-Mead is the default for a scalar `-minimize`, Levenberg-Marquardt for
+`-target` least squares; particle swarm, differential evolution and annealing search the
+whole box; NSGA-II trades several `-minimize`/`-maximize` objectives into a Pareto front;
+`-center` with `-spec` limits maximises a yield. The knob values are published as
+`optimize_<name>` ([E-501](../../enhancements_doc/Enhancement-501.md)), and since
+[E-762](../../enhancements_doc/Enhancement-762.md) the outcome is too: the report's last
+line opens with why the search stopped, and `optimize_status` (a string variable),
+`optimize_converged`, `optimize_cost` and `optimize_evals` (vectors and variables) let a
+`.control` script branch on it.
+
+| the line opens with | `optimize_status` | `optimize_converged` |
+|---|---|---|
+| `converged` | `converged` | 1 |
+| `stopped at -maxiter (N iterations) -- NOT converged` (a NOTE follows) | `maxiter` | 0 |
+| `cooling schedule complete (N levels)` (annealing; NSGA-II's generations likewise) | `completed` | 1 |
+| `NO SOLUTION -- no evaluation solved` | `nosolve` | 0 |
+| `unchanged -- nothing was optimised` | `unchanged` | 0 |
+| `INTERRUPTED -- best point so far` | `interrupted` | 0 |
+
+`examples/optimize_examples/`, `examples/pareto_examples/`, `examples/dcenter_examples/`.
+The write-ups: [E-130](../../enhancements_doc/Enhancement-130.md),
+[E-143](../../enhancements_doc/Enhancement-143.md), [E-144](../../enhancements_doc/Enhancement-144.md),
+[E-145](../../enhancements_doc/Enhancement-145.md), [E-194](../../enhancements_doc/Enhancement-194.md)
+to [E-197](../../enhancements_doc/Enhancement-197.md), [E-206](../../enhancements_doc/Enhancement-206.md),
+[E-216](../../enhancements_doc/Enhancement-216.md), [E-322](../../enhancements_doc/Enhancement-322.md),
+[E-472](../../enhancements_doc/Enhancement-472.md), [E-762](../../enhancements_doc/Enhancement-762.md).
+
 ## 3.4 Analysis coverage
 
 All core analyses treat OSDI devices as full citizens. The audited status

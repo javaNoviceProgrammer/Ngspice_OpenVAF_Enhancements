@@ -163,3 +163,5 @@ contract rather than a defect: under `.option osdimc` the two `sweep` engines
 are separate run-class commands, so a default run and a `-perpoint` run
 compare *different Monte-Carlo samples* (~2 % apart), each correct for its
 own.
+
+**Update ([E-762](Enhancement-762.md)).** The interrupt was the one stop told apart from "converged"; every stop now is: the cap, a completed schedule, no solution, an unchanged objective. `optimize_status` reads `interrupted` for this one.

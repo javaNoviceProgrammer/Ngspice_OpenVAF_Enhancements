@@ -54,6 +54,11 @@ command reaches it:
       I(0.65 V) = 1 mA => is = 1.22e-14.
   [18] determined mixed fit: a model param (`@rmod[r]`) AND an instance param
       (`R2`) fitted together => r = 3 k, R2 = 2 k.
+  Enhancement-762 (optimize hunt F1 of 2026-09-29): the stop status.
+  [19] "stopped at -maxiter ... NOT converged" (three methods) with its NOTE, a
+      converged line unchanged, "NO SOLUTION", "unchanged", "cooling schedule
+      complete"; optimize_status / optimize_converged / optimize_cost /
+      optimize_evals published and equal to the line.
   [19] `-mparam` is the in-place fast path: it does NOT re-source (0 "Reset
       re-loads" banners), unlike -dparam.
   [20] all three knob kinds (`-dparam` + `-mparam` + `-param`) coexist in one run
@@ -72,6 +77,7 @@ sys.path.insert(0, os.path.dirname(HERE))  # the examples/ dir, for _setup.py
 from _setup import NG as NGSPICE, VAF as OPENVAF
 
 checks = passed = 0
+AT = "@"   # spelled apart so the mention checker does not read a GitHub handle
 def check(label, ok, detail=""):
     global checks, passed
     checks += 1; passed += bool(ok)
@@ -156,13 +162,13 @@ subprocess.run([OPENVAF, os.path.join(HERE, "optdiode.va"), "-o", osdi],
                capture_output=True, text=True, timeout=120)
 d5 = ("osdi diode fit\nVd a 0 dc 0.65\nN1 a 0 dmod\n.model dmod optdiode is=1e-15 n=1\n"
       f".control\npre_osdi {osdi}\n"
-      "optimize -param @n1[is] 1e-15 1e-16 1e-12 -analysis op "
+      "optimize -param " + AT + "n1[is] 1e-15 1e-16 1e-12 -analysis op "
       "-minimize (abs(i(vd))-1m)^2 -tol 1e-24\n"
       "let icurr = abs(i(vd))\nprint icurr\n.endc\n.end\n")
 o5 = run(d5)
 if os.path.exists(osdi):
     os.remove(osdi)
-is_fit = optval(o5, "@n1[is]")
+is_fit = optval(o5, "" + AT + "n1[is]")
 icurr = val(o5, "icurr")
 check(f"OSDI diode: is fitted so I(0.65V)=1mA (got is={is_fit})",
       is_fit is not None and 1.0e-14 < is_fit < 1.5e-14, str(is_fit))
@@ -247,14 +253,14 @@ if len(iv) >= 2:
     d9 = ("diode ls extraction\nVd a 0 dc 0.6\nN1 a 0 dmod\n"
           ".model dmod optdiode is=5e-15 n=1.0\n.control\n"
           f"pre_osdi {osdi9}\n"
-          "optimize -param @n1[is] 5e-15 1e-15 5e-14 -param @n1[n] 1.0 0.5 2.0\n"
+          "optimize -param " + AT + "n1[is] 5e-15 1e-15 5e-14 -param " + AT + "n1[n] 1.0 0.5 2.0\n"
           "+  -analysis dc Vd 0.6 0.7 0.1\n"
           f"+  -target abs(i(vd))[0] {i06:.10g} {1.0 / i06:.10g}\n"
           f"+  -target abs(i(vd))[1] {i07:.10g} {1.0 / i07:.10g}\n"
           "+  -tol 1e-14 -maxiter 200\n.endc\n.end\n")
     o9 = run(d9)
-    is9 = optval(o9, "@n1[is]")
-    n9 = optval(o9, "@n1[n]")
+    is9 = optval(o9, "" + AT + "n1[is]")
+    n9 = optval(o9, "" + AT + "n1[n]")
     check(f"OSDI diode LS: is -> 1e-14 (got {is9})",
           is9 is not None and abs(is9 - 1e-14) / 1e-14 < 2e-2, str(is9))
     check(f"OSDI diode LS: n -> 1.2 (got {n9})",
@@ -341,30 +347,30 @@ osdim = os.path.join(HERE, "optresm.osdi")
 subprocess.run([OPENVAF, os.path.join(HERE, "optresm.va"), "-o", osdim],
                capture_output=True, text=True, timeout=120)
 
-# [16] OSDI model param: fit @rmod[r] so v(out)=0.25 -> r=3k
+# [16] OSDI model param: fit `@rmod[r]` so v(out)=0.25 -> r=3k
 d16 = ("optimizer mparam osdi\nV1 in 0 dc 1\nN1 in out rmod\nR2 out 0 1k\n"
        ".model rmod optresm r=1k\n.control\n"
        f"pre_osdi {osdim}\n"
-       "optimize -mparam @rmod[r] 1k 100 10k -analysis op -minimize (v(out)-0.25)^2 -tol 1e-16\n"
+       "optimize -mparam " + AT + "rmod[r] 1k 100 10k -analysis op -minimize (v(out)-0.25)^2 -tol 1e-16\n"
        "op\nlet vo = v(out)\nprint vo\n.endc\n.end\n")
 o16 = run(d16)
-rm16 = optval(o16, "@rmod[r]")
+rm16 = optval(o16, "" + AT + "rmod[r]")
 vo16 = val(o16, "vo")
-check(f"OSDI model param: @rmod[r] -> 3k (got {rm16})",
+check(f"OSDI model param: " + AT + f"rmod[r] -> 3k (got {rm16})",
       rm16 is not None and abs(rm16 - 3000) / 3000 < 2e-3, str(rm16))
 check(f"OSDI model param: v(out) -> 0.25 (got {vo16})",
       vo16 is not None and abs(vo16 - 0.25) < 1e-4, str(vo16))
 
-# [17] built-in diode model param: fit @dmod[is] so I(0.65V)=1mA
+# [17] built-in diode model param: fit `@dmod[is]` so I(0.65V)=1mA
 d17 = ("optimizer mparam builtin\nVd a 0 dc 0.65\nD1 a 0 dmod\n"
        ".model dmod d(is=1e-15 n=1)\n.control\n"
-       "optimize -mparam @dmod[is] 1e-15 1e-16 1e-12 -analysis op "
+       "optimize -mparam " + AT + "dmod[is] 1e-15 1e-16 1e-12 -analysis op "
        "-minimize (abs(i(vd))-1m)^2 -tol 1e-24\n"
        "op\nlet ic = abs(i(vd))\nprint ic\n.endc\n.end\n")
 o17 = run(d17)
-is17 = optval(o17, "@dmod[is]")
+is17 = optval(o17, "" + AT + "dmod[is]")
 ic17 = val(o17, "ic")
-check(f"built-in model param: @dmod[is] fitted (got {is17})",
+check(f"built-in model param: " + AT + f"dmod[is] fitted (got {is17})",
       is17 is not None and 1.0e-14 < is17 < 1.5e-14, str(is17))
 check(f"built-in model param: I(0.65V) -> 1 mA (got {ic17})",
       ic17 is not None and abs(ic17 - 1e-3) / 1e-3 < 1e-3, str(ic17))
@@ -373,13 +379,13 @@ check(f"built-in model param: I(0.65V) -> 1 mA (got {ic17})",
 d18 = ("optimizer mparam+param\nV1 in 0 dc 1\nN1 in mid rmod\nR2 mid 0 1k\n"
        ".model rmod optresm r=1k\n.control\n"
        f"pre_osdi {osdim}\n"
-       "optimize -mparam @rmod[r] 1k 100 10k -param R2 1k 100 10k -analysis op "
+       "optimize -mparam " + AT + "rmod[r] 1k 100 10k -param R2 1k 100 10k -analysis op "
        "-minimize (v(mid)-0.4)^2+(abs(i(v1))-0.2m)^2 -maxiter 400 -tol 1e-15\n"
        ".endc\n.end\n")
 o18 = run(d18)
-rm18 = optval(o18, "@rmod[r]")
+rm18 = optval(o18, "" + AT + "rmod[r]")
 r2_18 = optval(o18, "r2") or optval(o18, "R2")
-check(f"mixed model+instance: @rmod[r] -> 3k (got {rm18})",
+check(f"mixed model+instance: " + AT + f"rmod[r] -> 3k (got {rm18})",
       rm18 is not None and abs(rm18 - 3000) / 3000 < 5e-3, str(rm18))
 check(f"mixed model+instance: R2 -> 2k (got {r2_18})",
       r2_18 is not None and abs(r2_18 - 2000) / 2000 < 5e-3, str(r2_18))
@@ -393,14 +399,14 @@ check(f"-mparam is the in-place fast path (0 re-sources, got {resets16})",
 d20 = ("optimizer all-three\n.param rtop=1k\nV1 in 0 dc 1\nRtop in a {rtop}\n"
        "N1 a b rmod\nR2 b 0 1k\n.model rmod optresm r=1k\n.control\n"
        f"pre_osdi {osdim}\n"
-       "optimize -dparam rtop 1k 100 10k -mparam @rmod[r] 1k 100 10k "
+       "optimize -dparam rtop 1k 100 10k -mparam " + AT + "rmod[r] 1k 100 10k "
        "-param R2 1k 100 10k -analysis op "
        "-target v(a) 0.66667 -target v(b) 0.33333 -maxiter 400 -tol 1e-13\n"
        ".endc\n.end\n")
 o20 = run(d20)
 m20 = re.search(r"sum-sq residual = ([-\d.eE+]+)", o20)
 resid20 = float(m20.group(1)) if m20 else None
-has_all3 = (optval(o20, "rtop") is not None and optval(o20, "@rmod[r]") is not None
+has_all3 = (optval(o20, "rtop") is not None and optval(o20, "" + AT + "rmod[r]") is not None
             and (optval(o20, "r2") or optval(o20, "R2")) is not None)
 check(f"all three knob kinds (-dparam/-mparam/-param) coexist and converge "
       f"(residual {resid20})",
@@ -460,6 +466,57 @@ check("small OSDI -dparam optimize arms the fast path (E-323 cost-aware guard)",
       armed23)
 check(f"OSDI -dparam optimize converges: v(n5) -> 0.25 (got {vout23})",
       vout23 is not None and abs(vout23 - 0.25) < 1e-3, str(vout23))
+
+# ---- [19] Enhancement-762 (optimize hunt F1 of 2026-09-29): the stop status ----
+# Every stop used to be reported as "converged" -- the iteration cap, a run in
+# which no evaluation solved, one whose objective never moved -- and only an
+# interrupt (E-537) was told apart. The methods now record why they stopped, the
+# report opens with the matching phrase (plus a NOTE for the cap), and
+# `optimize_status`, `optimize_converged`, `optimize_cost` and `optimize_evals`
+# are published for a script to test.
+print("\nEnhancement-762: the stop status is reported and published")
+TAIL = ("\necho status=$optimize_status conv=$optimize_converged evals=$optimize_evals\n"
+        "print optimize_converged optimize_evals optimize_cost\n")
+def status_of(out):
+    m = re.search(r"(?m)^status=(\S+) conv=(\S+) evals=(\S+)", out)
+    return (m.group(1), int(float(m.group(2))), int(float(m.group(3)))) if m else None
+def report_line(out):
+    m = re.search(r"(?m)^optimize: (.*?), (?:objective|sum-sq residual) = (\S+).*?after (\d+) evaluations", out)
+    return (m.group(1), float(m.group(2)), int(m.group(3))) if m else None
+DIVD = "opt status\nV1 in 0 dc 1\nR1 in out 1k\nR2 out 0 1k\n.control\n"
+# the cap, three methods
+for meth, opt in (("Nelder-Mead", "-minimize (v(out)-0.9)^2"), ("Levenberg-Marquardt", "-target v(out) 0.9"),
+                  ("particle swarm", "-minimize (v(out)-0.9)^2 -method pso -swarmsize 5 -seed 1")):
+    o = run(DIVD + f"optimize -param R2 100 10 100k -analysis op {opt} -maxiter 1" + TAIL + ".endc\n.end\n")
+    rl, st = report_line(o), status_of(o)
+    check(f"[19] {meth} at -maxiter 1 reports 'stopped at -maxiter (1 iteration) -- NOT converged' (it said converged)",
+          rl is not None and rl[0] == "stopped at -maxiter (1 iteration) -- NOT converged", str(rl))
+    check(f"[19] ... with the NOTE to raise -maxiter, and optimize_status=maxiter, optimize_converged=0",
+          "the iteration cap ended the search" in o and st is not None and st[0] == "maxiter" and st[1] == 0, str(st))
+# a normal run: the line is unchanged and the published numbers match it
+o = run(DIVD + "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2" + TAIL + ".endc\n.end\n")
+rl, st = report_line(o), status_of(o)
+cost_v, evals_v = val(o, "optimize_cost"), val(o, "optimize_evals")
+check("[19] a converged run still reads 'converged, objective = ... after N evaluations'",
+      rl is not None and rl[0] == "converged", str(rl))
+check("[19] ... and publishes optimize_status=converged, optimize_converged=1, optimize_evals=N and optimize_cost equal to the line",
+      st is not None and st == ("converged", 1, rl[2]) and evals_v == rl[2] and cost_v is not None
+      and abs(cost_v - rl[1]) <= 1e-6 * max(abs(rl[1]), 1e-30) + 1e-300, f"{st} {evals_v} {cost_v}")
+# no evaluation solved
+o = run(DIVD + "optimize -param R2 1k 10 10k -analysis tran 1 -minimize (v(out)-0.9)^2" + TAIL + ".endc\n.end\n")
+rl, st = report_line(o), status_of(o)
+check("[19] an analysis that never solves reports 'NO SOLUTION -- no evaluation solved' and optimize_status=nosolve",
+      rl is not None and rl[0] == "NO SOLUTION -- no evaluation solved" and st is not None and st[0] == "nosolve" and st[1] == 0, f"{rl} {st}")
+# the objective never moved
+o = run(DIVD + "optimize -param R9 1k 10 10k -analysis op -minimize (v(out)-0.9)^2" + TAIL + ".endc\n.end\n")
+rl, st = report_line(o), status_of(o)
+check("[19] a knob the objective does not depend on reports 'unchanged -- nothing was optimised' and optimize_status=unchanged",
+      rl is not None and rl[0] == "unchanged -- nothing was optimised" and st is not None and st[0] == "unchanged", f"{rl} {st}")
+# annealing completes its schedule
+o = run(DIVD + "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2 -method sa -seed 1 -maxiter 10" + TAIL + ".endc\n.end\n")
+rl, st = report_line(o), status_of(o)
+check("[19] simulated annealing reports 'cooling schedule complete (10 levels)' and optimize_status=completed, optimize_converged=1",
+      rl is not None and rl[0] == "cooling schedule complete (10 levels)" and st == ("completed", 1, rl[2]), f"{rl} {st}")
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

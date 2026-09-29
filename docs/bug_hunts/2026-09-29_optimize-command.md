@@ -10,7 +10,7 @@ its reproduction.
 
 | id | finding | severity |
 |---|---|---|
-| [F1](#f1--every-stop-is-reported-as-converged) | every stop is reported as "converged": at `-maxiter`, after all evaluations failed, when LM could not reduce; only the interrupt is told apart | **high** — the one word a script or a reader acts on |
+| [F1](#f1--every-stop-is-reported-as-converged) | *(fixed in [E-762](../../enhancements_doc/Enhancement-762.md): the methods record their stop, the line opens with it, `optimize_status` and three result vectors are published)* every stop is reported as "converged": at `-maxiter`, after all evaluations failed, when LM could not reduce; only the interrupt is told apart | **high** — the one word a script or a reader acts on |
 | [F2](#f2--the-knob-and-target-numbers-are-lenient) | `-param R2 1k abc 10k` takes `abc` as 0 and `10o` as 10 in silence; an init outside `[lo, hi]` is clamped without a word; a `-target` weight of −1 is accepted; a bare `-method`, a second `-minimize` under a scalar method and `-swarmsize 3` are absorbed in silence | **medium** — E-499 made the options strict and left the knobs and targets as they were |
 | [F3](#f3--an-expression-or-command-that-begins-with-a-minus-sign-is-read-as-a-flag) | `-minimize -v(out)` and `-target v(out) - v(in) 0.4` are torn apart at the `-`: the first ends in "incomplete or empty netlist", the second fits to a target of 0 and answers a different question | **medium** — a negated objective is the natural way to maximise |
 | [F4](#f4--simulated-annealing-seeds-its-temperature-from-the-failure-penalty) | a start inside the failing region gives `T0 = 7.9e29`; after 40 cooling levels T is still `1e26`, every uphill move is accepted, the schedule is meaningless | **medium** |
@@ -60,6 +60,14 @@ stalled, no solvable evaluation, interrupted), the report prints the matching wo
 NOTE for the cap ("raise -maxiter or loosen -tol"), and the status is published as a
 vector and a shell variable (`optimize_status`) beside `optimize_cost` and
 `optimize_evals` (O7), so a `.control` loop can branch on it.
+
+*Fixed in [E-762](../../enhancements_doc/Enhancement-762.md).* As sketched: six statuses
+(converged, maxiter, completed, nosolve, unchanged, interrupted), the phrase on the line
+with a NOTE after the cap, `optimize_status` as a string variable and `optimize_converged`,
+`optimize_cost`, `optimize_evals` as vectors and variables; the converged line is unchanged.
+One deliberate choice: LM's "cannot reduce further" stays "converged" — at a minimum no
+step lowers the cost, and the command cannot tell that from a rugged region. O7's history
+vectors are still open.
 
 ## F2 — the knob and target numbers are lenient
 

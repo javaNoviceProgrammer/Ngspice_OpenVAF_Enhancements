@@ -81,3 +81,5 @@ analytic optima in 1-D and 2-D. Natural follow-ups: gradient / least-squares
 methods for smooth problems, multi-analysis objectives (combine several runs),
 and optimizing `.param` values directly (which needs a re-source that does not
 re-run the analysis).
+
+**Update ([E-762](Enhancement-762.md)).** The report's last line now says why the search stopped: `converged` (unchanged) on the simplex's own tolerance, `stopped at -maxiter (N iterations) -- NOT converged` with a NOTE when the cap ran out first, `NO SOLUTION -- no evaluation solved`, `unchanged -- nothing was optimised`; `optimize_status`, `optimize_converged`, `optimize_cost` and `optimize_evals` are published for a `.control` script.

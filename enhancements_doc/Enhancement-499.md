@@ -169,3 +169,5 @@ A legal `-seed` still pins the run.
 
 `examples/loopguard_examples/` — 49 checks under both linear solvers, **31 of
 which fail without the fix** (36 under KLU). Full regression 413/413.
+
+**Update ([E-762](Enhancement-762.md)).** The two situations these NOTEs describe are now also the line's own verdict: an objective equal at every evaluation reads `unchanged -- nothing was optimised` (the NOTE still says why), and a search the iteration cap ended reads `stopped at -maxiter ... NOT converged` with its own NOTE. The bound NOTE is unchanged.

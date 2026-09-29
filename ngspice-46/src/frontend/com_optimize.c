@@ -101,6 +101,20 @@ ft_optimizing) unless `-verbose`.
 #define OPT_MAXOBJ    8          /* Enhancement-216: max NSGA-II objectives */
 #define OPT_PENALTY  1e30        /* cost for a failed / non-finite eval   */
 
+/* Enhancement-762 (optimize hunt F1 of 2026-09-29): WHY the search stopped.
+ * Every stop used to be reported as "converged" -- the iteration cap, a run
+ * in which no evaluation solved, one whose objective never moved -- and only
+ * an interrupt (E-537) was told apart. The methods now record their reason,
+ * the report prints the matching phrase, and `optimize_status` (a string
+ * variable), `optimize_converged` (1 for CONVERGED and COMPLETED),
+ * `optimize_cost` and `optimize_evals` are published for a script to test. */
+#define OPT_ST_CONVERGED   0     /* the method's own criterion was met          */
+#define OPT_ST_MAXITER     1     /* -maxiter ran out first: NOT converged        */
+#define OPT_ST_COMPLETED   2     /* a fixed schedule ran to its end (sa, nsga2)  */
+#define OPT_ST_NOSOLVE     3     /* no evaluation produced a solution            */
+#define OPT_ST_UNCHANGED   4     /* the objective was the same at every eval     */
+#define OPT_ST_INTERRUPTED 5     /* the user stopped it (E-537)                  */
+
 /* Enhancement-206 (design centering): one pass/fail spec for the inner Monte
  * Carlo, exactly like montecarlo's -spec: an expression bounded by -max/-min. */
 struct opt_spec {
@@ -171,6 +185,7 @@ struct optctx {
                                           * replays the same trial window        */
     int    interrupted;                  /* E-537 (hunt I): the user stopped the
                                           * search, so it did not converge       */
+    int    status;                       /* E-762: one of OPT_ST_*               */
     int    lhs_warned;                   /* E-537 (hunt O): said once          */
 
     /* Enhancement-216: multi-objective / Pareto optimization (NSGA-II). Instead of
@@ -800,6 +815,7 @@ static void levenberg_marquardt(struct optctx *c, double *ubest, double *fbest)
         u[j] = clamp01(ubest[j]);
     cost0 = opt_eval(c, u, r0);
 
+    c->status = OPT_ST_MAXITER;          /* E-762: unless a break below says otherwise */
     for (iter = 0; iter < c->maxiter; iter++) {
         /* E-536 (hunt bug 17): an interrupt only aborts the inner analysis it
          * lands in, and the next dosim() clears the flag -- poll here so
@@ -808,6 +824,7 @@ static void levenberg_marquardt(struct optctx *c, double *ubest, double *fbest)
         if (ft_intrpt) {
             fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
             c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
+            c->status = OPT_ST_INTERRUPTED;
             break;
         }
         int accepted = 0;
@@ -868,13 +885,19 @@ static void levenberg_marquardt(struct optctx *c, double *ubest, double *fbest)
             fprintf(cp_out, "  iter %-3d  cost %.6g  lambda %.2g  (%d evals)\n",
                     iter + 1, accepted ? costn : cost0, lambda, c->nevals);
 
-        if (!accepted)
+        if (!accepted) {
+            /* no step of any length lowers the cost: a minimum to within the
+             * finite-difference accuracy, which is what convergence means here */
+            c->status = OPT_ST_CONVERGED;
             break;                                /* cannot reduce further  */
+        }
         {
             double improve = cost0 - costn;
             cost0 = costn;
-            if (improve <= c->tol * (cost0 + c->tol) || sqrt(dnorm) < c->tol)
+            if (improve <= c->tol * (cost0 + c->tol) || sqrt(dnorm) < c->tol) {
+                c->status = OPT_ST_CONVERGED;
                 break;                            /* converged              */
+            }
         }
     }
 
@@ -910,6 +933,7 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
         fv[i] = opt_eval(c, s[i], NULL);
     }
 
+    c->status = OPT_ST_MAXITER;          /* E-762 */
     for (iter = 0; iter < c->maxiter; iter++) {
         /* E-536 (hunt bug 17): an interrupt only aborts the inner analysis it
          * lands in, and the next dosim() clears the flag -- poll here so
@@ -918,6 +942,7 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
         if (ft_intrpt) {
             fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
             c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
+            c->status = OPT_ST_INTERRUPTED;
             break;
         }
         int hi, nh;
@@ -932,8 +957,10 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
         for (i = 0; i <= n; i++)
             if (i != hi && fv[i] > fv[nh]) nh = i;
 
-        if (fv[hi] - fv[lo] <= c->tol * (fabs(fv[lo]) + c->tol))
+        if (fv[hi] - fv[lo] <= c->tol * (fabs(fv[lo]) + c->tol)) {
+            c->status = OPT_ST_CONVERGED;
             break;                               /* converged */
+        }
 
         for (j = 0; j < n; j++) {                /* centroid of all but worst */
             double sum = 0.0;
@@ -1042,6 +1069,7 @@ static void particle_swarm(struct optctx *c, double *ubest, double *fbest)
     }
     for (j = 0; j < n; j++) gb[j] = pb[gi * n + j];
 
+    c->status = OPT_ST_MAXITER;          /* E-762 */
     for (iter = 0; iter < c->maxiter; iter++) {
         /* E-536 (hunt bug 17): an interrupt only aborts the inner analysis it
          * lands in, and the next dosim() clears the flag -- poll here so
@@ -1050,6 +1078,7 @@ static void particle_swarm(struct optctx *c, double *ubest, double *fbest)
         if (ft_intrpt) {
             fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
             c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
+            c->status = OPT_ST_INTERRUPTED;
             break;
         }
         double prevgf = gf;
@@ -1074,7 +1103,7 @@ static void particle_swarm(struct optctx *c, double *ubest, double *fbest)
         /* converge on relative gbest stagnation held over several iterations
          * (E-197: more patience as dimension grows; unchanged for small n) */
         if (prevgf - gf <= c->tol * (fabs(gf) + c->tol)) {
-            if (++stall >= 8 + n / 4) break;
+            if (++stall >= 8 + n / 4) { c->status = OPT_ST_CONVERGED; break; }
         } else {
             stall = 0;
         }
@@ -1126,6 +1155,7 @@ static void differential_evolution(struct optctx *c, double *ubest, double *fbes
     }
     for (j = 0; j < n; j++) gb[j] = x[gi * n + j];
 
+    c->status = OPT_ST_MAXITER;          /* E-762 */
     for (iter = 0; iter < c->maxiter; iter++) {
         /* E-536 (hunt bug 17): an interrupt only aborts the inner analysis it
          * lands in, and the next dosim() clears the flag -- poll here so
@@ -1134,6 +1164,7 @@ static void differential_evolution(struct optctx *c, double *ubest, double *fbes
         if (ft_intrpt) {
             fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
             c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
+            c->status = OPT_ST_INTERRUPTED;
             break;
         }
         double prevgf = gf;
@@ -1161,7 +1192,7 @@ static void differential_evolution(struct optctx *c, double *ubest, double *fbes
          * improvements, so give the stagnation counter more patience as n grows
          * (unchanged for small n: 8 for n <= 3). */
         if (prevgf - gf <= c->tol * (fabs(gf) + c->tol)) {
-            if (++stall >= 8 + n / 4) break;
+            if (++stall >= 8 + n / 4) { c->status = OPT_ST_CONVERGED; break; }
         } else {
             stall = 0;
         }
@@ -1213,6 +1244,7 @@ static void simulated_annealing(struct optctx *c, double *ubest, double *fbest)
     L     = 8 + 4 * n;
     alpha = pow(1e-4, 1.0 / (double) (c->maxiter > 1 ? c->maxiter : 1));
 
+    c->status = OPT_ST_COMPLETED;        /* E-762: the schedule is the stop */
     for (level = 0; level < c->maxiter; level++) {
         /* E-536 (hunt bug 17): an interrupt only aborts the inner analysis it
          * lands in, and the next dosim() clears the flag -- poll here so
@@ -1221,6 +1253,7 @@ static void simulated_annealing(struct optctx *c, double *ubest, double *fbest)
         if (ft_intrpt) {
             fprintf(cp_err, "optimize: interrupted at iteration %d\n", level);
             c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
+            c->status = OPT_ST_INTERRUPTED;
             break;
         }
         double step = 0.30 * sqrt(T / T0) + 0.02;   /* wide when hot, fine when cold */
@@ -1421,6 +1454,7 @@ static void nsga2(struct optctx *c)
         opt_eval_objs(c, &X[i * n], &F[i * m]);
     }
 
+    c->status = OPT_ST_COMPLETED;        /* E-762: the generations are the stop */
     for (gen = 0; gen < c->maxiter; gen++) {
         /* E-536 (hunt bug 17): an interrupt only aborts the inner analysis it
          * lands in, and the next dosim() clears the flag -- poll here so
@@ -1429,6 +1463,7 @@ static void nsga2(struct optctx *c)
         if (ft_intrpt) {
             fprintf(cp_err, "optimize: interrupted at iteration %d\n", gen);
             c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
+            c->status = OPT_ST_INTERRUPTED;
             break;
         }
         /* rank+crowd the current parents [0,N) for tournament selection */
@@ -1599,6 +1634,59 @@ static char *collect_until_flag(wordlist **pwl)
     return acc;
 }
 
+
+/* Enhancement-762: the status as a word (the `optimize_status` variable) */
+static const char *opt_status_word(int st)
+{
+    switch (st) {
+    case OPT_ST_CONVERGED:   return "converged";
+    case OPT_ST_MAXITER:     return "maxiter";
+    case OPT_ST_COMPLETED:   return "completed";
+    case OPT_ST_NOSOLVE:     return "nosolve";
+    case OPT_ST_UNCHANGED:   return "unchanged";
+    case OPT_ST_INTERRUPTED: return "interrupted";
+    }
+    return "unknown";
+}
+
+/* ... and as the phrase the report line opens with */
+static const char *opt_status_phrase(const struct optctx *c, char *buf, size_t n)
+{
+    switch (c->status) {
+    case OPT_ST_CONVERGED:
+        return "converged";
+    case OPT_ST_MAXITER:
+        (void) snprintf(buf, n, "stopped at -maxiter (%d iteration%s) -- NOT converged",
+                        c->maxiter, c->maxiter == 1 ? "" : "s");
+        return buf;
+    case OPT_ST_COMPLETED:
+        (void) snprintf(buf, n, "%s complete (%d %s)",
+                        c->method == 5 ? "cooling schedule" : "run",
+                        c->maxiter, c->method == 5 ? "levels" : "generations");
+        return buf;
+    case OPT_ST_NOSOLVE:
+        return "NO SOLUTION -- no evaluation solved";
+    case OPT_ST_UNCHANGED:
+        return "unchanged -- nothing was optimised";
+    case OPT_ST_INTERRUPTED:
+        return "INTERRUPTED -- best point so far";
+    }
+    return "stopped";
+}
+
+/* publish the outcome: `optimize_status` (a string variable), and the vectors
+ * plus variables `optimize_converged` (1 when the search ended on its own
+ * criterion or completed its schedule), `optimize_cost` and `optimize_evals` */
+static void opt_publish_outcome(const struct optctx *c, double fbest, int has_cost)
+{
+    const char *word = opt_status_word(c->status);
+    cp_vset("optimize_status", CP_STRING, word);
+    dc_set_result("optimize_converged",
+                  (c->status == OPT_ST_CONVERGED || c->status == OPT_ST_COMPLETED) ? 1.0 : 0.0);
+    dc_set_result("optimize_evals", (double) c->nevals);
+    if (has_cost)
+        dc_set_result("optimize_cost", fbest);
+}
 
 void com_optimize(wordlist *wl)
 {
@@ -1931,6 +2019,7 @@ void com_optimize(wordlist *wl)
             fprintf(cp_out, " %s(%s)", c.obj_max[o] ? "max" : "min", c.obj[o]);
         fprintf(cp_out, "\n");
         nsga2(&c);
+        opt_publish_outcome(&c, 0.0, 0);   /* E-762: completed or interrupted */
         goto cleanup;
     }
 
@@ -2016,26 +2105,47 @@ void com_optimize(wordlist *wl)
                             "rebuilt after a node collapse moved\n",
                     rk, c.nevals, rr);
     }
-    if (c.center) {
-        fprintf(cp_out, "optimize: centered -- worst-case Cpk = %.4g, yield = %.2f%% "
-                        "(%d MC samples), after %d evaluations\n",
-                c.last_cpk, 100.0 * c.last_yield, c.nsamples, c.nevals);
-        dc_set_result("dcenter_yield", c.last_yield);
-        dc_set_result("dcenter_cpk", c.last_cpk);
-    } else if (c.nt > 0)
-        /* E-537 (hunt I): "converged" describes the search stopping on its own
-         * criterion. A search the USER stopped did not, and saying so was the
-         * one case E-499's qualifiers did not cover -- the interrupt poll
-         * (E-536) breaks straight into this line, and if the interrupt lands
-         * early the reported value can be the untouched starting point. */
-        fprintf(cp_out, "optimize: %s, sum-sq residual = %.6g (rms %.6g) "
-                        "after %d evaluations\n",
-                c.interrupted ? "INTERRUPTED -- best point so far" : "converged",
-                fbest, sqrt(fbest / c.nt), c.nevals);
-    else
-        fprintf(cp_out, "optimize: %s, objective = %.6g after %d evaluations\n",
-                c.interrupted ? "INTERRUPTED -- best point so far" : "converged",
-                fbest, c.nevals);
+    /* Enhancement-762 (optimize hunt F1): the reason the search stopped. The
+     * methods recorded their own (criterion met, -maxiter ran out, a schedule
+     * completed, an interrupt); two verdicts are the epilogue's: a best cost
+     * still at the penalty means no evaluation ever solved, and an objective
+     * that never moved means nothing was optimised (E-499's NOTE below says
+     * why that happens). Every one of these used to read "converged". */
+    {
+        char phrase[128];
+        const char *ph;
+        if (c.interrupted)
+            c.status = OPT_ST_INTERRUPTED;
+        else if (fbest >= OPT_PENALTY)
+            c.status = OPT_ST_NOSOLVE;
+        else if (c.fseen_n > 1 && c.fseen_hi == c.fseen_lo)
+            c.status = OPT_ST_UNCHANGED;
+        ph = opt_status_phrase(&c, phrase, sizeof phrase);
+        if (c.center) {
+            fprintf(cp_out, "optimize: centering %s -- worst-case Cpk = %.4g, yield = %.2f%% "
+                            "(%d MC samples), after %d evaluations\n",
+                    ph, c.last_cpk, 100.0 * c.last_yield, c.nsamples, c.nevals);
+            dc_set_result("dcenter_yield", c.last_yield);
+            dc_set_result("dcenter_cpk", c.last_cpk);
+        } else if (c.nt > 0)
+            /* E-537 (hunt I): "converged" describes the search stopping on its
+             * own criterion. A search the USER stopped did not, and saying so
+             * was the one case E-499's qualifiers did not cover -- the
+             * interrupt poll (E-536) breaks straight into this line, and if
+             * the interrupt lands early the reported value can be the
+             * untouched starting point. */
+            fprintf(cp_out, "optimize: %s, sum-sq residual = %.6g (rms %.6g) "
+                            "after %d evaluations\n",
+                    ph, fbest, sqrt(fbest / c.nt), c.nevals);
+        else
+            fprintf(cp_out, "optimize: %s, objective = %.6g after %d evaluations\n",
+                    ph, fbest, c.nevals);
+        if (c.status == OPT_ST_MAXITER)
+            fprintf(cp_out, "optimize: NOTE -- the iteration cap ended the search before "
+                            "its own criterion did; raise -maxiter, or loosen -tol if the "
+                            "reported value is close enough.\n");
+        opt_publish_outcome(&c, fbest, 1);
+    }
     /* Enhancement-499: "converged" describes the SEARCH stopping, not the answer
      * being the one the author wanted, and three ordinary situations produced a
      * confident "converged" with nothing to show for it:
