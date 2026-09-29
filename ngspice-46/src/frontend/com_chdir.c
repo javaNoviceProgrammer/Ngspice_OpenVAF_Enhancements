@@ -12,6 +12,7 @@
 
 #include "com_chdir.h"
 #include "ngspice/cpextern.h"
+#include "ngspice/osdiitf.h"   /* Enhancement-758: OSDIcwdChanged */
 
 
 void
@@ -50,9 +51,12 @@ com_chdir(wordlist *wl)
     }
 
 
-    if (s != NULL)
+    if (s != NULL) {
         if (chdir(s) == -1)
             perror(s);
+        else
+            OSDIcwdChanged();   /* Enhancement-758: the cached cwd is stale */
+    }
 
     if (copied)
         tfree(s);

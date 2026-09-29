@@ -144,9 +144,18 @@ if DP:
     rc, o_none = run(DECK.replace("{D}", "-1"), CTL, "dpm")
     rc, o_ann = run(DECK.replace("{D}", "0"), CTL, "dp0")
     n_none, n_ann = rows(o_none), rows(o_ann)
-    # 132 is the un-announced step count for this deck -- the same figure the
-    # literal and localparam -1 produce below.
-    check("d=-1 from the deck announces nothing", n_none == 132, f"{n_none} rows")
+    # The un-announced step count is what the literal -1 form of disc.va below
+    # produces for the same drive (it was a fixed 132 until Enhancement-759
+    # made the `@(cross)` itself land the step on each crossing, which adds a
+    # point per crossing to both forms alike).
+    DISC0, _ = build("disc.va", "d")
+    n_lit = None
+    if DISC0:
+        rc, o_lit = run("V1 p 0 PULSE(0 1 10n 1n 1n 20n 50n)\nN1 p 0 o mm\n.model mm disc sel=0\nRo o 0 1meg\n",
+                        f"pre_osdi {os.path.basename(DISC0)}\ntran 1n 100n\nprint v(o)", "dlit")
+        n_lit = rows(o_lit)
+    check("d=-1 from the deck announces nothing (the same rows as the literal -1 form)",
+          n_lit is not None and n_none == n_lit, f"{n_none} rows, literal -1 {n_lit}")
     check("  ... while d=0 from the deck does announce", n_ann > n_none,
           f"d=-1 -> {n_none} rows, d=0 -> {n_ann} rows")
 

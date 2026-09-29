@@ -4,6 +4,9 @@
 Seven small things the compiler said wrongly, or did not say:
   [1]  two messages carried runs of spaces (a flattened line continuation)
   [2]  --dump-json was in --help and answered "currently unimplemented"
+  [9]  E-759: --dump-json wrote a non-finite float constant as a bare `inf`
+       (every module with a cross/above event has one: the bound-step slot's
+       initial value); it is the string "inf" now and the file parses
   [8]  E-694: --dump-json wrote string constants raw; a $fatal's message ends in a
        real newline, so any module with a message task dumped invalid JSON
   [3]  $fatal / $error / $warning / $info with no message printed no line, so
@@ -81,6 +84,8 @@ src = M + "parameter real r=1k; integer c; analog begin @(cross(V(p,n)-0.5, +1))
 ok, msg = compile_src(src, "c2", flags=["--dump-json"])
 jpath = os.path.join(WORK, "c2_m.json")
 j = json.load(open(jpath)) if os.path.exists(jpath) else {}
+check("[9] E-759: a non-finite float constant (the bound-step slot's infinity every event module has) is the JSON string \"inf\", and the dump parses",
+      any(v.get("fconst") == "inf" for v in j.get("vals", [])), str([v.get("fconst") for v in j.get("vals", []) if isinstance(v.get("fconst"), str)]))
 inputs = j.get("inputs", {})
 ok_a = ok and os.path.exists(os.path.join(WORK, "c2.osdi")) and set(j) >= {"cfg", "instructions", "vals", "inputs", "outputs"} \
     and "r" in inputs.get("parameters", {}) and "(p, n)" in inputs.get("voltages", {}) and "c" in j.get("outputs", {}) \

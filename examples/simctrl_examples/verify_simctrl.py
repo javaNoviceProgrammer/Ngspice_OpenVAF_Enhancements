@@ -27,7 +27,10 @@ Defects fixed:
   * $discontinuity(n>=0) additionally raises EVAL_RET_FLAG_DISCONT: OSDItrunc
     requests delta/8 while the flag is set (with a 20*CKTdelmin floor), so
     the integrator REJECTS the too-large event step and bisects onto the
-    event -- the E-24 sentinel only bounded the NEXT step.
+    event -- the E-24 sentinel only bounded the NEXT step. Enhancement-759:
+    a cross event now lands the step on its crossing with or without the
+    announcement, and on that landing the eighth is the step AFTER the
+    event (the restart the announcement asks for), not a rejection.
 
 Checks:
   1. tran $finish: Note printed; the run ends AT the requesting point (well
@@ -40,8 +43,10 @@ Checks:
      analysis never runs)
   5. dc sweep $finish: sweep ends at the requesting sweep point (~0.7 V),
      not the .dc stop value (2 V)
-  6. $discontinuity A/B twins: the accepted step containing the event is
-     >= 4x smaller with the announcement than without (rejection bisected
+  6. $discontinuity A/B twins: both land the event point on the crossing
+     (E-759: within 1 ns of 833.33 ns at a 60 ns step; it used to sit on the
+     step grid), and the step AFTER the event is >= 4x smaller with the
+     announcement than without (E-55's eighth, applied forward on a landing
      into the step); the event time is no later
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
@@ -136,7 +141,7 @@ def main():
     check("sweep ended at ~0.7 V (stop value was 2 V)",
           vmax and abs(float(vmax) - 0.7) < 0.051)
 
-    print("[6] $discontinuity(0): the event step is rejected and bisected")
+    print("[6] $discontinuity(0): the event is landed on, the step after it cut (E-759)")
     dts = {}
     for model in ("snodisc", "sdisc"):
         deck = (f"* sc disc {model}\nVs in 0 DC 0 SIN(0 1 100k)\nRs in a 1k\n"
@@ -150,14 +155,22 @@ def main():
             if len(p) >= 2:
                 ts.append(float(p[0]))
                 vs.append(float(p[1]))
-        k = max(range(1, len(ts)), key=lambda i: abs(vs[i] - vs[i - 1]))
-        dts[model] = (ts[k] - ts[k - 1], ts[k], vs[k] - vs[k - 1])
-    dt_no, t_no, jump_no = dts["snodisc"]
-    dt_yes, t_yes, jump_yes = dts["sdisc"]
-    print(f"        without: dt={dt_no:.3e} at t={t_no:.4e} (jump {jump_no:+.3f});"
-          f" with: dt={dt_yes:.3e} at t={t_yes:.4e} (jump {jump_yes:+.3f})")
-    check("event step >= 4x smaller with the announcement", dt_yes <= dt_no / 4)
-    check("event resolved no later", t_yes <= t_no + 1e-12)
+        # the event: the first point where the branch current's 1 mA step shows
+        k = next((i for i in range(1, len(ts)) if abs(vs[i] - vs[i - 1]) > 0.2), None)
+        after = (ts[k + 1] - ts[k]) if k is not None and k + 1 < len(ts) else None
+        dts[model] = (ts[k] - ts[k - 1], ts[k], vs[k] - vs[k - 1], after) if k is not None else (None,) * 4
+    dt_no, t_no, jump_no, after_no = dts["snodisc"]
+    dt_yes, t_yes, jump_yes, after_yes = dts["sdisc"]
+    print(f"        without: event at t={t_no} (jump {jump_no}), step after {after_no};"
+          f" with: event at t={t_yes} (jump {jump_yes}), step after {after_yes}")
+    # V(a) = 0.5 sin(2 pi 100 kHz t) before the event crosses 0.25 V at t = 833.33 ns
+    t_cross = 1.0 / 12.0 * 1e-5
+    check("E-759: the event point is landed on the crossing without the announcement (within 1 ns)",
+          t_no is not None and 0 <= t_no - t_cross < 1e-9)
+    check("E-759: ... and with it", t_yes is not None and 0 <= t_yes - t_cross < 1e-9)
+    check("the step after the event is >= 4x smaller with the announcement (E-55's eighth, forward)",
+          after_no is not None and after_yes is not None and after_yes <= after_no / 4)
+    check("event resolved no later", t_yes is not None and t_yes <= t_no + 1e-12)
 
     print()
     print("ALL PASS" if ok else "SOME CHECKS FAILED")

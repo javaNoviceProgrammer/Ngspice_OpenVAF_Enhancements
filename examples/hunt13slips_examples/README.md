@@ -12,4 +12,6 @@ Since E-694 (hunt F4 of 2026-09-21) the dump's strings are escaped: a module
 with a `$fatal`/`$error`/`$warning`/`$info` -- whose message ends in a real
 newline -- produced a file no JSON parser accepted.
 
-Run: `python3 verify_hunt13slips.py` (8 checks per solver, both solvers).
+Run: `python3 verify_hunt13slips.py` (9 checks per solver, both solvers).
+
+**Update ([E-759](../../enhancements_doc/Enhancement-759.md)).** Check [9]: `--dump-json` wrote a non-finite float constant as a bare `inf`, which no JSON parser accepts, and since E-759 every module with a `cross`/`above` event has one (the bound-step slot's initial value is infinity); the serializer now writes the string `"inf"` (`"-inf"`, `"nan"`) and the dump of the cross module parses.

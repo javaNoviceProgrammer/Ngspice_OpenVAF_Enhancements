@@ -400,6 +400,9 @@ extern size_t osdi_model_data_off(void);
 extern void *osdi_model_data(GENmodel *model);
 extern void *osdi_model_data_from_inst(GENinstance *inst);
 extern OsdiRegistryEntry *osdi_reg_entry_model(const GENmodel *model);
+/* Enhancement-759: the count of accepted points (osdiaccept.c), the
+ * `$osdi$point` simparam. */
+extern double OSDIpointSeq(void);
 extern OsdiRegistryEntry *osdi_reg_entry_inst(const GENinstance *inst);
 
 /* `.option osdimc` automatic Monte-Carlo (osdisetup.c). capture_chain records

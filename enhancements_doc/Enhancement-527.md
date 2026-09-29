@@ -92,3 +92,5 @@ header still *defaults* to NIST1998 for LRM backward compatibility, a ~1 ppm
 difference now documented). The stale `lower_rng` comment claiming an
 in-model seed advance that does not exist was rewritten to the documented
 pure-(seed, salt) contract.
+
+**Update ([E-758](Enhancement-758.md)).** The `cwd` entry this audit added to `$simparam$str` was refreshed with a `getcwd()` on every load call, which on macOS opens and stats the directory chain: ~12 µs on every Newton iteration of every deck with a compiled model. It is cached now and re-read after the `cd` command; the served value is unchanged.

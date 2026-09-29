@@ -1,0 +1,32 @@
+`include "disciplines.vams"
+// Enhancement-759: a cross/above event lands the timestep on its crossing.
+// The switch closes when V(c) passes vth; the bodies record when they ran.
+module landsw(p, n, c);
+  inout p, n, c; electrical p, n, c;
+  parameter real vth = 0.5;
+  parameter real ttol = 0.0;          // 0: the default margin (a thousandth of the step)
+  (* desc="time of the last rising body" *) real trise;
+  (* desc="time of the last falling body" *) real tfall;
+  (* desc="time of the last above body" *) real tabove;
+  (* desc="rising crossings" *) integer nr;
+  (* desc="falling crossings" *) integer nf;
+  (* desc="either" *) integer ne;
+  (* desc="above events" *) integer na;
+  analog begin
+    @(cross(V(c) - vth, +1, ttol)) begin nr = nr + 1; trise = $abstime; end
+    @(cross(V(c) - vth, -1, ttol)) begin nf = nf + 1; tfall = $abstime; end
+    @(cross(V(c) - vth, 0, ttol)) begin ne = ne + 1; $strobe("either at %e", $abstime); end
+    @(above(V(c) - vth, ttol)) begin na = na + 1; tabove = $abstime; end
+    if (V(c) > vth) I(p, n) <+ V(p, n) / 1.0; else I(p, n) <+ V(p, n) / 1M;
+  end
+endmodule
+
+// the same switch announcing the discontinuity in the event body (E-55)
+module landdisc(p, n, c);
+  inout p, n, c; electrical p, n, c;
+  parameter real vth = 0.5;
+  analog begin
+    @(cross(V(c) - vth, 0)) $discontinuity(0);
+    if (V(c) > vth) I(p, n) <+ V(p, n) / 1.0; else I(p, n) <+ V(p, n) / 1M;
+  end
+endmodule

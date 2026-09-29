@@ -44,6 +44,11 @@ int OSDItrunc(GENmodel *in_model, CKTcircuit *ckt, double *timestep) {
           !(extra_inst_data->prev_point_eval_flags & EVAL_RET_FLAG_DISCONT) &&
           !extra_inst_data->discont_retry &&
           ckt->CKTdelta > 20.0 * ckt->CKTdelmin) {
+        /* (Enhancement-759: on a LANDING attempt the point already is the
+         * crossing a `$discontinuity` in the event body announces, and
+         * dctran accepts it whatever this cut says -- the eighth becomes the
+         * step AFTER the discontinuity, the restart the announcement asks
+         * for, instead of a rejection that would redo the approach) */
         double cut = ckt->CKTdelta / 8.0;
         if (cut < *timestep) {
           *timestep = cut;
@@ -53,7 +58,38 @@ int OSDItrunc(GENmodel *in_model, CKTcircuit *ckt, double *timestep) {
 
       if (has_boundstep) {
         double *del = (double *)(((char *)inst) + offset);
-        if (*del < 0.0) {
+        if (*del < -1.0) {
+          /* Enhancement-759 (speed hunt F2 of 2026-09-28): a LANDING REQUEST
+           * from a `@(cross)`/`@(above)` that fired on this point -- the
+           * compiler writes -(2 + t), t the offset from the last accepted
+           * point at which the crossing sits (plus its margin), a value no
+           * bound can be. The point overshot the crossing: redo it at
+           * exactly that size, however close to the step under way (dctran's
+           * 0.9 rule would otherwise accept a landing in the last tenth of a
+           * step), so the timepoint the LRM asks for at the crossing exists.
+           * Floored like a bound (E-504) so a request can never crawl. */
+          double land = -(*del) - 2.0;
+          double span = ckt->CKTfinalTime - ckt->CKTinitTime;
+          double floor_step = (span > 0.0) ? span / E504_MAX_MODEL_STEPS : 0.0;
+          if (land < floor_step)
+            land = floor_step;
+          if (land > 0.0 && land < ckt->CKTdelta && ckt->CKTdelta > 20.0 * ckt->CKTdelmin) {
+            /* The landing REPLACES the truncation estimate of this step:
+             * the estimate measures the discontinuity the crossing brings
+             * (a switch closing inside the step), not the smooth interval
+             * before it, and honouring a smaller cut would put a point
+             * short of the crossing and approach it again -- two rejected
+             * points per crossing instead of one. Several requests: the
+             * earliest lands (a later one is asked again from there). */
+            if (ckt->CKTforceReject) {
+              if (land < *timestep)
+                *timestep = land;
+            } else {
+              *timestep = land;
+              ckt->CKTforceReject = 1;
+            }
+          }
+        } else if (*del < 0.0) {
           /* Enhancement-24: a negative bound_step is the sentinel written by
            * $discontinuity(n) (n >= 0). Rather than a literal step bound, it means
            * "a discontinuity occurred here": don't let the next timestep grow past

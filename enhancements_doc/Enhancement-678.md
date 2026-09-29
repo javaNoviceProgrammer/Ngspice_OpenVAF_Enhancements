@@ -98,3 +98,5 @@ The bound while the decay is active is 2τ, as it was 2/K before.
   attempt — which is why the period read 0.99999 s. That is a property of
   variable persistence across rejected attempts, not of the reset, and the
   hunt document records it.
+
+**Update ([E-759](Enhancement-759.md)).** The oscillator's release cross now fires at the landing of the reset's crossing: the module's attempt flags stop a landing request once a body has fired in the attempt (the reset drops the expression through the release threshold at the same instant, which no interpolation locates), and a landing that falls short on the exponential reset is not chased. The period reads 1 s as before; the note on variable persistence across rejected attempts stands.

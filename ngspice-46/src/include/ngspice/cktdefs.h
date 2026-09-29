@@ -445,6 +445,14 @@ struct CKTcircuit {
     unsigned int CKTdynorder:1;    /* Enhancement-128: LTE-based dynamic integration order */
     unsigned int CKTconvhelp:1;    /* Enhancement-204: auto-escalating DC convergence aids */
     int CKTordFix;                 /* Enhancement-181: fixed integration order, 0 = off */
+    /* Enhancement-759: a device asked OSDItrunc to redo the point under way
+       at a landing step (a crossing); dctran rejects it even above its 0.9 rule */
+    int CKTforceReject;
+    /* Enhancement-759: the attempt under way is the landing such a request
+       asked for -- accepted when converged (the truncation estimate at a
+       crossing is the discontinuity's, not the smooth interval's) and not
+       cut again by a $discontinuity announced there (OSDItrunc) */
+    int CKTlanding;
     int CKTorderCnt;               /* E-128: accepted steps since the last order reset (history depth) */
     int CKTorderMaxUsed;           /* E-128: highest integration order actually selected (diagnostic) */
     int CKTorderHold;              /* E-128: steps to hold the order after a change (settling) */

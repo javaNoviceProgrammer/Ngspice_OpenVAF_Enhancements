@@ -117,3 +117,5 @@ ALL PASS; 28/28 crate tests.
   path as reaching the stop time.
 - The env-gated `OPENVAF_TAINT_DEBUG=1` dump (op-dependence statistics at
   the init/eval split) was kept from the investigation.
+
+**Update ([E-759](Enhancement-759.md)).** A `cross`/`above` event now lands the step on its crossing, so a `$discontinuity(n >= 0)` in the event body fires on a landing attempt, and there the eighth this enhancement asks for is no longer a rejection (dctran accepts a converged landing whatever the truncation estimate says) but the step AFTER the event — the restart the announcement means. The `simctrl` twins check that both models land the event point on the crossing and that the announced one takes a step four times shorter after it.

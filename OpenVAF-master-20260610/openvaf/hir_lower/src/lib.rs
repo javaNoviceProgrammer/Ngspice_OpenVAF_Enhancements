@@ -344,6 +344,12 @@ pub struct HirInterner {
     /// first evaluation of each analysis whether or not that evaluation reaches
     /// the call site. See `expr::capture_table_data`.
     pub table_capture_flags: Vec<u32>,
+    /// Enhancement-759: the module's ATTEMPT FLAGS -- three `EventState`
+    /// slots shared by every `cross`/`above` of the module (a body fired in
+    /// this attempt, a landing was requested in this attempt, the `$abstime`
+    /// they were stamped with), allocated by the first event that needs them
+    /// (`hir_lower::stmt::event_attempt_flags`).
+    pub event_attempt_flags: Option<(u32, u32, u32)>,
 }
 
 pub type LiveParams<'a> = FilterMap<
@@ -368,6 +374,7 @@ impl Default for HirInterner {
             indirect_branch_equations: Vec::default(),
             event_state_count: 0,
             table_capture_flags: Vec::default(),
+            event_attempt_flags: None,
         }
     }
 }

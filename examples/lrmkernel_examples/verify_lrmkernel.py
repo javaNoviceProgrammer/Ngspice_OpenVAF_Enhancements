@@ -260,5 +260,40 @@ if rc == 0:
     check("$vt(300) == `P_K*300/`P_Q exactly under PHYSICAL_CONSTANTS_NIST2018",
           close(num(sim, "@n1[dvt]"), 0.0, 1e-18), f"dvt={num(sim, '@n1[dvt]')}")
 
+# ---- [6] Enhancement-758: cwd is cached, re-read after `cd`, and cheap ------
+# The `cwd` entry used to be re-read with getcwd() on EVERY load call, which on
+# macOS opens and stats the directory chain: ~12 us per Newton iteration for any
+# deck with a compiled model, whatever its size (a one-instance transient of
+# 1.2 M iterations spent 12.8 of 14.4 s there). It is cached now and the `cd`
+# command invalidates it -- the one thing that changes the process directory.
+print("\n$simparam$str(\"cwd\") cached across iterations (Enhancement-758):")
+import tempfile
+rc, out, osdi = compile_file("cwdprobe.va")
+check("cwdprobe.va compiles", rc == 0, out.strip()[-120:])
+if rc == 0:
+    newdir = os.path.realpath(tempfile.mkdtemp(prefix="lk_cd_"))
+    sim = run("V1 in 0 1.0\nN1 in 0 m1\n.model m1 cwdprobe",
+              f"op\ncd {newdir}\nop", "cwd", osdi)
+    seen = [os.path.realpath(l.split("cwd=", 1)[1].strip()) for l in sim.splitlines() if "cwd=" in l]
+    check("the first op reports the suite's own directory",
+          len(seen) >= 1 and seen[0] == os.path.realpath(HERE), f"{seen[:1]}")
+    check("after `cd` the next op reports the new directory (the cache is invalidated)",
+          len(seen) >= 2 and seen[1] == newdir, f"{seen[1:2]} want {newdir}")
+    try:
+        os.rmdir(newdir)
+    except OSError:
+        pass
+    # the cost: one compiled instance, ~4000 Newton iterations; the load time per
+    # iteration was ~12 us (a getcwd per iteration), it is ~1-2.5 us now; 6 us
+    # leaves room for a loaded machine and still fails the old behaviour
+    sim = run("V1 in 0 pulse(0 1 1n 0.1n 0.1n 50n 100n)\nN1 in out m1\nC1 out 0 1p\n.model m1 cwdprobe",
+              "tran 0.1n 200n\nrusage all", "cwdt", osdi)
+    m_l = re.search(r"Transient load time = ([\d.eE+-]+)", sim)
+    m_i = re.search(r"Transient iterations = (\d+)", sim)
+    per_iter = float(m_l.group(1)) / int(m_i.group(1)) if (m_l and m_i and int(m_i.group(1)) > 0) else None
+    check("[speed] the compiled load costs under 6 us per Newton iteration for one instance (was ~12 us, a getcwd each)",
+          per_iter is not None and per_iter < 6e-6,
+          f"{per_iter * 1e6:.2f} us/iter over {m_i.group(1) if m_i else '?'} iterations")
+
 print(f"\n{'ALL PASS' if checks == passed else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if checks == passed else 1)

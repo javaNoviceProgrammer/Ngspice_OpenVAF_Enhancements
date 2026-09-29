@@ -28,4 +28,7 @@ undisclosed gaps across `$bound_step`, `$table_model`, the distributions,
   **`$vt`** uses the 2019 exact SI k/q — equal to `` `P_K*T/`P_Q ``
   exactly under `` `define PHYSICAL_CONSTANTS_NIST2018 ``.
 
-Run `python3 verify_lrmkernel.py` — 43 checks, both solvers.
+Run `python3 verify_lrmkernel.py` — 48 checks, both solvers. The last five are
+Enhancement-758: `$simparam$str("cwd")` is read once and re-read after `cd`, not
+with a `getcwd()` on every Newton iteration (`cwdprobe.va` strobes it; one instance
+must load in under 6 µs per iteration, where the E-757 binary took 12–14 µs).

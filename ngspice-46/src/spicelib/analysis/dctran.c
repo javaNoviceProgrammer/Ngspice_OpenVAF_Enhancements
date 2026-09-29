@@ -295,6 +295,8 @@ DCtran(CKTcircuit *ckt,
         ckt->CKTdelta = 0;
         ckt->CKTbreak = 1;
         firsttime = 1;
+        ckt->CKTlanding = 0;   /* Enhancement-759 */
+        ckt->CKTforceReject = 0;
         save_mode = (ckt->CKTmode&MODEUIC) | MODETRANOP | MODEINITJCT;
         save_order = ckt->CKTorder;
 
@@ -1017,6 +1019,7 @@ resume:
             redostep = 1;
 #endif
             ckt->CKTdelta = ckt->CKTdelta/8;
+            ckt->CKTlanding = 0;   /* Enhancement-759: a landing that did not converge is redone as any step */
 #ifdef STEPDEBUG
             (void)printf("delta cut to %g for non-convergence\n",ckt->CKTdelta);
             fflush(stdout);
@@ -1079,6 +1082,7 @@ resume:
             newdelta = ckt->CKTdelta;
             /* Scan through all devices, estimate the truncation error,
                and reduce the time step, if necessary.*/
+            ckt->CKTforceReject = 0;   /* Enhancement-759: set by a device's landing request */
             error = CKTtrunc(ckt,&newdelta);
             if(error) {
                 UPDATE_STATS(DOING_TRAN);
@@ -1093,7 +1097,18 @@ resume:
             if (ckt->CKTordFix > 0)
                 newdelta = 2.0 * ckt->CKTdelta;   /* grow to the tmax pin; the
                                                    * loop top clamps to CKTmaxStep */
-            if (newdelta > .9 * ckt->CKTdelta) {
+            /* Enhancement-759: a device that asked to land on an event
+             * (OSDItrunc) is honoured even when the landing lies in the
+             * last tenth of the step under way; the LANDING attempt itself
+             * is accepted once converged: the interval up to the crossing
+             * is smooth, and the truncation estimate at the crossing
+             * measures the discontinuity the event brings (the predictor
+             * extrapolated the old branch), which no smaller step removes
+             * -- rejecting it would redo the point short of the crossing,
+             * with the event body's effects already in the model's state,
+             * and approach the crossing again. The step AFTER the landing
+             * follows the estimate, floored at an eighth (E-55's cut). */
+            if ((newdelta > .9 * ckt->CKTdelta || ckt->CKTlanding) && !ckt->CKTforceReject) {
 #if defined(XSPICE)
                 /* The timestep has succeeded.  XSPICE instances with
                  * both analog and event ports ("hybrids") and others
@@ -1229,6 +1244,11 @@ resume:
                     }
                 }
                 /* time point OK  - 630 */
+                if (ckt->CKTlanding) {
+                    if (newdelta < ckt->CKTdelta / 8.0)
+                        newdelta = ckt->CKTdelta / 8.0;
+                    ckt->CKTlanding = 0;
+                }
                 ckt->CKTdelta = newdelta;
 
                 /* Enhancement-679 (hunt F8 of 2026-09-19): a node the DC-path
@@ -1320,6 +1340,8 @@ resume:
                 redostep = 1;
 #endif
                 ckt->CKTdelta = newdelta;
+                /* Enhancement-759: the retry of a forced rejection is the landing */
+                ckt->CKTlanding = ckt->CKTforceReject ? 1 : 0;
                 /* Enhancement-128: a HIGH rejection RATE means the current order
                  * overreaches the local dynamics (a stiff / fast-slewing region).
                  * CKTorderRej is a leaky bucket -- +1 per rejection, -1 per accepted
@@ -1328,8 +1350,8 @@ resume:
                  * order toward the robust low order, while the isolated rejections
                  * normal on a smooth high-order run stay near zero and leave the order
                  * (and its efficiency) intact. Bounded so it cannot run away. */
-                if (ckt->CKTdynorder && ckt->CKTorder > 1) {
-                    ckt->CKTorderRej += 2;
+                if (ckt->CKTdynorder && ckt->CKTorder > 1 && !ckt->CKTforceReject) {
+                    ckt->CKTorderRej += 2;   /* E-759: a landing is not the order's fault */
                     if (ckt->CKTorderRej > 8)
                         ckt->CKTorderRej = 8;
                     if (ckt->CKTorderRej >= 4) {

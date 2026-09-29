@@ -15,6 +15,47 @@ use crate::{CallBackKind, CurrentKind, ParamKind, PlaceKind};
 /// unlowered `ExprId` inside the branch) -- used by `lower_event_control`'s
 /// `cross`/`above`/`timer` edge-detection logic, which combines several
 /// already-computed boolean `Value`s rather than source-level expressions.
+/// Enhancement-759: see `event_prev_sample`.
+struct EventSample {
+    prev_eval: Value,
+    /// the slot `prev_eval` is read from (rewritten at a retry's first iterate)
+    prev_idx: u32,
+    /// this iterate's value of the expression
+    current: Value,
+    acc: Value,
+    is_initial: Value,
+    in_tran: Value,
+    new_point: Value,
+    /// the first iterate of an attempt (a new point, or a retry's new time)
+    first_iter: Value,
+    accepted_rule: Value,
+}
+
+/// Enhancement-759: what `event_landing_context` decided for one iterate.
+struct LandingCtx {
+    /// this iterate may ask for a landing
+    may_request: Value,
+    /// this iterate may run the body (an edge and no request of its own)
+    may_fire: Value,
+    /// the body runs now: the last request was DECLINED (the point it asked
+    /// to redo was accepted), so the crossing has been passed without it
+    fire_declined: Value,
+    /// this attempt is a landing this event asked for
+    landing_att: Value,
+    /// what a request made at this iterate writes to the pending slot: 1,
+    /// or 2 for a refinement asked from a landing attempt
+    request_gen: Value,
+    first_iter: Value,
+    pend_idx: u32,
+    /// the margin the last request used
+    margin_idx: u32,
+    short_idx: u32,
+    fired_idx: u32,
+    req_idx: u32,
+    stamp_idx: u32,
+    abstime: Value,
+}
+
 pub(crate) fn bool_and(ctx: &mut LoweringCtx, a: Value, b: Value) -> Value {
     ctx.make_select(a, |_, branch| if branch { b } else { FALSE })
 }
@@ -246,12 +287,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
             // at all. Wrapping the BODY in an `if` is not equivalent: the event
             // still fires and still controls the timestep. Gating the FIRED bool
             // leaves the event itself dormant.
-            Event::Cross { expr, dir, enable, .. } => {
-                let fired = self.lower_cross(*expr, *dir);
+            Event::Cross { expr, dir, time_tol, expr_tol, enable, .. } => {
+                let fired = self.lower_cross(*expr, *dir, *time_tol, *expr_tol);
                 self.gate_on_enable(fired, *enable)
             }
-            Event::Above { expr, enable, .. } => {
-                let fired = self.lower_above(*expr);
+            Event::Above { expr, time_tol, expr_tol, enable, .. } => {
+                let fired = self.lower_above(*expr, *time_tol, *expr_tol);
                 self.gate_on_enable(fired, *enable)
             }
             Event::Timer { t0, period, enable, .. } => {
@@ -330,11 +371,19 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// never fires (there is no real "previous" sample yet): `raw_prev` is seeded with the
     /// current value itself on `IsInitialStep`, making the first "transition" trivially a
     /// non-transition.
-    fn lower_above(&mut self, expr: ExprId) -> Value {
+    fn lower_above(
+        &mut self,
+        expr: ExprId,
+        time_tol: Option<ExprId>,
+        expr_tol: Option<ExprId>,
+    ) -> Value {
         let current = self.lower_expr(expr);
-        let (raw_prev, idx) = self.new_event_state();
-        let is_initial = self.ctx.use_param(ParamKind::IsInitialStep);
-        let prev = self.ctx.make_select(is_initial, |_, branch| if branch { current } else { raw_prev });
+        // Enhancement-759: the accepted sample beside the previous evaluation's,
+        // and the landing context (see `event_landing_context`)
+        let smp = self.event_prev_sample(current);
+        let is_initial = smp.is_initial;
+        let lc = self.event_landing_context(&smp);
+        let prev = smp.prev_eval;
 
         // Enhancement-587 (hunt F3 of 2026-09-07): a crossing needs a previous
         // sample on the OTHER side. `prev <= 0 && cur > 0` counted an expression
@@ -382,10 +431,22 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let fired = bool_and(self.ctx, fired, edge_ok);
 
         let init_pos = bool_and(self.ctx, is_initial, is_above);
-        let fired = bool_or(self.ctx, fired, init_pos);
 
-        self.ctx.def_place(PlaceKind::EventState(idx), current);
-        fired
+        // Enhancement-759: in a transient the rise between the accepted sample
+        // and this iterate is landed on (see `event_landing_context`); the
+        // initialization event is untouched
+        let and = |ctx: &mut LoweringCtx, a: Value, b: Value| ctx.ins().select(a, b, FALSE);
+        let acc_below = self.ctx.ins().flt(smp.acc, F_ZERO);
+        let present = and(self.ctx, acc_below, is_at_or_above);
+        let present = and(self.ctx, present, smp.in_tran);
+        let ask = and(self.ctx, present, lc.may_request);
+        let requested = self.localise_crossing(ask, smp.acc, current, time_tol, expr_tol, &lc);
+        let not_requested = self.ctx.ins().select(requested, FALSE, TRUE);
+        let fired = and(self.ctx, fired, not_requested);
+        let fired = and(self.ctx, fired, lc.may_fire);
+        let fired = self.ctx.ins().select(lc.fire_declined, TRUE, fired);
+        self.event_landing_record(&lc, present, requested, fired);
+        bool_or(self.ctx, fired, init_pos)
     }
 
     /// Lowers `@(cross(expr, dir))`: fires on any evaluation-to-evaluation zero-crossing of
@@ -429,69 +490,391 @@ impl BodyLoweringCtx<'_, '_, '_> {
         })
     }
 
-    fn lower_cross(&mut self, expr: ExprId, dir: Option<ExprId>) -> Value {
-        let current = self.lower_expr(expr);
+    /// Enhancement-759 (speed hunt F2 of 2026-09-28): what an event needs to
+    /// know about the point it is evaluated at, beside the previous
+    /// evaluation's value of its expression.
+    ///
+    /// An event's edge used to be detected between consecutive EVALUATIONS,
+    /// whatever point they belonged to. Three things followed. The edge was
+    /// gone by the CONVERGED iterate of the point that crossed (its
+    /// successors compare with each other), which is the one iterate whose
+    /// step bound the simulator reads, so nothing could land the step on the
+    /// crossing. A rejected attempt's iterate served as "previous" for the
+    /// retry, so a retry that sat before the crossing saw a phantom edge back
+    /// across it. And the body ran at whichever attempt first saw the edge,
+    /// so a `$strobe` or `$finish` in it was discarded with a rejected
+    /// attempt.
+    ///
+    /// The simulator counts accepted points (`$osdi$point`, ngspice's
+    /// osdiaccept.c) and serves the step under way (`$osdi$delta`, E-678).
+    /// The value the expression had at the last ACCEPTED point is kept
+    /// (`acc`): when the count changes, the previous evaluation was the
+    /// accepted point's; while the count stands -- the iterates of one
+    /// attempt, a rejected attempt and its retry -- the sample stands. The
+    /// first iterate of an attempt is the one whose time is new. Outside a
+    /// transient past t = 0, or where the count is not served, `acc` is not
+    /// used and the events keep E-587's evaluation-to-evaluation rules.
+    fn event_prev_sample(&mut self, current: Value) -> EventSample {
         let (raw_prev, idx) = self.new_event_state();
+        let (raw_acc, acc_idx) = self.new_event_state();
+        let (raw_point, pt_idx) = self.new_event_state();
         let is_initial = self.ctx.use_param(ParamKind::IsInitialStep);
-        // Enhancement-713 (robustness campaign F7 of 2026-09-23): every
-        // conjunction below was a `make_select` -- a branch, two arms and a
-        // merge block -- so one event opened seven diamonds and 500 events
-        // 3 500, all folded to selects by LLVM a moment later. The operands are
-        // pure comparisons, so the selects are emitted directly.
-        let prev = self.ctx.ins().select(is_initial, current, raw_prev);
-        let and = |ctx: &mut LoweringCtx, a: Value, b: Value| ctx.ins().select(a, b, FALSE);
-        let or = |ctx: &mut LoweringCtx, a: Value, b: Value| ctx.ins().select(a, TRUE, b);
-
-        // Enhancement-587: strict on the previous side, inclusive on the
-        // current side -- see `lower_above`. An expression that starts exactly
-        // at zero and rises is not a crossing; one that lands exactly on zero
-        // from the other side is, once.
-        let prev_lt = self.ctx.ins().flt(prev, F_ZERO);
-        let cur_ge = self.ctx.ins().fge(current, F_ZERO);
-        let rising = and(self.ctx, prev_lt, cur_ge);
-
-        let prev_gt = self.ctx.ins().fgt(prev, F_ZERO);
-        let cur_le = self.ctx.ins().fle(current, F_ZERO);
-        let falling = and(self.ctx, prev_gt, cur_le);
-
-        let either = or(self.ctx, rising, falling);
-
-        let fired = if let Some(dir) = dir {
-            let dir = self.lower_expr(dir);
-            let dir = self.guard_event_direction("@(cross)", dir);
-            let dir_pos = self.ctx.ins().fgt(dir, F_ZERO);
-            let dir_neg = self.ctx.ins().flt(dir, F_ZERO);
-            let fired_pos = and(self.ctx, dir_pos, rising);
-            let fired_neg = and(self.ctx, dir_neg, falling);
-            let dir_le = self.ctx.ins().fle(dir, F_ZERO);
-            let dir_ge = self.ctx.ins().fge(dir, F_ZERO);
-            let dir_is_zero = and(self.ctx, dir_le, dir_ge);
-            let fired_either = and(self.ctx, dir_is_zero, either);
-            let fired_pos_or_neg = or(self.ctx, fired_pos, fired_neg);
-            or(self.ctx, fired_pos_or_neg, fired_either)
-        } else {
-            either
-        };
-
-        // LRM 5.10.3.2 (events audit): "The cross() function will not
-        // generate events for non-transient analyses, such as ac, dc, or
-        // noise" and it "can only generate an event after the simulation time
-        // has advanced from zero". It fired during .dc sweeps and off the
-        // Newton iterates of the t=0 operating point (the trajectory from the
-        // 0 initial guess walks through the threshold). The FIRED bool is
-        // gated -- not the state, which keeps tracking through DC and the
-        // operating point so the first transient step compares against the
-        // converged OP value rather than replaying it.
+        let prev_eval = self.ctx.ins().select(is_initial, current, raw_prev);
+        let key = self.ctx.sconst("$osdi$point");
+        let minus_one = self.ctx.fconst(-1.0);
+        let point = self.ctx.call1(CallBackKind::SimParamOpt, &[key, minus_one]);
+        let served = self.ctx.ins().fge(point, F_ZERO);
+        let point_changed = self.ctx.ins().fne(point, raw_point);
+        let new_point = self.ctx.ins().select(is_initial, TRUE, point_changed);
+        let acc = self.ctx.ins().select(new_point, prev_eval, raw_acc);
+        let (raw_time, time_idx) = self.new_event_state();
+        let abstime = self.ctx.use_param(ParamKind::Abstime);
+        let time_changed = self.ctx.ins().fne(abstime, raw_time);
+        let first_iter = self.ctx.ins().select(new_point, TRUE, time_changed);
         let name = self.ctx.sconst("tran");
         let tran_hit = self.ctx.call1(CallBackKind::Analysis, &[name]);
         let zero = self.ctx.iconst(0);
         let is_tran = self.ctx.ins().ine(tran_hit, zero);
-        let abstime = self.ctx.use_param(ParamKind::Abstime);
         let t_pos = self.ctx.ins().fgt(abstime, F_ZERO);
-        let gate = and(self.ctx, is_tran, t_pos);
-        let fired = and(self.ctx, fired, gate);
-
+        let in_tran = self.ctx.ins().select(is_tran, t_pos, FALSE);
+        let accepted_rule = self.ctx.ins().select(in_tran, served, FALSE);
         self.ctx.def_place(PlaceKind::EventState(idx), current);
+        self.ctx.def_place(PlaceKind::EventState(acc_idx), acc);
+        self.ctx.def_place(PlaceKind::EventState(pt_idx), point);
+        self.ctx.def_place(PlaceKind::EventState(time_idx), abstime);
+        EventSample {
+            prev_eval,
+            prev_idx: idx,
+            current,
+            acc,
+            is_initial,
+            in_tran,
+            new_point,
+            first_iter,
+            accepted_rule,
+        }
+    }
+
+    /// The `cross` edge between `prev` and `current`, filtered by `dir`
+    /// (E-587's rule: strict on the previous side, inclusive on the current).
+    fn cross_edge(&mut self, prev: Value, current: Value, dir: Option<Value>) -> Value {
+        let and = |ctx: &mut LoweringCtx, a: Value, b: Value| ctx.ins().select(a, b, FALSE);
+        let or = |ctx: &mut LoweringCtx, a: Value, b: Value| ctx.ins().select(a, TRUE, b);
+        let prev_lt = self.ctx.ins().flt(prev, F_ZERO);
+        let cur_ge = self.ctx.ins().fge(current, F_ZERO);
+        let rising = and(self.ctx, prev_lt, cur_ge);
+        let prev_gt = self.ctx.ins().fgt(prev, F_ZERO);
+        let cur_le = self.ctx.ins().fle(current, F_ZERO);
+        let falling = and(self.ctx, prev_gt, cur_le);
+        let either = or(self.ctx, rising, falling);
+        match dir {
+            Some(dir) => {
+                let dir_pos = self.ctx.ins().fgt(dir, F_ZERO);
+                let dir_neg = self.ctx.ins().flt(dir, F_ZERO);
+                let fired_pos = and(self.ctx, dir_pos, rising);
+                let fired_neg = and(self.ctx, dir_neg, falling);
+                let dir_le = self.ctx.ins().fle(dir, F_ZERO);
+                let dir_ge = self.ctx.ins().fge(dir, F_ZERO);
+                let dir_is_zero = and(self.ctx, dir_le, dir_ge);
+                let fired_either = and(self.ctx, dir_is_zero, either);
+                let fired_pos_or_neg = or(self.ctx, fired_pos, fired_neg);
+                or(self.ctx, fired_pos_or_neg, fired_either)
+            }
+            None => either,
+        }
+    }
+
+    /// Enhancement-759: land the simulator on the crossing, and say whether
+    /// this iterate asked for it. `present` says the crossing lies between
+    /// the last accepted sample `acc` and `current`; the crossing sits
+    /// `delta * acc / (acc - current)` after the last accepted point, `delta`
+    /// the step under way. When this attempt overshoots that by more than
+    /// half the margin -- the event's `time_tol`, else a thousandth of the
+    /// step -- a LANDING REQUEST is written into the bound-step slot as
+    /// `-(2 + t)`, `t` the offset to land at (the crossing plus the margin), a
+    /// value no bound can be (a bound is positive, E-24's discontinuity
+    /// sentinel is -1). ngspice's OSDItrunc turns it into a forced rejection
+    /// of this attempt and a retry of exactly that size, however close to the
+    /// step it is. The earliest of several requests in one evaluation wins.
+    /// `present` is already gated by `event_landing_context`'s rules (no
+    /// request from a retry's first iterate, a landing attempt, or an attempt
+    /// a body fired in); none either when `|current|` is within `expr_tol`.
+    /// LRM 5.10.3: the simulator shall place a timepoint at the crossing,
+    /// within the tolerances; it used to resolve it to the step grid.
+    fn localise_crossing(
+        &mut self,
+        present: Value,
+        acc: Value,
+        current: Value,
+        time_tol: Option<ExprId>,
+        expr_tol: Option<ExprId>,
+        lc: &LandingCtx,
+    ) -> Value {
+        let and = |ctx: &mut LoweringCtx, a: Value, b: Value| ctx.ins().select(a, b, FALSE);
+        let zero = self.ctx.fconst(0.0);
+        let key = self.ctx.sconst("$osdi$delta");
+        let delta = self.ctx.call1(CallBackKind::SimParamOpt, &[key, F_ZERO]);
+        let have_delta = self.ctx.ins().fgt(delta, zero);
+        let diff = self.ctx.ins().fsub(acc, current);
+        let frac = self.ctx.ins().fdiv(acc, diff);
+        let off = self.ctx.ins().fmul(delta, frac);
+        let ttol = match time_tol {
+            Some(e) => self.lower_expr(e),
+            None => zero,
+        };
+        // the margin: time_tol when given, else a thousandth of the step; never
+        // below a billionth of it
+        let rel = self.ctx.fconst(1.0e-3);
+        let m_rel = self.ctx.ins().fmul(delta, rel);
+        let tol_given = self.ctx.ins().fgt(ttol, zero);
+        let margin = self.ctx.ins().select(tol_given, ttol, m_rel);
+        let rel_floor = self.ctx.fconst(1.0e-9);
+        let m_floor = self.ctx.ins().fmul(delta, rel_floor);
+        let below_floor = self.ctx.ins().flt(margin, m_floor);
+        let margin = self.ctx.ins().select(below_floor, m_floor, margin);
+        let target = self.ctx.ins().fadd(off, margin);
+        let over = self.ctx.ins().fsub(delta, target);
+        let half = self.ctx.fconst(0.5);
+        let half_margin = self.ctx.ins().fmul(margin, half);
+        // a landing attempt is judged against the margin its request used (a
+        // whole one, not half): the margin follows the step, and the landing
+        // step is shorter than the step that asked, so an exact landing --
+        // the requested margin past the crossing -- would look overshot by
+        // the shorter margin and be refined for nothing
+        let stored = self.ctx.use_param(ParamKind::EventState(lc.margin_idx));
+        let threshold = self.ctx.ins().select(lc.landing_att, stored, half_margin);
+        let overshot = self.ctx.ins().fgt(over, threshold);
+        let etol = match expr_tol {
+            Some(e) => self.lower_expr(e),
+            None => zero,
+        };
+        let neg_cur = self.ctx.ins().fneg(current);
+        let cur_neg = self.ctx.ins().flt(current, zero);
+        let acur = self.ctx.ins().select(cur_neg, neg_cur, current);
+        let outside = self.ctx.ins().fgt(acur, etol);
+        let refine = and(self.ctx, present, have_delta);
+        let refine = and(self.ctx, refine, overshot);
+        let refine = and(self.ctx, refine, outside);
+        let two = self.ctx.fconst(2.0);
+        let enc = self.ctx.ins().fadd(two, target);
+        let request = self.ctx.ins().fneg(enc);
+        let cur_bound = self.ctx.use_place(PlaceKind::BoundStep);
+        let minus_one = self.ctx.fconst(-1.0);
+        let has_req = self.ctx.ins().flt(cur_bound, minus_one);
+        let mine_later = self.ctx.ins().flt(request, cur_bound);
+        let keep_old = and(self.ctx, has_req, mine_later);
+        let chosen = self.ctx.ins().select(keep_old, cur_bound, request);
+        let bound = self.ctx.ins().select(refine, chosen, cur_bound);
+        self.ctx.def_place(PlaceKind::BoundStep, bound);
+        let margin_next = self.ctx.ins().select(refine, margin, stored);
+        self.ctx.def_place(PlaceKind::EventState(lc.margin_idx), margin_next);
+        refine
+    }
+
+    /// Enhancement-759: the module's attempt flags (see `HirInterner::
+    /// event_attempt_flags`), allocated on first use. Returns the slot
+    /// indices (fired, requested, stamp).
+    fn event_attempt_flags(&mut self) -> (u32, u32, u32) {
+        if let Some(slots) = self.ctx.intern.event_attempt_flags {
+            return slots;
+        }
+        let (_, fired) = self.new_event_state();
+        let (_, requested) = self.new_event_state();
+        let (_, stamp) = self.new_event_state();
+        self.ctx.intern.event_attempt_flags = Some((fired, requested, stamp));
+        (fired, requested, stamp)
+    }
+
+    /// Enhancement-759: what a `cross`/`above` may do at this iterate. The
+    /// edge stays E-587's, between consecutive evaluations, with these rules
+    /// in a transient where the accepted-point count is served:
+    ///
+    /// * a RETRY's first iterate (`retry`: the time changed, no point was
+    ///   accepted) is skipped -- ngspice starts a redone attempt's Newton
+    ///   iteration from the REJECTED attempt's solution, so the expression
+    ///   this iterate sees is that attempt's (past the crossing that made it
+    ///   ask, or wherever the LTE rejection left it), not a value at the new
+    ///   time. The iterate neither fires nor requests, and the "previous
+    ///   evaluation" the next iterate is compared against is the last
+    ///   ACCEPTED sample, so an edge the landing reaches reappears there --
+    ///   which is where the body belongs, its `$abstime` the crossing's --
+    ///   and a retry that landed short sees no phantom edge back across the
+    ///   threshold;
+    /// * a LANDING ATTEMPT (a retry this event asked for) may ask ONCE more
+    ///   when it still overshoots the crossing by more than half the margin
+    ///   -- the linear interpolation over a curved expression (a sine over a
+    ///   60 ns step) lands 0.2 ns past it, the second interpolation, over
+    ///   the short interval, within the margin; the refinement's landing
+    ///   makes no request of its own (the pending slot carries the
+    ///   generation: 1 a request, 2 a refinement);
+    /// * an iterate that asks for a landing does not fire -- the attempt is
+    ///   about to be redone at the crossing;
+    /// * the module's ATTEMPT FLAGS: once any body has fired in this attempt,
+    ///   no event asks for a landing until the attempt is over -- an
+    ///   interpolation over an attempt whose bodies changed the model (a
+    ///   reset that drops the expression through a second threshold at the
+    ///   same instant) locates nothing, and the crossing fires as E-587 did;
+    ///   and once any event has asked, no later body fires in the attempt,
+    ///   which is being discarded;
+    /// * a request ngspice DECLINED -- the point it asked to redo was
+    ///   accepted instead (the landing would sit under the step floor, E-504,
+    ///   or the step is already at its minimum) -- has passed the crossing
+    ///   without the body: it runs at the next point's first iterate, on the
+    ///   accepted solution (`fire_declined`), as E-587's rule would have run
+    ///   it one point earlier;
+    /// * a landing that fell SHORT of its crossing (the expression is not
+    ///   linear over the step: an exponential reset) is not chased -- the
+    ///   next attempt makes no request and the crossing fires where it
+    ///   appears (`short_idx`: 2 written by the short landing, 1 while the
+    ///   attempt after it runs, 0 again after that).
+    ///
+    /// Everything else (the operating point, dc sweeps, a simulator without
+    /// the count) is as before.
+    fn event_landing_context(&mut self, smp: &EventSample) -> LandingCtx {
+        let and = |ctx: &mut LoweringCtx, a: Value, b: Value| ctx.ins().select(a, b, FALSE);
+        let (raw_pending, pend_idx) = self.new_event_state();
+        let (raw_landing, land_idx) = self.new_event_state();
+        let (raw_short, short_idx) = self.new_event_state();
+        let (_, margin_idx) = self.new_event_state();
+        let (fired_idx, req_idx, stamp_idx) = self.event_attempt_flags();
+        let zero = self.ctx.fconst(0.0);
+        let one = self.ctx.fconst(1.0);
+        let two = self.ctx.fconst(2.0);
+        let not_new = self.ctx.ins().select(smp.new_point, FALSE, TRUE);
+        let retry = and(self.ctx, smp.first_iter, not_new);
+        let retry = and(self.ctx, retry, smp.accepted_rule);
+        let pending = self.ctx.ins().fgt(raw_pending, zero);
+        let landing_start = and(self.ctx, retry, pending);
+        // the generation of the landing under way: what the request wrote
+        let gen_start = self.ctx.ins().select(landing_start, raw_pending, zero);
+        let gen_att = self.ctx.ins().select(smp.first_iter, gen_start, raw_landing);
+        let refinement = self.ctx.ins().fgt(gen_att, one);
+        // a declined request: the point was accepted with the request standing
+        let declined = and(self.ctx, smp.new_point, pending);
+        let declined = and(self.ctx, declined, smp.accepted_rule);
+        // a landing that fell short holds the next attempt back
+        let short_first = self.ctx.ins().feq(raw_short, two);
+        let short_later = self.ctx.ins().fgt(raw_short, zero);
+        let short_hold = self.ctx.ins().select(smp.first_iter, short_first, short_later);
+        let landing_att = self.ctx.ins().fgt(gen_att, zero);
+        self.ctx.def_place(PlaceKind::EventState(land_idx), gen_att);
+        // the next iterate of a retry is compared against the accepted sample
+        let prev_next = self.ctx.ins().select(retry, smp.acc, smp.current);
+        self.ctx.def_place(PlaceKind::EventState(smp.prev_idx), prev_next);
+        // the attempt flags, valid while stamped with this attempt's time
+        let abstime = self.ctx.use_param(ParamKind::Abstime);
+        let stamp = self.ctx.use_place(PlaceKind::EventState(stamp_idx));
+        let same_attempt = self.ctx.ins().feq(stamp, abstime);
+        let raw_fired = self.ctx.use_place(PlaceKind::EventState(fired_idx));
+        let raw_req = self.ctx.use_place(PlaceKind::EventState(req_idx));
+        let fired_any = self.ctx.ins().select(same_attempt, raw_fired, zero);
+        let req_any = self.ctx.ins().select(same_attempt, raw_req, zero);
+        let fired_any = self.ctx.ins().fgt(fired_any, zero);
+        let req_any = self.ctx.ins().fgt(req_any, zero);
+        let not_retry = self.ctx.ins().select(retry, FALSE, TRUE);
+        let not_refinement = self.ctx.ins().select(refinement, FALSE, TRUE);
+        let not_fired_any = self.ctx.ins().select(fired_any, FALSE, TRUE);
+        let not_short = self.ctx.ins().select(short_hold, FALSE, TRUE);
+        let may_request = and(self.ctx, smp.accepted_rule, not_retry);
+        let may_request = and(self.ctx, may_request, not_refinement);
+        let may_request = and(self.ctx, may_request, not_fired_any);
+        let may_request = and(self.ctx, may_request, not_short);
+        let not_req_any = self.ctx.ins().select(req_any, FALSE, TRUE);
+        let may_fire = and(self.ctx, not_retry, not_req_any);
+        // the short-landing memory: 1 while the attempt after a short landing
+        // runs (a landing attempt itself rewrites it, see `event_landing_record`)
+        let hold_next = self.ctx.ins().select(short_hold, one, zero);
+        self.ctx.def_place(PlaceKind::EventState(short_idx), hold_next);
+        LandingCtx {
+            may_request,
+            may_fire,
+            fire_declined: declined,
+            landing_att,
+            request_gen: self.ctx.ins().select(landing_att, two, one),
+            first_iter: smp.first_iter,
+            pend_idx,
+            margin_idx,
+            short_idx,
+            fired_idx,
+            req_idx,
+            stamp_idx,
+            abstime,
+        }
+    }
+
+    /// Enhancement-759: records this event's request and firing in its
+    /// pending slot and the module's attempt flags, and whether a landing
+    /// attempt fell short of its crossing (`present`: the crossing lies
+    /// between the accepted sample and this iterate; a landing attempt's
+    /// last iterate decides).
+    fn event_landing_record(
+        &mut self,
+        lc: &LandingCtx,
+        present: Value,
+        requested: Value,
+        fired: Value,
+    ) {
+        let zero = self.ctx.fconst(0.0);
+        let one = self.ctx.fconst(1.0);
+        let two = self.ctx.fconst(2.0);
+        let pend_next = self.ctx.ins().select(requested, lc.request_gen, zero);
+        self.ctx.def_place(PlaceKind::EventState(lc.pend_idx), pend_next);
+        let not_first = self.ctx.ins().select(lc.first_iter, FALSE, TRUE);
+        let judge = self.ctx.ins().select(lc.landing_att, not_first, FALSE);
+        let short_now = self.ctx.ins().select(present, zero, two);
+        let cur_short = self.ctx.use_place(PlaceKind::EventState(lc.short_idx));
+        let short_next = self.ctx.ins().select(judge, short_now, cur_short);
+        self.ctx.def_place(PlaceKind::EventState(lc.short_idx), short_next);
+        let stamp = self.ctx.use_place(PlaceKind::EventState(lc.stamp_idx));
+        let same_attempt = self.ctx.ins().feq(stamp, lc.abstime);
+        let raw_fired = self.ctx.use_place(PlaceKind::EventState(lc.fired_idx));
+        let raw_req = self.ctx.use_place(PlaceKind::EventState(lc.req_idx));
+        let fired_any = self.ctx.ins().select(same_attempt, raw_fired, zero);
+        let req_any = self.ctx.ins().select(same_attempt, raw_req, zero);
+        let fired_next = self.ctx.ins().select(fired, one, fired_any);
+        let req_next = self.ctx.ins().select(requested, one, req_any);
+        self.ctx.def_place(PlaceKind::EventState(lc.fired_idx), fired_next);
+        self.ctx.def_place(PlaceKind::EventState(lc.req_idx), req_next);
+        self.ctx.def_place(PlaceKind::EventState(lc.stamp_idx), lc.abstime);
+    }
+
+    fn lower_cross(
+        &mut self,
+        expr: ExprId,
+        dir: Option<ExprId>,
+        time_tol: Option<ExprId>,
+        expr_tol: Option<ExprId>,
+    ) -> Value {
+        let current = self.lower_expr(expr);
+        let smp = self.event_prev_sample(current);
+        let dir = match dir {
+            Some(dir) => {
+                let dir = self.lower_expr(dir);
+                Some(self.guard_event_direction("@(cross)", dir))
+            }
+            None => None,
+        };
+        let and = |ctx: &mut LoweringCtx, a: Value, b: Value| ctx.ins().select(a, b, FALSE);
+        // Enhancement-759: the landing context (see `event_landing_context`)
+        let lc = self.event_landing_context(&smp);
+        // LRM 5.10.3.2 (events audit): "The cross() function will not
+        // generate events for non-transient analyses, such as ac, dc, or
+        // noise" and it "can only generate an event after the simulation time
+        // has advanced from zero". The FIRED bool is gated -- not the state,
+        // which keeps tracking through DC and the operating point.
+        let fired = self.cross_edge(smp.prev_eval, current, dir);
+        let fired = and(self.ctx, fired, smp.in_tran);
+        // the crossing between the accepted sample and this iterate is what
+        // the step is landed on
+        let present = self.cross_edge(smp.acc, current, dir);
+        let present = and(self.ctx, present, smp.in_tran);
+        let ask = and(self.ctx, present, lc.may_request);
+        let requested = self.localise_crossing(ask, smp.acc, current, time_tol, expr_tol, &lc);
+        let not_requested = self.ctx.ins().select(requested, FALSE, TRUE);
+        let fired = and(self.ctx, fired, not_requested);
+        let fired = and(self.ctx, fired, lc.may_fire);
+        let fired = self.ctx.ins().select(lc.fire_declined, TRUE, fired);
+        self.event_landing_record(&lc, present, requested, fired);
         fired
     }
 

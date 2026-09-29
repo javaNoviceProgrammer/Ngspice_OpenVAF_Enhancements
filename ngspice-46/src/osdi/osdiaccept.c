@@ -411,8 +411,31 @@ static void slew_accept(CKTcircuit *ckt, GENmodel *inModel,
   }
 }
 
+/* Enhancement-759 (speed hunt F2 of 2026-09-28): a count of the accepted
+ * points, served to the compiled models as the private simparam
+ * `$osdi$point` (the `$osdi$...` namespace of E-678). A model's event
+ * (`@(cross)`, `@(above)`) used to detect its edge between consecutive
+ * EVALUATIONS, so at a new point only the first Newton iterate saw the
+ * edge, and a rejected point's iterate served as "previous" for the retry;
+ * with this count a model knows when the point it is evaluating is a new
+ * one and keeps the value its expression had at the last ACCEPTED point.
+ * OSDIaccept runs once per accepted point per loaded object, so the count
+ * advances once per (time, mode), not per call. */
+static double osdi_point_seq = 0.0;
+static double osdi_point_last_time = -1.0;
+static long osdi_point_last_mode = -1;
+
+extern double OSDIpointSeq(void) { return osdi_point_seq; }
+
 int OSDIaccept(CKTcircuit *ckt, GENmodel *inModel) {
   OsdiRegistryEntry *entry = osdi_reg_entry_model(inModel);
+
+  if (ckt->CKTtime != osdi_point_last_time ||
+      (long)ckt->CKTmode != osdi_point_last_mode) {
+    osdi_point_seq += 1.0;
+    osdi_point_last_time = ckt->CKTtime;
+    osdi_point_last_mode = (long)ckt->CKTmode;
+  }
 
   /* LRM 9.4.6/9.5.9: the timepoint was accepted -- flush the deferred display
    * and file output of its converged iteration. Runs once per accept in

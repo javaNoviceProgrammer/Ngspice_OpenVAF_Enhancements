@@ -314,6 +314,9 @@ extern void OSDImcCornerPriority(bool on);
 extern void OSDImcCornerLeave(CKTcircuit *ckt);
 extern bool OSDImcOptionSet(void);
 extern void OSDImcPreserveTrial(void);
+/* Enhancement-758: the `cd` command changed the process directory; the
+ * cached $simparam$str("cwd") answer is re-read on the next query. */
+extern void OSDIcwdChanged(void);
 extern void OSDImcSigmaScale(double s);
 /* E-536: the hunt round's known-open repairs.
  * InterruptReset -- a keyboard interrupt longjmps past every bracket clear;

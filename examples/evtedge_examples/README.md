@@ -1,10 +1,10 @@
-# evtedge_examples — crossing edges and small-signal `transition`/`slew` (Enhancement-587)
+# evtedge_examples — crossing edges and small-signal `transition`/`slew` (Enhancement-587), and the landing of the step on a crossing (Enhancement-759)
 
 ```
 python3 verify_evtedge.py
 ```
 
-14 checks, both solvers.
+24 checks, both solvers (18 of 24 on the E-757 toolchain).
 
 ## The need
 
@@ -43,3 +43,22 @@ Two findings of the 2026-09-07 hunt:
 | `transition(x, 5u, 1u)` | exactly −180° at 100 kHz |
 | noise | unity transfer through `transition` |
 | transient | the 1 µs ramp and the 1 V/µs slew as before |
+
+## Enhancement-759: the step lands on the crossing
+
+`evtland.va` is a compiled switch whose event bodies record when they ran (`trise`,
+`tfall`, `tabove`, the counters, a `$strobe`), and `landdisc` the same switch with a
+`$discontinuity(0)` in the body. A crossing used to be resolved to the step grid: on a
+0→1→0 V ramp over 2 µs at a 100 ns step the switch closed 31.2 ns late, the same as a
+plain `if` and as the built-in `sw`, and `time_tol` was ignored. Now the event asks
+ngspice to redo the step at the interpolated crossing (plus `time_tol`, or a thousandth
+of the step) and the body runs there.
+
+| check [9] | result |
+|---|---|
+| the rising, falling and `above` bodies' `$abstime` | 500.04 ns, 1500.00 ns, 500.04 ns for crossings at 500 and 1500 ns |
+| the first output point on the new side | at the landing (was 31.2 ns late) |
+| a `$strobe` in the body | printed once per crossing, with the crossing time |
+| `time_tol = 1p` | the bodies within 2 ps (500.001 ns) |
+| the 500 MHz pulse drive at a 1 ns step over 2 µs | exactly 1000 / 1000 / 2000 (was 1001 / 1001 / 2002) |
+| `$discontinuity(0)` in the body | the landing kept, the eighth is the step after it (75 points, 3 rejected; an interim build looped at 126 and 23) |

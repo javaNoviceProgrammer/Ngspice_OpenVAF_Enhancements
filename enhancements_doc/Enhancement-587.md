@@ -67,3 +67,5 @@ E-512 record — and `absdelay`, which is a true delay, keeps its phase.
 | `transition(x, 5u, 1u)` | exactly −180° at 100 kHz |
 | noise | the spectrum through `transition` equals the spectrum at its input |
 | transient | the 1 µs ramp is 0.5 half-way and 1 at its end; the 1 V/µs slew likewise |
+
+**Update ([E-759](Enhancement-759.md)).** The edge stays evaluation-to-evaluation, and in a transient the event also keeps the sample at the last accepted point, asks ngspice to land the step on the interpolated crossing, skips the first iterate of a redone attempt (ngspice starts it from the rejected solution) and compares the next one against the accepted sample. The `evtedge` suite's section [9] holds the landing checks; sections [1]–[8] are unchanged, the sine on its threshold still counts 2/2/4/2.

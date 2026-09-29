@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+// Enhancement-758: reports $simparam$str("cwd") once per analysis, so a run can
+// show which directory the kernel answered with, before and after a `cd`.
+module cwdprobe(p, n);
+  inout p, n; electrical p, n;
+  string cw;
+  analog begin
+    @(initial_step) begin
+      cw = $simparam$str("cwd");
+      $strobe("cwd=%s", cw);
+    end
+    I(p,n) <+ V(p,n)/1k;
+  end
+endmodule

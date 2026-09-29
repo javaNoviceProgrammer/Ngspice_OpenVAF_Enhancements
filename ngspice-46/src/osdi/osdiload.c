@@ -573,15 +573,21 @@ static void slew_stamp(CKTcircuit *ckt, void *inst, OsdiExtraInstData *extra,
  * realisation of `idt(x, ic, assert)` reads to size its reset dynamics to
  * the analysis: the transient's print step, and the step being attempted
  * (both 0 outside a transient). No model spells them; the LRM-facing surface
- * above is unchanged. */
-#define NUM_SIM_PARAMS 17
+ * above is unchanged.
+ *
+ * Enhancement-759: `$osdi$point` is a third one -- the count of accepted
+ * points (osdiaccept.c), which the compiler's `@(cross)`/`@(above)`
+ * realisation reads to tell a new point's iterates from a retry's, so an
+ * event's edge is detected against the last ACCEPTED sample and the
+ * crossing can be landed on by bounding the retry step. */
+#define NUM_SIM_PARAMS 18
 char *sim_params[NUM_SIM_PARAMS + 1] = {
     "iniLim", "gmin", "gdev", "tnom",
     "simulatorVersion", "sourceScaleFactor",
     "epsmin", "reltol", "vntol", "abstol", "scale",
     "iteration", "abstime", "simulatorSubversion",
     "temp",
-    "$osdi$tstep", "$osdi$delta",
+    "$osdi$tstep", "$osdi$delta", "$osdi$point",
     NULL};
 /* Enhancement-25: string simulator parameters returned by $simparam$str.
  * "analysis_name" mirrors the analysis() naming ("dc"/"ac"/"tran"/"noise");
@@ -593,8 +599,9 @@ char *sim_params[NUM_SIM_PARAMS + 1] = {
  *   analysis_type   ngspice gives analyses no user-chosen names distinct from
  *                   their type, so the honest answer is the same
  *                   "dc"/"ac"/"tran"/"noise" string analysis_name carries
- *   cwd             the working directory, refreshed per query (a .control
- *                   `cd` can change it between runs)
+ *   cwd             the working directory, re-read after a .control `cd`
+ *                   (the one thing that changes it between runs; E-758
+ *                   caches it otherwise)
  *
  * `module`, `instance` and `path` stay OUT: the simparam channel is filled
  * per circuit, with no instance identity in reach, and inventing one would be
@@ -605,15 +612,34 @@ char *sim_params_str[NUM_SIM_PARAMS_STR + 1] =
     {"analysis_name", "simulator", "analysis_type", "cwd", NULL};
 char *sim_param_vals_str[NUM_SIM_PARAMS_STR] = {"dc", "ngspice", "dc", ""};
 
-/* kernel audit: $simparam$str("cwd"), LRM Table 9-28. */
+/* kernel audit: $simparam$str("cwd"), LRM Table 9-28.
+ *
+ * Enhancement-758 (speed hunt F1 of 2026-09-28): this used to call getcwd()
+ * on EVERY load call -- the table is filled per call, and the entry was
+ * "refreshed per query" -- and on macOS getcwd() opens and stats the
+ * directory chain: ~12 us per Newton iteration, paid by every deck that
+ * loads a compiled model whether or not any model ever asks for `cwd`,
+ * independent of the instance and model count. A one-instance transient of
+ * 1.2 M iterations spent 12.8 of its 14.4 s there; the E-752 10 Gb/s PRBS
+ * through a compiled 50 ohm / 0.4 pF channel took 3.07 s where the built-in
+ * RC took 0.14 s. The process directory changes only through the `cd`
+ * command (com_chdir.c, the one chdir() in the tree), which now invalidates
+ * the cached answer; nothing a model can observe has changed. */
+static char osdi_cwd_buf[1024];
+static bool osdi_cwd_stale = true;
+
+extern void OSDIcwdChanged(void) { osdi_cwd_stale = true; }
+
 static const char *osdi_cwd(void) {
-  static char buf[1024];
-  buf[0] = '\0';
+  if (osdi_cwd_stale) {
+    osdi_cwd_buf[0] = '\0';
 #ifdef HAVE_GETCWD
-  if (!getcwd(buf, sizeof(buf)))
-    buf[0] = '\0';
+    if (!getcwd(osdi_cwd_buf, sizeof(osdi_cwd_buf)))
+      osdi_cwd_buf[0] = '\0';
 #endif
-  return buf;
+    osdi_cwd_stale = false;
+  }
+  return osdi_cwd_buf;
 }
 
 double sim_param_vals[NUM_SIM_PARAMS] = {0};
@@ -807,7 +833,9 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt) {
        * attempted, for the compiler's idt reset realisation (see the
        * declaration); 0 outside a transient */
       (ckt->CKTmode & (MODETRAN | MODETRANOP)) ? ckt->CKTstep : 0.0,
-      (ckt->CKTmode & MODETRAN) ? ckt->CKTdelta : 0.0 };
+      (ckt->CKTmode & MODETRAN) ? ckt->CKTdelta : 0.0,
+      /* Enhancement-759: the accepted-point count */
+      OSDIpointSeq() };
   memcpy(&sim_param_vals, &sim_param_vals_, sizeof(double) * NUM_SIM_PARAMS);
 
   /* Enhancement-25: current analysis name for $simparam$str("analysis_name"),
@@ -836,7 +864,8 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt) {
   const char *analysis_name = osdi_analysis_name(ckt);
   sim_param_vals_str[0] = (char *)analysis_name;
   /* kernel audit, Table 9-28: type == the same derivation here (see the
-   * declaration comment), and the cwd is refreshed per query */
+   * declaration comment); the cwd is cached and re-read after a `cd`
+   * (Enhancement-758) */
   sim_param_vals_str[2] = (char *)analysis_name;
   sim_param_vals_str[3] = (char *)osdi_cwd();
 

@@ -163,7 +163,18 @@ impl Serializer<'_> {
                     wln!(sel, "\"{kind}\": \"{}\",", json_escaped(&name))
                 }
                 ValueDef::Const(Const::Float(val)) => {
-                    wln!(sel, "\"fconst\": {},", f64::from(val))
+                    // Enhancement-759: a non-finite constant is written as the
+                    // string "inf", "-inf" or "nan" -- JSON has no spelling for
+                    // it, and Rust's `{}` printed a bare `inf` that no parser
+                    // accepts. Every `cross`/`above` event now touches the
+                    // bound-step slot, whose initial value is infinity, so
+                    // every module with an event dumped an invalid file.
+                    let f = f64::from(val);
+                    if f.is_finite() {
+                        wln!(sel, "\"fconst\": {f},")
+                    } else {
+                        wln!(sel, "\"fconst\": \"{f}\",")
+                    }
                 }
                 ValueDef::Const(Const::Int(val)) => wln!(sel, "\"iconst\": {val},"),
                 ValueDef::Const(Const::Str(val)) => {

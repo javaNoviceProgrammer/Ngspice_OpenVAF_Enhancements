@@ -69,3 +69,5 @@ prior example folder still passes.
 - Requires the accompanying ngspice rebuild; a stock ngspice ignores the sentinel
   (a negative `bound_step` there would be a no-op or, in an unpatched `OSDItrunc`,
   wrongly clamp to a negative step — so the two must be built together).
+
+**Update ([E-759](Enhancement-759.md)).** The bound-step slot carries a second special value beside this sentinel: a landing request `−(2 + t)` from a `cross`/`above` event, `t` the offset from the last accepted point at which the crossing sits. `OSDItrunc` tells the two apart by `< −1`; a request written over the sentinel replaces it for that attempt, which is rejected and redone at the landing anyway, where a `$discontinuity` in the body sets the sentinel again.

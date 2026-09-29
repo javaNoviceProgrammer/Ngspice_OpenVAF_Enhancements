@@ -110,3 +110,5 @@ today. That is a decision, not a defect, and the comment says so.
 
 `examples/rtdomain_examples/verify_rtdomain.py` — 16 checks under both linear
 solvers. 11 fail on the shipped binaries.
+
+**Update ([E-759](Enhancement-759.md)).** A landing request from a `cross`/`above` event is floored by this enhancement's span-over-10⁶ step as a bound is; a landing closer than that to the last accepted point is declined by `OSDItrunc`, and the compiled event then runs its body at the next point instead.

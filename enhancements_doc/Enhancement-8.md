@@ -358,3 +358,5 @@ Deferred to follow-up work: `generate if`/`generate case`; exact
 breakpoint-forcing for `cross`/`above`/`timer` (§2, limitation 2); a real
 diagnostic (rather than silent degradation) for malformed `@(...)`
 conditions.
+
+**Update ([E-759](Enhancement-759.md)).** The deferred "exact breakpoint-forcing for `cross`/`above`" is done for the crossing events: ngspice serves the accepted-point count as `$osdi$point`, each event keeps the sample at the last accepted point and asks, through the bound-step slot, to land the step on the interpolated crossing (plus `time_tol`, or a thousandth of the step); the body runs at the landing. `timer` keeps its own bound-step placement.
