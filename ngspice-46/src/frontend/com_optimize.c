@@ -40,10 +40,23 @@ with several local minima:
     minima while the temperature T is high and settling as T is cooled to zero.
     It evaluates one candidate per step (no population), so it is the cheapest
     global method when each analysis is expensive.
+  * -method cmaes (Enhancement-764): covariance matrix adaptation evolution
+    strategy -- a Gaussian search distribution whose covariance and step size
+    are adapted from the RANKING of each generation's candidates. It learns the
+    scale and orientation of the valley (a knob spanning decades, correlated
+    knobs), never reads a cost (a failed evaluation is the worst rank and
+    nothing more), and does not clamp onto a bound; the standard choice for a
+    black-box problem in two to fifty knobs.
 
 All work for a scalar -minimize objective and -target least-squares. `-swarmsize
-<N>` sets the pso/de population (default auto, ~10+4*np), `-seed <s>` makes a run
-reproducible.
+<N>` sets the pso/de/cmaes population (default auto, ~10+4*np for pso/de,
+4+3*ln(np) for cmaes), `-seed <s>` makes a run reproducible. `-polish`
+(Enhancement-764) finishes a global method's best point with the local one
+(Nelder-Mead, or Levenberg-Marquardt for -target fits) so a global search ends
+with the local methods' precision; `-starts <k>` runs the method from k extra
+Latin-hypercube start points besides the given one, each with a share of
+-maxiter (CMA-ES doubles its population per start), reports which start won and
+polishes the winner.
 
 Syntax (in a .control block, after the circuit is loaded):
 
@@ -52,8 +65,8 @@ Syntax (in a .control block, after the circuit is loaded):
            ( -minimize <expression ...>
              | -target <expr> <value> [<weight>]  [-target ...]
                [ -analysis <command ...> -target ... ] )
-           [-method nm|lm|pso|de|sa] [-swarmsize <N>] [-seed <s>]
-           [-maxiter <N>] [-tol <T>] [-verbose]
+           [-method nm|lm|pso|de|sa|cmaes] [-swarmsize <N>] [-seed <s>]
+           [-maxiter <N>] [-tol <T>] [-polish] [-starts <k>] [-verbose]
 
 Three knob kinds, all in-place except -dparam:
   -param  <name> -- an `alter` target: a device instance (e.g. R1, C1) or an
@@ -167,6 +180,10 @@ struct optctx {
     int    fseen_n;
     int swarmsize;                       /* Enhancement-194: PSO population (0=auto)*/
     unsigned long seed;                  /* Enhancement-194: PSO RNG seed          */
+    int    polish;                       /* Enhancement-764: finish with the local method */
+    int    starts;                       /* Enhancement-764: extra Latin-hypercube starts */
+    double nm_step;                      /* Enhancement-764: Nelder-Mead's first simplex
+                                          * edge in the cube (0 = the 0.1 it always used) */
 
     /* Enhancement-206: design centering. When `center` is set the objective is
      * the parametric yield / worst-case Cpk from an inner Monte Carlo run of
@@ -912,16 +929,18 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
     int i, j, iter, lo;
 
     /* build the initial simplex: the start point plus one point per dimension
-     * nudged by 0.1 in normalized space */
+     * nudged by 0.1 in normalized space (Enhancement-764: a -polish from a
+     * global method's best point asks for a smaller edge through nm_step) */
+    const double edge = c->nm_step > 0.0 ? c->nm_step : 0.1;
     for (j = 0; j < n; j++)
         s[0][j] = clamp01(ubest[j]);
     fv[0] = opt_eval(c, s[0], NULL);
     for (i = 1; i <= n; i++) {
         for (j = 0; j < n; j++)
             s[i][j] = s[0][j];
-        double b = s[0][i - 1] + 0.1;
+        double b = s[0][i - 1] + edge;
         if (b > 1.0)
-            b = s[0][i - 1] - 0.1;
+            b = s[0][i - 1] - edge;
         s[i][i - 1] = clamp01(b);
         fv[i] = opt_eval(c, s[i], NULL);
     }
@@ -1274,6 +1293,312 @@ static void simulated_annealing(struct optctx *c, double *ubest, double *fbest)
 
     for (j = 0; j < n; j++) ubest[j] = best[j];
     *fbest = fb;
+}
+
+
+/* ==================== Enhancement-764: CMA-ES ============================== */
+
+/* Enhancement-764: a standard normal deviate (Box-Muller on two uniforms; the
+ * first is taken in (0, 1] so the log is finite). Same stream as opt_rand, so
+ * a run is reproducible from `-seed`. */
+static double opt_gauss(void)
+{
+    double u1 = 1.0 - opt_rand(), u2 = opt_rand();
+    return sqrt(-2.0 * log(u1)) * cos(6.283185307179586 * u2);
+}
+
+/* Enhancement-764: cyclic Jacobi eigendecomposition of the symmetric n x n
+ * matrix A (row-major; destroyed). On return d[i] is the i-th eigenvalue and
+ * column i of V its eigenvector, so A = V diag(d) V'. n is at most OPT_MAXP
+ * (128), where the O(n^3) sweeps cost microseconds against an analysis. */
+static void opt_jacobi(int n, double *A, double *V, double *d)
+{
+    int i, j, k, sweep;
+
+    for (i = 0; i < n; i++)
+        for (j = 0; j < n; j++)
+            V[i * n + j] = (i == j) ? 1.0 : 0.0;
+    for (sweep = 0; sweep < 100; sweep++) {
+        double off = 0.0, diag = 0.0;
+        for (i = 0; i < n; i++) {
+            diag += A[i * n + i] * A[i * n + i];
+            for (j = i + 1; j < n; j++)
+                off += A[i * n + j] * A[i * n + j];
+        }
+        if (off <= 1e-30 * (diag + 1e-300))
+            break;
+        for (i = 0; i < n - 1; i++)
+            for (j = i + 1; j < n; j++) {
+                double apq = A[i * n + j], theta, t, cs, sn;
+                if (fabs(apq) < 1e-300)
+                    continue;
+                theta = 0.5 * (A[j * n + j] - A[i * n + i]) / apq;
+                t  = (theta >= 0.0 ? 1.0 : -1.0) / (fabs(theta) + sqrt(theta * theta + 1.0));
+                cs = 1.0 / sqrt(t * t + 1.0);
+                sn = t * cs;
+                for (k = 0; k < n; k++) {              /* columns i, j */
+                    double aki = A[k * n + i], akj = A[k * n + j];
+                    A[k * n + i] = cs * aki - sn * akj;
+                    A[k * n + j] = sn * aki + cs * akj;
+                }
+                for (k = 0; k < n; k++) {              /* rows i, j */
+                    double aik = A[i * n + k], ajk = A[j * n + k];
+                    A[i * n + k] = cs * aik - sn * ajk;
+                    A[j * n + k] = sn * aik + cs * ajk;
+                }
+                A[i * n + j] = A[j * n + i] = 0.0;
+                for (k = 0; k < n; k++) {              /* V = V J */
+                    double vki = V[k * n + i], vkj = V[k * n + j];
+                    V[k * n + i] = cs * vki - sn * vkj;
+                    V[k * n + j] = sn * vki + cs * vkj;
+                }
+            }
+    }
+    for (i = 0; i < n; i++)
+        d[i] = A[i * n + i];
+}
+
+/* Enhancement-764: Covariance Matrix Adaptation Evolution Strategy over the np
+ * normalized parameters (Hansen's (mu/mu_w, lambda)-CMA-ES with the published
+ * default constants). Each generation samples lambda candidates from
+ * N(m, sigma^2 C), RANKS them by cost, recombines the best mu into the new mean
+ * with log-decreasing weights, and adapts the covariance C (a rank-one update
+ * along the evolution path p_c and a rank-mu update from the selected steps)
+ * and the step size sigma (cumulative step-size adaptation on the conjugate
+ * path p_s against its expected length under random selection).
+ *
+ * Why a seventh method: it is rank-based, so it never reads a cost -- a failed
+ * evaluation (OPT_PENALTY) is the worst rank and steers the distribution away
+ * without poisoning a mean or a temperature, and a generation in which nothing
+ * solved moves nothing (three in a row with no solution ever found end the
+ * search, which the epilogue reports as NO SOLUTION); and it learns the scale
+ * and the orientation of the valley, so a knob spanning decades needs no log
+ * scaling and correlated knobs need no rotation of the box, where Nelder-Mead's
+ * axis-aligned simplex, LM's fixed finite-difference step and a swarm that
+ * clamps its velocities at a wall all struggle (the 2026-09-29 hunt's O1 and
+ * O2). Candidates outside the cube are re-drawn a few times, then projected
+ * onto it and ranked with a penalty on the squared distance moved (scaled by
+ * the generation's spread of solved costs), so a mean may settle ON a bound
+ * when the optimum is there without the distribution collapsing early.
+ *
+ * lambda is -swarmsize (default 4 + floor(3 ln n)), mu = lambda/2, sigma_0 = 0.3
+ * in the unit cube, candidate 0 of the first generation is the start point.
+ * Stops CONVERGED when sigma times the longest axis of C is below -tol (the
+ * distribution has shrunk to the tolerance, in the cube), or -- the published
+ * TolFun rule -- when the costs of the current generation and the best costs
+ * of the last 10 + 30 n / lambda generations all lie within -tol of each other
+ * (the swarm's test on the all-time best would fire while the distribution is
+ * still learning the valley: a start on its floor sees worse samples for many
+ * generations, legitimately); MAXITER when the generations run out. On exit ubest holds the best point and *fbest its
+ * cost. Works for scalar, least-squares and centering objectives alike. */
+static void cma_es(struct optctx *c, double *ubest, double *fbest)
+{
+    const int n = c->np, lam = c->swarmsize, mu = lam / 2;
+    double *C = TMALLOC(double, (size_t) n * (size_t) n);    /* covariance        */
+    double *B = TMALLOC(double, (size_t) n * (size_t) n);    /* its eigenvectors  */
+    double *A = TMALLOC(double, (size_t) n * (size_t) n);    /* scratch copy      */
+    double *D = TMALLOC(double, n);                          /* sqrt eigenvalues  */
+    double *X = TMALLOC(double, (size_t) lam * (size_t) n);  /* candidates        */
+    double *Y = TMALLOC(double, (size_t) lam * (size_t) n);  /* their steps / sigma */
+    double *F = TMALLOC(double, lam);                        /* costs             */
+    double *P = TMALLOC(double, lam);                        /* boundary penalties */
+    double *R = TMALLOC(double, lam);                        /* ranking keys      */
+    double *w = TMALLOC(double, mu);                         /* recombination weights */
+    int    *idx = TMALLOC(int, lam);
+    double m[OPT_MAXP], pc[OPT_MAXP], ps[OPT_MAXP], yw[OPT_MAXP], z[OPT_MAXP],
+           tmp[OPT_MAXP], gb[OPT_MAXP];
+    double sigma = 0.3, sumw = 0.0, mueff = 0.0, cc, cs, c1, cmu, damps, chiN;
+    double gf = 1e300, dmax = 1.0, dmin = 1.0;
+    const int nhist = 10 + (30 * n) / lam;                   /* TolFun window     */
+    double *hist = TMALLOC(double, nhist);                   /* generation bests  */
+    int i, j, k, gen, allfail = 0, ngen = 0;
+
+    opt_srand(c->seed);
+    for (i = 0; i < mu; i++) { w[i] = log(mu + 0.5) - log(i + 1.0); sumw += w[i]; }
+    for (i = 0; i < mu; i++) { w[i] /= sumw; mueff += w[i] * w[i]; }
+    mueff = 1.0 / mueff;
+    cc    = (4.0 + mueff / n) / (n + 4.0 + 2.0 * mueff / n);
+    cs    = (mueff + 2.0) / (n + mueff + 5.0);
+    c1    = 2.0 / ((n + 1.3) * (n + 1.3) + mueff);
+    cmu   = 2.0 * (mueff - 2.0 + 1.0 / mueff) / ((n + 2.0) * (n + 2.0) + mueff);
+    if (cmu > 1.0 - c1) cmu = 1.0 - c1;
+    damps = sqrt((mueff - 1.0) / (n + 1.0)) - 1.0;
+    damps = 1.0 + cs + 2.0 * (damps > 0.0 ? damps : 0.0);
+    chiN  = sqrt((double) n) * (1.0 - 1.0 / (4.0 * n) + 1.0 / (21.0 * n * (double) n));
+
+    for (j = 0; j < n; j++) {
+        m[j] = clamp01(ubest[j]);
+        gb[j] = m[j];
+        pc[j] = ps[j] = 0.0;
+        D[j] = 1.0;
+        for (k = 0; k < n; k++)
+            C[j * n + k] = B[j * n + k] = (j == k) ? 1.0 : 0.0;
+    }
+
+    c->status = OPT_ST_MAXITER;          /* E-762: unless a break below says otherwise */
+    for (gen = 0; gen < c->maxiter; gen++) {
+        double flo = 1e300, fhi = -1e300, scale, psn;
+        int nfin = 0, hsig;
+
+        /* E-536 (hunt bug 17): poll the interrupt at the loop top, as the
+         * other methods do; the best point so far is reported by the epilogue */
+        if (ft_intrpt) {
+            fprintf(cp_err, "optimize: interrupted at generation %d\n", gen);
+            c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
+            c->status = OPT_ST_INTERRUPTED;
+            break;
+        }
+
+        /* sample lambda candidates: x = m + sigma B D z, z ~ N(0, I) */
+        for (i = 0; i < lam; i++) {
+            double dist2 = 0.0;
+            int tries;
+            for (tries = 0; tries < 10; tries++) {
+                int inside = 1;
+                if (gen == 0 && i == 0) {            /* the start point itself */
+                    for (j = 0; j < n; j++) X[i * n + j] = m[j];
+                    break;
+                }
+                for (k = 0; k < n; k++) z[k] = D[k] * opt_gauss();
+                for (j = 0; j < n; j++) {
+                    double s = 0.0;
+                    for (k = 0; k < n; k++) s += B[j * n + k] * z[k];
+                    X[i * n + j] = m[j] + sigma * s;
+                    if (X[i * n + j] < 0.0 || X[i * n + j] > 1.0) inside = 0;
+                }
+                if (inside) break;
+            }
+            for (j = 0; j < n; j++) {                /* project; remember the move */
+                double x = X[i * n + j], xc = clamp01(x);
+                dist2 += (x - xc) * (x - xc);
+                X[i * n + j] = xc;
+                Y[i * n + j] = (xc - m[j]) / sigma;
+            }
+            F[i] = opt_eval(c, &X[i * n], NULL);
+            P[i] = dist2;
+            if (F[i] < gf) { gf = F[i]; for (j = 0; j < n; j++) gb[j] = X[i * n + j]; }
+            if (F[i] < OPT_PENALTY) {
+                nfin++;
+                if (F[i] < flo) flo = F[i];
+                if (F[i] > fhi) fhi = F[i];
+            }
+        }
+
+        /* rank: solved candidates by cost plus the boundary penalty (a squared
+         * distance in the cube, scaled to the generation's spread of costs so
+         * it orders the projected candidates without outweighing a real
+         * difference), the failed ones last, ordered by how far outside they were */
+        scale = (nfin > 1 && fhi > flo) ? (fhi - flo) : (fabs(flo) > 0.0 && flo < 1e300 ? fabs(flo) : 1.0);
+        for (i = 0; i < lam; i++) {
+            R[i] = (F[i] >= OPT_PENALTY) ? OPT_PENALTY + P[i] : F[i] + scale * P[i];
+            idx[i] = i;
+        }
+        for (i = 1; i < lam; i++) {                  /* insertion sort, lam <= 256 */
+            int t = idx[i];
+            for (j = i; j > 0 && R[idx[j - 1]] > R[t]; j--) idx[j] = idx[j - 1];
+            idx[j] = t;
+        }
+
+        if (nfin == 0) {
+            /* nothing solved: there is no order to learn from. Widen the
+             * search a little and try again; three such generations with no
+             * solution ever found end the search (the epilogue's NO SOLUTION). */
+            if (++allfail >= 3 && gf >= OPT_PENALTY)
+                break;
+            if (sigma < 0.5) sigma *= 1.5;
+            if (c->verbose)
+                fprintf(cp_out, "  gen %-3d  no candidate solved  sigma %.3g  (%d evals)\n",
+                        gen + 1, sigma, c->nevals);
+            continue;
+        }
+        allfail = 0;
+
+        /* recombine the best mu into the new mean; y_w is the mean's step */
+        for (j = 0; j < n; j++) {
+            double s = 0.0;
+            for (i = 0; i < mu; i++) s += w[i] * X[idx[i] * n + j];
+            tmp[j] = s;
+        }
+        for (j = 0; j < n; j++) { yw[j] = (tmp[j] - m[j]) / sigma; m[j] = tmp[j]; }
+
+        /* p_s = (1 - c_s) p_s + sqrt(c_s (2 - c_s) mu_eff) C^-1/2 y_w,
+         * with C^-1/2 = B D^-1 B' */
+        for (j = 0; j < n; j++) {
+            double s = 0.0;
+            for (k = 0; k < n; k++) s += B[k * n + j] * yw[k];
+            z[j] = s / D[j];
+        }
+        psn = 0.0;
+        for (j = 0; j < n; j++) {
+            double s = 0.0;
+            for (k = 0; k < n; k++) s += B[j * n + k] * z[k];
+            ps[j] = (1.0 - cs) * ps[j] + sqrt(cs * (2.0 - cs) * mueff) * s;
+            psn += ps[j] * ps[j];
+        }
+        psn = sqrt(psn);
+        hsig = psn / sqrt(1.0 - pow(1.0 - cs, 2.0 * (gen + 1))) / chiN < 1.4 + 2.0 / (n + 1.0);
+
+        /* p_c = (1 - c_c) p_c + h_sig sqrt(c_c (2 - c_c) mu_eff) y_w */
+        for (j = 0; j < n; j++)
+            pc[j] = (1.0 - cc) * pc[j] + (hsig ? sqrt(cc * (2.0 - cc) * mueff) * yw[j] : 0.0);
+
+        /* C = (1 - c_1 - c_mu) C + c_1 (p_c p_c' + (1 - h_sig) c_c (2 - c_c) C)
+         *     + c_mu sum_i w_i y_i y_i' */
+        for (j = 0; j < n; j++)
+            for (k = j; k < n; k++) {
+                double s = 0.0, v;
+                for (i = 0; i < mu; i++) s += w[i] * Y[idx[i] * n + j] * Y[idx[i] * n + k];
+                v = (1.0 - c1 - cmu) * C[j * n + k]
+                  + c1 * (pc[j] * pc[k] + (hsig ? 0.0 : cc * (2.0 - cc)) * C[j * n + k])
+                  + cmu * s;
+                C[j * n + k] = C[k * n + j] = v;
+            }
+
+        /* sigma *= exp((c_s / d_s) (|p_s| / chiN - 1)) */
+        sigma *= exp((cs / damps) * (psn / chiN - 1.0));
+
+        /* the new axes: C = B diag(D^2) B' */
+        memcpy(A, C, (size_t) n * (size_t) n * sizeof *A);
+        opt_jacobi(n, A, B, D);
+        dmax = 0.0; dmin = 1e300;
+        for (j = 0; j < n; j++) {
+            if (D[j] < 1e-40) D[j] = 1e-40;
+            D[j] = sqrt(D[j]);
+            if (D[j] > dmax) dmax = D[j];
+            if (D[j] < dmin) dmin = D[j];
+        }
+        if (dmax > 1e7 * dmin) {         /* condition guard: nudge the flat axes */
+            for (j = 0; j < n; j++) C[j * n + j] += (dmax * 1e-7) * (dmax * 1e-7);
+        }
+
+        if (c->verbose)
+            fprintf(cp_out, "  gen %-3d  best cost %.6g  sigma %.3g  axis ratio %.3g  (%d evals)\n",
+                    gen + 1, gf, sigma, dmax / dmin, c->nevals);
+
+        /* stop: the distribution has shrunk to the tolerance in the cube ... */
+        if (sigma * dmax < c->tol) { c->status = OPT_ST_CONVERGED; break; }
+        /* ... or nothing is left to resolve (TolFun): this generation's solved
+         * costs and the generation bests of the window all within tolerance */
+        hist[ngen % nhist] = flo;
+        ngen++;
+        if (ngen >= nhist) {
+            double hlo = 1e300, hhi = -1e300;
+            for (i = 0; i < nhist; i++) {
+                if (hist[i] < hlo) hlo = hist[i];
+                if (hist[i] > hhi) hhi = hist[i];
+            }
+            if (hhi - hlo <= c->tol * (fabs(gf) + c->tol) &&
+                fhi - flo <= c->tol * (fabs(gf) + c->tol)) {
+                c->status = OPT_ST_CONVERGED;
+                break;
+            }
+        }
+    }
+
+    for (j = 0; j < n; j++) ubest[j] = gb[j];
+    *fbest = gf;
+    tfree(C); tfree(B); tfree(A); tfree(D); tfree(X); tfree(Y);
+    tfree(F); tfree(P); tfree(R); tfree(w); tfree(idx); tfree(hist);
 }
 
 
@@ -1685,7 +2010,7 @@ void com_optimize(wordlist *wl)
 {
     struct optctx c;
     double ubest[OPT_MAXP], fbest = OPT_PENALTY;
-    int k, use_lm, use_pso, use_de, use_sa;
+    int k, use_lm, use_pso, use_de, use_sa, use_cma;
     int mc_held = 0;                     /* E-536 (hunt bug 16): bracket balance */
 
     memset(&c, 0, sizeof c);
@@ -1869,16 +2194,19 @@ void com_optimize(wordlist *wl)
                     c.method = 5;        /* Enhancement-196 */
                 else if (eq(mm, "nsga2") || eq(mm, "nsga") || eq(mm, "pareto"))
                     c.method = 6;        /* Enhancement-216 */
+                else if (eq(mm, "cmaes") || eq(mm, "cma") || eq(mm, "cma-es") ||
+                         eq(mm, "cmaes") || eq(mm, "evolutionstrategy"))
+                    c.method = 7;        /* Enhancement-764 */
                 else {
                     fprintf(cp_err, "optimize: unknown -method '%s' "
-                                    "(use nm, lm, pso, de, sa or nsga2)\n", mm);
+                                    "(use nm, lm, pso, de, sa, cmaes or nsga2)\n", mm);
                     goto cleanup;
                 }
                 wl = wl->wl_next->wl_next;
             } else {
                 /* Enhancement-763: a bare option flag used to fall off the end
                  * of the command in silence and the default ran */
-                fprintf(cp_err, "optimize: -method needs nm, lm, pso, de, sa or nsga2\n");
+                fprintf(cp_err, "optimize: -method needs nm, lm, pso, de, sa, cmaes or nsga2\n");
                 goto cleanup;
             }
         } else if (eq(w, "-swarmsize") || eq(w, "-swarm") || eq(w, "-npart")) {
@@ -1930,6 +2258,15 @@ void com_optimize(wordlist *wl)
         } else if (eq(w, "-lhs")) {
             c.lhs = 1;
             wl = wl->wl_next;
+        } else if (eq(w, "-polish")) {         /* Enhancement-764 */
+            c.polish = 1;
+            wl = wl->wl_next;
+        } else if (eq(w, "-starts") || eq(w, "-restarts")) {   /* Enhancement-764 */
+            if (wl->wl_next) {
+                if (!opt_intopt(wl->wl_next->wl_word, "-starts", 1, &c.starts))
+                    goto cleanup;
+                wl = wl->wl_next->wl_next;
+            } else { fprintf(cp_err, "optimize: -starts needs a count\n"); goto cleanup; }
         } else if (eq(w, "-spec")) {
             c.center = 1;
             if (c.nspec >= OPT_MAXSPEC) {
@@ -1985,8 +2322,8 @@ void com_optimize(wordlist *wl)
         fprintf(cp_err, "usage: optimize (-param|-mparam|-dparam) <name> <init> "
                         "<lo> <hi> [...] -analysis <cmd> (-minimize <expr> | -target "
                         "<expr> <val> [<w>] ... | -center (-spec <m> [-max hi] [-min lo])... "
-                        "-samples N [-lhs]) [-method nm|lm|pso|de|sa] [-swarmsize N] "
-                        "[-seed s] [-maxiter N] [-tol T] [-verbose]\n");
+                        "-samples N [-lhs]) [-method nm|lm|pso|de|sa|cmaes] [-swarmsize N] "
+                        "[-seed s] [-maxiter N] [-tol T] [-polish] [-starts k] [-verbose]\n");
         goto cleanup;
     }
     if (c.center && (c.objective || c.nt > 0)) {
@@ -2039,6 +2376,21 @@ void com_optimize(wordlist *wl)
     if (c.method == 2 && c.nt == 0) {
         fprintf(cp_err, "optimize: -method lm requires -target objectives\n");
         goto cleanup;
+    }
+    /* Enhancement-764: -polish and -starts belong to the scalar search; NSGA-II
+     * returns a front, which has no single point to polish or to start from */
+    if (c.method == 6 && (c.polish || c.starts > 0)) {
+        fprintf(cp_err, "optimize: %s cannot be combined with -method nsga2 (a Pareto "
+                        "front has no single best point)\n", c.polish ? "-polish" : "-starts");
+        goto cleanup;
+    }
+    if (c.polish && c.starts == 0 &&
+        (c.method == 1 || c.method == 2 || (c.method == 0 && !c.center))) {
+        fprintf(cp_out, "optimize: NOTE -- -polish finishes a global method (pso, de, sa, "
+                        "cmaes) with the local one; %s is the local method, so it is ignored\n",
+                (c.method == 2 || (c.method == 0 && c.nt > 0)) ? "Levenberg-Marquardt"
+                                                                : "Nelder-Mead");
+        c.polish = 0;
     }
     /* Enhancement-535: the optimizer's whole search is ONE Monte-Carlo
      * sample under `.option osdimc` -- each Nelder-Mead evaluation is a
@@ -2104,7 +2456,8 @@ void com_optimize(wordlist *wl)
     use_pso = (c.method == 3);
     use_de  = (c.method == 4);
     use_sa  = (c.method == 5);
-    if (use_pso || use_de || use_sa) use_lm = 0;
+    use_cma = (c.method == 7);           /* Enhancement-764 */
+    if (use_pso || use_de || use_sa || use_cma) use_lm = 0;
 
     if (use_pso || use_de) {
         /* auto population: ~4x the dimension, bounded for speed. E-197 raised the
@@ -2122,11 +2475,24 @@ void com_optimize(wordlist *wl)
             c.swarmsize = 5;
         }
     }
+    if (use_cma) {
+        /* Enhancement-764: the published default population, 4 + floor(3 ln n);
+         * mu = lambda/2 needs at least two members, so lambda is at least 4 */
+        if (c.swarmsize <= 0) {
+            c.swarmsize = 4 + (int) floor(3.0 * log((double) c.np));
+            if (c.swarmsize > 256) c.swarmsize = 256;
+        } else if (c.swarmsize < 4) {
+            fprintf(cp_out, "optimize: NOTE -- -swarmsize %d raised to 4 (CMA-ES recombines "
+                            "the best half of at least four candidates)\n", c.swarmsize);
+            c.swarmsize = 4;
+        }
+    }
 
     {
         const char *mname = use_pso ? "Particle Swarm"
                           : use_de  ? "Differential Evolution"
                           : use_sa  ? "Simulated Annealing"
+                          : use_cma ? "CMA-ES"
                           : use_lm  ? "Levenberg-Marquardt" : "Nelder-Mead";
         if (c.center)
             fprintf(cp_out, "optimize: design centering -- %d design param%s, %d spec%s, "
@@ -2150,21 +2516,129 @@ void com_optimize(wordlist *wl)
         else if (use_sa)
             fprintf(cp_out, "optimize: annealing, seed %lu, %d cooling levels\n",
                     c.seed, c.maxiter);
+        else if (use_cma)
+            fprintf(cp_out, "optimize: CMA-ES population of %d (recombining %d), seed %lu, "
+                            "up to %d generations\n",
+                    c.swarmsize, c.swarmsize / 2, c.seed, c.maxiter);
+        if (c.starts > 0)
+            fprintf(cp_out, "optimize: %d start%s -- the given point and %d Latin-hypercube "
+                            "point%s, %d iteration%s each, the winner polished\n",
+                    c.starts + 1, "s", c.starts, c.starts == 1 ? "" : "s",
+                    (c.maxiter + c.starts) / (c.starts + 1),
+                    (c.maxiter + c.starts) / (c.starts + 1) == 1 ? "" : "s");
     }
 
     for (k = 0; k < c.np; k++)
         ubest[k] = clamp01((c.x0[k] - c.lo[k]) / (c.hi[k] - c.lo[k]));
 
-    if (use_pso)
-        particle_swarm(&c, ubest, &fbest);
-    else if (use_de)
-        differential_evolution(&c, ubest, &fbest);
-    else if (use_sa)
-        simulated_annealing(&c, ubest, &fbest);
-    else if (use_lm)
-        levenberg_marquardt(&c, ubest, &fbest);
-    else
-        nelder_mead(&c, ubest, &fbest);
+    {
+        const int which = use_pso ? 3 : use_de ? 4 : use_sa ? 5 : use_cma ? 7 : use_lm ? 2 : 1;
+        if (c.starts > 0) {
+            /* Enhancement-764: multi-start. The given point and `starts`
+             * Latin-hypercube points in the cube, each run with its share of
+             * -maxiter (a population method with its own seed per start, CMA-ES
+             * with a population doubled per start -- the IPOP restart rule); the
+             * best of the runs is then polished below with the local method. */
+            const int nrun = c.starts + 1, full = c.maxiter, lam0 = c.swarmsize;
+            const unsigned long seed0 = c.seed;
+            double *lhs = TMALLOC(double, (size_t) c.starts * (size_t) c.np);
+            double bu[OPT_MAXP], bf = OPT_PENALTY, u0[OPT_MAXP];
+            int r, win = 0, bstatus = c.status;
+
+            opt_srand(seed0);
+            for (k = 0; k < c.np; k++) {             /* one stratum per start, shuffled */
+                int s, t;
+                for (s = 0; s < c.starts; s++) lhs[s * c.np + k] = (double) s;
+                for (s = c.starts - 1; s > 0; s--) {
+                    double tmpv;
+                    t = (int) (opt_rand() * (s + 1));
+                    if (t > s) t = s;
+                    tmpv = lhs[s * c.np + k]; lhs[s * c.np + k] = lhs[t * c.np + k]; lhs[t * c.np + k] = tmpv;
+                }
+                for (s = 0; s < c.starts; s++)
+                    lhs[s * c.np + k] = clamp01((lhs[s * c.np + k] + opt_rand()) / c.starts);
+            }
+            for (k = 0; k < c.np; k++) u0[k] = ubest[k];
+            c.maxiter = (full + nrun - 1) / nrun;
+            if (c.maxiter < 1) c.maxiter = 1;
+            for (r = 0; r < nrun && !c.interrupted; r++) {
+                double f = OPT_PENALTY;
+                int ev0 = c.nevals;
+                if (r > 0) {
+                    for (k = 0; k < c.np; k++) ubest[k] = lhs[(r - 1) * c.np + k];
+                    c.seed = seed0 + (unsigned long) r;
+                    if (use_cma) c.swarmsize = (lam0 << r) > 256 ? 256 : (lam0 << r);
+                } else {
+                    for (k = 0; k < c.np; k++) ubest[k] = u0[k];
+                }
+                c.status = OPT_ST_MAXITER;
+                switch (which) {
+                case 3: particle_swarm(&c, ubest, &f); break;
+                case 4: differential_evolution(&c, ubest, &f); break;
+                case 5: simulated_annealing(&c, ubest, &f); break;
+                case 7: cma_es(&c, ubest, &f); break;
+                case 2: levenberg_marquardt(&c, ubest, &f); break;
+                default: nelder_mead(&c, ubest, &f); break;
+                }
+                if (use_cma)
+                    fprintf(cp_out, "optimize: start %d of %d (%s, population %d) -- %s, cost %.6g "
+                                    "after %d evaluations\n",
+                            r + 1, nrun, r == 0 ? "the given point" : "Latin-hypercube point",
+                            c.swarmsize, opt_status_word(c.status), f, c.nevals - ev0);
+                else
+                    fprintf(cp_out, "optimize: start %d of %d (%s) -- %s, cost %.6g after %d evaluations\n",
+                            r + 1, nrun, r == 0 ? "the given point" : "Latin-hypercube point",
+                            opt_status_word(c.status), f, c.nevals - ev0);
+                if (f < bf) {
+                    bf = f; win = r; bstatus = c.status;
+                    for (k = 0; k < c.np; k++) bu[k] = ubest[k];
+                }
+            }
+            c.maxiter = full; c.swarmsize = lam0; c.seed = seed0;
+            for (k = 0; k < c.np; k++) ubest[k] = bu[k];
+            fbest = bf;
+            c.status = bstatus;
+            if (!c.interrupted) {
+                fprintf(cp_out, "optimize: start %d of %d won (cost %.6g)%s\n",
+                        win + 1, nrun, bf, win == 0 ? " -- the given point" : "");
+                c.polish = 1;
+            }
+            dc_set_result("optimize_start", (double) (win + 1));
+            tfree(lhs);
+        } else {
+            switch (which) {
+            case 3: particle_swarm(&c, ubest, &fbest); break;
+            case 4: differential_evolution(&c, ubest, &fbest); break;
+            case 5: simulated_annealing(&c, ubest, &fbest); break;
+            case 7: cma_es(&c, ubest, &fbest); break;
+            case 2: levenberg_marquardt(&c, ubest, &fbest); break;
+            default: nelder_mead(&c, ubest, &fbest); break;
+            }
+        }
+
+        if (c.polish && !c.interrupted && fbest < OPT_PENALTY) {
+            /* Enhancement-764: finish with the local method from the best point --
+             * Levenberg-Marquardt for a -target fit, Nelder-Mead otherwise (a
+             * half-size first simplex: the point is already good). A global
+             * search stops at its population's resolution (the 2026-09-29 hunt's
+             * O1: a six-particle swarm at 0.036 where the simplex reaches 2e-14);
+             * the polish gives it the local methods' precision. Its status is the
+             * final one: the local criterion met is what "converged" means here. */
+            const int lm = (c.nt > 0 && !c.objective && !c.center);
+            const double f0 = fbest;
+            const int ev0 = c.nevals;
+            char phrase[128];
+            fprintf(cp_out, "optimize: polish -- %s from the best point (cost %.6g)\n",
+                    lm ? "Levenberg-Marquardt" : "Nelder-Mead", f0);
+            c.status = OPT_ST_MAXITER;
+            c.nm_step = 0.05;
+            if (lm) levenberg_marquardt(&c, ubest, &fbest);
+            else    nelder_mead(&c, ubest, &fbest);
+            c.nm_step = 0.0;
+            fprintf(cp_out, "optimize: polish %s -- cost %.6g -> %.6g in %d evaluations\n",
+                    opt_status_phrase(&c, phrase, sizeof phrase), f0, fbest, c.nevals - ev0);
+        }
+    }
 
     /* leave the circuit at the optimum and report. The final run is verbose for a
      * plain optimize (one analysis), but stays quiet for centering -- a verbose

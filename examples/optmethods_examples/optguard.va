@@ -1,0 +1,5 @@
+`include "disciplines.vams"
+module optguard(p, n); inout p, n; electrical p, n;
+  (* type="instance" *) parameter real g = 1m from (0:inf);
+  analog I(p,n) <+ g*V(p,n);
+endmodule

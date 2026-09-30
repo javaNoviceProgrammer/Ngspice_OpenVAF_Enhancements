@@ -97,3 +97,5 @@ under differential evolution is raised to 5 with the NOTE and the fit converges;
   the parser cannot tell `-v(out)` from a misspelt flag, and the message says so.
 - A unit letter after a number is SPICE's and stays accepted (`10o` = 10), so a typo of
   that shape is not caught.
+
+**Update ([E-764](Enhancement-764.md)).** The raised-population NOTE covers `-method cmaes` (a value below 4 is raised to 4); `-starts` takes its count through the same strict reader (a bare `-starts`, `-starts 0` and `-starts abc` are refused), and `-polish` or `-starts` under `-method nsga2` is refused with a message. The usage line and the unknown-method message list the seven methods.

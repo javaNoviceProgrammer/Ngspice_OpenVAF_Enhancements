@@ -212,14 +212,22 @@ sweep's scale is spelled `v_sweep` (E-584): `v-sweep` is a subtraction to `print
 
 `optimize` varies a set of knobs, re-runs one or more analyses and drives an objective to
 a minimum: `optimize (-param|-mparam|-dparam) <name> <init> <lo> <hi> [...] -analysis <cmd>
-(-minimize <expr> | -target <expr> <value> [<weight>] ...) [-method nm|lm|pso|de|sa|nsga2]
-[-maxiter N] [-tol T] [-seed s] [-verbose]`. A `-param` is an `alter` target (a device or
+(-minimize <expr> | -target <expr> <value> [<weight>] ...) [-method nm|lm|pso|de|sa|cmaes|nsga2]
+[-maxiter N] [-tol T] [-seed s] [-polish] [-starts k] [-verbose]`. A `-param` is an `alter` target (a device or
 `@inst[param]`), a `-mparam` a `.model` parameter (`@model[param]`, via `altermod`), a
 `-dparam` a deck `.param` (`alterparam` and a re-source, or the in-place fast path on a
 large deck). Nelder-Mead is the default for a scalar `-minimize`, Levenberg-Marquardt for
 `-target` least squares; particle swarm, differential evolution and annealing search the
-whole box; NSGA-II trades several `-minimize`/`-maximize` objectives into a Pareto front;
-`-center` with `-spec` limits maximises a yield. The knob values are published as
+whole box; CMA-ES ([E-764](../../enhancements_doc/Enhancement-764.md)) searches it with a
+Gaussian whose covariance and step size adapt to the ranking of each generation — it
+learns a valley's scale and orientation, treats a failed evaluation as the worst rank and
+nothing more, and is the method to reach for on a knob spanning decades, on correlated
+knobs, or from a start the model refuses; NSGA-II trades several `-minimize`/`-maximize`
+objectives into a Pareto front; `-center` with `-spec` limits maximises a yield. `-polish`
+finishes a global method with the local one (Nelder-Mead, or Levenberg-Marquardt for a
+`-target` fit) so the search ends with the local methods' precision, and `-starts k` runs
+the method from k extra Latin-hypercube points, prints each start's verdict, polishes the
+winner and publishes `optimize_start`. The knob values are published as
 `optimize_<name>` ([E-501](../../enhancements_doc/Enhancement-501.md)), and since
 [E-762](../../enhancements_doc/Enhancement-762.md) the outcome is too: the report's last
 line opens with why the search stopped, and `optimize_status` (a string variable),
@@ -242,13 +250,15 @@ token, a second `-minimize` under a scalar method, a knob named twice. An expres
 begins with `-` must be quoted (`-minimize "-v(out)"`) or written `0-v(out)`, and a
 `-target` expression must be one token (`v(out)-v(in)`).
 
-`examples/optimize_examples/`, `examples/pareto_examples/`, `examples/dcenter_examples/`.
+`examples/optimize_examples/`, `examples/optmethods_examples/` (the methods added from
+the 2026-09-29 proposal on), `examples/pareto_examples/`, `examples/dcenter_examples/`.
 The write-ups: [E-130](../../enhancements_doc/Enhancement-130.md),
 [E-143](../../enhancements_doc/Enhancement-143.md), [E-144](../../enhancements_doc/Enhancement-144.md),
 [E-145](../../enhancements_doc/Enhancement-145.md), [E-194](../../enhancements_doc/Enhancement-194.md)
 to [E-197](../../enhancements_doc/Enhancement-197.md), [E-206](../../enhancements_doc/Enhancement-206.md),
 [E-216](../../enhancements_doc/Enhancement-216.md), [E-322](../../enhancements_doc/Enhancement-322.md),
-[E-472](../../enhancements_doc/Enhancement-472.md), [E-762](../../enhancements_doc/Enhancement-762.md).
+[E-472](../../enhancements_doc/Enhancement-472.md), [E-762](../../enhancements_doc/Enhancement-762.md),
+[E-764](../../enhancements_doc/Enhancement-764.md).
 
 ## 3.4 Analysis coverage
 

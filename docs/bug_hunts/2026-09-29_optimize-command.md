@@ -238,6 +238,11 @@ default swarm (14) five seeds reach 2.5e-6 to 4e-11 and differential evolution 1
 6.6e-11. Two things worth having: velocities that reflect at a bound instead of clamping,
 and a local polish (Nelder-Mead or LM from the global best) at the end of every global
 method, which would give a global search the local methods' precision.
+*Closed in [E-764](../../enhancements_doc/Enhancement-764.md): `-polish` runs the local
+method from a global method's best point (this exact command with it: 0.036 on the bound
+to 1.3e-12 at R2 = 250, the bound NOTE gone), `-starts k` adds Latin-hypercube starts with
+a per-start report, and `-method cmaes` alone reaches 250 (a mean that settles inside the
+box, not a swarm clamped at the wall). The reflecting velocities were not done.*
 
 **O2 — a knob spanning decades.** `-param R2 1k 1 1e9 -target v(out) 0.9 -method lm`:
 rms 2.5e-5 after 41 evaluations, against 2.3e-9 on `[1, 100k]`; the finite-difference
@@ -246,6 +251,11 @@ derivative until the search has shrunk the problem. Nelder-Mead is unaffected. A
 log-scaled knob kind (`-lparam <name> <init> <lo> <hi>`, searched in `log(x)`) is what
 device extraction needs — saturation currents, capacitances and resistances all live on
 decades — and an adaptive step (relative to the current value) would help the linear one.
+*Closed for one method in [E-764](../../enhancements_doc/Enhancement-764.md): CMA-ES learns
+the knob's scale, and on this box `-method cmaes -tol 1e-10` reaches rms 8e-8 (R2 =
+8999.99) against LM's 2.5e-5; at the default `-tol`, a length of 1e-6 in the cube (a
+kilo-ohm on nine decades), it stops at rms 5e-3. LM's fixed step and the log-scaled knob
+kind are open (the proposal's section 7).*
 
 **O3 — what a reset keeps.** After a fit, a user `reset` re-sources the deck: `-param`
 and `-mparam` optima (in-place alters) are gone, a `-dparam` optimum stays when F7 is

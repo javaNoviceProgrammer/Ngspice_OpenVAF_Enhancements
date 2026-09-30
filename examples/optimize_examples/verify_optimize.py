@@ -547,7 +547,7 @@ for label, ctl, needle in (
     ("a -target expression with spaces is refused with the one-token hint (it fitted to a target of 0)",
      "optimize -param R2 1k 10 10k -analysis op -target v(out) - v(in) 0.4", "<value> needs a number, not '-'"),
     ("a bare -method is refused (it ran the default)",
-     "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2 -method", "-method needs nm, lm, pso, de, sa or nsga2"),
+     "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2 -method", "-method needs nm, lm, pso, de, sa, cmaes or nsga2"),   # E-764 added cmaes
     ("a bare -maxiter is refused",
      "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2 -maxiter", "-maxiter needs a value"),
     ("two -minimize under a scalar method are refused (the second was dropped)",

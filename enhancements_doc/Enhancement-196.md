@@ -29,3 +29,5 @@ Differential evolution (global): objective = -1.8996     p = 5.1457   (GLOBAL)
 ## Verification
 
 [`examples/saopt_examples/verify_saopt.py`](../examples/saopt_examples/verify_saopt.py) — 7 checks: SA finds the global basin from the trapping corner; Nelder-Mead from the same start is trapped in a higher local minimum; a fixed `-seed` is reproducible; several independent seeds all reach the global basin; SA minimizes a `-target` least-squares objective; SA solves a 2-D separable multimodal minimum; and all three global methods (sa/pso/de) reach the global while the local nm does not. The existing `optimize` (20), `psoopt` (6) and `deopt` (7) examples are unchanged. It is a front-end command, independent of the linear solver, so it runs once. Full example regression: 160/160.
+
+**Update ([E-764](Enhancement-764.md)).** `-polish` and `-starts k` apply to the annealer too: a Nelder-Mead (or LM) finish from the best point, and k extra starts with their own seeds. The hunt's F4 (a temperature seeded from the failure penalty) is untouched; `-method cmaes`, which ranks a failed evaluation last instead of reading its cost, is the method that leaves a failing start.

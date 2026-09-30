@@ -77,3 +77,5 @@ and the centering yield were, the outcome was not.
   happened to be uphill. E-499's bound NOTE and E-438's failure NOTE still qualify it.
 - A search that never leaves a failing region (hunt F6) now reads `NO SOLUTION`; it still
   does not look for a solvable start. That is F6's fold.
+
+**Update ([E-764](Enhancement-764.md)).** `-method cmaes` records `converged` on its own two criteria (the distribution shrunk below `-tol`, or the TolFun rule) and `maxiter` when the generations run out; a box the model refuses entirely ends after three all-failed generations and reads NO SOLUTION here. With `-polish` the local method's status is the final one, and with `-starts k` each start's verdict is printed on its own line (`start 2 of 5 (Latin-hypercube point) -- converged, cost ...`) with `optimize_start` published beside these variables.
