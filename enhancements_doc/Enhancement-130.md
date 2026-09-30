@@ -91,3 +91,5 @@ re-run the analysis).
 **Update ([E-765](Enhancement-765.md)).** `-method bayes` hands the rest of its evaluation budget to the simplex once its surrogate has located the basin, with a first simplex edge of 0.02 and the remaining evaluations as the iteration cap; the simplex's own run and report are unchanged.
 
 **Update ([E-766](Enhancement-766.md)).** Under a constrained solve (`-constrain`) the simplex minimises the augmented objective, and a simplex that has gone flat against a bound -- every vertex the same clamped value in one coordinate -- is rebuilt around its best vertex with an inward edge instead of passing the convergence test; the unconstrained simplex is unchanged. `-min` stays the `-minimize` alias except right after a `-constrain` or a `-spec`.
+
+**Update ([E-768](Enhancement-768.md)).** A second local method, `-method tr`, a trust region on a quadratic model, reaches the simplex's optima in a half to a seventh of the evaluations on smooth objectives and carries the knob bounds inside its subproblem. The polish and the surrogate's hand-off run it instead of the simplex; the simplex is still the `-minimize` default and is unchanged.

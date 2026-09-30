@@ -131,3 +131,5 @@ constraint active.
   a suite-wide look at the runs that finish on a bound.
 - Equality constraints are a band (`-min v -max v`) or a `-target`; constraints do not
   reach NSGA-II or design centering.
+
+**Update ([E-768](Enhancement-768.md)).** The polish under `-constrain` runs the trust region, whose subproblem holds the knob bounds, so the flat-simplex rebuild matters only when Nelder-Mead itself is the inner method. As the inner method the trust region ends the divider problem at R1 = 1111.11 with the multiplier 1e-4 exactly in 107 evaluations (Nelder-Mead: 179, R1 = 1108.5).

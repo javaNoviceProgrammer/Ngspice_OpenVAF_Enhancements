@@ -104,6 +104,26 @@ an augmented Lagrangian around any scalar method.
  [27] a compiled conductance refused at g <= 0 under CMA-ES with v(out) <= 0.5:
       g = 1m, active.
 
+Enhancement-768: a derivative-free trust region on a quadratic model (`-method tr`),
+and the polish and the surrogate's hand-off running it for a scalar objective.
+ [28] a smooth bowl in two knobs: converged below 1e-12 at (0.3, 0.7) in at most
+      15 evaluations, a third or less of what Nelder-Mead takes; the banner
+      names the method.
+ [29] harder shapes: the rotated ellipsoid of condition 1e6 below 1e-9 within 60
+      evaluations, Rosenbrock in four knobs below 1e-7 within 200, a coupled
+      quadratic in ten knobs to Nelder-Mead's value in a third of its evaluations.
+ [30] the bounds are inside the subproblem: an optimum on a wall ends with that
+      knob exactly on the bound and the other at its minimum; an optimum in a
+      corner ends in the corner; both in fewer evaluations than the simplex.
+ [31] what the polish gained: hunt O1's swarm polished in at most 20 evaluations
+      (the simplex took 38); the surrogate's hand-off on the ellipsoid, which
+      left the simplex flat in a box corner at 0.18, converges below 1e-9.
+ [32] under -constrain: R1 = 1111.1 and the multiplier 1e-4 to 2 %.
+ [33] the arguments: `-maxiter 1`, the aliases, `-polish` a NOTE under it,
+      `-verbose` one line per iteration, a refused start whose axis point solves
+      (g = 1m) and one where nothing solves (NO SOLUTION after 4 evaluations),
+      the E-762 variables.
+
 It is a front-end command, independent of the linear solver, so it is checked once.
 """
 import os
@@ -164,7 +184,7 @@ ROS = ("V1 x1 0 dc 0.5\nV2 x2 0 dc 0.5\nV3 x3 0 dc 0.5\nV4 x4 0 dc 0.5\n"
 WELL = "V1 x 0 dc 0.15\nB1 out 0 V = pow(v(x)-0.2,2)*pow(v(x)-0.8,2) + 0.02*pow(v(x)-0.8,2)\n"
 WELL_OPT = "-param V1 0.15 0 1 -analysis op -minimize v(out)"
 
-print("Enhancement-764: CMA-ES, -polish and -starts; Enhancement-765: Bayesian optimization; Enhancement-766: constraints")
+print("Enhancement-764: CMA-ES, -polish and -starts; Enhancement-765: Bayesian optimization; Enhancement-766: constraints; Enhancement-768: a trust region")
 
 # [1] the rotated ellipsoid ------------------------------------------------------------
 print("\n[1] a rotated ellipsoid (condition 1e6): CMA-ES learns the valley, the swarm clamps")
@@ -200,8 +220,8 @@ b = run(DIV, o1 + " -polish", "o1p")
 check("[3] the swarm alone still finishes where the hunt found it: 'converged, objective = 0.0361376 after 67 evaluations', R2 = 10 on the bound",
       "optimize: converged, objective = 0.0361376 after 67 evaluations" in a and knob(a, "r2") == 10.0
       and "finished ON a search bound" in a)
-check("[3] -polish: 'optimize: polish -- Nelder-Mead from the best point (cost 0.0361376)'",
-      "optimize: polish -- Nelder-Mead from the best point (cost 0.0361376)" in b)
+check("[3] -polish: 'optimize: polish -- Trust-Region from the best point (cost 0.0361376)' (the trust region since E-768; it was the simplex)",
+      "optimize: polish -- Trust-Region from the best point (cost 0.0361376)" in b)
 m = re.search(r"^optimize: polish converged -- cost 0\.0361376 -> ([\d.eE+-]+) in (\d+) evaluations", b, re.M)
 check("[3] ...'polish converged -- cost 0.0361376 -> <below 1e-9> in <N> evaluations'",
       m is not None and float(m.group(1)) < 1e-9, m.group(0) if m else b[-400:])
@@ -300,10 +320,10 @@ sa = run(ELL, f"optimize {ELL_OPT} -method cmaes -starts abc", "sa")
 check("[7] a bare -starts, -starts 0 and -starts abc are refused by E-763's readers ('needs a count', 'must be 1 or more (got 0)', 'needs a number, not abc'), no run",
       "optimize: -starts needs a count" in bs and "optimize: -starts must be 1 or more (got 0)" in s0
       and "optimize: -starts needs a number, not 'abc'" in sa and "(CMA-ES)" not in bs + s0 + sa)
-check("[7] the usage line lists the methods and the two flags", "-method nm|lm|pso|de|sa|cmaes|bayes]" in run(DIV, "optimize -param R2 1k 1 10k", "us")
+check("[7] the usage line lists the methods and the two flags", "-method nm|lm|tr|pso|de|sa|cmaes|bayes]" in run(DIV, "optimize -param R2 1k 1 10k", "us")
       and "[-polish] [-starts k]" in run(DIV, "optimize -param R2 1k 1 10k", "us2"))
 uk = run(DIV, "optimize -param R2 1k 1 10k -analysis op -minimize v(out) -method bogus", "uk")
-check("[7] an unknown method names the eight: 'use nm, lm, pso, de, sa, cmaes, bayes or nsga2'", "(use nm, lm, pso, de, sa, cmaes, bayes or nsga2)" in uk)
+check("[7] an unknown method names the nine: 'use nm, lm, tr, pso, de, sa, cmaes, bayes or nsga2'", "(use nm, lm, tr, pso, de, sa, cmaes, bayes or nsga2)" in uk)
 
 # [8] -polish on a -target fit is Levenberg-Marquardt ---------------------------------------------------
 print("\n[8] -polish on a -target fit")
@@ -341,9 +361,9 @@ check("[9] ...polished and converged at the global minimum, v1 = 0.8 to 1e-3, op
       and win is not None and var(w4, "start") == win.group(1) and var(w4, "status") == "converged",
       f"{ph} {knob(w4, 'v1')} start={var(w4, 'start')} status={var(w4, 'status')}")
 wc = run(WELL, f"optimize {WELL_OPT} -method cmaes -seed 1 -starts 2", "wc")
-check("[9] CMA-ES -starts 2: three runs, the winner polished with Nelder-Mead, v1 = 0.8 to 1e-3",
+check("[9] CMA-ES -starts 2: three runs, the winner polished with the trust region, v1 = 0.8 to 1e-3",
       "optimize: 3 starts -- the given point and 2 Latin-hypercube points, 34 iterations each" in wc
-      and len(re.findall(r"^optimize: start \d of 3 \(", wc, re.M)) == 3 and "optimize: polish -- Nelder-Mead from the best point" in wc
+      and len(re.findall(r"^optimize: start \d of 3 \(", wc, re.M)) == 3 and "optimize: polish -- Trust-Region from the best point" in wc
       and knob(wc, "v1") is not None and abs(knob(wc, "v1") - 0.8) < 1e-3, f"{knob(wc, 'v1')} {cost(wc)}")
 pops = re.findall(r"^optimize: start \d of 3 \((?:the given point|Latin-hypercube point), population (\d+)\)", wc, re.M)
 wcv = run(WELL, f"optimize {WELL_OPT} -method cmaes -seed 1 -starts 2 -verbose", "wcv")
@@ -400,13 +420,13 @@ check("[11] seeds 2 to 5 at the same budget all hand off and end at R2 = 9000 wi
 print("\n[12] a smooth bowl in two knobs")
 b60 = run(BOWL, f"optimize {BOWL_OPT} -method bayes -seed 1 -maxiter 60", "b60")
 h = HAND.search(b60)
-m = re.search(r"^optimize: polish -- Nelder-Mead from the best point \(cost ([\d.eE+-]+)\), up to (\d+) iterations \(the remaining budget\)", b60, re.M)
+m = re.search(r"^optimize: polish -- Trust-Region from the best point \(cost ([\d.eE+-]+)\), up to (\d+) iterations \(the remaining budget\)", b60, re.M)
 check("[12] the surrogate hands off within 25 evaluations with its best below 1e-5 (the basin found)",
       h is not None and int(h.group(1)) <= 25 and m is not None and float(m.group(1)) < 1e-5, f"{h.group(0) if h else None} | {m.group(0) if m else None}")
 ph, fb, _, nb = cost(b60)
 nm_b = run(BOWL, f"optimize {BOWL_OPT} -method nm", "bnm")
 ps_b = run(BOWL, f"optimize {BOWL_OPT} -method pso -seed 1", "bps")
-check("[12] ...with a budget of 60 the Nelder-Mead polish converges below 1e-10 at (0.3, 0.7) to 1e-4, in fewer evaluations than Nelder-Mead alone",
+check("[12] ...with a budget of 60 the trust-region polish converges below 1e-10 at (0.3, 0.7) to 1e-4, in fewer evaluations than Nelder-Mead alone (26 against 103)",
       ph == "converged" and fb is not None and fb < 1e-10 and abs(knob(b60, "v1") - 0.3) < 1e-4 and abs(knob(b60, "v2") - 0.7) < 1e-4
       and cost(nm_b)[3] is not None and nb < cost(nm_b)[3], f"{ph} {fb} evals {nb} vs nm {cost(nm_b)[3]}")
 check("[12] the swarm on the same bowl spends more than 500 evaluations (it 'converged' at 2e-9 after 1153)",
@@ -415,10 +435,11 @@ check("[12] the swarm on the same bowl spends more than 500 evaluations (it 'con
 # [13] the budget is honoured ---------------------------------------------------------------------------------
 print("\n[13] the budget is honoured")
 b30 = run(BOWL, f"optimize {BOWL_OPT} -method bayes -seed 1 -maxiter 30", "b30")
-h = HAND.search(b30)
-check("[13] -maxiter 30: the hand-off leaves the polish its share and the report reads 'stopped at -maxiter (M iterations) -- NOT converged' with the NOTE, M = 30 - N",
-      h is not None and re.search(r"^optimize: stopped at -maxiter \(" + h.group(3) + r" iterations\) -- NOT converged, objective", b30, re.M) is not None
-      and "NOTE -- the iteration cap ended" in b30, b30[-700:])
+b21 = run(BOWL, f"optimize {BOWL_OPT} -method bayes -seed 1 -maxiter 20", "b21")
+h = HAND.search(b21)
+check("[13] -maxiter 20: the hand-off leaves the polish one iteration, too few to certify, and the report reads 'stopped at -maxiter (1 iteration) -- NOT converged' with the NOTE (the budget honoured, the shortfall said)",
+      h is not None and re.search(r"^optimize: stopped at -maxiter \(" + h.group(3) + r" iterations?\) -- NOT converged, objective", b21, re.M) is not None
+      and "NOTE -- the iteration cap ended" in b21, b21[-700:])
 m3 = run(BOWL, f"optimize {BOWL_OPT} -method bayes -seed 1 -maxiter 3\necho status=$optimize_status", "m3")
 check("[13] -maxiter 3: a design of 3 ('3 in the initial design'), 'stopped at -maxiter (3 evaluations) -- NOT converged' -- the cap is counted in evaluations here -- and optimize_status = maxiter",
       "a budget of 3 evaluations (3 in the initial design)" in m3 and "optimize: stopped at -maxiter (3 evaluations) -- NOT converged, objective" in m3 and var(m3, "status") == "maxiter", m3[-500:])
@@ -482,7 +503,7 @@ st = run(BOWL, f"optimize {BOWL_OPT} -method bayes -seed 1 -maxiter 40 -starts 1
 check("[18] the banner says '2 starts -- the given point and 1 Latin-hypercube point, 20 evaluations each, the winner polished', two per-start lines, a winner, the winner's polish below 1e-9 at (0.3, 0.7), and no per-start hand-off line (the winner is polished anyway)",
       "optimize: 2 starts -- the given point and 1 Latin-hypercube point, 20 evaluations each, the winner polished" in st
       and len(re.findall(r"^optimize: start \d of 2 \(", st, re.M)) == 2 and re.search(r"^optimize: start \d of 2 won", st, re.M) is not None
-      and "optimize: polish -- Nelder-Mead from the best point" in st and cost(st)[1] is not None and cost(st)[1] < 1e-9
+      and "optimize: polish -- Trust-Region from the best point" in st and cost(st)[1] is not None and cost(st)[1] < 1e-9
       and abs(knob(st, "v1") - 0.3) < 1e-3 and abs(knob(st, "v2") - 0.7) < 1e-3 and "surrogate converged after" not in st,
       st[-900:])
 
@@ -526,7 +547,7 @@ con_ok(run(DIV, CUR + " -method pso -seed 1 -polish", "c_pso"), "[21] the swarm 
 cb = run(DIV, CUR + " -method bayes -seed 1 -maxiter 120", "c_bo")
 con_ok(cb, "[21] the surrogate with its hand-off (a budget of 120, the polish's share constrained too): the same optimum and multiplier", "c_bo")
 check("[21] ...inside the constraint rounds the surrogate's hand-off line is not repeated (none printed), the polish line names the remaining budget once",
-      cb.count("optimize: surrogate converged after") == 0 and len(re.findall(r"^optimize: polish -- Nelder-Mead from the best point \(cost [\d.eE+-]+\), up to \d+ iterations \(the remaining budget\)", cb, re.M)) == 1,
+      cb.count("optimize: surrogate converged after") == 0 and len(re.findall(r"^optimize: polish -- Trust-Region from the best point \(cost [\d.eE+-]+\), up to \d+ iterations \(the remaining budget\)", cb, re.M)) == 1,
       f"{cb.count('optimize: surrogate converged after')} hand-off lines; {len(re.findall(r'^optimize: polish -- ', cb, re.M))} polish lines")
 
 print("\n[22] an inactive constraint changes nothing")
@@ -598,6 +619,93 @@ if os.path.exists(osdi):
     os.remove(osdi)
 else:
     check("[27] optguard.va compiled", False, "openvaf-r failed")
+
+# ============================== Enhancement-768 ==============================================
+print("\nEnhancement-768: a trust region on a quadratic model")
+WALL = "V1 x1 0 dc 0.9\nV2 x2 0 dc 0.1\nB1 out 0 V = pow(v(x1)+0.2,2) + pow(v(x2)-0.7,2)\n"
+Q10 = ("".join(f"V{i} x{i} 0 dc 0.5\n" for i in range(1, 11)) + "B1 out 0 V = "
+       + " + ".join(f"{i}*pow(v(x{i})-{0.1 + 0.08 * i:.2f},2)" for i in range(1, 11)) + " + 0.5*v(x1)*v(x2) + 0.3*v(x3)*v(x7)\n")
+Q10_OPT = " ".join(f"-param V{i} 0.5 0 1" for i in range(1, 11)) + " -analysis op -minimize v(out) -maxiter 2000"
+
+print("\n[28] a smooth bowl")
+tb = run(BOWL, f"optimize {BOWL_OPT} -method tr", "t_bowl")
+ph, f, _, n = cost(tb)
+nn = cost(nm_b)[3]
+check("[28] converged below 1e-12 at (0.3, 0.7) to 1e-6 in at most 15 evaluations (9: five for the first model, three steps, the final apply), a third or less of Nelder-Mead's",
+      ph == "converged" and f is not None and f < 1e-12 and abs(knob(tb, "v1") - 0.3) < 1e-6 and abs(knob(tb, "v2") - 0.7) < 1e-6 and n <= 15 and 3 * n <= nn,
+      f"{ph} {f} evals {n} vs nm {nn}")
+check("[28] the report names the method: 'minimizing 'v(out)' (Trust-Region)'", "(Trust-Region)" in tb)
+
+print("\n[29] harder shapes")
+te = run(ELL, f"optimize {ELL_OPT} -method tr", "t_ell")
+ph, f, _, n = cost(te)
+check("[29] the rotated ellipsoid of condition 1e6: converged below 1e-9 at (0.3, 0.7) to 1e-4 within 60 evaluations",
+      ph == "converged" and f is not None and f < 1e-9 and abs(knob(te, "v1") - 0.3) < 1e-4 and abs(knob(te, "v2") - 0.7) < 1e-4 and n <= 60, f"{ph} {f} evals {n}")
+tro = run(ROS, "optimize -param V1 0.5 0 1 -param V2 0.5 0 1 -param V3 0.5 0 1 -param V4 0.5 0 1 -analysis op -minimize v(out) -maxiter 600 -method tr", "t_ros")
+ph, f, _, n = cost(tro)
+check("[29] Rosenbrock in four knobs: converged below 1e-7 with every knob at 2/3 to 1e-3, within 200 evaluations",
+      ph == "converged" and f is not None and f < 1e-7 and all(abs(knob(tro, f"v{i}") - 2.0 / 3.0) < 1e-3 for i in range(1, 5)) and n <= 200, f"{ph} {f} evals {n}")
+tq = run(Q10, f"optimize {Q10_OPT} -method tr", "t_q10")
+nq = run(Q10, f"optimize {Q10_OPT} -method nm", "n_q10")
+check("[29] a coupled quadratic in ten knobs: the trust region reaches Nelder-Mead's value (to 1e-5) or lower in a third of its evaluations or fewer",
+      cost(tq)[0] == "converged" and cost(tq)[1] is not None and cost(nq)[1] is not None and cost(tq)[1] <= cost(nq)[1] + 1e-5 and 3 * cost(tq)[3] <= cost(nq)[3],
+      f"tr {cost(tq)[1]} in {cost(tq)[3]}, nm {cost(nq)[1]} in {cost(nq)[3]}")
+
+print("\n[30] the bounds are inside the subproblem")
+tw = run(WALL, f"optimize {BOWL_OPT} -method tr", "t_wall")
+nw = run(WALL, f"optimize {BOWL_OPT} -method nm", "n_wall")
+ph, f, _, n = cost(tw)
+check("[30] an optimum on a wall ((x+0.2)^2 + (y-0.7)^2 in the unit box): v1 exactly 0, v2 = 0.7 to 1e-6, the objective 0.04, the bound NOTE, fewer evaluations than the simplex",
+      ph == "converged" and knob(tw, "v1") == 0.0 and abs(knob(tw, "v2") - 0.7) < 1e-6 and abs(f - 0.04) < 1e-9 and "finished ON a search bound" in tw and n < cost(nw)[3],
+      f"{ph} v1 {knob(tw, 'v1')} v2 {knob(tw, 'v2')} f {f} evals {n} vs nm {cost(nw)[3]}")
+tc = run(DIV, "optimize -param R1 1k 100 10k -param R2 1k 100 10k -analysis op -minimize 0-i(v1) -method tr", "t_cor")
+check("[30] an optimum in a corner (the least current: both resistors at their ceiling): R1 = R2 = 10000 exactly, the objective 5e-05",
+      cost(tc)[0] == "converged" and knob(tc, "r1") == 10000.0 and knob(tc, "r2") == 10000.0 and abs(cost(tc)[1] - 5e-5) < 1e-12, f"{cost(tc)} {knob(tc, 'r1')} {knob(tc, 'r2')}")
+
+print("\n[31] what the polish gained")
+m = re.search(r"^optimize: polish converged -- cost 0\.0361376 -> ([\d.eE+-]+) in (\d+) evaluations", b, re.M)
+check("[31] hunt O1's swarm, polished: 'polish converged -- cost 0.0361376 -> <below 1e-9> in N evaluations' with N at most 20 (the simplex took 38)",
+      m is not None and float(m.group(1)) < 1e-9 and int(m.group(2)) <= 20, m.group(0) if m else "no polish line")
+he = run(ELL, f"optimize {ELL_OPT} -method bayes -seed 1 -maxiter 80", "t_bell")
+ph, f, _, n = cost(he)
+check("[31] the surrogate's hand-off on the ellipsoid: the trust region converges below 1e-9 at (0.3, 0.7) within the budget of 80 (the simplex, flat in a box corner, stopped at 0.18)",
+      ph == "converged" and f is not None and f < 1e-9 and abs(knob(he, "v1") - 0.3) < 1e-4 and abs(knob(he, "v2") - 0.7) < 1e-4 and n <= 81
+      and "optimize: polish -- Trust-Region from the best point" in he, f"{ph} {f} evals {n}")
+
+print("\n[32] under -constrain")
+ct = run(DIV, CUR + " -method tr", "t_con")
+m = ACT.search(ct)
+check("[32] 'minimise the current subject to v(out) >= 0.9' under the trust region: converged, R1 = 1111.1 to 0.5, R2 = 10000, the constraint active with the multiplier 1e-4 to 2 %",
+      cost(ct)[0] == "converged" and knob(ct, "r1") is not None and abs(knob(ct, "r1") - 1111.11) < 0.5 and knob(ct, "r2") == 10000.0
+      and m is not None and abs(float(m.group(2)) - 1e-4) < 2e-6, f"{cost(ct)} r1 {knob(ct, 'r1')} {m.group(0) if m else None}")
+
+print("\n[33] the arguments")
+t1 = run(BOWL, f"optimize {BOWL_OPT} -method tr -maxiter 1\necho status=$optimize_status conv=$optimize_converged", "t_m1")
+check("[33] -maxiter 1: 'stopped at -maxiter (1 iteration) -- NOT converged' with the NOTE, optimize_status = maxiter",
+      "optimize: stopped at -maxiter (1 iteration) -- NOT converged, objective" in t1 and "NOTE -- the iteration cap ended" in t1 and var(t1, "status") == "maxiter" and var(t1, "conv") == "0")
+tp = run(BOWL, f"optimize {BOWL_OPT} -method trust -polish", "t_pol")
+check("[33] 'trust' is an alias; -polish under it: 'NOTE -- -polish finishes a global method (pso, de, sa, cmaes, bayes) with the local one; Trust-Region is the local method, so it is ignored'",
+      "with the local one; Trust-Region is the local method, so it is ignored" in tp and "(Trust-Region)" in tp and cost(tp) == cost(tb))
+tv = run(ROS, "optimize -param V1 0.5 0 1 -param V2 0.5 0 1 -param V3 0.5 0 1 -param V4 0.5 0 1 -analysis op -minimize v(out) -maxiter 600 -method tr -verbose", "t_vb")
+its = re.findall(r"^  iter (\d+)\s+cost [\d.eE+-]+\s+radius [\d.eE+-]+\s+(ratio -?[\d.eE+-]+|\(model minimum; \d+ evals\)|\(geometry)", tv, re.M)
+check("[33] -verbose: one line per iteration, numbered from 1 ('iter N  cost  radius  ratio', or a 'model minimum' / 'geometry' line), most of them trial steps with a ratio",
+      len(its) >= 20 and [int(x[0]) for x in its] == list(range(1, len(its) + 1)) and sum(x[1].startswith("ratio") for x in its) > len(its) // 2, f"{len(its)} lines")
+subprocess.run([OPENVAF, os.path.join(HERE, "optguard.va"), "-o", osdi], capture_output=True, text=True)
+if os.path.exists(osdi):
+    GB = "V1 in 0 dc 1\nR1 in out 1k\nN1 out 0 gm\n.model gm optguard\n"
+    ga = run(GB, f"pre_osdi {osdi}\noptimize -param " + AT + "n1[g] -0.2m -2m 5m -analysis op -target v(out) 0.5 -method tr", "t_g1")
+    gb = run(GB, f"pre_osdi {osdi}\noptimize -param " + AT + "n1[g] -1m -2m 5m -analysis op -target v(out) 0.5 -method tr", "t_g2")
+    check("[33] a refused start whose axis point solves (g = -0.2m, the point a radius above it is legal): converged at g = 1m to 1e-6, E-438's NOTE",
+          cost(ga)[0] == "converged" and knob(ga, AT + "n1[g]") is not None and abs(knob(ga, AT + "n1[g]") - 1e-3) < 1e-6 and "did not solve" in ga, f"{cost(ga)} {knob(ga, AT + 'n1[g]')}")
+    check("[33] a refused start with no solving axis point (g = -1m): NO SOLUTION after 4 evaluations, as the simplex reads after 3 (hunt F6 stays open for the local methods)",
+          cost(gb)[0] == "NO SOLUTION -- no evaluation solved" and cost(gb)[3] == 4, f"{cost(gb)}")
+    os.remove(osdi)
+else:
+    for _ in range(2):
+        check("[33] optguard.va compiled", False, "openvaf-r failed")
+pvt = run(BOWL, f"optimize {BOWL_OPT} -method tr\necho status=$optimize_status conv=$optimize_converged evals=$optimize_evals cost=$optimize_cost", "t_pv")
+check("[33] optimize_status = converged, optimize_converged = 1, optimize_evals and optimize_cost equal to the line",
+      var(pvt, "status") == "converged" and var(pvt, "conv") == "1" and int(float(var(pvt, "evals"))) == cost(pvt)[3] and abs(float(var(pvt, "cost")) - cost(pvt)[1]) < 1e-12)
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

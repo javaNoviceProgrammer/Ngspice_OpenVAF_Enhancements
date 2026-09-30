@@ -147,3 +147,5 @@ equal to the line.
   method.
 
 **Update ([E-766](Enhancement-766.md)).** Under `-constrain` the surrogate minimises the augmented objective in each outer round; its hand-off line is not repeated inside the rounds (the polish line names the remaining budget once), and the hand-off polish runs its own constrained rounds.
+
+**Update ([E-768](Enhancement-768.md)).** The hand-off for a scalar objective runs the trust region: on the bowl the whole search converges in 26 evaluations instead of 91, and inside a budget of 30, which used to end `NOT converged`; on the rotated ellipsoid, where the simplex sat flat in a box corner at 0.18, it reaches 4.8e-14. The first model's 2n + 1 evaluations are outside the hand-off's iteration cap, so a remainder of one iteration still reads `NOT converged`.

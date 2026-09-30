@@ -72,3 +72,5 @@ in-place; `-dparam` now joins them on large circuits.
   `opt_eval_objs`; arm before dispatch, free at cleanup.
 - `examples/optimize_examples/verify_optimize.py` — a large-circuit `-dparam`
   optimization that arms the fast path and still converges (2 new checks).
+
+**Update ([E-767](Enhancement-767.md)).** The optimizer tier's final apply also went through the in-place push and left the stored deck at the initial value (the 2026-09-29 hunt's F7: a fit to 0.9 read 0.5 after a `reset`, `listing param` showed the start). After the final apply the optimum is written with one `alterparam` per `-dparam` knob, no reset; the per-evaluation path and its evaluation counts are unchanged.

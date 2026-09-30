@@ -213,10 +213,11 @@ sweep's scale is spelled `v_sweep` (E-584): `v-sweep` is a subtraction to `print
 `optimize` varies a set of knobs, re-runs one or more analyses and drives an objective to
 a minimum: `optimize (-param|-mparam|-dparam) <name> <init> <lo> <hi> [...] -analysis <cmd>
 (-minimize <expr> | -target <expr> <value> [<weight>] ...) [-constrain <expr> (-max hi | -min lo) ...] [-ctol T]
-[-method nm|lm|pso|de|sa|cmaes|bayes|nsga2] [-maxiter N] [-tol T] [-seed s] [-polish] [-starts k] [-verbose]`. A `-param` is an `alter` target (a device or
+[-method nm|lm|tr|pso|de|sa|cmaes|bayes|nsga2] [-maxiter N] [-tol T] [-seed s] [-polish] [-starts k] [-verbose]`. A `-param` is an `alter` target (a device or
 `@inst[param]`), a `-mparam` a `.model` parameter (`@model[param]`, via `altermod`), a
 `-dparam` a deck `.param` (`alterparam` and a re-source, or the in-place fast path on a
-large deck). Nelder-Mead is the default for a scalar `-minimize`, Levenberg-Marquardt for
+large deck; either way the optimum is written into the deck, so it survives a `reset` —
+[E-767](../../enhancements_doc/Enhancement-767.md)). Nelder-Mead is the default for a scalar `-minimize`, Levenberg-Marquardt for
 `-target` least squares; particle swarm, differential evolution and annealing search the
 whole box; CMA-ES ([E-764](../../enhancements_doc/Enhancement-764.md)) searches it with a
 Gaussian whose covariance and step size adapt to the ranking of each generation — it
@@ -229,9 +230,13 @@ Gaussian-process surrogate to every evaluation and picks the next by expected im
 basin in ten to twenty evaluations, hands the rest of `-maxiter` (an evaluation budget
 here) to the local method, and reports the predicted cost with its uncertainty and a
 length scale per knob, naming a knob the objective ignores; NSGA-II trades several
-`-minimize`/`-maximize` objectives into a Pareto front; `-center` with `-spec` limits maximises a yield. `-polish`
-finishes a global method with the local one (Nelder-Mead, or Levenberg-Marquardt for a
-`-target` fit) so the search ends with the local methods' precision, and `-starts k` runs
+`-minimize`/`-maximize` objectives into a Pareto front; `-center` with `-spec` limits maximises a yield. A second
+local method, `-method tr` ([E-768](../../enhancements_doc/Enhancement-768.md)), is a
+derivative-free trust region on a quadratic model: one evaluation per step and the knob
+bounds inside its subproblem, two to seven times fewer evaluations than Nelder-Mead on a
+smooth objective. `-polish` finishes a global method with a local one (that trust region,
+or Levenberg-Marquardt for a `-target` fit) so the search ends with the local methods'
+precision, and `-starts k` runs
 the method from k extra Latin-hypercube points, prints each start's verdict, polishes the
 winner and publishes `optimize_start`. `-constrain <expr> -max <hi>` and/or `-min <lo>`
 ([E-766](../../enhancements_doc/Enhancement-766.md)) add constraints to any scalar method
@@ -272,7 +277,8 @@ to [E-197](../../enhancements_doc/Enhancement-197.md), [E-206](../../enhancement
 [E-216](../../enhancements_doc/Enhancement-216.md), [E-322](../../enhancements_doc/Enhancement-322.md),
 [E-472](../../enhancements_doc/Enhancement-472.md), [E-762](../../enhancements_doc/Enhancement-762.md),
 [E-764](../../enhancements_doc/Enhancement-764.md), [E-765](../../enhancements_doc/Enhancement-765.md),
-[E-766](../../enhancements_doc/Enhancement-766.md).
+[E-766](../../enhancements_doc/Enhancement-766.md), [E-767](../../enhancements_doc/Enhancement-767.md),
+[E-768](../../enhancements_doc/Enhancement-768.md).
 
 ## 3.4 Analysis coverage
 

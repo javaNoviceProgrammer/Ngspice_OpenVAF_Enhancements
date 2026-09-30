@@ -203,6 +203,11 @@ at every corner.
 
 ## 4. A trust-region quadratic model — a faster local method
 
+*Implemented in [E-768](../../enhancements_doc/Enhancement-768.md): a least-change
+quadratic on 2n + 1 points, a box trust region intersected with the knob bounds, and the
+polish and the surrogate's hand-off switched to it. Measured at two to seven times fewer
+evaluations than Nelder-Mead; the `-minimize` default is left as it was.*
+
 Nelder-Mead is robust and slow: on a smooth objective it spends several evaluations per
 useful step and its convergence is linear at best. Powell's BOBYQA family keeps an
 **interpolation set** of `2n + 1` points, fits a quadratic model through them (the
@@ -397,6 +402,8 @@ Every section: `optimize_status`, `optimize_converged`, `optimize_evals` and
    state. *Done: [E-766](../../enhancements_doc/Enhancement-766.md).*
 4. **The trust-region method** (section 4) and **pattern search** (section 5), one fold
    each; then the question of the `-minimize` default.
+   *Section 4 done: [E-768](../../enhancements_doc/Enhancement-768.md). Pattern search
+   and the default are open.*
 5. **Discrete knobs** (section 7), which also settle O2's log-scaled knob.
 6. **Worst case over corners** (section 8), after the corner move's cost is measured.
 7. **A second multi-objective method** (section 9), after F5 is fixed in

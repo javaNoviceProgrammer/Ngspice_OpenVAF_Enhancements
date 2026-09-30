@@ -1,13 +1,15 @@
-# optimize_examples — the built-in `optimize` command (Enhancements 130, 143, 144, 145, 322, 323, 762, 763)
+# optimize_examples — the built-in `optimize` command (Enhancements 130, 143, 144, 145, 322, 323, 762, 763, 767)
 
 ```
 python3 verify_optimize.py
 ```
 
-69 checks, one solver (a front-end command; the linear solver does not enter). 47 of 69 on
+73 checks, one solver (a front-end command; the linear solver does not enter). 70 of 73 on the
+E-766 binary (two checks of section [21] and the bare `-method` message); of the first 69, 47 on
 the E-761 binary, 68 of 69 on the E-763 binary (the bare `-method` message names `cmaes` since
-[Enhancement-764](../../enhancements_doc/Enhancement-764.md) and `bayes` since
-[Enhancement-765](../../enhancements_doc/Enhancement-765.md)).
+[Enhancement-764](../../enhancements_doc/Enhancement-764.md) `bayes` since
+[Enhancement-765](../../enhancements_doc/Enhancement-765.md) and `tr` since
+[Enhancement-768](../../enhancements_doc/Enhancement-768.md)).
 
 Sections [1]–[18] are the command's original coverage: analytic optima reached by
 Nelder-Mead and Levenberg-Marquardt over instance, `.model` and `.param` knobs, single and
@@ -39,3 +41,11 @@ expression with spaces (it fitted to a target of 0), a bare `-method` or `-maxit
 message and no run follows; SPICE suffixes, a negative target value and a raised
 population (with a NOTE) still work; `-minimize -v(out)` is refused with the quoting hint
 and `-minimize "-v(out)"` runs.
+
+Section [21] is Enhancement-767 (F7 of the same hunt): on a deck large enough to arm the
+`.param` fast path (a chain of 100 resistors) the fit was pushed in place and never
+written into the deck, so a `reset` put the circuit back at the initial value (v(out) 0.5
+for a fit to 0.9) and `listing param` showed `rr = 1000`. The optimum is written into the
+deck once after the search: the output is still 0.9 after a reset, the listing shows 9000
+and equals `optimize_rr`, the fit's 16 evaluations are unchanged, and a two-resistor deck
+(the `alterparam` route) behaves as before.

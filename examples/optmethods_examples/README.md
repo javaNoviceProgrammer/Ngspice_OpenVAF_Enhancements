@@ -1,11 +1,11 @@
-# optmethods_examples — the optimization methods added to `optimize` from the 2026-09-29 proposal on (Enhancements 764, 765, 766)
+# optmethods_examples — the optimization methods added to `optimize` from the 2026-09-29 proposal on (Enhancements 764, 765, 766, 768)
 
 ```
 python3 verify_optmethods.py
 ```
 
-81 checks, one solver (a front-end command; the linear solver does not enter). 7 of 81
-on the E-763 binary, which refuses both method names, the two flags and `-constrain`.
+97 checks, one solver (a front-end command; the linear solver does not enter). 74 of 97
+on the E-766 binary, which does not know `-method tr` and polishes with Nelder-Mead.
 
 The [`optimize` suite](../optimize_examples/) keeps the command's original coverage; this
 one checks the methods' claims on standard test functions posed **inside ngspice**: the
@@ -61,3 +61,17 @@ Lagrangian around any scalar method.
 | [25] | seven refusals with their messages; `-min` still the `-minimize` alias without a `-constrain` before it |
 | [26] | a `-constrain` before `-analysis` belongs to stage 0; `-starts 2` with every start constrained and the winner polished |
 | [27] | a compiled conductance refused at g ≤ 0 under CMA-ES with `v(out) <= 0.5`: g = 1m, active |
+
+Sections [28]–[33] are [Enhancement-768](../../enhancements_doc/Enhancement-768.md): a
+derivative-free trust region on a quadratic model (`-method tr`), which the polish and the
+surrogate's hand-off now run for a scalar objective. Eight checks of the earlier sections
+([3], [7], [9], [12], [13], [18], [21]) expect it in the polish lines and the method lists.
+
+| section | what it pins |
+|---|---|
+| [28] | a smooth bowl below 1e-12 in at most 15 evaluations, a third or less of Nelder-Mead's; the banner names the method |
+| [29] | the rotated ellipsoid below 1e-9 within 60 evaluations, Rosenbrock in four knobs below 1e-7 within 200, a coupled quadratic in ten knobs at Nelder-Mead's value in a third of its evaluations |
+| [30] | the bounds inside the subproblem: an optimum on a wall with that knob exactly on the bound, an optimum in a corner |
+| [31] | hunt O1's swarm polished in at most 20 evaluations; the surrogate's hand-off on the ellipsoid converged below 1e-9 (the simplex stopped flat in a corner at 0.18) |
+| [32] | under `-constrain`: R1 = 1111.1, the multiplier 1e-4 to 2 % |
+| [33] | `-maxiter 1`, the `trust` alias, `-polish` a NOTE under it, one `-verbose` line per iteration, a refused start whose axis point solves and one where nothing does, the E-762 variables |

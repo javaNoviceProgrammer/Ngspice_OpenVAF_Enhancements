@@ -103,3 +103,5 @@ under differential evolution is raised to 5 with the NOTE and the fit converges;
 **Update ([E-765](Enhancement-765.md)).** The method lists in the usage line, the bare-flag message and the unknown-method message name `bayes`; `-swarmsize` under it prints a NOTE and is ignored, and `-maxiter` above 2000 is capped with a NOTE.
 
 **Update ([E-766](Enhancement-766.md)).** `-constrain`'s bounds and `-ctol` go through the same strict readers: a limit that is not a number, `-ctol 0`, a constraint with no `-max`/`-min`, a `-constrain` followed by a flag and a `-max` before any `-spec` or `-constrain` are refused with a message.
+
+**Update ([E-768](Enhancement-768.md)).** The method lists in the usage line, the bare-flag message and the unknown-method message name `tr`.

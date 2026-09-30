@@ -16,7 +16,7 @@ its reproduction.
 | [F4](#f4--simulated-annealing-seeds-its-temperature-from-the-failure-penalty) | a start inside the failing region gives `T0 = 7.9e29`; after 40 cooling levels T is still `1e26`, every uphill move is accepted, the schedule is meaningless | **medium** |
 | [F5](#f5--nsga-ii-ignores-failed-evaluations) | a design the model refuses (`g = −0.0011`) sits on the reported Pareto front with a neighbour's objectives; no NOTE; E-438's check and E-472's reuse are missing from the multi-objective path | **high** — the front is the answer |
 | [F6](#f6--a-search-started-inside-a-failing-region-never-leaves-it) | NM stops after 3 evaluations and LM after 15, both "converged" at the failing start; LM's residual vector is left uninitialised on a failed stage | **high** |
-| [F7](#f7--the-dparam-optimum-is-not-written-into-the-deck-when-the-fast-path-is-armed) | on a deck of 80 weighted devices or more the fitted `.param` value never reaches the deck: `listing param` shows the initial value and a user `reset` reverts the circuit (0.9 → 0.5); a small deck keeps it | **high** — the answer evaporates at the next reset, and only for large decks |
+| [F7](#f7--the-dparam-optimum-is-not-written-into-the-deck-when-the-fast-path-is-armed) | *(fixed in [E-767](../../enhancements_doc/Enhancement-767.md): the optimum is written into the deck once after the search when the fast path was armed)* on a deck of 80 weighted devices or more the fitted `.param` value never reaches the deck: `listing param` shows the initial value and a user `reset` reverts the circuit (0.9 → 0.5); a small deck keeps it | **high** — the answer evaporates at the next reset, and only for large decks |
 | [O1](#observations) | particle swarm with a six-member swarm collapses onto a bound (0.036 against 2e-14 for NM) and its stall test calls it converged; default swarms are fine but stop at 1e-6, four to seven orders above the local methods | observation |
 | [O2](#observations) | a knob spanning decades: LM's fixed finite-difference step in linear normalised space costs four orders of accuracy on `[1, 1e9]` | observation |
 | [O3](#observations) | after a fit, a user `reset` drops the `-param`/`-mparam` optimum (alter semantics) and keeps the `-dparam` one | observation |
@@ -237,6 +237,11 @@ Which of the two a user gets depends on a device count they have no reason to kn
 optimum on both paths; `optimize_rr` already publishes the number. O3 documents what a
 reset does to the other knob kinds.
 
+*Fixed in [E-767](../../enhancements_doc/Enhancement-767.md).* As sketched: one
+`alterparam` per `-dparam` knob after the final apply when the fast path was armed, no
+reset. The 100-resistor row now reads 0.9, 0.9 and `rr = 9000`; the fit's 16 evaluations
+are unchanged.
+
 ## Observations
 
 **O1 — particle swarm on a bound.** `-param R2 1k 10 10k -minimize (v(out)-0.2)^2 -method
@@ -251,7 +256,9 @@ method, which would give a global search the local methods' precision.
 method from a global method's best point (this exact command with it: 0.036 on the bound
 to 1.3e-12 at R2 = 250, the bound NOTE gone), `-starts k` adds Latin-hypercube starts with
 a per-start report, and `-method cmaes` alone reaches 250 (a mean that settles inside the
-box, not a swarm clamped at the wall). The reflecting velocities were not done.*
+box, not a swarm clamped at the wall). The reflecting velocities were not done. Since
+[E-768](../../enhancements_doc/Enhancement-768.md) the polish is a trust region on a quadratic
+model: the same command ends at 1.7e-14 in 11 polish evaluations instead of 38.*
 
 **O2 — a knob spanning decades.** `-param R2 1k 1 1e9 -target v(out) 0.9 -method lm`:
 rms 2.5e-5 after 41 evaluations, against 2.3e-9 on `[1, 100k]`; the finite-difference

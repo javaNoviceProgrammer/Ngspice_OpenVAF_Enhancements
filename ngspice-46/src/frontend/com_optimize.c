@@ -52,6 +52,11 @@ with several local minima:
     so far, the next point chosen by expected improvement. The method for the
     SLOW deck: tens of evaluations where the population methods spend
     thousands, in up to a dozen knobs. -maxiter is its evaluation budget.
+  * -method tr (Enhancement-768): a derivative-free trust region on a quadratic
+    model -- a LOCAL method, like the simplex, but one evaluation per step, a
+    Hessian learned from 2n+1 interpolation points, and the knob bounds inside
+    its subproblem, so it runs along a wall instead of clamping onto it. It is
+    what -polish and the surrogate's hand-off run for a scalar objective.
 
 All work for a scalar -minimize objective and -target least-squares. `-swarmsize
 <N>` sets the pso/de/cmaes population (default auto, ~10+4*np for pso/de,
@@ -82,7 +87,7 @@ Syntax (in a .control block, after the circuit is loaded):
              | -target <expr> <value> [<weight>]  [-target ...]
                [ -analysis <command ...> -target ... ] )
            [-constrain <expr> (-max <hi> | -min <lo>) ...] [-ctol <T>]
-           [-method nm|lm|pso|de|sa|cmaes|bayes] [-swarmsize <N>] [-seed <s>]
+           [-method nm|lm|tr|pso|de|sa|cmaes|bayes] [-swarmsize <N>] [-seed <s>]
            [-maxiter <N>] [-tol <T>] [-polish] [-starts <k>] [-verbose]
 
 Three knob kinds, all in-place except -dparam:
@@ -1451,6 +1456,409 @@ static void simulated_annealing(struct optctx *c, double *ubest, double *fbest)
 }
 
 
+
+/* ==================== Enhancement-768: trust region ========================= */
+
+/* the quadratic model's value relative to its centre: g'd + d'Hd/2 */
+static double tr_q(int n, const double *g, const double *H, const double *d)
+{
+    double q = 0.0;
+    int i, j;
+    for (i = 0; i < n; i++) {
+        double hd = 0.0;
+        for (j = 0; j < n; j++) hd += H[i * n + j] * d[j];
+        q += d[i] * (g[i] + 0.5 * hd);
+    }
+    return q;
+}
+
+/* coordinate minimisation of the model over the box lo <= d <= hi, from d: each
+ * pass minimises the one-dimensional quadratic in every coordinate exactly
+ * (an end of the interval when the curvature is not positive), so the model
+ * value never rises */
+static void tr_coord(int n, const double *g, const double *H, const double *lo,
+                     const double *hi, double *d)
+{
+    int sweep, i, j;
+    for (sweep = 0; sweep < 200; sweep++) {
+        double moved = 0.0;
+        for (i = 0; i < n; i++) {
+            double ge = g[i], hii = H[i * n + i], t;
+            for (j = 0; j < n; j++) if (j != i) ge += H[i * n + j] * d[j];
+            if (hii > 1e-300) {
+                t = -ge / hii;
+                if (t < lo[i]) t = lo[i];
+                if (t > hi[i]) t = hi[i];
+            } else {
+                double ql = ge * lo[i] + 0.5 * hii * lo[i] * lo[i];
+                double qh = ge * hi[i] + 0.5 * hii * hi[i] * hi[i];
+                double qc = ge * d[i] + 0.5 * hii * d[i] * d[i];
+                t = ql <= qh ? lo[i] : hi[i];
+                if (qc <= ql && qc <= qh) t = d[i];
+            }
+            if (fabs(t - d[i]) > moved) moved = fabs(t - d[i]);
+            d[i] = t;
+        }
+        if (moved < 1e-15) break;
+    }
+}
+
+/* the trust-region subproblem: minimise g'd + d'Hd/2 over the box lo <= d <= hi
+ * (the radius and the knob bounds together -- a box, so nothing is clamped
+ * afterwards). A Newton step on the free coordinates with the bound ones held,
+ * the active set grown one hit at a time, then polished by coordinate
+ * minimisation and cross-checked against coordinate minimisation from zero;
+ * the lower of the two is returned, and neither can be above zero. */
+static void tr_box_qp(int n, const double *g, const double *H, const double *lo,
+                      const double *hi, double *d)
+{
+    double dn[OPT_MAXP], dc[OPT_MAXP], b[OPT_MAXP], x[OPT_MAXP];
+    int fixed[OPT_MAXP], idx[OPT_MAXP];
+    double *M = TMALLOC(double, (size_t) n * (size_t) n);
+    int i, j, a, bb, pass;
+
+    for (i = 0; i < n; i++) { dn[i] = dc[i] = 0.0; fixed[i] = 0; }
+    for (pass = 0; pass <= n; pass++) {
+        int nf = 0, worst = -1;
+        double wfrac = 1.0;
+        for (i = 0; i < n; i++) if (!fixed[i]) idx[nf++] = i;
+        if (nf == 0) break;
+        for (a = 0; a < nf; a++) {
+            double r = -g[idx[a]];
+            for (j = 0; j < n; j++) if (fixed[j]) r -= H[idx[a] * n + j] * dn[j];
+            b[a] = r;
+            for (bb = 0; bb < nf; bb++) M[a * nf + bb] = H[idx[a] * n + idx[bb]];
+        }
+        if (!solve_lin(nf, M, b, x)) break;
+        for (a = 0; a < nf; a++) {               /* how far toward it the box allows */
+            double from = dn[idx[a]], to = x[a], fr = 1.0;
+            if (to != to) { wfrac = 0.0; worst = -2; break; }
+            if (to > hi[idx[a]])      fr = (hi[idx[a]] - from) / (to - from);
+            else if (to < lo[idx[a]]) fr = (lo[idx[a]] - from) / (to - from);
+            if (fr < wfrac) { wfrac = fr; worst = a; }
+        }
+        if (worst == -2) break;
+        for (a = 0; a < nf; a++) dn[idx[a]] += wfrac * (x[a] - dn[idx[a]]);
+        if (worst < 0) break;
+        dn[idx[worst]] = x[worst] > dn[idx[worst]] || x[worst] > hi[idx[worst]] ? hi[idx[worst]] : lo[idx[worst]];
+        if (x[worst] < lo[idx[worst]]) dn[idx[worst]] = lo[idx[worst]];
+        fixed[idx[worst]] = 1;
+    }
+    for (i = 0; i < n; i++) {
+        if (dn[i] != dn[i]) dn[i] = 0.0;
+        if (dn[i] < lo[i]) dn[i] = lo[i];
+        if (dn[i] > hi[i]) dn[i] = hi[i];
+    }
+    tr_coord(n, g, H, lo, hi, dn);
+    tr_coord(n, g, H, lo, hi, dc);
+    if (tr_q(n, g, H, dn) <= tr_q(n, g, H, dc)) memcpy(d, dn, (size_t) n * sizeof *d);
+    else                                        memcpy(d, dc, (size_t) n * sizeof *d);
+    tfree(M);
+}
+
+/* the least-change update of the model c0 + g'y + y'Hy/2 (y = x - xk): the
+ * smallest change of H in the Frobenius norm that makes the model interpolate
+ * Fv at the m points Y, from the KKT system
+ *
+ *     [ A  X ] [ lambda ]   [ r ]        A_jl = (y_j' y_l)^2 / 2
+ *     [ X' 0 ] [ dc, dg ] = [ 0 ]        X = [1, y_j'],  r = Fv - model
+ *
+ * solved in coordinates scaled by the radius so its entries are of order one;
+ * then H += sum lambda_j y_j y_j'. With H = 0 on entry this is the
+ * minimum-Frobenius-norm model. Returns 0 when the system is singular (a
+ * degenerate point set) or the result does not interpolate. */
+static int tr_update(int n, int m, const double *Y, const double *Fv, const double *xk,
+                     double delta, double *c0, double *g, double *H,
+                     double *W, double *rhs, double *sol, double *yh)
+{
+    const int N = m + n + 1;
+    double fmin = 1e300, fmax = -1e300;
+    int i, j, l;
+
+    for (j = 0; j < m; j++) {
+        for (i = 0; i < n; i++) yh[j * n + i] = (Y[j * n + i] - xk[i]) / delta;
+        if (Fv[j] < fmin) fmin = Fv[j];
+        if (Fv[j] > fmax) fmax = Fv[j];
+    }
+    memset(W, 0, (size_t) N * (size_t) N * sizeof *W);
+    for (j = 0; j < m; j++) {
+        for (l = 0; l < m; l++) {
+            double dot = 0.0;
+            for (i = 0; i < n; i++) dot += yh[j * n + i] * yh[l * n + i];
+            W[j * N + l] = 0.5 * dot * dot;
+        }
+        W[j * N + m] = W[m * N + j] = 1.0;
+        for (i = 0; i < n; i++)
+            W[j * N + m + 1 + i] = W[(m + 1 + i) * N + j] = yh[j * n + i];
+    }
+    for (j = 0; j < m; j++) {
+        double y[OPT_MAXP];
+        for (i = 0; i < n; i++) y[i] = Y[j * n + i] - xk[i];
+        rhs[j] = Fv[j] - (*c0 + tr_q(n, g, H, y));
+    }
+    for (j = m; j < N; j++) rhs[j] = 0.0;
+    if (!solve_lin(N, W, rhs, sol)) return 0;
+    for (j = 0; j < N; j++) if (sol[j] != sol[j] || fabs(sol[j]) > 1e250) return 0;
+    *c0 += sol[m];
+    for (i = 0; i < n; i++) g[i] += sol[m + 1 + i] / delta;
+    for (j = 0; j < m; j++) {
+        double lam = sol[j] / (delta * delta);
+        if (lam == 0.0) continue;
+        for (i = 0; i < n; i++)
+            for (l = 0; l < n; l++)
+                H[i * n + l] += lam * yh[j * n + i] * yh[j * n + l];
+    }
+    for (j = 0; j < m; j++) {                    /* does it interpolate? */
+        double y[OPT_MAXP], q;
+        for (i = 0; i < n; i++) y[i] = Y[j * n + i] - xk[i];
+        q = *c0 + tr_q(n, g, H, y);
+        if (fabs(Fv[j] - q) > 1e-6 * (fabs(Fv[j]) + (fmax - fmin)) + 1e-300) return -1;
+    }
+    return 1;
+}
+
+/* the 2n axis points around xk at the radius, kept inside the cube: xk + delta e_i
+ * and xk - delta e_i, or two steps to the inside when one would leave it */
+static void tr_axis_set(int n, const double *xk, double delta, double *Y)
+{
+    int i, j;
+    for (j = 0; j < n; j++) Y[j] = xk[j];
+    for (i = 0; i < n; i++) {
+        double plus = xk[i] + delta, minus = xk[i] - delta;
+        if (plus > 1.0)  plus  = xk[i] - 2.0 * delta;
+        if (minus < 0.0) minus = xk[i] + 2.0 * delta;
+        for (j = 0; j < n; j++) Y[(1 + 2 * i) * n + j] = Y[(2 + 2 * i) * n + j] = xk[j];
+        Y[(1 + 2 * i) * n + i] = clamp01(plus);
+        Y[(2 + 2 * i) * n + i] = clamp01(minus);
+    }
+}
+
+/* Enhancement-768: a derivative-free trust-region method on a quadratic model,
+ * over the np normalized parameters -- the local method the polish and the
+ * surrogate's hand-off were missing. Nelder-Mead spends several evaluations per
+ * useful step and converges linearly at best, and clamped against a knob's
+ * bound its simplex goes flat and stops; this method keeps 2n + 1 points,
+ * interpolates them with a quadratic whose Hessian changes least from one
+ * iteration to the next (tr_update: curvature accumulates as the points move),
+ * and minimises the model inside a box of radius delta around the best point
+ * INTERSECTED with the knob bounds (tr_box_qp) -- a bound is part of the
+ * subproblem, so a step runs along a wall instead of being clamped onto it.
+ *
+ * One evaluation per iteration: the trial point; the ratio of the actual to the
+ * predicted decrease accepts it (>= 0.1) and moves the radius (doubled when the
+ * model was good and the step reached it, halved when it was poor); the trial
+ * point replaces the point farthest from the centre, so the set follows the
+ * search. When the model expects less than -tol of decrease, the points still
+ * farther than two radii are brought in one at a time (a geometry step: the
+ * model is only trusted where its points are); with none left the search is
+ * CONVERGED if the last trial step delivered what the model predicted (the
+ * model has just proven itself), and otherwise the radius drops tenfold and the
+ * test repeats, down to a radius of -tol. Rejected steps that shrink the radius
+ * to -tol end it too (a noisy objective).
+ * A failed evaluation is not interpolated: the step is refused and the radius
+ * halved. The first radius is 0.1 of the box (0.05 and 0.02 when the polish and
+ * the surrogate's hand-off call it). On exit ubest holds the best point and
+ * *fbest its cost; scalar, least-squares and centering objectives, and the
+ * augmented objective of a constrained solve. */
+static void trust_region(struct optctx *c, double *ubest, double *fbest)
+{
+    const int n = c->np, m = 2 * n + 1, N = m + n + 1;
+    double *Y   = TMALLOC(double, (size_t) m * (size_t) n);
+    double *yh  = TMALLOC(double, (size_t) m * (size_t) n);
+    double *Fv  = TMALLOC(double, m);
+    double *H   = TMALLOC(double, (size_t) n * (size_t) n);
+    double *W   = TMALLOC(double, (size_t) N * (size_t) N);
+    double *rhs = TMALLOC(double, N), *sol = TMALLOC(double, N);
+    double g[OPT_MAXP], xk[OPT_MAXP], d[OPT_MAXP], lo[OPT_MAXP], hi[OPT_MAXP], xn[OPT_MAXP];
+    double delta = c->nm_step > 0.0 ? c->nm_step : 0.1, c0, fk;
+    const double dend = c->tol > 1e-12 ? c->tol : 1e-12;
+    int kb = 0, iter, i, j, geom = 0, nsol = 0, good = 0, upd;
+
+#define TR_DIST(jj, cen, out) do { int q_; (out) = 0.0;                      \
+        for (q_ = 0; q_ < n; q_++)                                            \
+            if (fabs(Y[(jj) * n + q_] - (cen)[q_]) > (out)) (out) = fabs(Y[(jj) * n + q_] - (cen)[q_]); } while (0)
+    /* rebuild the axis set around xk at the current radius and the model from
+     * nothing: the fallback when the point set has degenerated */
+#define TR_REBUILD() do {                                                     \
+        double fmax_ = -1e300;                                                \
+        tr_axis_set(n, xk, delta, Y);                                         \
+        Fv[0] = fk;                                                           \
+        for (j = 1; j < m; j++) { Fv[j] = opt_eval(c, &Y[j * n], NULL);       \
+                                  if (Fv[j] < OPT_PENALTY && Fv[j] > fmax_) fmax_ = Fv[j]; } \
+        if (fk > fmax_) fmax_ = fk;                                           \
+        for (j = 1; j < m; j++) if (Fv[j] >= OPT_PENALTY) Fv[j] = fmax_ + fabs(fmax_) + 1.0; \
+        kb = 0;                                                               \
+        for (j = 1; j < m; j++) if (Fv[j] < Fv[kb]) kb = j;                   \
+        for (i = 0; i < n; i++) { xk[i] = Y[kb * n + i]; g[i] = 0.0; }        \
+        fk = Fv[kb]; c0 = fk;                                                 \
+        memset(H, 0, (size_t) n * (size_t) n * sizeof *H);                    \
+        (void) tr_update(n, m, Y, Fv, xk, delta, &c0, g, H, W, rhs, sol, yh); \
+        good = 0;                                                             \
+    } while (0)
+
+    for (i = 0; i < n; i++) xk[i] = clamp01(ubest[i]);
+    fk = opt_eval(c, xk, NULL);
+    c->status = OPT_ST_MAXITER;
+    if (fk >= OPT_PENALTY) {
+        /* the start does not solve: look at the axis points for one that does */
+        tr_axis_set(n, xk, delta, Y);
+        for (j = 1; j < m; j++) {
+            double f = opt_eval(c, &Y[j * n], NULL);
+            if (f < fk) { fk = f; for (i = 0; i < n; i++) xn[i] = Y[j * n + i]; nsol = 1; }
+        }
+        if (!nsol) {                     /* nothing solves: the epilogue's NO SOLUTION */
+            for (i = 0; i < n; i++) ubest[i] = xk[i];
+            *fbest = fk;
+            goto tr_done;
+        }
+        for (i = 0; i < n; i++) xk[i] = xn[i];
+    }
+    TR_REBUILD();
+
+    for (iter = 0; iter < c->maxiter; iter++) {
+        double pred, dn = 0.0, ftol, fn, rho;
+        int far = -1;
+        double fard = 2.0 * delta;
+
+        /* E-536 (hunt bug 17): poll the interrupt at the loop top */
+        if (ft_intrpt) {
+            fprintf(cp_err, "optimize: interrupted at iteration %d\n", iter);
+            c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
+            c->status = OPT_ST_INTERRUPTED;
+            break;
+        }
+
+        for (i = 0; i < n; i++) {
+            lo[i] = -delta > -xk[i] ? -delta : -xk[i];
+            hi[i] = delta < 1.0 - xk[i] ? delta : 1.0 - xk[i];
+        }
+        tr_box_qp(n, g, H, lo, hi, d);
+        pred = -tr_q(n, g, H, d);
+        for (i = 0; i < n; i++) if (fabs(d[i]) > dn) dn = fabs(d[i]);
+        ftol = c->tol * (fabs(fk) + c->tol);
+
+        if (pred <= ftol || dn < 1e-14) {
+            /* the model expects nothing worth an evaluation. It is trusted only
+             * where its points are: bring in the farthest one that is more
+             * than two radii away, and when none is left go down a decade */
+            for (j = 0; j < m; j++) {
+                double dist;
+                if (j == kb) continue;
+                TR_DIST(j, xk, dist);
+                if (dist > fard) { fard = dist; far = j; }
+            }
+            if (far < 0) {
+                /* every point is within two radii. Done when the radius is at
+                 * -tol, or when the model has just proven itself: the last
+                 * trial step delivered what it predicted (ratio within a
+                 * quarter of 1), so its "nothing left" can be believed at this
+                 * radius without walking down five decades to confirm it */
+                if (delta <= dend || good) { c->status = OPT_ST_CONVERGED; break; }
+                delta *= 0.1;
+                if (delta < dend) delta = dend;
+                if (c->verbose)
+                    fprintf(cp_out, "  iter %-3d  cost %.6g  radius %.3g  (model minimum; %d evals)\n",
+                            iter + 1, fk, delta, c->nevals);
+                continue;
+            }
+            /* a geometry step: a point at the radius along the next axis */
+            {
+                int tries, placed = 0;
+                for (tries = 0; tries < 2 * n && !placed; tries++, geom++) {
+                    int ax = (geom / 2) % n, dup = 0;
+                    double sgn = (geom % 2) ? -1.0 : 1.0, v = xk[ax] + sgn * delta;
+                    if (v < 0.0 || v > 1.0) continue;
+                    for (i = 0; i < n; i++) xn[i] = xk[i];
+                    xn[ax] = v;
+                    for (j = 0; j < m && !dup; j++) {
+                        double dist;
+                        if (j == far) continue;
+                        TR_DIST(j, xn, dist);
+                        dup = dist < 1e-3 * delta;
+                    }
+                    placed = !dup;
+                }
+                if (!placed) {           /* every axis point is taken: drop a decade */
+                    if (delta <= dend) { c->status = OPT_ST_CONVERGED; break; }
+                    delta *= 0.1;
+                    if (delta < dend) delta = dend;
+                    continue;
+                }
+            }
+            fn = opt_eval(c, xn, NULL);
+            if (fn >= OPT_PENALTY) { double fmax_ = fk;
+                for (j = 0; j < m; j++) if (Fv[j] > fmax_) fmax_ = Fv[j];
+                fn = fmax_ + fabs(fmax_) + 1.0; }
+            for (i = 0; i < n; i++) Y[far * n + i] = xn[i];
+            Fv[far] = fn;
+            if (fn < fk) {
+                double st[OPT_MAXP];
+                for (i = 0; i < n; i++) st[i] = xn[i] - xk[i];
+                c0 += tr_q(n, g, H, st);
+                for (i = 0; i < n; i++) { double hd = 0.0;
+                    for (j = 0; j < n; j++) hd += H[i * n + j] * st[j];
+                    g[i] += hd; }
+                for (i = 0; i < n; i++) xk[i] = xn[i];
+                fk = fn; kb = far;
+            }
+            upd = tr_update(n, m, Y, Fv, xk, delta, &c0, g, H, W, rhs, sol, yh);
+            if (upd != 1) TR_REBUILD();
+            if (c->verbose)
+                fprintf(cp_out, "  iter %-3d  cost %.6g  radius %.3g  (geometry%s; %d evals)\n",
+                        iter + 1, fk, delta, upd == 1 ? "" : upd == 0 ? ", set rebuilt: singular" : ", set rebuilt: residual", c->nevals);
+            continue;
+        }
+
+        /* the trial step */
+        for (i = 0; i < n; i++) xn[i] = clamp01(xk[i] + d[i]);
+        fn = opt_eval(c, xn, NULL);
+        if (fn >= OPT_PENALTY) {         /* no solution there: refuse, come closer */
+            delta = 0.5 * (dn < delta ? dn : delta);
+            if (delta < dend) { c->status = OPT_ST_CONVERGED; break; }
+            continue;
+        }
+        rho = (fk - fn) / pred;
+        {
+            /* the trial point replaces the point farthest from the centre-to-be */
+            const double *cen = fn < fk ? xn : xk;
+            int drop = -1;
+            double dd = -1.0;
+            for (j = 0; j < m; j++) {
+                double dist;
+                if (j == kb && fn >= fk) continue;
+                TR_DIST(j, cen, dist);
+                if (dist > dd) { dd = dist; drop = j; }
+            }
+            for (i = 0; i < n; i++) Y[drop * n + i] = xn[i];
+            Fv[drop] = fn;
+            if (fn < fk) {
+                c0 += tr_q(n, g, H, d);
+                for (i = 0; i < n; i++) { double hd = 0.0;
+                    for (j = 0; j < n; j++) hd += H[i * n + j] * d[j];
+                    g[i] += hd; }
+                for (i = 0; i < n; i++) xk[i] = xn[i];
+                fk = fn; kb = drop;
+            }
+        }
+        if (rho >= 0.7 && dn >= 0.99 * delta) delta = 2.0 * delta < 0.5 ? 2.0 * delta : 0.5;
+        else if (rho < 0.1)                   delta = 0.5 * dn > 0.1 * delta ? 0.5 * dn : 0.1 * delta;
+        good = fabs(rho - 1.0) <= 0.25;
+        upd = tr_update(n, m, Y, Fv, xk, delta, &c0, g, H, W, rhs, sol, yh);
+        if (upd != 1) TR_REBUILD();
+        if (c->verbose)
+            fprintf(cp_out, "  iter %-3d  cost %.6g  radius %.3g  ratio %.2f%s  (%d evals)\n",
+                    iter + 1, fk, delta, rho, upd == 1 ? "" : upd == 0 ? "  (set rebuilt: singular)" : "  (set rebuilt: residual)", c->nevals);
+        if (delta < dend) { c->status = OPT_ST_CONVERGED; break; }
+    }
+#undef TR_DIST
+#undef TR_REBUILD
+
+    for (i = 0; i < n; i++) ubest[i] = xk[i];
+    *fbest = fk;
+tr_done:
+    tfree(Y); tfree(yh); tfree(Fv); tfree(H); tfree(W); tfree(rhs); tfree(sol);
+}
+
 /* ==================== Enhancement-764: CMA-ES ============================== */
 
 /* Enhancement-764: a standard normal deviate (Box-Muller on two uniforms; the
@@ -2254,6 +2662,7 @@ static void opt_run_method(struct optctx *c, int which, double *u, double *f)
     case 5: simulated_annealing(c, u, f); break;
     case 7: cma_es(c, u, f); break;
     case 8: bayes_opt(c, u, f); break;
+    case 9: trust_region(c, u, f); break;
     case 2: levenberg_marquardt(c, u, f); break;
     default: nelder_mead(c, u, f); break;
     }
@@ -2784,7 +3193,7 @@ void com_optimize(wordlist *wl)
 {
     struct optctx c;
     double ubest[OPT_MAXP], fbest = OPT_PENALTY;
-    int k, use_lm, use_pso, use_de, use_sa, use_cma, use_bo;
+    int k, use_lm, use_pso, use_de, use_sa, use_cma, use_bo, use_tr;
     int mc_held = 0;                     /* E-536 (hunt bug 16): bracket balance */
 
     int last_limit = 0;                  /* Enhancement-766: 1 a -spec, 2 a -constrain owns the next -max/-min */
@@ -2979,16 +3388,19 @@ void com_optimize(wordlist *wl)
                 else if (eq(mm, "bayes") || eq(mm, "bo") || eq(mm, "bayesian") ||
                          eq(mm, "gp") || eq(mm, "surrogate"))
                     c.method = 8;        /* Enhancement-765 */
+                else if (eq(mm, "tr") || eq(mm, "trust") || eq(mm, "trustregion") ||
+                         eq(mm, "quad") || eq(mm, "quadratic"))
+                    c.method = 9;        /* Enhancement-768 */
                 else {
                     fprintf(cp_err, "optimize: unknown -method '%s' "
-                                    "(use nm, lm, pso, de, sa, cmaes, bayes or nsga2)\n", mm);
+                                    "(use nm, lm, tr, pso, de, sa, cmaes, bayes or nsga2)\n", mm);
                     goto cleanup;
                 }
                 wl = wl->wl_next->wl_next;
             } else {
                 /* Enhancement-763: a bare option flag used to fall off the end
                  * of the command in silence and the default ran */
-                fprintf(cp_err, "optimize: -method needs nm, lm, pso, de, sa, cmaes, bayes or nsga2\n");
+                fprintf(cp_err, "optimize: -method needs nm, lm, tr, pso, de, sa, cmaes, bayes or nsga2\n");
                 goto cleanup;
             }
         } else if (eq(w, "-swarmsize") || eq(w, "-swarm") || eq(w, "-npart")) {
@@ -3149,7 +3561,7 @@ void com_optimize(wordlist *wl)
                         "<lo> <hi> [...] -analysis <cmd> (-minimize <expr> | -target "
                         "<expr> <val> [<w>] ... | -center (-spec <m> [-max hi] [-min lo])... "
                         "-samples N [-lhs]) [-constrain <expr> (-max hi | -min lo) ...] [-ctol T] "
-                        "[-method nm|lm|pso|de|sa|cmaes|bayes] [-swarmsize N] "
+                        "[-method nm|lm|tr|pso|de|sa|cmaes|bayes] [-swarmsize N] "
                         "[-seed s] [-maxiter N] [-tol T] [-polish] [-starts k] [-verbose]\n");
         goto cleanup;
     }
@@ -3240,9 +3652,10 @@ void com_optimize(wordlist *wl)
             if (c.con[j].stage >= c.ns) c.con[j].stage = c.ns - 1;
     }
     if (c.polish && c.starts == 0 &&
-        (c.method == 1 || c.method == 2 || (c.method == 0 && !c.center))) {
+        (c.method == 1 || c.method == 2 || c.method == 9 || (c.method == 0 && !c.center))) {
         fprintf(cp_out, "optimize: NOTE -- -polish finishes a global method (pso, de, sa, "
                         "cmaes, bayes) with the local one; %s is the local method, so it is ignored\n",
+                c.method == 9 ? "Trust-Region" :
                 (c.method == 2 || (c.method == 0 && c.nt > 0)) ? "Levenberg-Marquardt"
                                                                 : "Nelder-Mead");
         c.polish = 0;
@@ -3313,7 +3726,8 @@ void com_optimize(wordlist *wl)
     use_sa  = (c.method == 5);
     use_cma = (c.method == 7);           /* Enhancement-764 */
     use_bo  = (c.method == 8);           /* Enhancement-765 */
-    if (use_pso || use_de || use_sa || use_cma || use_bo) use_lm = 0;
+    use_tr  = (c.method == 9);           /* Enhancement-768 */
+    if (use_pso || use_de || use_sa || use_cma || use_bo || use_tr) use_lm = 0;
     if (use_bo) {
         /* Enhancement-765: the surrogate keeps every evaluation in an N x N
          * matrix; past two thousand a population method is the right tool */
@@ -3363,6 +3777,7 @@ void com_optimize(wordlist *wl)
                           : use_sa  ? "Simulated Annealing"
                           : use_cma ? "CMA-ES"
                           : use_bo  ? "Bayesian optimization"
+                          : use_tr  ? "Trust-Region"
                           : use_lm  ? "Levenberg-Marquardt" : "Nelder-Mead";
         if (c.center)
             fprintf(cp_out, "optimize: design centering -- %d design param%s, %d spec%s, "
@@ -3421,7 +3836,8 @@ void com_optimize(wordlist *wl)
         ubest[k] = clamp01((c.x0[k] - c.lo[k]) / (c.hi[k] - c.lo[k]));
 
     {
-        const int which = use_pso ? 3 : use_de ? 4 : use_sa ? 5 : use_cma ? 7 : use_bo ? 8 : use_lm ? 2 : 1;
+        const int which = use_pso ? 3 : use_de ? 4 : use_sa ? 5 : use_cma ? 7 : use_bo ? 8 : use_tr ? 9
+                        : use_lm ? 2 : 1;
         if (c.starts > 0) {
             /* Enhancement-764: multi-start. The given point and `starts`
              * Latin-hypercube points in the cube, each run with its share of
@@ -3517,11 +3933,11 @@ void com_optimize(wordlist *wl)
                 c.maxiter = c.polish_iters;
                 fprintf(cp_out, "optimize: polish -- %s from the best point (cost %.6g), up to %d "
                                 "iteration%s (the remaining budget)\n",
-                        lm ? "Levenberg-Marquardt" : "Nelder-Mead", f0, c.maxiter,
+                        lm ? "Levenberg-Marquardt" : "Trust-Region", f0, c.maxiter,
                         c.maxiter == 1 ? "" : "s");
             } else
                 fprintf(cp_out, "optimize: polish -- %s from the best point (cost %.6g)\n",
-                        lm ? "Levenberg-Marquardt" : "Nelder-Mead", f0);
+                        lm ? "Levenberg-Marquardt" : "Trust-Region", f0);
             c.status = OPT_ST_MAXITER;
             c.nm_step = c.polish_iters > 0 ? 0.02 : 0.05;   /* E-765: a surrogate's best is close */
             c.cap_is_evals = 0;          /* E-765: the polish counts iterations again */
@@ -3531,9 +3947,9 @@ void com_optimize(wordlist *wl)
                     for (j = 0; j < c.nc; j++) c.con[j].lam_hi = c.con[j].lam_lo = 0.0;
                     c.rho = 0.0;
                 }
-                al_solve(&c, lm ? 2 : 1, ubest, &fbest);
+                al_solve(&c, lm ? 2 : 9, ubest, &fbest);
             } else if (lm) levenberg_marquardt(&c, ubest, &fbest);
-            else    nelder_mead(&c, ubest, &fbest);
+            else    trust_region(&c, ubest, &fbest);   /* E-768: it was the simplex */
             c.nm_step = 0.0;
             fprintf(cp_out, "optimize: polish %s -- cost %.6g -> %.6g in %d evaluations\n",
                     opt_status_phrase(&c, phrase, sizeof phrase), f0, fbest, c.nevals - ev0);
@@ -3550,6 +3966,24 @@ void com_optimize(wordlist *wl)
     alter_journal_arm(1);
     (void) opt_eval(&c, ubest, NULL);
     alter_journal_arm(0);
+    /* Enhancement-767 (the 2026-09-29 hunt's F7): the fast path pushes every
+     * -dparam value in place and never touches the stored deck, and this final
+     * apply went the same way, so the next reset -- the user's, or any command's
+     * internal one -- restored the INITIAL value, while a small deck, fitted
+     * through alterparam, kept its optimum: which of the two a user got depended
+     * on a device count they have no reason to know about. Write the optimum
+     * into the deck once on this path too (no reset: the circuit holds it). */
+    if (c.fp_armed) {
+        ft_optimizing = TRUE;
+        for (k = 0; k < c.np; k++)
+            if (c.kind[k] == OPT_DECKPARAM) {
+                char cmd[512];
+                (void) snprintf(cmd, sizeof cmd, "alterparam %s=%.10g", c.name[k],
+                                c.lo[k] + clamp01(ubest[k]) * (c.hi[k] - c.lo[k]));
+                opt_run_cmd(cmd);
+            }
+        ft_optimizing = FALSE;
+    }
 
     /* Enhancement-472: say what the reuse actually did. The evaluation count
        above is the honest place to look for a behaviour change, so the decision

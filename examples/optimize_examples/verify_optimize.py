@@ -71,6 +71,15 @@ command reaches it:
   [20] all three knob kinds (`-dparam` + `-mparam` + `-param`) coexist in one run
       and converge.
 
+  Enhancement-767 (optimize hunt F7 of 2026-09-29): the -dparam optimum is the deck's.
+  [21] on a deck large enough to arm the `.param` fast path (a chain of 100
+      resistors) the fit pushed the value in place and never wrote the deck: a
+      `reset` put the circuit back at the initial value (v(out) 0.5 for a fit to
+      0.9) and `listing param` showed `rr = 1000`. The optimum is written into
+      the deck once after the search: after a reset the output is still 0.9, the
+      listing shows 9000, the evaluation count is what it was, and a two-resistor
+      deck (the alterparam path) behaves as before.
+
 It is a front-end command, independent of the linear solver, so it is checked once.
 """
 import math
@@ -547,7 +556,7 @@ for label, ctl, needle in (
     ("a -target expression with spaces is refused with the one-token hint (it fitted to a target of 0)",
      "optimize -param R2 1k 10 10k -analysis op -target v(out) - v(in) 0.4", "<value> needs a number, not '-'"),
     ("a bare -method is refused (it ran the default)",
-     "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2 -method", "-method needs nm, lm, pso, de, sa, cmaes, bayes or nsga2"),   # E-764 added cmaes, E-765 bayes
+     "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2 -method", "-method needs nm, lm, tr, pso, de, sa, cmaes, bayes or nsga2"),   # E-764 added cmaes, E-765 bayes, E-768 tr
     ("a bare -maxiter is refused",
      "optimize -param R2 1k 10 10k -analysis op -minimize (v(out)-0.9)^2 -maxiter", "-maxiter needs a value"),
     ("two -minimize under a scalar method are refused (the second was dropped)",
@@ -575,6 +584,43 @@ check("[20] `-minimize -v(out)` is refused with the quoting hint (it printed the
 o = run(DIVD + 'optimize -param R2 1k 10 10k -analysis op -minimize "-v(out)"\n.endc\n.end\n')
 check("[20] ... and the quoted form `-minimize \"-v(out)\"` runs: v(out) maximised to the upper bound (R2 = 10k)",
       "converged" in o and optval(o, "R2") is not None and abs(optval(o, "R2") - 10000) / 10000 < 1e-3, str(optval(o, "R2")))
+
+# [21] Enhancement-767 (hunt F7): the -dparam optimum survives a reset on the fast path too
+print("\n[21] Enhancement-767: the -dparam optimum is written into the deck on the fast path")
+def chain_deck(n, ctl):
+    body = "V1 in 0 dc 1\n"
+    prev = "in"
+    for i in range(1, n + 1):
+        body += f"R{i} {prev} n{i} 10\n"
+        prev = f"n{i}"
+    return f"optimize chain {n}\n" + body + f"RL {prev} 0 {{rr}}\n.param rr=1k\n.control\n{ctl}\n.endc\n.end\n"
+def chain_run(n):
+    ctl = (f"optimize -dparam rr 1k 100 100k -analysis op -target v(n{n}) 0.9\nop\necho after_fit=$&v(n{n})\n"
+           f"reset\nop\necho after_reset=$&v(n{n})\nlisting param\necho var=$optimize_rr")
+    return run(chain_deck(n, ctl))
+def echoed(out, name):
+    m = re.search(r"^" + name + r"=([-+.\deE]+)", out, re.M)
+    return float(m.group(1)) if m else None
+def listed(out, name):
+    m = re.search(r"--->\s*" + name + r"\s*=\s*([-+.\deE]+)", out)
+    return float(m.group(1)) if m else None
+big = chain_run(100)
+check("[21] a chain of 100 resistors arms the fast path ('fast .param path armed (no per-eval reset)') and the fit converges to rr = 9000 in the 16 evaluations it took before",
+      "optimize: fast .param path armed (no per-eval reset)" in big and optval(big, "rr") is not None and abs(optval(big, "rr") - 9000) < 0.5
+      and nevals(big) == 16, f"rr {optval(big, 'rr')} evals {nevals(big)}")
+check("[21] ...after the fit v(out) = 0.9, and after a user reset it is STILL 0.9 (it fell back to 0.5: the deck kept rr = 1k)",
+      echoed(big, "after_fit") is not None and abs(echoed(big, "after_fit") - 0.9) < 1e-6
+      and echoed(big, "after_reset") is not None and abs(echoed(big, "after_reset") - 0.9) < 1e-6,
+      f"after_fit {echoed(big, 'after_fit')} after_reset {echoed(big, 'after_reset')}")
+check("[21] ...`listing param` shows rr = 9000 after the reset (it showed 1000), equal to optimize_rr",
+      listed(big, "rr") is not None and abs(listed(big, "rr") - 9000) < 0.5 and echoed(big, "var") is not None
+      and abs(echoed(big, "var") - listed(big, "rr")) < 1e-3, f"listing {listed(big, 'rr')} var {echoed(big, 'var')}")
+small = chain_run(2)
+check("[21] a two-resistor deck (no fast path, the alterparam route) is as before: the optimum in the listing and the output after a reset equal to the output after the fit",
+      "fast .param path armed" not in small and listed(small, "rr") is not None and optval(small, "rr") is not None
+      and abs(listed(small, "rr") - optval(small, "rr")) < 1e-3 * optval(small, "rr")
+      and echoed(small, "after_reset") is not None and abs(echoed(small, "after_reset") - echoed(small, "after_fit")) < 1e-9,
+      f"listing {listed(small, 'rr')} opt {optval(small, 'rr')} after_fit {echoed(small, 'after_fit')} after_reset {echoed(small, 'after_reset')}")
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

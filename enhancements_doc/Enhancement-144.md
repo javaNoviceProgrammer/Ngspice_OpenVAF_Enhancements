@@ -98,3 +98,5 @@ unchanged (23/23 within the 31).
 Optimizing symbolic `.param` values, mixing freely with `alter`-reachable device
 parameters, in scalar or least-squares mode. Remaining optimizer follow-up:
 analytic (adjoint) sensitivities in place of the finite-difference Jacobian.
+
+**Update ([E-767](Enhancement-767.md)).** On a deck large enough to arm E-322's fast path the `-dparam` optimum was pushed in place and never written into the deck, so a `reset` restored the initial value; it is now written once after the search, and the optimum survives a reset on both paths.
