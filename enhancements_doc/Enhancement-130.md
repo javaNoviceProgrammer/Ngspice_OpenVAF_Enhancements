@@ -87,3 +87,5 @@ re-run the analysis).
 **Update ([E-763](Enhancement-763.md)).** The parser refuses what it cannot mean: a bound or init that is not a number, an init outside `[lo, hi]`, a bare `-method`, a stray token, a knob named twice; an objective that begins with `-` must be quoted (`-minimize "-v(out)"`) or written `0-v(out)`, and the message says so.
 
 **Update ([E-764](Enhancement-764.md)).** A seventh method, `-method cmaes`, joins the simplex; `-polish` runs Nelder-Mead (or LM for a `-target` fit) from a global method's best point with a first simplex edge of 0.05 in the cube instead of 0.1, and `-starts k` runs the simplex from k Latin-hypercube points besides the given one, reports each start and continues the winner with the full budget. Under `-method nm` alone `-polish` prints a NOTE and is ignored.
+
+**Update ([E-765](Enhancement-765.md)).** `-method bayes` hands the rest of its evaluation budget to the simplex once its surrogate has located the basin, with a first simplex edge of 0.02 and the remaining evaluations as the iteration cap; the simplex's own run and report are unchanged.

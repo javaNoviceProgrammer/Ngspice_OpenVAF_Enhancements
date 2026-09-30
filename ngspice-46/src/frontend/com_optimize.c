@@ -47,6 +47,11 @@ with several local minima:
     knobs), never reads a cost (a failed evaluation is the worst rank and
     nothing more), and does not clamp onto a bound; the standard choice for a
     black-box problem in two to fifty knobs.
+  * -method bayes (Enhancement-765): Bayesian optimization -- a Gaussian-process
+    surrogate (Matern 5/2, a length scale per knob) fitted to every evaluation
+    so far, the next point chosen by expected improvement. The method for the
+    SLOW deck: tens of evaluations where the population methods spend
+    thousands, in up to a dozen knobs. -maxiter is its evaluation budget.
 
 All work for a scalar -minimize objective and -target least-squares. `-swarmsize
 <N>` sets the pso/de/cmaes population (default auto, ~10+4*np for pso/de,
@@ -65,7 +70,7 @@ Syntax (in a .control block, after the circuit is loaded):
            ( -minimize <expression ...>
              | -target <expr> <value> [<weight>]  [-target ...]
                [ -analysis <command ...> -target ... ] )
-           [-method nm|lm|pso|de|sa|cmaes] [-swarmsize <N>] [-seed <s>]
+           [-method nm|lm|pso|de|sa|cmaes|bayes] [-swarmsize <N>] [-seed <s>]
            [-maxiter <N>] [-tol <T>] [-polish] [-starts <k>] [-verbose]
 
 Three knob kinds, all in-place except -dparam:
@@ -184,6 +189,10 @@ struct optctx {
     int    starts;                       /* Enhancement-764: extra Latin-hypercube starts */
     double nm_step;                      /* Enhancement-764: Nelder-Mead's first simplex
                                           * edge in the cube (0 = the 0.1 it always used) */
+    int    cap_is_evals;                 /* Enhancement-765: -maxiter counted evaluations
+                                          * (Bayesian optimization), for the report's word */
+    int    polish_iters;                 /* Enhancement-765: the hand-off -- what the surrogate
+                                          * left of the budget goes to the local method */
 
     /* Enhancement-206: design centering. When `center` is set the objective is
      * the parametric yield / worst-case Cpk from an inner Monte Carlo run of
@@ -1602,6 +1611,489 @@ static void cma_es(struct optctx *c, double *ubest, double *fbest)
 }
 
 
+
+/* ==================== Enhancement-765: Bayesian optimization =============== */
+
+/* Enhancement-765: a Nelder-Mead simplex on a callback, for the surrogate's own
+ * minimisations (the marginal likelihood over the hyperparameters, the negated
+ * expected improvement over the cube). Standard coefficients; the box [lo, hi]
+ * is optional and enforced by clamping. On return x holds the best point and
+ * the best value is returned. Kept apart from nelder_mead() so that method, and
+ * every report it prints, stays byte for byte what it was. */
+static double nm_callback(int n, double *x, double (*fn)(const double *, void *), void *arg,
+                          double step, int maxiter, double tol, const double *lo, const double *hi)
+{
+    const int m = n + 1;
+    double *s = TMALLOC(double, (size_t) m * (size_t) n), *fv = TMALLOC(double, m);
+    double *cent = TMALLOC(double, n), *xr = TMALLOC(double, n), *xe = TMALLOC(double, n),
+           *xc = TMALLOC(double, n);
+    int i, j, iter, ilo, ihi, inh;
+    double best;
+
+#define NMC_CLAMP(v, j) (lo && hi ? ((v) < lo[j] ? lo[j] : (v) > hi[j] ? hi[j] : (v)) : (v))
+    for (j = 0; j < n; j++) s[j] = NMC_CLAMP(x[j], j);
+    fv[0] = fn(s, arg);
+    for (i = 1; i < m; i++) {
+        for (j = 0; j < n; j++) s[i * n + j] = s[j];
+        s[i * n + i - 1] = NMC_CLAMP(s[i - 1] + step, i - 1);
+        if (s[i * n + i - 1] == s[i - 1]) s[i * n + i - 1] = NMC_CLAMP(s[i - 1] - step, i - 1);
+        fv[i] = fn(&s[i * n], arg);
+    }
+    for (iter = 0; iter < maxiter; iter++) {
+        ilo = ihi = 0;
+        for (i = 1; i < m; i++) { if (fv[i] < fv[ilo]) ilo = i; if (fv[i] > fv[ihi]) ihi = i; }
+        inh = (ihi == 0) ? 1 : 0;
+        for (i = 0; i < m; i++) if (i != ihi && fv[i] > fv[inh]) inh = i;
+        if (fv[ihi] - fv[ilo] <= tol * (fabs(fv[ilo]) + tol)) break;
+        for (j = 0; j < n; j++) {
+            double sum = 0.0;
+            for (i = 0; i < m; i++) if (i != ihi) sum += s[i * n + j];
+            cent[j] = sum / n;
+            xr[j] = NMC_CLAMP(cent[j] + (cent[j] - s[ihi * n + j]), j);
+        }
+        {
+            double fr = fn(xr, arg);
+            if (fr < fv[ilo]) {
+                double fe;
+                for (j = 0; j < n; j++) xe[j] = NMC_CLAMP(cent[j] + 2.0 * (xr[j] - cent[j]), j);
+                fe = fn(xe, arg);
+                if (fe < fr) { memcpy(&s[ihi * n], xe, (size_t) n * sizeof *xe); fv[ihi] = fe; }
+                else         { memcpy(&s[ihi * n], xr, (size_t) n * sizeof *xr); fv[ihi] = fr; }
+            } else if (fr < fv[inh]) {
+                memcpy(&s[ihi * n], xr, (size_t) n * sizeof *xr); fv[ihi] = fr;
+            } else {
+                double fc;
+                for (j = 0; j < n; j++) xc[j] = NMC_CLAMP(cent[j] + 0.5 * (s[ihi * n + j] - cent[j]), j);
+                fc = fn(xc, arg);
+                if (fc < fv[ihi]) {
+                    memcpy(&s[ihi * n], xc, (size_t) n * sizeof *xc); fv[ihi] = fc;
+                } else {                                     /* shrink toward the best */
+                    for (i = 0; i < m; i++) if (i != ilo) {
+                        for (j = 0; j < n; j++)
+                            s[i * n + j] = NMC_CLAMP(s[ilo * n + j] + 0.5 * (s[i * n + j] - s[ilo * n + j]), j);
+                        fv[i] = fn(&s[i * n], arg);
+                    }
+                }
+            }
+        }
+    }
+#undef NMC_CLAMP
+    ilo = 0;
+    for (i = 1; i < m; i++) if (fv[i] < fv[ilo]) ilo = i;
+    memcpy(x, &s[ilo * n], (size_t) n * sizeof *x);
+    best = fv[ilo];
+    tfree(s); tfree(fv); tfree(cent); tfree(xr); tfree(xe); tfree(xc);
+    return best;
+}
+
+/* Enhancement-765: the Gaussian-process surrogate. A Matern-5/2 kernel with one
+ * length scale per knob (in cube units: a knob the objective does not depend on
+ * gets a long one, and the surrogate drops it), a signal variance and a noise
+ * floor; the targets are the costs, log-transformed when they are all positive
+ * and span two decades or more (a -target sum of squares does near its optimum),
+ * standardised over the solved points, with a failed evaluation imputed at the
+ * worst solved value plus three standard deviations. The kernel matrix is
+ * N x N for N evaluations; a Cholesky factorisation at N <= 2000 is nothing. */
+struct gp {
+    int    n, N;
+    const double *X;          /* N x n, the evaluated points (owned by the caller) */
+    double *y;                /* N standardised targets                             */
+    double *L;                /* N x N Cholesky factor of K + sn2 I                 */
+    double *alpha;            /* K^-1 y                                             */
+    double *ell;              /* n length scales                                    */
+    double sf2, sn2;          /* signal and noise variance                          */
+};
+
+static double gp_kern(const struct gp *g, const double *a, const double *b)
+{
+    double r2 = 0.0, r, s5;
+    int j;
+    for (j = 0; j < g->n; j++) {
+        double d = (a[j] - b[j]) / g->ell[j];
+        r2 += d * d;
+    }
+    r  = sqrt(r2);
+    s5 = 2.23606797749979 * r;
+    return g->sf2 * (1.0 + s5 + 5.0 * r2 / 3.0) * exp(-s5);
+}
+
+/* factor K + sn2 I and solve for alpha; 0 when the matrix is not positive definite */
+static int gp_fit(struct gp *g)
+{
+    const int N = g->N;
+    int i, j, k;
+    for (i = 0; i < N; i++)
+        for (j = 0; j <= i; j++)
+            g->L[i * N + j] = gp_kern(g, &g->X[i * g->n], &g->X[j * g->n])
+                            + (i == j ? g->sn2 + 1e-10 : 0.0);
+    for (j = 0; j < N; j++) {                              /* Cholesky, lower */
+        double d = g->L[j * N + j];
+        for (k = 0; k < j; k++) d -= g->L[j * N + k] * g->L[j * N + k];
+        if (d <= 0.0 || d != d) return 0;
+        d = sqrt(d);
+        g->L[j * N + j] = d;
+        for (i = j + 1; i < N; i++) {
+            double s = g->L[i * N + j];
+            for (k = 0; k < j; k++) s -= g->L[i * N + k] * g->L[j * N + k];
+            g->L[i * N + j] = s / d;
+        }
+    }
+    for (i = 0; i < N; i++) {                              /* L z = y */
+        double s = g->y[i];
+        for (k = 0; k < i; k++) s -= g->L[i * N + k] * g->alpha[k];
+        g->alpha[i] = s / g->L[i * N + i];
+    }
+    for (i = N - 1; i >= 0; i--) {                         /* L' alpha = z */
+        double s = g->alpha[i];
+        for (k = i + 1; k < N; k++) s -= g->L[k * N + i] * g->alpha[k];
+        g->alpha[i] = s / g->L[i * N + i];
+    }
+    return 1;
+}
+
+/* the log marginal likelihood of the fitted surrogate */
+static double gp_lml(const struct gp *g)
+{
+    double s = 0.0, ld = 0.0;
+    int i;
+    for (i = 0; i < g->N; i++) {
+        s  += g->y[i] * g->alpha[i];
+        ld += log(g->L[i * g->N + i]);
+    }
+    return -0.5 * s - ld - 0.5 * g->N * 1.8378770664093453;
+}
+
+/* predictive mean and variance of the latent function at x */
+static void gp_predict(const struct gp *g, const double *x, double *mean, double *var)
+{
+    const int N = g->N;
+    double *kv = TMALLOC(double, N);
+    double m = 0.0, v = 0.0;
+    int i, k;
+    for (i = 0; i < N; i++) {
+        kv[i] = gp_kern(g, x, &g->X[i * g->n]);
+        m += kv[i] * g->alpha[i];
+    }
+    for (i = 0; i < N; i++) {                              /* v = L^-1 k */
+        double s = kv[i];
+        for (k = 0; k < i; k++) s -= g->L[i * N + k] * kv[k];
+        kv[i] = s / g->L[i * N + i];
+        v += kv[i] * kv[i];
+    }
+    *mean = m;
+    *var  = g->sf2 - v;
+    if (*var < 1e-12) *var = 1e-12;
+    tfree(kv);
+}
+
+/* hyperparameters as theta = (log ell_1..n, log sf2, log sn2), boxed */
+static void gp_set_theta(struct gp *g, const double *th)
+{
+    int j;
+    for (j = 0; j < g->n; j++) {
+        double e = exp(th[j]);
+        g->ell[j] = e < 5e-2 ? 5e-2 : e > 1e2 ? 1e2 : e;   /* a twentieth of the box: finer is the local method's */
+    }
+    g->sf2 = exp(th[g->n]);     if (g->sf2 < 1e-3) g->sf2 = 1e-3; if (g->sf2 > 1e3) g->sf2 = 1e3;
+    g->sn2 = exp(th[g->n + 1]); if (g->sn2 < 1e-8) g->sn2 = 1e-8; if (g->sn2 > 1.0) g->sn2 = 1.0;
+}
+
+static double gp_neg_lml_cb(const double *th, void *arg)
+{
+    struct gp *g = (struct gp *) arg;
+    gp_set_theta(g, th);
+    if (!gp_fit(g)) return 1e300;
+    return -gp_lml(g);
+}
+
+/* expected improvement below ybest (standardised units), with a small
+ * exploration offset; the callback returns its negative for the minimiser */
+struct ei_arg { const struct gp *g; double ybest; };
+
+static double gp_ei(const struct gp *g, const double *x, double ybest)
+{
+    double m, v, s, z, cdf, pdf;
+    gp_predict(g, x, &m, &v);
+    s = sqrt(v);
+    z = (ybest - 0.01 - m) / s;
+    cdf = 0.5 * erfc(-z / 1.4142135623730951);
+    pdf = exp(-0.5 * z * z) / 2.5066282746310002;
+    return (ybest - 0.01 - m) * cdf + s * pdf;
+}
+
+static double gp_neg_ei_cb(const double *x, void *arg)
+{
+    const struct ei_arg *a = (const struct ei_arg *) arg;
+    return -gp_ei(a->g, x, a->ybest);
+}
+
+/* Latin-hypercube points in the cube on E-194's stream: for each knob one
+ * stratum per point, shuffled, a uniform draw inside the stratum */
+static void opt_lhs(int npts, int n, double *X)
+{
+    int j, s, t;
+    for (j = 0; j < n; j++) {
+        for (s = 0; s < npts; s++) X[s * n + j] = (double) s;
+        for (s = npts - 1; s > 0; s--) {
+            double tmp;
+            t = (int) (opt_rand() * (s + 1));
+            if (t > s) t = s;
+            tmp = X[s * n + j]; X[s * n + j] = X[t * n + j]; X[t * n + j] = tmp;
+        }
+        for (s = 0; s < npts; s++)
+            X[s * n + j] = clamp01((X[s * n + j] + opt_rand()) / npts);
+    }
+}
+
+/* Enhancement-765: Bayesian optimization over the np normalized parameters.
+ * When one evaluation is a transient of seconds, the number of evaluations is
+ * the whole cost, and this method spends its own arithmetic to save them: a
+ * Gaussian-process surrogate is fitted to every point evaluated so far and the
+ * next point maximises the EXPECTED IMPROVEMENT, which trades the surrogate's
+ * predicted gain against its uncertainty. On a smooth objective in up to a
+ * dozen knobs it reaches the optimum in tens of evaluations where the swarm and
+ * DE spend thousands and the simplex a few hundred.
+ *
+ * The design, kept to what the size of the problem needs: an initial design of
+ * 2n + 2 Latin-hypercube points (the start point among them); the surrogate of
+ * struct gp above, its hyperparameters by maximising the marginal likelihood
+ * with nm_callback in log space (every evaluation while there are fewer than 20,
+ * every fifth after); the acquisition maximised on the surrogate over 400 + 100n
+ * Latin-hypercube candidates and perturbations of the best point, the three
+ * best refined with nm_callback -- thousands of surrogate evaluations cost less
+ * than one analysis. A failed evaluation is imputed at the worst solved cost
+ * plus three standard deviations, so the surrogate learns that region is bad
+ * without a discontinuity; a design in which nothing solved is redrawn (three
+ * times at most, then the epilogue's NO SOLUTION).
+ *
+ * -maxiter is the EVALUATION budget here (the report says "evaluations"), and
+ * the stop tests are CONVERGED when the largest expected improvement in
+ * standardised units falls below -tol, or when the best cost has not moved by
+ * -tol over the last 10 + 2n evaluations while that improvement is below 1e-2;
+ * MAXITER when the budget runs out; and -- since a Gaussian process locates the
+ * basin in tens of evaluations but cannot resolve a cost that falls by orders
+ * of magnitude at the optimum -- when it expects less than a thousandth of the
+ * cost spread twice running, or a criterion is met with budget left, the rest
+ * of the budget goes to the local method (Nelder-Mead, or LM for a -target
+ * fit) through E-764's polish. The report adds what no other method can: the
+ * surrogate's predicted cost at the optimum with its uncertainty, and the
+ * length scales -- a knob's is "(no dependence seen)" above ten box widths,
+ * which is E-762's `unchanged` case with a diagnosis. On exit ubest holds the best
+ * point and *fbest its cost; scalar, least-squares and centering objectives. */
+static void bayes_opt(struct optctx *c, double *ubest, double *fbest)
+{
+    const int n = c->np, budget = c->maxiter;
+    int n0 = 2 * n + 2;
+    double *X = TMALLOC(double, (size_t) budget * (size_t) n);   /* evaluated points */
+    double *F = TMALLOC(double, budget);                         /* their raw costs  */
+    struct gp g;
+    int handoff_reason = 0;
+    double th[OPT_MAXP + 2], gb[OPT_MAXP], xn[OPT_MAXP];
+    double gf = 1e300, ymean = 0.0, ystd = 1.0, eimax = 0.0, tstart = 0.0;
+    int N = 0, i, j, k, rounds = 0, uselog = 0, stall = 0, fitted = 0, lowei = 0;
+    double last_improved_f = 1e300;
+
+    if (n0 > budget) n0 = budget;
+    memset(&g, 0, sizeof g);
+    g.n = n; g.X = X;
+    g.y     = TMALLOC(double, budget);
+    g.L     = TMALLOC(double, (size_t) budget * (size_t) budget);
+    g.alpha = TMALLOC(double, budget);
+    g.ell   = TMALLOC(double, n);
+    for (j = 0; j < n; j++) { th[j] = log(0.3); g.ell[j] = 0.3; gb[j] = clamp01(ubest[j]); }
+    th[n] = 0.0; th[n + 1] = log(1e-4); g.sf2 = 1.0; g.sn2 = 1e-4;
+
+    opt_srand(c->seed);
+    c->cap_is_evals = 1;
+    c->status = OPT_ST_MAXITER;
+
+#define BO_EVAL(idx) do {                                                   \
+        F[idx] = opt_eval(c, &X[(idx) * n], NULL);                          \
+        if (F[idx] < gf) { gf = F[idx]; for (j = 0; j < n; j++) gb[j] = X[(idx) * n + j]; } \
+        if (c->verbose && fitted)                                           \
+            fprintf(cp_out, "  eval %-3d  cost %.6g  best %.6g  max EI %.3g\n", (idx) + 1, F[idx], gf, eimax); \
+        else if (c->verbose)                                                \
+            fprintf(cp_out, "  eval %-3d  cost %.6g  best %.6g  (design)\n", (idx) + 1, F[idx], gf); \
+    } while (0)
+
+    /* the initial design: the start point and 2n + 1 Latin-hypercube points */
+    opt_lhs(n0, n, X);
+    for (j = 0; j < n; j++) X[j] = clamp01(ubest[j]);
+    for (i = 0; i < n0; i++) {
+        if (ft_intrpt) break;
+        BO_EVAL(N);
+        N++;
+    }
+    (void) tstart;
+
+    while (N < budget) {
+        int nsol = 0, redo = 0;
+        double tmin = 1e300, tmax = -1e300, tsum = 0.0, tsq = 0.0, tfail;
+        double fmin = 1e300, fmax = -1e300;
+
+        /* E-536 (hunt bug 17): one analysis can be seconds here -- poll before
+         * every evaluation, not once per population */
+        if (ft_intrpt) {
+            fprintf(cp_err, "optimize: interrupted at evaluation %d\n", N);
+            c->interrupted = 1;          /* E-537 (hunt I): not a convergence */
+            c->status = OPT_ST_INTERRUPTED;
+            break;
+        }
+
+        /* the targets: log when all solved costs are positive and span two
+         * decades, standardised over the solved points, failures imputed */
+        for (i = 0; i < N; i++)
+            if (F[i] < OPT_PENALTY) { nsol++; if (F[i] < fmin) fmin = F[i]; if (F[i] > fmax) fmax = F[i]; }
+        if (nsol == 0) {
+            /* nothing solved yet: redraw the design (three rounds at most) */
+            if (++rounds >= 3) break;
+            redo = (N + n0 <= budget) ? n0 : budget - N;
+            if (redo <= 0) break;
+            opt_lhs(redo, n, &X[N * n]);
+            for (i = 0; i < redo; i++) { if (ft_intrpt) break; BO_EVAL(N); N++; }
+            continue;
+        }
+        uselog = (fmin > 0.0 && fmax / fmin >= 100.0);
+        for (i = 0; i < N; i++) {
+            if (F[i] >= OPT_PENALTY) continue;
+            double t = uselog ? log(F[i]) : F[i];
+            g.y[i] = t;
+            tsum += t; tsq += t * t;
+            if (t < tmin) tmin = t; if (t > tmax) tmax = t;
+        }
+        ymean = tsum / nsol;
+        ystd  = sqrt(tsq / nsol - ymean * ymean > 0.0 ? tsq / nsol - ymean * ymean : 0.0);
+        if (ystd < 1e-300 * (fabs(ymean) + 1.0) || ystd != ystd) ystd = fabs(ymean) > 0.0 ? 1e-6 * fabs(ymean) : 1.0;
+        tfail = tmax + 3.0 * ystd;
+        for (i = 0; i < N; i++)
+            g.y[i] = ((F[i] >= OPT_PENALTY ? tfail : g.y[i]) - ymean) / ystd;
+        g.N = N;
+
+        /* the hyperparameters by marginal likelihood, then the fit */
+        if (N <= 20 || (N % 5) == 0 || !fitted) {
+            double th0[OPT_MAXP + 2];
+            memcpy(th0, th, (size_t) (n + 2) * sizeof *th);
+            (void) nm_callback(n + 2, th0, gp_neg_lml_cb, &g, 0.7, 60 + 20 * n, 1e-4, NULL, NULL);
+            if (gp_neg_lml_cb(th0, &g) < 1e300) memcpy(th, th0, (size_t) (n + 2) * sizeof *th);
+        }
+        gp_set_theta(&g, th);
+        for (k = 0; k < 6 && !gp_fit(&g); k++) {          /* not PD: more noise */
+            th[n + 1] += log(10.0);
+            gp_set_theta(&g, th);
+        }
+        if (k >= 6) break;
+        fitted = 1;
+
+        /* the acquisition: expected improvement over Latin-hypercube candidates
+         * and perturbations of the best point, the three best refined */
+        {
+            const int ncand = 400 + 100 * n, npert = 20, ntot = ncand + npert;
+            double *C = TMALLOC(double, (size_t) ntot * (size_t) n);
+            double *E = TMALLOC(double, ntot);
+            struct ei_arg ea;
+            double ybest = 1e300, lo01[OPT_MAXP], hi01[OPT_MAXP];
+            int top[3] = { -1, -1, -1 }, t;
+            for (i = 0; i < N; i++) if (F[i] < OPT_PENALTY && g.y[i] < ybest) ybest = g.y[i];
+            ea.g = &g; ea.ybest = ybest;
+            for (j = 0; j < n; j++) { lo01[j] = 0.0; hi01[j] = 1.0; }
+            opt_lhs(ncand, n, C);
+            for (i = ncand; i < ntot; i++)
+                for (j = 0; j < n; j++)
+                    C[i * n + j] = clamp01(gb[j] + (i < ncand + npert / 2 ? 0.05 : 0.01) * opt_gauss());
+            for (i = 0; i < ntot; i++) {
+                E[i] = gp_ei(&g, &C[i * n], ybest);
+                for (t = 0; t < 3; t++)
+                    if (top[t] < 0 || E[i] > E[top[t]]) {
+                        int u;
+                        for (u = 2; u > t; u--) top[u] = top[u - 1];
+                        top[t] = i;
+                        break;
+                    }
+            }
+            eimax = -1.0;
+            for (t = 0; t < 3; t++) {
+                double xt[OPT_MAXP], e;
+                if (top[t] < 0) continue;
+                memcpy(xt, &C[top[t] * n], (size_t) n * sizeof *xt);
+                e = -nm_callback(n, xt, gp_neg_ei_cb, &ea, 0.05, 40, 1e-6, lo01, hi01);
+                if (e > eimax) { eimax = e; memcpy(xn, xt, (size_t) n * sizeof *xn); }
+            }
+            /* never re-evaluate a point already known: fall back to the best
+             * candidate that is new */
+            for (t = 0; t < ntot; t++) {
+                int dup = 0;
+                for (i = 0; i < N && !dup; i++) {
+                    double d2 = 0.0;
+                    for (j = 0; j < n; j++) d2 += (xn[j] - X[i * n + j]) * (xn[j] - X[i * n + j]);
+                    dup = d2 < 1e-16;
+                }
+                if (!dup) break;
+                { int bi = -1; for (i = 0; i < ntot; i++) if (E[i] >= 0.0 && (bi < 0 || E[i] > E[bi])) bi = i;
+                  if (bi < 0) break;
+                  memcpy(xn, &C[bi * n], (size_t) n * sizeof *xn); E[bi] = -1.0; }
+            }
+            tfree(C); tfree(E);
+        }
+
+        /* stop: nothing left to gain (the surrogate's own criterion) ... */
+        if (eimax < c->tol) { c->status = OPT_ST_CONVERGED; handoff_reason = 0; break; }
+        /* ... or it expects less than a thousandth of the cost spread, twice
+         * running, once the design and a few steps are behind it -- the point
+         * at which a local method finishes faster than another surrogate step */
+        lowei = (eimax < 1e-3) ? lowei + 1 : 0;
+        if (lowei >= 2 && N >= n0 + 2 + n) { c->status = OPT_ST_CONVERGED; handoff_reason = 1; break; }
+        /* ... or the best has not moved for 10 + 2n evaluations while the
+         * surrogate expects little */
+        if (last_improved_f - gf <= c->tol * (fabs(gf) + c->tol)) stall++;
+        else { stall = 0; last_improved_f = gf; }
+        if (stall >= 10 + 2 * n && eimax < 1e-2) { c->status = OPT_ST_CONVERGED; handoff_reason = 2; break; }
+
+        memcpy(&X[N * n], xn, (size_t) n * sizeof *xn);
+        BO_EVAL(N);
+        N++;
+    }
+#undef BO_EVAL
+
+    /* the hand-off: a Gaussian process locates the basin in tens of evaluations
+     * and cannot resolve a cost that falls by orders of magnitude at the
+     * optimum (the spike is sharper than any length scale), so when its
+     * criterion is met with budget left, the rest of the budget goes to the
+     * local method -- Nelder-Mead, or LM for a -target fit -- through the
+     * -polish machinery of E-764, capped at the evaluations that remain */
+    if (c->status == OPT_ST_CONVERGED && N < budget && !c->interrupted && gf < OPT_PENALTY &&
+        c->starts == 0) {               /* under -starts the winner is polished anyway */
+        fprintf(cp_out, "optimize: surrogate converged after %d evaluations (%s); the budget's "
+                        "remaining %d evaluation%s go%s to the local method\n",
+                N, handoff_reason == 0 ? "the largest expected improvement is below -tol"
+                 : handoff_reason == 1 ? "it expects less than a thousandth of the cost spread"
+                                       : "the best cost has not moved and little is expected",
+                budget - N, budget - N == 1 ? "" : "s", budget - N == 1 ? "es" : "");
+        c->polish = 1;
+        c->polish_iters = budget - N;
+    }
+
+    /* the surrogate's own account of the optimum */
+    if (fitted && gf < OPT_PENALTY) {
+        double m, v, s, lo, hi, pm;
+        gp_predict(&g, gb, &m, &v);
+        s  = sqrt(v);
+        pm = m * ystd + ymean;
+        lo = (m - s) * ystd + ymean;
+        hi = (m + s) * ystd + ymean;
+        if (uselog) { pm = exp(pm); lo = exp(lo); hi = exp(hi); }
+        fprintf(cp_out, "optimize: surrogate -- predicted cost %.6g (%.3g .. %.3g, one sigma) at the "
+                        "optimum after %d evaluations, %s; length scales (box widths):",
+                pm, lo, hi, N, uselog ? "fitted to log cost" : "fitted to the cost");
+        for (j = 0; j < n; j++)
+            fprintf(cp_out, " %s %.3g%s", c->name[j], g.ell[j], g.ell[j] >= 10.0 ? " (no dependence seen)" : "");
+        fprintf(cp_out, "\n");
+    }
+
+    for (j = 0; j < n; j++) ubest[j] = gb[j];
+    *fbest = gf;
+    tfree(X); tfree(F); tfree(g.y); tfree(g.L); tfree(g.alpha); tfree(g.ell);
+}
+
 /* ==================== Enhancement-216: NSGA-II Pareto ====================== */
 
 /* Evaluate all `nobj` objectives at the normalized point `u` into `f`. Maximized
@@ -1974,8 +2466,9 @@ static const char *opt_status_phrase(const struct optctx *c, char *buf, size_t n
     case OPT_ST_CONVERGED:
         return "converged";
     case OPT_ST_MAXITER:
-        (void) snprintf(buf, n, "stopped at -maxiter (%d iteration%s) -- NOT converged",
-                        c->maxiter, c->maxiter == 1 ? "" : "s");
+        (void) snprintf(buf, n, "stopped at -maxiter (%d %s%s) -- NOT converged",
+                        c->maxiter, c->cap_is_evals ? "evaluation" : "iteration",
+                        c->maxiter == 1 ? "" : "s");
         return buf;
     case OPT_ST_COMPLETED:
         (void) snprintf(buf, n, "%s complete (%d %s)",
@@ -2010,7 +2503,7 @@ void com_optimize(wordlist *wl)
 {
     struct optctx c;
     double ubest[OPT_MAXP], fbest = OPT_PENALTY;
-    int k, use_lm, use_pso, use_de, use_sa, use_cma;
+    int k, use_lm, use_pso, use_de, use_sa, use_cma, use_bo;
     int mc_held = 0;                     /* E-536 (hunt bug 16): bracket balance */
 
     memset(&c, 0, sizeof c);
@@ -2197,16 +2690,19 @@ void com_optimize(wordlist *wl)
                 else if (eq(mm, "cmaes") || eq(mm, "cma") || eq(mm, "cma-es") ||
                          eq(mm, "cmaes") || eq(mm, "evolutionstrategy"))
                     c.method = 7;        /* Enhancement-764 */
+                else if (eq(mm, "bayes") || eq(mm, "bo") || eq(mm, "bayesian") ||
+                         eq(mm, "gp") || eq(mm, "surrogate"))
+                    c.method = 8;        /* Enhancement-765 */
                 else {
                     fprintf(cp_err, "optimize: unknown -method '%s' "
-                                    "(use nm, lm, pso, de, sa, cmaes or nsga2)\n", mm);
+                                    "(use nm, lm, pso, de, sa, cmaes, bayes or nsga2)\n", mm);
                     goto cleanup;
                 }
                 wl = wl->wl_next->wl_next;
             } else {
                 /* Enhancement-763: a bare option flag used to fall off the end
                  * of the command in silence and the default ran */
-                fprintf(cp_err, "optimize: -method needs nm, lm, pso, de, sa, cmaes or nsga2\n");
+                fprintf(cp_err, "optimize: -method needs nm, lm, pso, de, sa, cmaes, bayes or nsga2\n");
                 goto cleanup;
             }
         } else if (eq(w, "-swarmsize") || eq(w, "-swarm") || eq(w, "-npart")) {
@@ -2322,7 +2818,7 @@ void com_optimize(wordlist *wl)
         fprintf(cp_err, "usage: optimize (-param|-mparam|-dparam) <name> <init> "
                         "<lo> <hi> [...] -analysis <cmd> (-minimize <expr> | -target "
                         "<expr> <val> [<w>] ... | -center (-spec <m> [-max hi] [-min lo])... "
-                        "-samples N [-lhs]) [-method nm|lm|pso|de|sa|cmaes] [-swarmsize N] "
+                        "-samples N [-lhs]) [-method nm|lm|pso|de|sa|cmaes|bayes] [-swarmsize N] "
                         "[-seed s] [-maxiter N] [-tol T] [-polish] [-starts k] [-verbose]\n");
         goto cleanup;
     }
@@ -2387,7 +2883,7 @@ void com_optimize(wordlist *wl)
     if (c.polish && c.starts == 0 &&
         (c.method == 1 || c.method == 2 || (c.method == 0 && !c.center))) {
         fprintf(cp_out, "optimize: NOTE -- -polish finishes a global method (pso, de, sa, "
-                        "cmaes) with the local one; %s is the local method, so it is ignored\n",
+                        "cmaes, bayes) with the local one; %s is the local method, so it is ignored\n",
                 (c.method == 2 || (c.method == 0 && c.nt > 0)) ? "Levenberg-Marquardt"
                                                                 : "Nelder-Mead");
         c.polish = 0;
@@ -2457,7 +2953,21 @@ void com_optimize(wordlist *wl)
     use_de  = (c.method == 4);
     use_sa  = (c.method == 5);
     use_cma = (c.method == 7);           /* Enhancement-764 */
-    if (use_pso || use_de || use_sa || use_cma) use_lm = 0;
+    use_bo  = (c.method == 8);           /* Enhancement-765 */
+    if (use_pso || use_de || use_sa || use_cma || use_bo) use_lm = 0;
+    if (use_bo) {
+        /* Enhancement-765: the surrogate keeps every evaluation in an N x N
+         * matrix; past two thousand a population method is the right tool */
+        if (c.maxiter > 2000) {
+            fprintf(cp_out, "optimize: NOTE -- -maxiter %d capped at 2000 for Bayesian optimization "
+                            "(its surrogate holds every evaluation; use a population method for a "
+                            "larger budget)\n", c.maxiter);
+            c.maxiter = 2000;
+        }
+        if (c.swarmsize > 0)
+            fprintf(cp_out, "optimize: NOTE -- -swarmsize does not apply to Bayesian optimization "
+                            "(no population; ignored)\n");
+    }
 
     if (use_pso || use_de) {
         /* auto population: ~4x the dimension, bounded for speed. E-197 raised the
@@ -2493,6 +3003,7 @@ void com_optimize(wordlist *wl)
                           : use_de  ? "Differential Evolution"
                           : use_sa  ? "Simulated Annealing"
                           : use_cma ? "CMA-ES"
+                          : use_bo  ? "Bayesian optimization"
                           : use_lm  ? "Levenberg-Marquardt" : "Nelder-Mead";
         if (c.center)
             fprintf(cp_out, "optimize: design centering -- %d design param%s, %d spec%s, "
@@ -2520,11 +3031,19 @@ void com_optimize(wordlist *wl)
             fprintf(cp_out, "optimize: CMA-ES population of %d (recombining %d), seed %lu, "
                             "up to %d generations\n",
                     c.swarmsize, c.swarmsize / 2, c.seed, c.maxiter);
+        else if (use_bo) {
+            int n0 = 2 * c.np + 2, per = c.starts > 0 ? (c.maxiter + c.starts) / (c.starts + 1) : c.maxiter;
+            if (n0 > per) n0 = per;
+            fprintf(cp_out, "optimize: Bayesian optimization -- a Gaussian-process surrogate (Matern 5/2, "
+                            "a length scale per knob) and expected improvement, seed %lu, a budget of "
+                            "%d evaluation%s (%d in the initial design)\n",
+                    c.seed, per, per == 1 ? "" : "s", n0);
+        }
         if (c.starts > 0)
             fprintf(cp_out, "optimize: %d start%s -- the given point and %d Latin-hypercube "
-                            "point%s, %d iteration%s each, the winner polished\n",
+                            "point%s, %d %s%s each, the winner polished\n",
                     c.starts + 1, "s", c.starts, c.starts == 1 ? "" : "s",
-                    (c.maxiter + c.starts) / (c.starts + 1),
+                    (c.maxiter + c.starts) / (c.starts + 1), use_bo ? "evaluation" : "iteration",
                     (c.maxiter + c.starts) / (c.starts + 1) == 1 ? "" : "s");
     }
 
@@ -2532,7 +3051,7 @@ void com_optimize(wordlist *wl)
         ubest[k] = clamp01((c.x0[k] - c.lo[k]) / (c.hi[k] - c.lo[k]));
 
     {
-        const int which = use_pso ? 3 : use_de ? 4 : use_sa ? 5 : use_cma ? 7 : use_lm ? 2 : 1;
+        const int which = use_pso ? 3 : use_de ? 4 : use_sa ? 5 : use_cma ? 7 : use_bo ? 8 : use_lm ? 2 : 1;
         if (c.starts > 0) {
             /* Enhancement-764: multi-start. The given point and `starts`
              * Latin-hypercube points in the cube, each run with its share of
@@ -2572,11 +3091,13 @@ void com_optimize(wordlist *wl)
                     for (k = 0; k < c.np; k++) ubest[k] = u0[k];
                 }
                 c.status = OPT_ST_MAXITER;
+                c.polish_iters = 0;      /* E-765: a start's hand-off is not the winner's */
                 switch (which) {
                 case 3: particle_swarm(&c, ubest, &f); break;
                 case 4: differential_evolution(&c, ubest, &f); break;
                 case 5: simulated_annealing(&c, ubest, &f); break;
                 case 7: cma_es(&c, ubest, &f); break;
+                case 8: bayes_opt(&c, ubest, &f); break;
                 case 2: levenberg_marquardt(&c, ubest, &f); break;
                 default: nelder_mead(&c, ubest, &f); break;
                 }
@@ -2595,6 +3116,7 @@ void com_optimize(wordlist *wl)
                 }
             }
             c.maxiter = full; c.swarmsize = lam0; c.seed = seed0;
+            c.polish_iters = 0;
             for (k = 0; k < c.np; k++) ubest[k] = bu[k];
             fbest = bf;
             c.status = bstatus;
@@ -2611,6 +3133,7 @@ void com_optimize(wordlist *wl)
             case 4: differential_evolution(&c, ubest, &fbest); break;
             case 5: simulated_annealing(&c, ubest, &fbest); break;
             case 7: cma_es(&c, ubest, &fbest); break;
+            case 8: bayes_opt(&c, ubest, &fbest); break;
             case 2: levenberg_marquardt(&c, ubest, &fbest); break;
             default: nelder_mead(&c, ubest, &fbest); break;
             }
@@ -2628,10 +3151,18 @@ void com_optimize(wordlist *wl)
             const double f0 = fbest;
             const int ev0 = c.nevals;
             char phrase[128];
-            fprintf(cp_out, "optimize: polish -- %s from the best point (cost %.6g)\n",
-                    lm ? "Levenberg-Marquardt" : "Nelder-Mead", f0);
+            if (c.polish_iters > 0) {    /* E-765: the surrogate's hand-off */
+                c.maxiter = c.polish_iters;
+                fprintf(cp_out, "optimize: polish -- %s from the best point (cost %.6g), up to %d "
+                                "iteration%s (the remaining budget)\n",
+                        lm ? "Levenberg-Marquardt" : "Nelder-Mead", f0, c.maxiter,
+                        c.maxiter == 1 ? "" : "s");
+            } else
+                fprintf(cp_out, "optimize: polish -- %s from the best point (cost %.6g)\n",
+                        lm ? "Levenberg-Marquardt" : "Nelder-Mead", f0);
             c.status = OPT_ST_MAXITER;
-            c.nm_step = 0.05;
+            c.nm_step = c.polish_iters > 0 ? 0.02 : 0.05;   /* E-765: a surrogate's best is close */
+            c.cap_is_evals = 0;          /* E-765: the polish counts iterations again */
             if (lm) levenberg_marquardt(&c, ubest, &fbest);
             else    nelder_mead(&c, ubest, &fbest);
             c.nm_step = 0.0;

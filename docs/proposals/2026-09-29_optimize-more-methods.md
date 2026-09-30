@@ -110,6 +110,12 @@ evaluation are nothing against an analysis.
 
 ## 2. Bayesian optimization — for the slow deck
 
+*Implemented in [E-765](../../enhancements_doc/Enhancement-765.md), with one addition the
+probes forced: a Gaussian process locates the basin in ten to twenty evaluations and
+cannot resolve the cost spike at the optimum, so the rest of the budget is handed to the
+local method through section 6's polish. The feasibility classifier below is not done;
+failures are imputed.*
+
 When one evaluation is a transient of seconds or a corner sweep of minutes, the number
 of evaluations is the whole cost, and the right method spends its own arithmetic to
 save them. Bayesian optimization fits a **Gaussian-process surrogate** to every point
@@ -379,7 +385,9 @@ Every section: `optimize_status`, `optimize_converged`, `optimize_evals` and
    *Done: [E-764](../../enhancements_doc/Enhancement-764.md).*
 2. **Bayesian optimization** (section 2): the fold that changes what is practical on a
    slow deck; the function-pointer refactor of the Nelder-Mead and DE loops comes
-   with it.
+   with it. *Done: [E-765](../../enhancements_doc/Enhancement-765.md) — a separate
+   callback simplex rather than a refactor, so the six methods stay byte for byte;
+   the acquisition is maximised by candidates plus that simplex, not by DE.*
 3. **Constraints** (section 3): the fold that changes what problems the command can
    state.
 4. **The trust-region method** (section 4) and **pattern search** (section 5), one fold

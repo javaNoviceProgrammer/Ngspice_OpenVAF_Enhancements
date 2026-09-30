@@ -212,7 +212,7 @@ sweep's scale is spelled `v_sweep` (E-584): `v-sweep` is a subtraction to `print
 
 `optimize` varies a set of knobs, re-runs one or more analyses and drives an objective to
 a minimum: `optimize (-param|-mparam|-dparam) <name> <init> <lo> <hi> [...] -analysis <cmd>
-(-minimize <expr> | -target <expr> <value> [<weight>] ...) [-method nm|lm|pso|de|sa|cmaes|nsga2]
+(-minimize <expr> | -target <expr> <value> [<weight>] ...) [-method nm|lm|pso|de|sa|cmaes|bayes|nsga2]
 [-maxiter N] [-tol T] [-seed s] [-polish] [-starts k] [-verbose]`. A `-param` is an `alter` target (a device or
 `@inst[param]`), a `-mparam` a `.model` parameter (`@model[param]`, via `altermod`), a
 `-dparam` a deck `.param` (`alterparam` and a re-source, or the in-place fast path on a
@@ -222,8 +222,14 @@ whole box; CMA-ES ([E-764](../../enhancements_doc/Enhancement-764.md)) searches 
 Gaussian whose covariance and step size adapt to the ranking of each generation — it
 learns a valley's scale and orientation, treats a failed evaluation as the worst rank and
 nothing more, and is the method to reach for on a knob spanning decades, on correlated
-knobs, or from a start the model refuses; NSGA-II trades several `-minimize`/`-maximize`
-objectives into a Pareto front; `-center` with `-spec` limits maximises a yield. `-polish`
+knobs, or from a start the model refuses; Bayesian optimization
+([E-765](../../enhancements_doc/Enhancement-765.md), `-method bayes`) fits a
+Gaussian-process surrogate to every evaluation and picks the next by expected improvement
+— the method for a slow deck, where each evaluation is a transient of seconds: it finds the
+basin in ten to twenty evaluations, hands the rest of `-maxiter` (an evaluation budget
+here) to the local method, and reports the predicted cost with its uncertainty and a
+length scale per knob, naming a knob the objective ignores; NSGA-II trades several
+`-minimize`/`-maximize` objectives into a Pareto front; `-center` with `-spec` limits maximises a yield. `-polish`
 finishes a global method with the local one (Nelder-Mead, or Levenberg-Marquardt for a
 `-target` fit) so the search ends with the local methods' precision, and `-starts k` runs
 the method from k extra Latin-hypercube points, prints each start's verdict, polishes the
@@ -258,7 +264,7 @@ The write-ups: [E-130](../../enhancements_doc/Enhancement-130.md),
 to [E-197](../../enhancements_doc/Enhancement-197.md), [E-206](../../enhancements_doc/Enhancement-206.md),
 [E-216](../../enhancements_doc/Enhancement-216.md), [E-322](../../enhancements_doc/Enhancement-322.md),
 [E-472](../../enhancements_doc/Enhancement-472.md), [E-762](../../enhancements_doc/Enhancement-762.md),
-[E-764](../../enhancements_doc/Enhancement-764.md).
+[E-764](../../enhancements_doc/Enhancement-764.md), [E-765](../../enhancements_doc/Enhancement-765.md).
 
 ## 3.4 Analysis coverage
 

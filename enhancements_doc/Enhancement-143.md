@@ -115,3 +115,5 @@ Least-squares fitting of `alter`-reachable device/instance parameters over one o
 more analyses. Still future work: optimizing symbolic `.param` values directly
 (needs a re-source that re-evaluates the netlist without re-running the analysis),
 and analytic (adjoint) sensitivities in place of the finite-difference Jacobian.
+
+**Update ([E-765](Enhancement-765.md)).** Levenberg-Marquardt is the finisher for a `-target` fit run under `-method bayes`: the surrogate hands off within ten to twenty evaluations and LM converges from its best point in a handful (the divider fit at R2 = 9000 in 24 to 33 evaluations in all, every seed).

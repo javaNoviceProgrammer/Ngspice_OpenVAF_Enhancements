@@ -202,6 +202,12 @@ stage. A start that fails is not a start: probe the box (a dozen random points, 
 annealer does) and begin from the best solvable one, saying so; a Nelder-Mead simplex
 whose vertices are all penalties expands rather than converges.
 
+*Open for Nelder-Mead and LM. Two methods leave this start by construction:
+[E-764](../../enhancements_doc/Enhancement-764.md)'s CMA-ES ranks a failed candidate last
+(g = 1m from this start, 8 of 197 refused) and
+[E-765](../../enhancements_doc/Enhancement-765.md)'s surrogate imputes it (g = 1m in 19
+evaluations, 2 refused); a box refused entirely ends as NO SOLUTION in both.*
+
 ## F7 — the `-dparam` optimum is not written into the deck when the fast path is armed
 
 **Observed.** A chain of 100 resistors into `RL out 0 {rr}`, `.param rr=1k`,

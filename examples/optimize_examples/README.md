@@ -6,7 +6,8 @@ python3 verify_optimize.py
 
 69 checks, one solver (a front-end command; the linear solver does not enter). 47 of 69 on
 the E-761 binary, 68 of 69 on the E-763 binary (the bare `-method` message names `cmaes` since
-[Enhancement-764](../../enhancements_doc/Enhancement-764.md)).
+[Enhancement-764](../../enhancements_doc/Enhancement-764.md) and `bayes` since
+[Enhancement-765](../../enhancements_doc/Enhancement-765.md)).
 
 Sections [1]–[18] are the command's original coverage: analytic optima reached by
 Nelder-Mead and Levenberg-Marquardt over instance, `.model` and `.param` knobs, single and

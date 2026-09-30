@@ -49,6 +49,35 @@ Enhancement-764: CMA-ES (`-method cmaes`), `-polish` and `-starts <k>`.
  [10] the E-762 variables for a CMA-ES run: optimize_status, optimize_converged,
       optimize_evals and optimize_cost agree with the report line.
 
+Enhancement-765: Bayesian optimization (`-method bayes`).
+ [11] the divider fit (R2 in [1, 100k], target v(out) = 0.9) at a budget of 25:
+      the surrogate hands off within 16 evaluations ("surrogate converged after N
+      evaluations (...); the budget's remaining M evaluations go to the local
+      method", N + M = 25), Levenberg-Marquardt gets "up to M iterations (the
+      remaining budget)" and converges to R2 = 9000 within 40 evaluations in all;
+      seeds 1 to 5 all end at 9000.
+ [12] a smooth bowl in two knobs: the surrogate reaches a cost below 1e-5 in at
+      most 25 evaluations (the swarm needs more than 500 for its 2e-9); with a
+      budget of 60 the hand-off polish converges below 1e-10 at (0.3, 0.7) in
+      fewer evaluations than Nelder-Mead alone.
+ [13] the budget is honoured: at 30 the polish runs out of its share and the line
+      reads "stopped at -maxiter (N iterations) -- NOT converged" with the NOTE;
+      at -maxiter 3 the design is truncated and the line counts "3 evaluations".
+ [14] the surrogate's report: predicted cost with a one-sigma range, "fitted to log
+      cost", one length scale per knob, and "(no dependence seen)" on exactly the
+      knob the objective does not use.
+ [15] hunt F6: a start the model refuses is imputed and left (g = 1m, E-438's NOTE
+      a minority); a box refused entirely ends after three redrawn designs (13
+      evaluations) as NO SOLUTION.
+ [16] a knob the objective does not depend on: "unchanged -- nothing was
+      optimised" and the length scale says why.
+ [17] the arguments: -swarmsize is a NOTE and ignored, `bo` is an alias, two `-seed
+      1` runs are identical and `-seed 2` differs, `-verbose` prints "(design)"
+      lines then "max EI" lines, one per evaluation.
+ [18] `-starts 1`: the banner says "evaluations each", two per-start lines, the
+      winner polished.
+ [19] optimize_status, optimize_converged and optimize_evals agree with the line.
+
 It is a front-end command, independent of the linear solver, so it is checked once.
 """
 import os
@@ -109,7 +138,7 @@ ROS = ("V1 x1 0 dc 0.5\nV2 x2 0 dc 0.5\nV3 x3 0 dc 0.5\nV4 x4 0 dc 0.5\n"
 WELL = "V1 x 0 dc 0.15\nB1 out 0 V = pow(v(x)-0.2,2)*pow(v(x)-0.8,2) + 0.02*pow(v(x)-0.8,2)\n"
 WELL_OPT = "-param V1 0.15 0 1 -analysis op -minimize v(out)"
 
-print("Enhancement-764: CMA-ES, -polish and -starts")
+print("Enhancement-764: CMA-ES, -polish and -starts; Enhancement-765: Bayesian optimization")
 
 # [1] the rotated ellipsoid ------------------------------------------------------------
 print("\n[1] a rotated ellipsoid (condition 1e6): CMA-ES learns the valley, the swarm clamps")
@@ -232,7 +261,7 @@ check("[7] -swarmsize 2: 'NOTE -- -swarmsize 2 raised to 4 (CMA-ES recombines th
 nm0 = run(ELL, f"optimize {ELL_OPT} -method nm", "nm0")
 nm1 = run(ELL, f"optimize {ELL_OPT} -method nm -polish", "nm1")
 check("[7] -polish under Nelder-Mead: a NOTE that it is ignored, and the run is the one without it (same report line)",
-      "optimize: NOTE -- -polish finishes a global method (pso, de, sa, cmaes) with the local one; Nelder-Mead is the local method, so it is ignored" in nm1
+      "optimize: NOTE -- -polish finishes a global method (pso, de, sa, cmaes, bayes) with the local one; Nelder-Mead is the local method, so it is ignored" in nm1
       and cost(nm1) == cost(nm0) and "optimize: polish" not in nm1, f"{cost(nm0)} {cost(nm1)}")
 ns_p = run(ELL, "optimize -param V1 0.5 0 1 -analysis op -minimize v(out) -maximize v(x1) -method nsga2 -polish", "nsp")
 ns_s = run(ELL, "optimize -param V1 0.5 0 1 -analysis op -minimize v(out) -maximize v(x1) -method nsga2 -starts 2", "nss")
@@ -245,10 +274,10 @@ sa = run(ELL, f"optimize {ELL_OPT} -method cmaes -starts abc", "sa")
 check("[7] a bare -starts, -starts 0 and -starts abc are refused by E-763's readers ('needs a count', 'must be 1 or more (got 0)', 'needs a number, not abc'), no run",
       "optimize: -starts needs a count" in bs and "optimize: -starts must be 1 or more (got 0)" in s0
       and "optimize: -starts needs a number, not 'abc'" in sa and "(CMA-ES)" not in bs + s0 + sa)
-check("[7] the usage line lists the method and the two flags", "-method nm|lm|pso|de|sa|cmaes]" in run(DIV, "optimize -param R2 1k 1 10k", "us")
+check("[7] the usage line lists the methods and the two flags", "-method nm|lm|pso|de|sa|cmaes|bayes]" in run(DIV, "optimize -param R2 1k 1 10k", "us")
       and "[-polish] [-starts k]" in run(DIV, "optimize -param R2 1k 1 10k", "us2"))
 uk = run(DIV, "optimize -param R2 1k 1 10k -analysis op -minimize v(out) -method bogus", "uk")
-check("[7] an unknown method names the seven: 'use nm, lm, pso, de, sa, cmaes or nsga2'", "(use nm, lm, pso, de, sa, cmaes or nsga2)" in uk)
+check("[7] an unknown method names the eight: 'use nm, lm, pso, de, sa, cmaes, bayes or nsga2'", "(use nm, lm, pso, de, sa, cmaes, bayes or nsga2)" in uk)
 
 # [8] -polish on a -target fit is Levenberg-Marquardt ---------------------------------------------------
 print("\n[8] -polish on a -target fit")
@@ -309,6 +338,134 @@ check("[10] optimize_status = converged, optimize_converged = 1, optimize_evals 
       var(pv, "status") == "converged" and var(pv, "conv") == "1" and var(pv, "evals") is not None and int(float(var(pv, "evals"))) == npv
       and var(pv, "cost") is not None and abs(float(var(pv, "cost")) - fpv) <= 1e-6 * max(1.0, abs(fpv)),
       f"status={var(pv, 'status')} conv={var(pv, 'conv')} evals={var(pv, 'evals')}/{npv} cost={var(pv, 'cost')}/{fpv}")
+
+# ============================== Enhancement-765 ==============================================
+print("\nEnhancement-765: Bayesian optimization")
+BOWL = "V1 x1 0 dc 0.9\nV2 x2 0 dc 0.1\nB1 out 0 V = pow(v(x1)-0.3,2) + pow(v(x2)-0.7,2)\n"
+BOWL_OPT = "-param V1 0.9 0 1 -param V2 0.1 0 1 -analysis op -minimize v(out)"
+BOWL3 = "V1 x1 0 dc 0.9\nV2 x2 0 dc 0.1\nV3 x3 0 dc 0.5\nB1 out 0 V = pow(v(x1)-0.3,2) + pow(v(x2)-0.7,2)\n"
+DIVFIT = "optimize -param R2 1k 1 100k -analysis op -target v(out) 0.9"
+HAND = re.compile(r"^optimize: surrogate converged after (\d+) evaluations \((.*?)\); the budget's remaining (\d+) evaluations? go(?:es)? to the local method", re.M)
+
+# [11] the divider fit ------------------------------------------------------------------------------
+print("\n[11] the divider fit at a budget of 25 evaluations")
+d1 = run(DIV, DIVFIT + " -method bayes -seed 1 -maxiter 25", "d1")
+h = HAND.search(d1)
+check("[11] the banner: 'Bayesian optimization -- a Gaussian-process surrogate (Matern 5/2, a length scale per knob) and expected improvement, seed 1, a budget of 25 evaluations (4 in the initial design)'",
+      "optimize: Bayesian optimization -- a Gaussian-process surrogate (Matern 5/2, a length scale per knob) and expected improvement, seed 1, a budget of 25 evaluations (4 in the initial design)" in d1
+      and ", Bayesian optimization" in d1)
+check("[11] the hand-off: 'surrogate converged after N evaluations (it expects less than a thousandth of the cost spread); the budget's remaining M evaluations go to the local method', N <= 16, N + M = 25",
+      h is not None and int(h.group(1)) <= 16 and int(h.group(1)) + int(h.group(3)) == 25 and h.group(2) == "it expects less than a thousandth of the cost spread",
+      h.group(0) if h else d1[-600:])
+check("[11] ...'polish -- Levenberg-Marquardt from the best point (cost ...), up to M iterations (the remaining budget)' and 'polish converged'",
+      h is not None and re.search(r"^optimize: polish -- Levenberg-Marquardt from the best point \(cost [\d.eE+-]+\), up to " + h.group(3) + r" iterations \(the remaining budget\)", d1, re.M) is not None
+      and "optimize: polish converged -- cost" in d1, d1[-600:])
+ph, fd, rd, nd = cost(d1)
+check("[11] ...converged, rms below 1e-8, R2 = 9000 to 0.01, within 40 evaluations in all (Nelder-Mead alone takes 35 to rms 5e-7, the swarm hundreds)",
+      ph == "converged" and rd is not None and rd < 1e-8 and knob(d1, "r2") is not None and abs(knob(d1, "r2") - 9000) < 0.01 and nd <= 40,
+      f"{ph} rms {rd} r2 {knob(d1, 'r2')} evals {nd}")
+seeds_ok = []
+for s in (2, 3, 4, 5):
+    o = run(DIV, DIVFIT + f" -method bayes -seed {s} -maxiter 25", f"d{s}")
+    seeds_ok.append(cost(o)[0] == "converged" and knob(o, "r2") is not None and abs(knob(o, "r2") - 9000) < 0.01 and cost(o)[3] <= 40)
+check("[11] seeds 2 to 5 at the same budget all hand off and end at R2 = 9000 within 40 evaluations", all(seeds_ok), f"{seeds_ok}")
+
+# [12] the bowl --------------------------------------------------------------------------------------------
+print("\n[12] a smooth bowl in two knobs")
+b60 = run(BOWL, f"optimize {BOWL_OPT} -method bayes -seed 1 -maxiter 60", "b60")
+h = HAND.search(b60)
+m = re.search(r"^optimize: polish -- Nelder-Mead from the best point \(cost ([\d.eE+-]+)\), up to (\d+) iterations \(the remaining budget\)", b60, re.M)
+check("[12] the surrogate hands off within 25 evaluations with its best below 1e-5 (the basin found)",
+      h is not None and int(h.group(1)) <= 25 and m is not None and float(m.group(1)) < 1e-5, f"{h.group(0) if h else None} | {m.group(0) if m else None}")
+ph, fb, _, nb = cost(b60)
+nm_b = run(BOWL, f"optimize {BOWL_OPT} -method nm", "bnm")
+ps_b = run(BOWL, f"optimize {BOWL_OPT} -method pso -seed 1", "bps")
+check("[12] ...with a budget of 60 the Nelder-Mead polish converges below 1e-10 at (0.3, 0.7) to 1e-4, in fewer evaluations than Nelder-Mead alone",
+      ph == "converged" and fb is not None and fb < 1e-10 and abs(knob(b60, "v1") - 0.3) < 1e-4 and abs(knob(b60, "v2") - 0.7) < 1e-4
+      and cost(nm_b)[3] is not None and nb < cost(nm_b)[3], f"{ph} {fb} evals {nb} vs nm {cost(nm_b)[3]}")
+check("[12] the swarm on the same bowl spends more than 500 evaluations (it 'converged' at 2e-9 after 1153)",
+      cost(ps_b)[3] is not None and cost(ps_b)[3] > 500, f"{cost(ps_b)}")
+
+# [13] the budget is honoured ---------------------------------------------------------------------------------
+print("\n[13] the budget is honoured")
+b30 = run(BOWL, f"optimize {BOWL_OPT} -method bayes -seed 1 -maxiter 30", "b30")
+h = HAND.search(b30)
+check("[13] -maxiter 30: the hand-off leaves the polish its share and the report reads 'stopped at -maxiter (M iterations) -- NOT converged' with the NOTE, M = 30 - N",
+      h is not None and re.search(r"^optimize: stopped at -maxiter \(" + h.group(3) + r" iterations\) -- NOT converged, objective", b30, re.M) is not None
+      and "NOTE -- the iteration cap ended" in b30, b30[-700:])
+m3 = run(BOWL, f"optimize {BOWL_OPT} -method bayes -seed 1 -maxiter 3\necho status=$optimize_status", "m3")
+check("[13] -maxiter 3: a design of 3 ('3 in the initial design'), 'stopped at -maxiter (3 evaluations) -- NOT converged' -- the cap is counted in evaluations here -- and optimize_status = maxiter",
+      "a budget of 3 evaluations (3 in the initial design)" in m3 and "optimize: stopped at -maxiter (3 evaluations) -- NOT converged, objective" in m3 and var(m3, "status") == "maxiter", m3[-500:])
+
+# [14] the surrogate's report -------------------------------------------------------------------------------------
+print("\n[14] the surrogate's report")
+b3 = run(BOWL3, "optimize -param V1 0.9 0 1 -param V2 0.1 0 1 -param V3 0.5 0 1 -analysis op -minimize v(out) -method bayes -seed 1 -maxiter 40", "b3")
+m = re.search(r"^optimize: surrogate -- predicted cost ([\d.eE+-]+) \(([\d.eE+-]+) \.\. ([\d.eE+-]+), one sigma\) at the optimum after (\d+) evaluations, fitted to (log cost|the cost); length scales \(box widths\):(.*)$", b3, re.M)
+check("[14] 'surrogate -- predicted cost X (lo .. hi, one sigma) at the optimum after N evaluations, fitted to log cost; length scales (box widths): ...', lo <= X <= hi",
+      m is not None and float(m.group(2)) <= float(m.group(1)) <= float(m.group(3)) and m.group(5) == "log cost", m.group(0) if m else b3[-600:])
+check("[14] ...the third knob, which the objective does not use, reads '(no dependence seen)' and the two it uses do not",
+      m is not None and re.search(r" v3 \d[\d.eE+-]* \(no dependence seen\)", m.group(6)) is not None and m.group(6).count("(no dependence seen)") == 1
+      and re.search(r" v1 [\d.eE+-]+ v2 [\d.eE+-]+ v3", m.group(6)) is not None, m.group(6) if m else "no line")
+
+# [15] hunt F6 -------------------------------------------------------------------------------------------------------
+print("\n[15] hunt F6 under the surrogate")
+subprocess.run([OPENVAF, os.path.join(HERE, "optguard.va"), "-o", osdi], capture_output=True, text=True)
+if os.path.exists(osdi):
+    GB = "V1 in 0 dc 1\nR1 in out 1k\nN1 out 0 gm\n.model gm optguard\n"
+    pre = f"pre_osdi {osdi}\n"
+    g1 = run(GB, pre + "optimize -param " + AT + "n1[g] -1m -2m 5m -analysis op -target v(out) 0.5 -method bayes -seed 1 -maxiter 30", "gb1")
+    g2 = run(GB, pre + "optimize -param " + AT + "n1[g] -1m -2m -0.1m -analysis op -target v(out) 0.5 -method bayes -seed 1 -maxiter 30", "gb2")
+    ph, _, rg, ng = cost(g1)
+    mm = re.search(r"NOTE -- (\d+) of (\d+) evaluations did not solve", g1)
+    check("[15] from g = -1m (refused): the failures are imputed, the surrogate hands off, LM converges at g = 1m to 1e-6 within 30 evaluations; E-438's NOTE counts a minority",
+          ph == "converged" and knob(g1, AT + "n1[g]") is not None and abs(knob(g1, AT + "n1[g]") - 1e-3) < 1e-6 and ng <= 30
+          and mm is not None and int(mm.group(1)) < int(mm.group(2)) // 3, f"{ph} g {knob(g1, AT + 'n1[g]')} evals {ng} {mm.group(0) if mm else ''}")
+    ph, _, _, ng = cost(g2)
+    check("[15] a box refused entirely: three designs of 4 are drawn and nothing solves; NO SOLUTION after 13 evaluations (12 and the final apply)",
+          ph == "NO SOLUTION -- no evaluation solved" and ng == 13, f"{ph} {ng}")
+    os.remove(osdi)
+else:
+    for _ in range(2):
+        check("[15] optguard.va compiled", False, "openvaf-r failed")
+
+# [16] a knob the objective ignores -----------------------------------------------------------------------------------
+print("\n[16] a knob the objective does not depend on")
+u = run("V1 x 0 dc 0.5\nV2 y 0 dc 0.5\nB1 out 0 V = pow(v(y)-0.3,2)\n", "optimize -param V1 0.5 0 1 -analysis op -minimize v(out) -method bayes -seed 1 -maxiter 30", "unch")
+check("[16] 'unchanged -- nothing was optimised' after the design, and the surrogate line reads 'v1 100 (no dependence seen)'",
+      "optimize: unchanged -- nothing was optimised, objective = 0.04 after" in u and "length scales (box widths): v1 100 (no dependence seen)" in u, u[-500:])
+
+# [17] the arguments -------------------------------------------------------------------------------------------------------
+print("\n[17] the arguments")
+sw = run(BOWL, f"optimize {BOWL_OPT} -method bo -seed 1 -maxiter 12 -swarmsize 9", "bsw")
+check("[17] -swarmsize under the surrogate: 'NOTE -- -swarmsize does not apply to Bayesian optimization (no population; ignored)'; 'bo' is an alias",
+      "optimize: NOTE -- -swarmsize does not apply to Bayesian optimization (no population; ignored)" in sw and "(Bayesian optimization)" in sw)
+s1 = run(BOWL, f"optimize {BOWL_OPT} -method bayes -seed 1 -maxiter 30", "bs1")
+s2 = run(BOWL, f"optimize {BOWL_OPT} -method bayes -seed 2 -maxiter 30", "bs2")
+def bkey(o): return [ln for ln in o.splitlines() if ln.startswith("optimize: surrogate") or ln.startswith("optimize: stop") or ln.startswith("optimize: conv") or ln.startswith("    v")]
+check("[17] two runs at -seed 1 are identical to the digit (the surrogate line, the report line, the knobs); -seed 2 differs",
+      bkey(s1) == bkey(b30) and len(bkey(s1)) >= 4 and bkey(s1) != bkey(s2), f"{bkey(s1)[:2]} vs {bkey(b30)[:2]}")
+vb = run(BOWL, f"optimize {BOWL_OPT} -method bayes -seed 1 -maxiter 20 -verbose", "bvb")
+ev = re.findall(r"^  eval (\d+)\s+cost [\d.eE+-]+\s+best [\d.eE+-]+\s+(\(design\)|max EI [\d.eE+-]+)$", vb, re.M)
+check("[17] -verbose: one line per evaluation, numbered from 1, the first six '(design)' and the rest 'max EI <value>' (up to the hand-off)",
+      len(ev) >= 7 and [int(e[0]) for e in ev] == list(range(1, len(ev) + 1)) and all(e[1] == "(design)" for e in ev[:6]) and all(e[1].startswith("max EI") for e in ev[6:]),
+      f"{len(ev)} lines: {ev[:7]}")
+
+# [18] -starts -------------------------------------------------------------------------------------------------------------
+print("\n[18] -starts under the surrogate")
+st = run(BOWL, f"optimize {BOWL_OPT} -method bayes -seed 1 -maxiter 40 -starts 1", "bst")
+check("[18] the banner says '2 starts -- the given point and 1 Latin-hypercube point, 20 evaluations each, the winner polished', two per-start lines, a winner, the winner's polish below 1e-9 at (0.3, 0.7), and no per-start hand-off line (the winner is polished anyway)",
+      "optimize: 2 starts -- the given point and 1 Latin-hypercube point, 20 evaluations each, the winner polished" in st
+      and len(re.findall(r"^optimize: start \d of 2 \(", st, re.M)) == 2 and re.search(r"^optimize: start \d of 2 won", st, re.M) is not None
+      and "optimize: polish -- Nelder-Mead from the best point" in st and cost(st)[1] is not None and cost(st)[1] < 1e-9
+      and abs(knob(st, "v1") - 0.3) < 1e-3 and abs(knob(st, "v2") - 0.7) < 1e-3 and "surrogate converged after" not in st,
+      st[-900:])
+
+# [19] the variables -------------------------------------------------------------------------------------------------------
+print("\n[19] the published outcome")
+pv = run(DIV, DIVFIT + " -method bayes -seed 1 -maxiter 25\necho status=$optimize_status conv=$optimize_converged evals=$optimize_evals", "bpv")
+ph, _, _, npv = cost(pv)
+check("[19] optimize_status = converged, optimize_converged = 1, optimize_evals equal to the line", var(pv, "status") == "converged" and var(pv, "conv") == "1"
+      and var(pv, "evals") is not None and int(float(var(pv, "evals"))) == npv, f"{var(pv, 'status')} {var(pv, 'conv')} {var(pv, 'evals')}/{npv}")
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

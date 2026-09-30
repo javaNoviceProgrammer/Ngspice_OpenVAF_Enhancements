@@ -173,3 +173,5 @@ the line.
 - A Nelder-Mead `-starts` split gives every start ⌈`-maxiter`/(k+1)⌉ iterations; a start
   that has not converged in its share is reported `maxiter` and can still win.
 - `-starts` and `-polish` do not apply to NSGA-II, whose result is a front.
+
+**Update ([E-765](Enhancement-765.md)).** The polish machinery carries Bayesian optimization's hand-off: when the surrogate's criterion is met with budget left, the local method runs with the remaining evaluations as its cap (`polish -- ... up to M iterations (the remaining budget)`) and a first simplex edge of 0.02 instead of 0.05, since a surrogate's best is close; `-polish` after a population method is unchanged. The `-polish` NOTE and the method lists name `bayes`; `-starts` runs the surrogate per start without a hand-off and polishes the winner as before.
