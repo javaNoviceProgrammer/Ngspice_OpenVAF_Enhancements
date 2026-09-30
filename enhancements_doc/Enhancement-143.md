@@ -117,3 +117,5 @@ more analyses. Still future work: optimizing symbolic `.param` values directly
 and analytic (adjoint) sensitivities in place of the finite-difference Jacobian.
 
 **Update ([E-765](Enhancement-765.md)).** Levenberg-Marquardt is the finisher for a `-target` fit run under `-method bayes`: the surrogate hands off within ten to twenty evaluations and LM converges from its best point in a handful (the divider fit at R2 = 9000 in 24 to 33 evaluations in all, every seed).
+
+**Update ([E-766](Enhancement-766.md)).** Under `-constrain` the residual vector gains one entry per constraint side, `sqrt(rho/2) max(0, g + lambda/rho)`, so the Jacobian sees the bound and LM fits the targets while holding it; and every residual of a failed stage is now written (1e15) before the stage loop breaks, where the Jacobian used to read whatever the stack held (the 2026-09-29 hunt's F6).

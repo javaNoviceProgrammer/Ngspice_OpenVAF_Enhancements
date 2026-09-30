@@ -206,7 +206,10 @@ whose vertices are all penalties expands rather than converges.
 [E-764](../../enhancements_doc/Enhancement-764.md)'s CMA-ES ranks a failed candidate last
 (g = 1m from this start, 8 of 197 refused) and
 [E-765](../../enhancements_doc/Enhancement-765.md)'s surrogate imputes it (g = 1m in 19
-evaluations, 2 refused); a box refused entirely ends as NO SOLUTION in both.*
+evaluations, 2 refused); a box refused entirely ends as NO SOLUTION in both.
+[E-766](../../enhancements_doc/Enhancement-766.md) closed the "Where" item on `opt_eval`:
+every residual of a failed stage is written (1e15) before the `break`, so LM's Jacobian
+no longer reads the stack. The "a start that fails is not a start" probe is still open.*
 
 ## F7 — the `-dparam` optimum is not written into the deck when the fast path is armed
 

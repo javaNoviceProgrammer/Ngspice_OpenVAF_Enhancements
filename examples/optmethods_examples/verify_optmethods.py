@@ -78,6 +78,32 @@ Enhancement-765: Bayesian optimization (`-method bayes`).
       winner polished.
  [19] optimize_status, optimize_converged and optimize_evals agree with the line.
 
+Enhancement-766: constraints (`-constrain <expr> -max <hi> | -min <lo>`, `-ctol`),
+an augmented Lagrangian around any scalar method.
+ [20] "minimise the current subject to v(out) >= 0.9" on the divider (R1, R2 in
+      [100, 10k]): the optimum is R1 = R2/9 = 1111 with R2 at 10k and the
+      constraint active; the multiplier is the objective's sensitivity to the
+      bound, dI*/db = 1/R2 = 1e-4 per unit. Nelder-Mead from (2k, 5k) and from
+      (1k, 1k) -- where a simplex flattened against the R1 wall used to end at
+      R1 = 100 -- both reach it; the banner, the round lines, the constraint
+      line with "active (multiplier ...)", optimize_feasible = 1.
+ [21] the same under CMA-ES, the swarm with -polish and the surrogate: the same
+      optimum and multiplier; the surrogate's hand-off line printed once.
+ [22] an inactive constraint changes nothing: the unconstrained knob and cost,
+      "slack 0.4", no multiplier.
+ [23] an infeasible pair (v(out) >= 0.9 and <= 0.8): ten rounds, "INFEASIBLE --
+      v(out) >= 0.9 missed by ..." on the line, both sides VIOLATED, status
+      infeasible, optimize_feasible = 0, optimize_converged = 0.
+ [24] a band (both sides on one expression, both slack); LM with a -target and a
+      current bound in one stage and in two stages (the bound active to 1e-4).
+ [25] refusals: no limit, `-max abc`, under nsga2, under -center, `-ctol 0`, a
+      -constrain followed by a flag, `-max` before any -spec or -constrain; and
+      `-min` is still E-130's -minimize alias when no -constrain precedes it.
+ [26] a constraint given before -analysis belongs to stage 0; `-starts 2` with a
+      constraint: every start constrained, the winner polished, active.
+ [27] a compiled conductance refused at g <= 0 under CMA-ES with v(out) <= 0.5:
+      g = 1m, active.
+
 It is a front-end command, independent of the linear solver, so it is checked once.
 """
 import os
@@ -138,7 +164,7 @@ ROS = ("V1 x1 0 dc 0.5\nV2 x2 0 dc 0.5\nV3 x3 0 dc 0.5\nV4 x4 0 dc 0.5\n"
 WELL = "V1 x 0 dc 0.15\nB1 out 0 V = pow(v(x)-0.2,2)*pow(v(x)-0.8,2) + 0.02*pow(v(x)-0.8,2)\n"
 WELL_OPT = "-param V1 0.15 0 1 -analysis op -minimize v(out)"
 
-print("Enhancement-764: CMA-ES, -polish and -starts; Enhancement-765: Bayesian optimization")
+print("Enhancement-764: CMA-ES, -polish and -starts; Enhancement-765: Bayesian optimization; Enhancement-766: constraints")
 
 # [1] the rotated ellipsoid ------------------------------------------------------------
 print("\n[1] a rotated ellipsoid (condition 1e6): CMA-ES learns the valley, the swarm clamps")
@@ -466,6 +492,112 @@ pv = run(DIV, DIVFIT + " -method bayes -seed 1 -maxiter 25\necho status=$optimiz
 ph, _, _, npv = cost(pv)
 check("[19] optimize_status = converged, optimize_converged = 1, optimize_evals equal to the line", var(pv, "status") == "converged" and var(pv, "conv") == "1"
       and var(pv, "evals") is not None and int(float(var(pv, "evals"))) == npv, f"{var(pv, 'status')} {var(pv, 'conv')} {var(pv, 'evals')}/{npv}")
+
+# ============================== Enhancement-766 ==============================================
+print("\nEnhancement-766: constraints, an augmented Lagrangian around any scalar method")
+CUR = "optimize -param R1 1k 100 10k -param R2 1k 100 10k -analysis op -minimize 0-i(v1) -constrain v(out) -min 0.9"
+CUR2 = CUR.replace("-param R1 1k", "-param R1 2k").replace("-param R2 1k", "-param R2 5k")
+ACT = re.compile(r"^optimize: constraint v\(out\) >= 0\.9 -- ([\d.eE+-]+), active \(multiplier ([\d.eE+-]+): raising the bound raises the objective by about that much per unit\)", re.M)
+
+def con_ok(o, label, tag):
+    """the constrained divider's optimum: R1 = 1111 to 1 %, R2 = 10k, v(out) >= 0.9 - 1e-4, active, multiplier 1e-4 to 15 %"""
+    ph, f, _, n = cost(o)
+    m = ACT.search(o)
+    ok = (ph == "converged" and knob(o, "r1") is not None and abs(knob(o, "r1") - 1111.1) < 12 and knob(o, "r2") is not None
+          and abs(knob(o, "r2") - 10000) < 1 and m is not None and float(m.group(1)) >= 0.9 - 1e-4
+          and abs(float(m.group(2)) - 1e-4) < 1.5e-5 and f is not None and abs(f - 9e-5) < 2e-7)
+    check(label, ok, f"{ph} r1 {knob(o, 'r1')} r2 {knob(o, 'r2')} f {f} {m.group(0) if m else 'no active line'}")
+
+print("\n[20] minimise the current subject to v(out) >= 0.9")
+c1 = run(DIV, CUR2 + "\necho feas=$optimize_feasible status=$optimize_status", "c_nm2")
+check("[20] the banner: '1 constraint (augmented Lagrangian around Nelder-Mead, feasible within 0.0001 of each bound): v(out) >= 0.9'",
+      "optimize: 1 constraint (augmented Lagrangian around Nelder-Mead, feasible within 0.0001 of each bound): v(out) >= 0.9" in c1)
+rounds = re.findall(r"^optimize: constraints round (\d+) -- objective ([\d.eE+-]+), largest violation ([\d.eE+-]+)(?: \((?:feasible|relative)\))?, penalty ([\d.eE+-]+), (\w+) after (\d+) evaluations", c1, re.M)
+check("[20] one line per round ('constraints round k -- objective, largest violation, penalty, verdict after N evaluations'), numbered from 1, the last feasible, at most five rounds",
+      1 <= len(rounds) <= 5 and [int(r[0]) for r in rounds] == list(range(1, len(rounds) + 1)) and float(rounds[-1][2]) <= 1e-4, f"{rounds}")
+con_ok(c1, "[20] Nelder-Mead from (2k, 5k): converged at R1 = 1111 (1 %), R2 = 10k, v(out) >= 0.9 - 1e-4, the constraint line 'active (multiplier 1e-4 ...)' within 15 % of dI*/db = 1/R2, the objective 9e-5", "c_nm2")
+check("[20] optimize_feasible = 1, optimize_status = converged", var(c1, "feas") == "1" and var(c1, "status") == "converged", f"{var(c1, 'feas')} {var(c1, 'status')}")
+c0 = run(DIV, CUR, "c_nm1")
+con_ok(c0, "[20] Nelder-Mead from (1k, 1k), where the simplex flattened against the R1 wall and stopped at R1 = 100: rebuilt inward, it reaches the same optimum", "c_nm1")
+
+print("\n[21] the same under the global methods")
+con_ok(run(DIV, CUR + " -method cmaes -seed 1", "c_cma"), "[21] CMA-ES: the same optimum and multiplier", "c_cma")
+con_ok(run(DIV, CUR + " -method pso -seed 1 -polish", "c_pso"), "[21] the swarm with -polish: the same optimum and multiplier (the polish holds the constraint too)", "c_pso")
+cb = run(DIV, CUR + " -method bayes -seed 1 -maxiter 120", "c_bo")
+con_ok(cb, "[21] the surrogate with its hand-off (a budget of 120, the polish's share constrained too): the same optimum and multiplier", "c_bo")
+check("[21] ...inside the constraint rounds the surrogate's hand-off line is not repeated (none printed), the polish line names the remaining budget once",
+      cb.count("optimize: surrogate converged after") == 0 and len(re.findall(r"^optimize: polish -- Nelder-Mead from the best point \(cost [\d.eE+-]+\), up to \d+ iterations \(the remaining budget\)", cb, re.M)) == 1,
+      f"{cb.count('optimize: surrogate converged after')} hand-off lines; {len(re.findall(r'^optimize: polish -- ', cb, re.M))} polish lines")
+
+print("\n[22] an inactive constraint changes nothing")
+s0 = run(DIV, "optimize -param R2 1k 100 10k -analysis op -minimize (v(out)-0.5)^2", "c_un")
+s1 = run(DIV, "optimize -param R2 1k 100 10k -analysis op -minimize (v(out)-0.5)^2 -constrain v(out) -min 0.1", "c_sl")
+check("[22] the unconstrained knob and cost (R2 = 1000, objective 0), the line 'constraint v(out) >= 0.1 -- 0.5, slack 0.4', no multiplier, one round",
+      knob(s1, "r2") == knob(s0, "r2") == 1000.0 and cost(s1)[1] == cost(s0)[1] == 0.0 and "optimize: constraint v(out) >= 0.1 -- 0.5, slack 0.4" in s1
+      and "multiplier" not in s1 and s1.count("optimize: constraints round") == 1, s1[-500:])
+
+print("\n[23] an infeasible pair")
+inf = run(DIV, "optimize -param R2 1k 100 10k -analysis op -minimize 0-i(v1) -constrain v(out) -min 0.9 -max 0.8\necho status=$optimize_status feas=$optimize_feasible conv=$optimize_converged", "c_inf")
+check("[23] ten rounds, then 'INFEASIBLE -- v(out) >= 0.9 missed by <d> after 10 rounds, objective = ...' with d between 0.04 and 0.06",
+      inf.count("optimize: constraints round") == 10 and re.search(r"^optimize: INFEASIBLE -- v\(out\) >= 0\.9 missed by 0\.0[456]\d* after 10 rounds, objective = ", inf, re.M) is not None, inf[-900:])
+check("[23] ...both sides reported VIOLATED, status infeasible, optimize_feasible = 0, optimize_converged = 0",
+      re.search(r"^optimize: constraint v\(out\) <= 0\.8 -- [\d.eE+-]+, VIOLATED by", inf, re.M) is not None
+      and re.search(r"^optimize: constraint v\(out\) >= 0\.9 -- [\d.eE+-]+, VIOLATED by", inf, re.M) is not None
+      and var(inf, "status") == "infeasible" and var(inf, "feas") == "0" and var(inf, "conv") == "0", f"{var(inf, 'status')} {var(inf, 'feas')} {var(inf, 'conv')}")
+
+print("\n[24] a band, and Levenberg-Marquardt with a bound")
+band = run(DIV, "optimize -param R1 1k 100 10k -param R2 1k 100 10k -analysis op -minimize 0-i(v1) -constrain v(out) -min 0.4 -max 0.6", "c_band")
+check("[24] a band 0.4 <= v(out) <= 0.6 on one expression: the banner lists both sides, both are slack at the unconstrained optimum (R1 = R2 = 10k, v = 0.5)",
+      "v(out) >= 0.4, v(out) <= 0.6" in band and "optimize: constraint v(out) <= 0.6 -- 0.5, slack 0.1" in band and "optimize: constraint v(out) >= 0.4 -- 0.5, slack 0.1" in band
+      and knob(band, "r1") == 10000.0 and knob(band, "r2") == 10000.0, band[-500:])
+lm1 = run(DIV, "optimize -param R1 1k 100 100k -param R2 1k 100 100k -analysis op -target v(out) 0.5 -constrain 0-i(v1) -max 100u", "c_lm1")
+ph, f, r, _ = cost(lm1)
+cv = re.search(r"^optimize: constraint 0-i\(v1\) <= 0\.0001 -- ([\d.eE+-]+), (active|slack)", lm1, re.M)
+check("[24] LM, target v(out) = 0.5 with the current bounded at 100u (R1 + R2 >= 10k): converged, rms below 1e-6, the current within 1e-4 of the bound or below it, R1 = R2 to 0.1 %",
+      ph == "converged" and r is not None and r < 1e-6 and cv is not None and float(cv.group(1)) <= 1e-4 * (1 + 1e-4)
+      and knob(lm1, "r1") is not None and abs(knob(lm1, "r1") - knob(lm1, "r2")) < 1e-3 * knob(lm1, "r1"), f"{ph} rms {r} {cv.group(0) if cv else None} r1 {knob(lm1, 'r1')} r2 {knob(lm1, 'r2')}")
+AC = "V1 in 0 dc 1 ac 1\nR1 in out 1k\nR2 out 0 1k\nC1 out 0 1n\n"
+lm2 = run(AC, "optimize -param R1 1k 100 100k -param R2 1k 100 100k -analysis op -target v(out) 0.5 -constrain 0-i(v1) -max 100u -analysis ac lin 1 1k 1k -target mag(v(out)) 0.5 -method lm", "c_lm2")
+ph, f, r, _ = cost(lm2)
+cv = re.search(r"^optimize: constraint 0-i\(v1\) <= 0\.0001 -- ([\d.eE+-]+), (active|slack)", lm2, re.M)
+check("[24] LM over two stages (op and ac targets) with the stage-0 bound: converged, the current within 1e-4 of the bound and labelled active (a multiplier, or 'at the bound' when the last round landed feasible), R1 = R2 = 5k to 1 %",
+      ph == "converged" and cv is not None and float(cv.group(1)) <= 1e-4 * (1 + 1e-4) and cv.group(2) == "active"
+      and knob(lm2, "r1") is not None and abs(knob(lm2, "r1") - 5000) < 50 and abs(knob(lm2, "r2") - 5000) < 50, f"{ph} rms {r} {cv.group(0) if cv else None} r1 {knob(lm2, 'r1')} r2 {knob(lm2, 'r2')}")
+
+print("\n[25] refusals, and the -min alias kept")
+R = [("optimize -param R2 1k 100 10k -analysis op -minimize v(out) -constrain v(out)", "optimize: -constrain v(out) has no -max/-min limit"),
+     ("optimize -param R2 1k 100 10k -analysis op -minimize v(out) -constrain v(out) -max abc", "optimize: -constrain -max needs a number, not 'abc'"),
+     ("optimize -param R2 1k 100 10k -analysis op -minimize v(out) -maximize v(in) -method nsga2 -constrain v(out) -max 0.5", "optimize: -constrain is not available under -method nsga2"),
+     ("optimize -param R2 1k 100 10k -analysis op -center -spec v(out) -max 0.9 -constrain v(out) -min 0.1", "optimize: -constrain cannot be combined with -center"),
+     ("optimize -param R2 1k 100 10k -analysis op -minimize v(out) -constrain v(out) -max 0.5 -ctol 0", "optimize: -ctol must be positive"),
+     ("optimize -param R2 1k 100 10k -analysis op -minimize v(out) -constrain -max 0.5", "optimize: -constrain needs <expr>, then -max <hi> and/or -min <lo>"),
+     ("optimize -param R2 1k 100 10k -analysis op -minimize v(out) -max 0.5", "optimize: -max before any -spec or -constrain")]
+outs = [run(DIV, ctl, f"c_r{i}") for i, (ctl, _) in enumerate(R)]
+check("[25] seven refusals with their messages and no run: no limit, -max abc, under nsga2, under -center, -ctol 0, -constrain then a flag, -max before any -spec or -constrain",
+      all(msg in o and "optimize: converged" not in o and "NSGA-II --" not in o for o, (_, msg) in zip(outs, R)),
+      [ (msg in o) for o, (_, msg) in zip(outs, R)])
+al = run(DIV, "optimize -param R2 1k 100 10k -analysis op -min (v(out)-0.5)^2", "c_min")
+check("[25] '-min <expr>' without a -constrain before it is still E-130's -minimize alias: converged at R2 = 1000", cost(al)[0] == "converged" and knob(al, "r2") == 1000.0, al[-300:])
+
+print("\n[26] a stage-0 constraint, and -starts")
+pre = run(DIV, "optimize -param R1 2k 100 10k -param R2 5k 100 10k -constrain v(out) -min 0.9 -analysis op -minimize 0-i(v1)", "c_pre")
+con_ok(pre, "[26] a -constrain given before -analysis belongs to stage 0 and the run is the same", "c_pre")
+st = run(DIV, CUR + " -starts 2 -seed 1", "c_st")
+check("[26] -starts 2: three constrained starts (each its own rounds), a winner, the polish constrained, the optimum active",
+      len(re.findall(r"^optimize: start \d of 3 \(", st, re.M)) == 3 and re.search(r"^optimize: start \d of 3 won", st, re.M) is not None
+      and st.count("optimize: constraints round") >= 4 and ACT.search(st) is not None and knob(st, "r1") is not None and abs(knob(st, "r1") - 1111.1) < 12, st[-800:])
+
+print("\n[27] a refused start under a constraint")
+subprocess.run([OPENVAF, os.path.join(HERE, "optguard.va"), "-o", osdi], capture_output=True, text=True)
+if os.path.exists(osdi):
+    GB = "V1 in 0 dc 1\nR1 in out 1k\nN1 out 0 gm\n.model gm optguard\n"
+    g = run(GB, f"pre_osdi {osdi}\noptimize -param " + AT + "n1[g] -1m -2m 5m -analysis op -minimize 0-i(v1) -constrain v(out) -max 0.5 -method cmaes -seed 1", "c_g")
+    check("[27] minimise the current with v(out) <= 0.5 from g = -1m (refused) under CMA-ES: converged at g = 1m to 1e-5, the constraint active, E-438's NOTE counting the refused candidates",
+          cost(g)[0] == "converged" and knob(g, AT + "n1[g]") is not None and abs(knob(g, AT + "n1[g]") - 1e-3) < 1e-5
+          and re.search(r"^optimize: constraint v\(out\) <= 0\.5 -- [\d.eE+-]+, active", g, re.M) is not None and "did not solve" in g, g[-700:])
+    os.remove(osdi)
+else:
+    check("[27] optguard.va compiled", False, "openvaf-r failed")
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

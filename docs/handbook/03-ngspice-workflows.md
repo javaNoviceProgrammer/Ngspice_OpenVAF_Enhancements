@@ -212,8 +212,8 @@ sweep's scale is spelled `v_sweep` (E-584): `v-sweep` is a subtraction to `print
 
 `optimize` varies a set of knobs, re-runs one or more analyses and drives an objective to
 a minimum: `optimize (-param|-mparam|-dparam) <name> <init> <lo> <hi> [...] -analysis <cmd>
-(-minimize <expr> | -target <expr> <value> [<weight>] ...) [-method nm|lm|pso|de|sa|cmaes|bayes|nsga2]
-[-maxiter N] [-tol T] [-seed s] [-polish] [-starts k] [-verbose]`. A `-param` is an `alter` target (a device or
+(-minimize <expr> | -target <expr> <value> [<weight>] ...) [-constrain <expr> (-max hi | -min lo) ...] [-ctol T]
+[-method nm|lm|pso|de|sa|cmaes|bayes|nsga2] [-maxiter N] [-tol T] [-seed s] [-polish] [-starts k] [-verbose]`. A `-param` is an `alter` target (a device or
 `@inst[param]`), a `-mparam` a `.model` parameter (`@model[param]`, via `altermod`), a
 `-dparam` a deck `.param` (`alterparam` and a re-source, or the in-place fast path on a
 large deck). Nelder-Mead is the default for a scalar `-minimize`, Levenberg-Marquardt for
@@ -233,7 +233,13 @@ length scale per knob, naming a knob the objective ignores; NSGA-II trades sever
 finishes a global method with the local one (Nelder-Mead, or Levenberg-Marquardt for a
 `-target` fit) so the search ends with the local methods' precision, and `-starts k` runs
 the method from k extra Latin-hypercube points, prints each start's verdict, polishes the
-winner and publishes `optimize_start`. The knob values are published as
+winner and publishes `optimize_start`. `-constrain <expr> -max <hi>` and/or `-min <lo>`
+([E-766](../../enhancements_doc/Enhancement-766.md)) add constraints to any scalar method
+— "minimise the current subject to v(out) ≥ 0.9" — solved by an augmented Lagrangian
+around it: the bound is held to `-ctol` (1e-4 of the bound), the report prints each
+constraint's value with `active` and the multiplier as the objective's sensitivity to the
+bound, or `slack`, or `VIOLATED`, a pair that cannot be met reads `INFEASIBLE`, and
+`optimize_feasible` is published. The knob values are published as
 `optimize_<name>` ([E-501](../../enhancements_doc/Enhancement-501.md)), and since
 [E-762](../../enhancements_doc/Enhancement-762.md) the outcome is too: the report's last
 line opens with why the search stopped, and `optimize_status` (a string variable),
@@ -248,6 +254,7 @@ line opens with why the search stopped, and `optimize_status` (a string variable
 | `NO SOLUTION -- no evaluation solved` | `nosolve` | 0 |
 | `unchanged -- nothing was optimised` | `unchanged` | 0 |
 | `INTERRUPTED -- best point so far` | `interrupted` | 0 |
+| `INFEASIBLE -- <expr> >= <bound> missed by <d> after N rounds` (a `-constrain` could not be met; E-766) | `infeasible` | 0 |
 
 Since [E-763](../../enhancements_doc/Enhancement-763.md) the command refuses what it
 cannot mean instead of running with a guess: a bound or init that is not a number, an
@@ -264,7 +271,8 @@ The write-ups: [E-130](../../enhancements_doc/Enhancement-130.md),
 to [E-197](../../enhancements_doc/Enhancement-197.md), [E-206](../../enhancements_doc/Enhancement-206.md),
 [E-216](../../enhancements_doc/Enhancement-216.md), [E-322](../../enhancements_doc/Enhancement-322.md),
 [E-472](../../enhancements_doc/Enhancement-472.md), [E-762](../../enhancements_doc/Enhancement-762.md),
-[E-764](../../enhancements_doc/Enhancement-764.md), [E-765](../../enhancements_doc/Enhancement-765.md).
+[E-764](../../enhancements_doc/Enhancement-764.md), [E-765](../../enhancements_doc/Enhancement-765.md),
+[E-766](../../enhancements_doc/Enhancement-766.md).
 
 ## 3.4 Analysis coverage
 

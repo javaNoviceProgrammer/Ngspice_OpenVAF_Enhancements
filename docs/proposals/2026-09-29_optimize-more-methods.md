@@ -161,6 +161,11 @@ likelihood, expected improvement, the LHS, and the loop.
 
 ## 3. Constraints — an augmented Lagrangian around any scalar method
 
+*Implemented in [E-766](../../enhancements_doc/Enhancement-766.md), with the spelling of
+E-206's `-spec`: `-constrain <expr> -max <hi>` / `-min <lo>` rather than `<=`/`>=` tokens,
+which ngspice's lexer would read as a redirection; the constraint tolerance is relative to
+each bound's own magnitude, not to max(1, |value|), so a 100 µA bound is not lost.*
+
 The objective shape is the third gap, and this one is a wrapper, not a method: it
 applies to Nelder-Mead, CMA-ES, BO, the swarm and DE alike, and to LM through its
 residuals.
@@ -389,7 +394,7 @@ Every section: `optimize_status`, `optimize_converged`, `optimize_evals` and
    callback simplex rather than a refactor, so the six methods stay byte for byte;
    the acquisition is maximised by candidates plus that simplex, not by DE.*
 3. **Constraints** (section 3): the fold that changes what problems the command can
-   state.
+   state. *Done: [E-766](../../enhancements_doc/Enhancement-766.md).*
 4. **The trust-region method** (section 4) and **pattern search** (section 5), one fold
    each; then the question of the `-minimize` default.
 5. **Discrete knobs** (section 7), which also settle O2's log-scaled knob.

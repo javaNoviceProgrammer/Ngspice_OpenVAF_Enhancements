@@ -145,3 +145,5 @@ equal to the line.
   third).
 - `-maxiter` is capped at 2000 with a NOTE; a larger budget belongs to a population
   method.
+
+**Update ([E-766](Enhancement-766.md)).** Under `-constrain` the surrogate minimises the augmented objective in each outer round; its hand-off line is not repeated inside the rounds (the polish line names the remaining budget once), and the hand-off polish runs its own constrained rounds.

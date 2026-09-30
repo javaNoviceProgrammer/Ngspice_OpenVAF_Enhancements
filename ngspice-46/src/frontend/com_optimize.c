@@ -63,6 +63,17 @@ Latin-hypercube start points besides the given one, each with a share of
 -maxiter (CMA-ES doubles its population per start), reports which start won and
 polishes the winner.
 
+Constraints (Enhancement-766): `-constrain <expr> -max <hi>` and/or `-min <lo>`,
+any number of them, turn the fit into a design problem -- "minimise the current
+subject to v(out) >= 0.9" -- solved by an augmented Lagrangian around whichever
+method was chosen: the method minimises the objective plus (rho/2) max(0, g +
+lambda/rho)^2 per constraint side, the multipliers are updated between rounds,
+rho grows when the violation does not shrink, and the search stops feasible
+within -ctol (default 1e-4, relative to max(1, |bound|)) or reports INFEASIBLE.
+The report prints every constraint's value, whether it is active, and the
+multiplier as the objective's sensitivity to the bound; `optimize_feasible` is
+published beside the E-762 variables.
+
 Syntax (in a .control block, after the circuit is loaded):
 
   optimize (-param|-mparam|-dparam) <name> <init> <lo> <hi>  [...]
@@ -70,6 +81,7 @@ Syntax (in a .control block, after the circuit is loaded):
            ( -minimize <expression ...>
              | -target <expr> <value> [<weight>]  [-target ...]
                [ -analysis <command ...> -target ... ] )
+           [-constrain <expr> (-max <hi> | -min <lo>) ...] [-ctol <T>]
            [-method nm|lm|pso|de|sa|cmaes|bayes] [-swarmsize <N>] [-seed <s>]
            [-maxiter <N>] [-tol <T>] [-polish] [-starts <k>] [-verbose]
 
@@ -117,6 +129,7 @@ ft_optimizing) unless `-verbose`.
 #define OPT_MAXT    128          /* max least-squares targets (E-197)     */
 #define OPT_MAXSPEC  32          /* Enhancement-206: max yield specs      */
 #define OPT_MAXOBJ    8          /* Enhancement-216: max NSGA-II objectives */
+#define OPT_MAXC     32          /* Enhancement-766: max constraints        */
 #define OPT_PENALTY  1e30        /* cost for a failed / non-finite eval   */
 
 /* Enhancement-762 (optimize hunt F1 of 2026-09-29): WHY the search stopped.
@@ -132,6 +145,7 @@ ft_optimizing) unless `-verbose`.
 #define OPT_ST_NOSOLVE     3     /* no evaluation produced a solution            */
 #define OPT_ST_UNCHANGED   4     /* the objective was the same at every eval     */
 #define OPT_ST_INTERRUPTED 5     /* the user stopped it (E-537)                  */
+#define OPT_ST_INFEASIBLE  6     /* Enhancement-766: a constraint could not be met */
 
 /* Enhancement-206 (design centering): one pass/fail spec for the inner Monte
  * Carlo, exactly like montecarlo's -spec: an expression bounded by -max/-min. */
@@ -146,6 +160,19 @@ struct opt_target {
     double target;               /* desired value                         */
     double weight;               /* residual weight                       */
     int    stage;                /* which -analysis stage it belongs to   */
+};
+
+/* Enhancement-766: one constraint -- an expression bounded above and/or below,
+ * read after its stage's analysis like a target. `val` is the last
+ * evaluation's value (OPT_PENALTY when the stage did not solve); the
+ * multipliers are in the scaled units of opt_con_g(). */
+struct opt_con {
+    char  *expr;
+    double hi, lo;
+    int    hashi, haslo;
+    int    stage;
+    double val;
+    double lam_hi, lam_lo;
 };
 
 /* how a parameter is applied to the circuit */
@@ -193,6 +220,21 @@ struct optctx {
                                           * (Bayesian optimization), for the report's word */
     int    polish_iters;                 /* Enhancement-765: the hand-off -- what the surrogate
                                           * left of the budget goes to the local method */
+
+    /* Enhancement-766: constraints, solved by an augmented Lagrangian around
+     * the chosen method (al_solve). While al_active is set opt_eval adds the
+     * augmented terms to the cost (and a residual per constraint side for LM). */
+    int    nc;
+    struct opt_con con[OPT_MAXC];
+    int    ncside;                       /* constraint sides = extra LM residuals   */
+    double ctol;                         /* feasibility tolerance, relative (1e-4)  */
+    double rho;                          /* the penalty parameter                   */
+    int    al_active;
+    int    nm_restart;                   /* rebuild a simplex that collapsed onto a bound */
+    int    al_rounds;
+    int    al_feasible;
+    double al_viol;                      /* the largest scaled violation at the end */
+    int    al_worst, al_worst_hi;        /* which constraint and side it was         */
 
     /* Enhancement-206: design centering. When `center` is set the objective is
      * the parametric yield / worst-case Cpk from an inner Monte Carlo run of
@@ -662,6 +704,58 @@ static void opt_fp_apply(struct optctx *c, const double *u)
     sw_fp_apply(names, vals, c->fp_n);
 }
 
+/* Enhancement-766: the scale of a constraint side -- its bound's magnitude, so
+ * a 40 dB gain and a 100 uA current weigh alike; 1 for a bound of zero */
+static double opt_con_scale(const struct opt_con *k, int upper)
+{
+    double b = upper ? k->hi : k->lo;
+    return fabs(b) > 0.0 ? fabs(b) : 1.0;
+}
+
+/* a constraint side as g <= 0 in units of its scale: the upper side
+ * (value - hi)/s, the lower (lo - value)/s */
+static double opt_con_g(const struct opt_con *k, int upper)
+{
+    double s = opt_con_scale(k, upper);
+    return upper ? (k->val - k->hi) / s : (k->lo - k->val) / s;
+}
+
+/* Enhancement-766: read the constraints of stage s from the current plot */
+static void opt_eval_cons(struct optctx *c, int s, int failed)
+{
+    int j;
+    for (j = 0; j < c->nc; j++)
+        if (c->con[j].stage == s)
+            c->con[j].val = failed ? OPT_PENALTY : opt_eval_expr(c->con[j].expr);
+}
+
+/* Enhancement-766: the augmented terms at the last evaluation, added to `cost`
+ * and written as residuals after the targets when `resid` is given */
+static double opt_al_terms(const struct optctx *c, double *resid)
+{
+    double add = 0.0;
+    int j, side = c->nt;
+    for (j = 0; j < c->nc; j++) {
+        const struct opt_con *k = &c->con[j];
+        int up;
+        for (up = 1; up >= 0; up--) {
+            double g, lam, r;
+            if (up ? !k->hashi : !k->haslo) continue;
+            if (k->val >= OPT_PENALTY) { r = 1e15; }
+            else {
+                g = opt_con_g(k, up);
+                lam = up ? k->lam_hi : k->lam_lo;
+                r = g + lam / c->rho;
+                r = r > 0.0 ? sqrt(0.5 * c->rho) * r : 0.0;
+            }
+            if (resid) resid[side] = r;
+            side++;
+            add += r * r;
+        }
+    }
+    return add;
+}
+
 static double opt_eval(struct optctx *c, const double *u, double *resid)
 {
     int k, s, i;
@@ -674,7 +768,7 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
      * method winds down without running more analyses. */
     if (ft_intrpt) {
         if (resid)
-            for (k = 0; k < c->nt; k++)
+            for (k = 0; k < c->nt + c->ncside; k++)
                 resid[k] = 0.0;
         return OPT_PENALTY;
     }
@@ -732,8 +826,17 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
             c->reuse_failed = opt_run_failed();
             c->reuse_ready = 1;
             if (c->reuse_failed) {          /* Enhancement-438 */
+                int t;
                 c->nfailed++;
                 cost = OPT_PENALTY;
+                /* Enhancement-766 (and the 2026-09-29 hunt's F6): the residuals
+                 * of this and the later stages used to be left unwritten, so
+                 * LM's Jacobian read whatever the stack held; push away */
+                if (resid)
+                    for (t = 0; t < c->nt; t++)
+                        if (c->tgt[t].stage >= s) resid[t] = 1e15;
+                for (t = s; t < c->ns; t++)
+                    opt_eval_cons(c, t, 1);
                 break;
             }
             for (i = 0; i < c->nt; i++) {
@@ -749,6 +852,7 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
                     resid[i] = ri;
                 cost += ri * ri;
             }
+            opt_eval_cons(c, s, 0);             /* Enhancement-766 */
         }
     } else {
         /* scalar objective evaluated after the (single) analysis stage */
@@ -761,9 +865,18 @@ static double opt_eval(struct optctx *c, const double *u, double *resid)
              * search moves away, instead of scoring the previous point's plot. */
             c->nfailed++;
             cost = OPT_PENALTY;
+            opt_eval_cons(c, 0, 1);             /* Enhancement-766 */
         } else {
             cost = opt_eval_expr(c->objective);
+            opt_eval_cons(c, 0, 0);             /* Enhancement-766 */
         }
+    }
+
+    /* Enhancement-766: the augmented Lagrangian's terms while al_solve runs
+     * the inner method; a cost already at the penalty stays there */
+    if (c->nc > 0 && c->al_active && !c->center) {
+        double add = opt_al_terms(c, resid);
+        if (cost < OPT_PENALTY) cost += add;
     }
 
     ft_optimizing = FALSE;
@@ -822,7 +935,7 @@ static int solve_lin(int n, double *A, double *b, double *x)
  * upper bound, backward) finite differences. */
 static void levenberg_marquardt(struct optctx *c, double *ubest, double *fbest)
 {
-    const int n = c->np, m = c->nt;
+    const int n = c->np, m = c->nt + (c->al_active ? c->ncside : 0);   /* E-766 */
     const double h = 1e-3;
     double u[OPT_MAXP], r0[OPT_MAXT], rj[OPT_MAXT];
     double J[OPT_MAXT][OPT_MAXP];
@@ -935,7 +1048,7 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
     const int n = c->np;
     double s[OPT_MAXP + 1][OPT_MAXP], fv[OPT_MAXP + 1];
     double cent[OPT_MAXP], xr[OPT_MAXP], xe[OPT_MAXP], xc[OPT_MAXP];
-    int i, j, iter, lo;
+    int i, j, iter, lo, restarts = 0;
 
     /* build the initial simplex: the start point plus one point per dimension
      * nudged by 0.1 in normalized space (Enhancement-764: a -polish from a
@@ -979,6 +1092,39 @@ static void nelder_mead(struct optctx *c, double *ubest, double *fbest)
             if (i != hi && fv[i] > fv[nh]) nh = i;
 
         if (fv[hi] - fv[lo] <= c->tol * (fabs(fv[lo]) + c->tol)) {
+            /* Enhancement-766: a simplex clamped against a bound goes FLAT -- every
+             * vertex has the same clamped value in that coordinate, so no
+             * reflection can ever move along it -- and passes this test with
+             * that dimension undecided (from (1k, 1k) the constrained divider
+             * ended at R1 = 100 on the wall with the optimum at 1111 along it).
+             * Under the constrained solve (nm_restart) rebuild the simplex around
+             * the best vertex with an inward edge and go on; twice at most. The
+             * unconstrained simplex is left as it was. */
+            if (c->nm_restart && restarts < 2) {
+                int flat = 0;
+                for (j = 0; j < n && !flat; j++) {
+                    double spread = 0.0;
+                    for (i = 0; i <= n; i++)
+                        if (fabs(s[i][j] - s[lo][j]) > spread) spread = fabs(s[i][j] - s[lo][j]);
+                    flat = spread < 1e-12;
+                }
+                if (flat) {
+                    double b0[OPT_MAXP];
+                    for (j = 0; j < n; j++) b0[j] = s[lo][j];
+                    for (j = 0; j < n; j++) s[0][j] = b0[j];
+                    fv[0] = fv[lo];
+                    for (i = 1; i <= n; i++) {
+                        double e;
+                        for (j = 0; j < n; j++) s[i][j] = b0[j];
+                        e = b0[i - 1] + 0.05;
+                        if (e > 1.0) e = b0[i - 1] - 0.05;
+                        s[i][i - 1] = clamp01(e);
+                        fv[i] = opt_eval(c, s[i], NULL);
+                    }
+                    restarts++;
+                    continue;
+                }
+            }
             c->status = OPT_ST_CONVERGED;
             break;                               /* converged */
         }
@@ -2062,12 +2208,13 @@ static void bayes_opt(struct optctx *c, double *ubest, double *fbest)
      * -polish machinery of E-764, capped at the evaluations that remain */
     if (c->status == OPT_ST_CONVERGED && N < budget && !c->interrupted && gf < OPT_PENALTY &&
         c->starts == 0) {               /* under -starts the winner is polished anyway */
-        fprintf(cp_out, "optimize: surrogate converged after %d evaluations (%s); the budget's "
-                        "remaining %d evaluation%s go%s to the local method\n",
-                N, handoff_reason == 0 ? "the largest expected improvement is below -tol"
-                 : handoff_reason == 1 ? "it expects less than a thousandth of the cost spread"
-                                       : "the best cost has not moved and little is expected",
-                budget - N, budget - N == 1 ? "" : "s", budget - N == 1 ? "es" : "");
+        if (!c->al_active)              /* E-766: once, not in every constraint round */
+            fprintf(cp_out, "optimize: surrogate converged after %d evaluations (%s); the budget's "
+                            "remaining %d evaluation%s go%s to the local method\n",
+                    N, handoff_reason == 0 ? "the largest expected improvement is below -tol"
+                     : handoff_reason == 1 ? "it expects less than a thousandth of the cost spread"
+                                           : "the best cost has not moved and little is expected",
+                    budget - N, budget - N == 1 ? "" : "s", budget - N == 1 ? "es" : "");
         c->polish = 1;
         c->polish_iters = budget - N;
     }
@@ -2092,6 +2239,127 @@ static void bayes_opt(struct optctx *c, double *ubest, double *fbest)
     for (j = 0; j < n; j++) ubest[j] = gb[j];
     *fbest = gf;
     tfree(X); tfree(F); tfree(g.y); tfree(g.L); tfree(g.alpha); tfree(g.ell);
+}
+
+
+
+/* ==================== Enhancement-766: constraints ========================= */
+
+/* Enhancement-766: run one method from u; the switch every caller shares */
+static void opt_run_method(struct optctx *c, int which, double *u, double *f)
+{
+    switch (which) {
+    case 3: particle_swarm(c, u, f); break;
+    case 4: differential_evolution(c, u, f); break;
+    case 5: simulated_annealing(c, u, f); break;
+    case 7: cma_es(c, u, f); break;
+    case 8: bayes_opt(c, u, f); break;
+    case 2: levenberg_marquardt(c, u, f); break;
+    default: nelder_mead(c, u, f); break;
+    }
+}
+
+/* Enhancement-766: the augmented Lagrangian around any scalar method. Each
+ * constraint side is g(x) <= 0 in units of max(1, |bound|) -- the upper side
+ * (value - hi)/s, the lower (lo - value)/s -- and opt_eval adds
+ *
+ *     (rho/2) * max(0, g + lambda/rho)^2
+ *
+ * to the cost for each (as a residual sqrt(rho/2) max(0, g + lambda/rho) for
+ * LM) while al_active is set. The outer loop minimises that with the chosen
+ * method, reads the objective and the constraint values at the inner optimum,
+ * updates every multiplier lambda <- max(0, lambda + rho g), raises rho tenfold
+ * when the largest violation did not fall by a factor of four, and stops when
+ * the largest violation is within -ctol, or after ten rounds (INFEASIBLE).
+ * rho starts balanced against the problem, 2|f0| / viol0^2 from one evaluation
+ * at the start point (a fixed 10 dwarfed an objective of 1e-4 by four orders
+ * and the inner method rushed into a box corner to kill the penalty, then
+ * called the corner converged); every round is solved to the user's -tol. On
+ * exit ubest is the last inner optimum and *fbest the OBJECTIVE there (not the
+ * augmented cost); the multipliers stay in the context for the report, where
+ * lambda/s is the objective's sensitivity to the bound. */
+static const char *opt_status_word(int st);   /* defined with the report helpers below */
+
+static void al_solve(struct optctx *c, int which, double *ubest, double *fbest)
+{
+    double prev_viol = 1e300, viol = 0.0, f = OPT_PENALTY;
+    int round, j, inner = OPT_ST_MAXITER, worst = -1, worst_hi = 1;
+
+    if (c->rho <= 0.0) {
+        /* the starting penalty, balanced against the objective and the
+         * violation at the start point: (rho/2) viol0^2 ~ |f0| */
+        double viol0 = 0.0;
+        c->al_active = 0;
+        f = opt_eval(c, ubest, NULL);
+        if (f < OPT_PENALTY) {
+            double fs = fabs(f);
+            for (j = 0; j < c->nc; j++) {
+                const struct opt_con *k = &c->con[j];
+                if (k->hashi && opt_con_g(k, 1) > viol0) viol0 = opt_con_g(k, 1);
+                if (k->haslo && opt_con_g(k, 0) > viol0) viol0 = opt_con_g(k, 0);
+            }
+            if (viol0 < 1e-2) viol0 = 1e-2;
+            /* a -target fit that already fits at the start has f0 ~ 0 and no
+             * scale of its own; the cost of being wholly off, sum (w t)^2, is one */
+            if (c->nt > 0) {
+                double t = 0.0;
+                for (j = 0; j < c->nt; j++)
+                    t += c->tgt[j].weight * c->tgt[j].target * c->tgt[j].weight * c->tgt[j].target;
+                if (t > fs) fs = t;
+            }
+            c->rho = fs > 0.0 ? 2.0 * fs / (viol0 * viol0) : 1.0;
+            if (c->rho < 1e-9) c->rho = 1e-9;
+            if (c->rho > 1e9)  c->rho = 1e9;
+        } else
+            c->rho = 1.0;
+    }
+    for (round = 0; round < 10; round++) {
+        c->al_active = 1;
+        c->nm_restart = 1;
+        c->status = OPT_ST_MAXITER;
+        opt_run_method(c, which, ubest, fbest);
+        inner = c->status;
+        c->al_active = 0;
+        c->nm_restart = 0;
+        if (c->interrupted) break;
+
+        /* the objective and the constraint values at the inner optimum */
+        f = opt_eval(c, ubest, NULL);
+        if (f >= OPT_PENALTY) break;      /* nothing to read: NO SOLUTION */
+        viol = 0.0; worst = -1;
+        for (j = 0; j < c->nc; j++) {
+            struct opt_con *k = &c->con[j];
+            if (k->hashi) {
+                double g = opt_con_g(k, 1);
+                if (g > viol) { viol = g; worst = j; worst_hi = 1; }
+                k->lam_hi = k->lam_hi + c->rho * g > 0.0 ? k->lam_hi + c->rho * g : 0.0;
+            }
+            if (k->haslo) {
+                double g = opt_con_g(k, 0);
+                if (g > viol) { viol = g; worst = j; worst_hi = 0; }
+                k->lam_lo = k->lam_lo + c->rho * g > 0.0 ? k->lam_lo + c->rho * g : 0.0;
+            }
+        }
+        c->al_rounds++;
+        fprintf(cp_out, "optimize: constraints round %d -- objective %.6g, largest violation %.3g%s, "
+                        "penalty %.3g, %s after %d evaluations\n",
+                c->al_rounds, f, viol,
+                viol <= c->ctol ? " (feasible)" : worst >= 0 ? " (relative)" : "",
+                c->rho, opt_status_word(inner), c->nevals);
+        if (viol <= c->ctol) break;
+        if (viol > 0.25 * prev_viol && c->rho < 1e12)   /* no progress: tenfold, or a hundredfold when none at all */
+            c->rho *= viol > 0.9 * prev_viol ? 100.0 : 10.0;
+        prev_viol = viol;
+    }
+    c->al_active = 0;
+    if (!c->interrupted && f < OPT_PENALTY) {
+        *fbest = f;
+        c->al_viol = viol;
+        c->al_worst = worst;
+        c->al_worst_hi = worst_hi;
+        c->al_feasible = viol <= c->ctol;
+        c->status = c->al_feasible ? inner : OPT_ST_INFEASIBLE;
+    }
 }
 
 /* ==================== Enhancement-216: NSGA-II Pareto ====================== */
@@ -2455,6 +2723,7 @@ static const char *opt_status_word(int st)
     case OPT_ST_NOSOLVE:     return "nosolve";
     case OPT_ST_UNCHANGED:   return "unchanged";
     case OPT_ST_INTERRUPTED: return "interrupted";
+    case OPT_ST_INFEASIBLE:  return "infeasible";    /* Enhancement-766 */
     }
     return "unknown";
 }
@@ -2481,6 +2750,16 @@ static const char *opt_status_phrase(const struct optctx *c, char *buf, size_t n
         return "unchanged -- nothing was optimised";
     case OPT_ST_INTERRUPTED:
         return "INTERRUPTED -- best point so far";
+    case OPT_ST_INFEASIBLE:          /* Enhancement-766 */
+        if (c->al_worst >= 0) {
+            const struct opt_con *k = &c->con[c->al_worst];
+            double b = c->al_worst_hi ? k->hi : k->lo, s = opt_con_scale(k, c->al_worst_hi);
+            (void) snprintf(buf, n, "INFEASIBLE -- %s %s %g missed by %.3g after %d round%s",
+                            k->expr, c->al_worst_hi ? "<=" : ">=", b, c->al_viol * s,
+                            c->al_rounds, c->al_rounds == 1 ? "" : "s");
+        } else
+            (void) snprintf(buf, n, "INFEASIBLE -- the constraints could not be met");
+        return buf;
     }
     return "stopped";
 }
@@ -2497,6 +2776,8 @@ static void opt_publish_outcome(const struct optctx *c, double fbest, int has_co
     dc_set_result("optimize_evals", (double) c->nevals);
     if (has_cost)
         dc_set_result("optimize_cost", fbest);
+    if (c->nc > 0)                        /* Enhancement-766 */
+        dc_set_result("optimize_feasible", c->al_feasible ? 1.0 : 0.0);
 }
 
 void com_optimize(wordlist *wl)
@@ -2506,10 +2787,14 @@ void com_optimize(wordlist *wl)
     int k, use_lm, use_pso, use_de, use_sa, use_cma, use_bo;
     int mc_held = 0;                     /* E-536 (hunt bug 16): bracket balance */
 
+    int last_limit = 0;                  /* Enhancement-766: 1 a -spec, 2 a -constrain owns the next -max/-min */
+
     memset(&c, 0, sizeof c);
     sw_reuse_report(NULL, NULL);        /* Enhancement-472: zero the tally */
     c.maxiter = 100;
     c.tol = 1e-6;
+    c.ctol = 1e-4;                       /* Enhancement-766 */
+    c.al_worst = -1;
 
     while (wl) {
         const char *w = wl->wl_word;
@@ -2587,9 +2872,10 @@ void com_optimize(wordlist *wl)
             }
             c.ns++;
         } else if (eq(w, "-minimize") || eq(w, "-o") ||
-                   (eq(w, "-min") && c.nspec == 0 && !c.center)) {
+                   (eq(w, "-min") && c.nspec == 0 && !c.center && last_limit != 2)) {
             /* bare -min is the scalar-objective alias only outside centering mode;
-             * once a -spec is present (or -center given) it is a spec lower bound. */
+             * once a -spec is present (or -center given) it is a spec lower bound,
+             * and after a -constrain (Enhancement-766) the constraint's. */
             wl = wl->wl_next;
             char *e = collect_until_flag(&wl);
             /* First -minimize also seeds the scalar objective (for nm/pso/de/sa);
@@ -2775,11 +3061,48 @@ void com_optimize(wordlist *wl)
             c.spec[c.nspec].metric[sizeof c.spec[c.nspec].metric - 1] = '\0';
             c.spec[c.nspec].hasmax = c.spec[c.nspec].hasmin = 0;
             c.nspec++;
+            last_limit = 1;                     /* Enhancement-766: -max/-min are the spec's */
             wl = wl->wl_next;
+        } else if (eq(w, "-constrain") || eq(w, "-constraint") || eq(w, "-subject")) {
+            /* Enhancement-766: a constraint, bounded by the -max/-min that follow
+             * as a -spec is; the expression is one token, as a -target's is */
+            if (c.nc >= OPT_MAXC) {
+                fprintf(cp_err, "optimize: too many -constrain (max %d)\n", OPT_MAXC);
+                goto cleanup;
+            }
+            if (!wl->wl_next || is_flag(wl->wl_next->wl_word)) {
+                fprintf(cp_err, "optimize: -constrain needs <expr>, then -max <hi> and/or -min <lo> "
+                                "(the expression is one token: v(out), not v(out) - v(in))\n");
+                goto cleanup;
+            }
+            c.con[c.nc].expr  = copy(wl->wl_next->wl_word);
+            c.con[c.nc].hashi = c.con[c.nc].haslo = 0;
+            c.con[c.nc].stage = c.ns > 0 ? c.ns - 1 : 0;
+            c.con[c.nc].val   = OPT_PENALTY;
+            c.con[c.nc].lam_hi = c.con[c.nc].lam_lo = 0.0;
+            c.nc++;
+            last_limit = 2;
+            wl = wl->wl_next->wl_next;
+        } else if (eq(w, "-ctol")) {           /* Enhancement-766 */
+            if (wl->wl_next) {
+                if (!opt_realopt(wl->wl_next->wl_word, "-ctol", &c.ctol))
+                    goto cleanup;
+                if (c.ctol <= 0.0) { fprintf(cp_err, "optimize: -ctol must be positive\n"); goto cleanup; }
+                wl = wl->wl_next->wl_next;
+            } else { fprintf(cp_err, "optimize: -ctol needs a value\n"); goto cleanup; }
         } else if (eq(w, "-max")) {
-            if (c.nspec == 0) { fprintf(cp_err, "optimize: -max before any -spec\n"); goto cleanup; }
+            if (c.nspec == 0 && last_limit != 2) {
+                fprintf(cp_err, "optimize: -max before any -spec or -constrain\n"); goto cleanup;
+            }
             if (!wl->wl_next) { fprintf(cp_err, "optimize: -max needs a value\n"); goto cleanup; }
             wl = wl->wl_next;
+            if (last_limit == 2) {              /* Enhancement-766: the constraint's */
+                if (!opt_boundopt(wl->wl_word, "-constrain -max", &c.con[c.nc - 1].hi))
+                    goto cleanup;
+                c.con[c.nc - 1].hashi = 1;
+                wl = wl->wl_next;
+                continue;
+            }
             /* Enhancement-501: same rule as montecarlo/wcd/highsigma -- a spec
                limit must be finite, or it is never violated and silently does not
                exist. A NaN lower bound here reported Cpk = 1e+30 (OPT_PENALTY). */
@@ -2787,9 +3110,16 @@ void com_optimize(wordlist *wl)
                 goto cleanup;
             c.spec[c.nspec - 1].hasmax = 1;
             wl = wl->wl_next;
-        } else if (eq(w, "-min") && c.nspec > 0) {
+        } else if (eq(w, "-min") && (c.nspec > 0 || last_limit == 2)) {
             if (!wl->wl_next) { fprintf(cp_err, "optimize: -min needs a value\n"); goto cleanup; }
             wl = wl->wl_next;
+            if (last_limit == 2) {              /* Enhancement-766: the constraint's */
+                if (!opt_boundopt(wl->wl_word, "-constrain -min", &c.con[c.nc - 1].lo))
+                    goto cleanup;
+                c.con[c.nc - 1].haslo = 1;
+                wl = wl->wl_next;
+                continue;
+            }
             if (!opt_boundopt(wl->wl_word, "-spec -min", &c.spec[c.nspec - 1].lo))
                 goto cleanup;                                    /* Enhancement-501 */
             c.spec[c.nspec - 1].hasmin = 1;
@@ -2818,7 +3148,8 @@ void com_optimize(wordlist *wl)
         fprintf(cp_err, "usage: optimize (-param|-mparam|-dparam) <name> <init> "
                         "<lo> <hi> [...] -analysis <cmd> (-minimize <expr> | -target "
                         "<expr> <val> [<w>] ... | -center (-spec <m> [-max hi] [-min lo])... "
-                        "-samples N [-lhs]) [-method nm|lm|pso|de|sa|cmaes|bayes] [-swarmsize N] "
+                        "-samples N [-lhs]) [-constrain <expr> (-max hi | -min lo) ...] [-ctol T] "
+                        "[-method nm|lm|pso|de|sa|cmaes|bayes] [-swarmsize N] "
                         "[-seed s] [-maxiter N] [-tol T] [-polish] [-starts k] [-verbose]\n");
         goto cleanup;
     }
@@ -2879,6 +3210,34 @@ void com_optimize(wordlist *wl)
         fprintf(cp_err, "optimize: %s cannot be combined with -method nsga2 (a Pareto "
                         "front has no single best point)\n", c.polish ? "-polish" : "-starts");
         goto cleanup;
+    }
+    /* Enhancement-766: constraints */
+    if (c.nc > 0) {
+        int j;
+        for (j = 0; j < c.nc; j++)
+            if (!c.con[j].hashi && !c.con[j].haslo) {
+                fprintf(cp_err, "optimize: -constrain %s has no -max/-min limit\n", c.con[j].expr);
+                goto cleanup;
+            }
+        if (c.method == 6) {
+            fprintf(cp_err, "optimize: -constrain is not available under -method nsga2 (a front "
+                            "has no single point to hold to a bound)\n");
+            goto cleanup;
+        }
+        if (c.center) {
+            fprintf(cp_err, "optimize: -constrain cannot be combined with -center (its -spec limits "
+                            "are the yield's; a constraint bounds a nominal metric)\n");
+            goto cleanup;
+        }
+        c.ncside = 0;
+        for (j = 0; j < c.nc; j++) c.ncside += c.con[j].hashi + c.con[j].haslo;
+        if (c.nt > 0 && c.nt + c.ncside > OPT_MAXT) {
+            fprintf(cp_err, "optimize: %d targets and %d constraint sides exceed the %d residuals "
+                            "Levenberg-Marquardt holds\n", c.nt, c.ncside, OPT_MAXT);
+            goto cleanup;
+        }
+        for (j = 0; j < c.nc; j++)
+            if (c.con[j].stage >= c.ns) c.con[j].stage = c.ns - 1;
     }
     if (c.polish && c.starts == 0 &&
         (c.method == 1 || c.method == 2 || (c.method == 0 && !c.center))) {
@@ -3045,6 +3404,17 @@ void com_optimize(wordlist *wl)
                     c.starts + 1, "s", c.starts, c.starts == 1 ? "" : "s",
                     (c.maxiter + c.starts) / (c.starts + 1), use_bo ? "evaluation" : "iteration",
                     (c.maxiter + c.starts) / (c.starts + 1) == 1 ? "" : "s");
+        if (c.nc > 0) {                  /* Enhancement-766 */
+            int j;
+            fprintf(cp_out, "optimize: %d constraint%s (augmented Lagrangian around %s, feasible within "
+                            "%g of each bound):", c.nc, c.nc == 1 ? "" : "s", mname, c.ctol);
+            for (j = 0; j < c.nc; j++) {
+                if (c.con[j].haslo) fprintf(cp_out, " %s >= %g", c.con[j].expr, c.con[j].lo);
+                if (c.con[j].hashi) fprintf(cp_out, "%s %s <= %g", c.con[j].haslo ? "," : "", c.con[j].expr, c.con[j].hi);
+                if (j + 1 < c.nc) fprintf(cp_out, ";");
+            }
+            fprintf(cp_out, "\n");
+        }
     }
 
     for (k = 0; k < c.np; k++)
@@ -3092,15 +3462,13 @@ void com_optimize(wordlist *wl)
                 }
                 c.status = OPT_ST_MAXITER;
                 c.polish_iters = 0;      /* E-765: a start's hand-off is not the winner's */
-                switch (which) {
-                case 3: particle_swarm(&c, ubest, &f); break;
-                case 4: differential_evolution(&c, ubest, &f); break;
-                case 5: simulated_annealing(&c, ubest, &f); break;
-                case 7: cma_es(&c, ubest, &f); break;
-                case 8: bayes_opt(&c, ubest, &f); break;
-                case 2: levenberg_marquardt(&c, ubest, &f); break;
-                default: nelder_mead(&c, ubest, &f); break;
-                }
+                if (c.nc > 0) {          /* E-766: fresh multipliers per start */
+                    int j;
+                    for (j = 0; j < c.nc; j++) c.con[j].lam_hi = c.con[j].lam_lo = 0.0;
+                    c.rho = 0.0;             /* re-balanced at this start */
+                    al_solve(&c, which, ubest, &f);
+                } else
+                    opt_run_method(&c, which, ubest, &f);
                 if (use_cma)
                     fprintf(cp_out, "optimize: start %d of %d (%s, population %d) -- %s, cost %.6g "
                                     "after %d evaluations\n",
@@ -3127,16 +3495,10 @@ void com_optimize(wordlist *wl)
             }
             dc_set_result("optimize_start", (double) (win + 1));
             tfree(lhs);
+        } else if (c.nc > 0) {
+            al_solve(&c, which, ubest, &fbest);      /* E-766 */
         } else {
-            switch (which) {
-            case 3: particle_swarm(&c, ubest, &fbest); break;
-            case 4: differential_evolution(&c, ubest, &fbest); break;
-            case 5: simulated_annealing(&c, ubest, &fbest); break;
-            case 7: cma_es(&c, ubest, &fbest); break;
-            case 8: bayes_opt(&c, ubest, &fbest); break;
-            case 2: levenberg_marquardt(&c, ubest, &fbest); break;
-            default: nelder_mead(&c, ubest, &fbest); break;
-            }
+            opt_run_method(&c, which, ubest, &fbest);
         }
 
         if (c.polish && !c.interrupted && fbest < OPT_PENALTY) {
@@ -3163,7 +3525,14 @@ void com_optimize(wordlist *wl)
             c.status = OPT_ST_MAXITER;
             c.nm_step = c.polish_iters > 0 ? 0.02 : 0.05;   /* E-765: a surrogate's best is close */
             c.cap_is_evals = 0;          /* E-765: the polish counts iterations again */
-            if (lm) levenberg_marquardt(&c, ubest, &fbest);
+            if (c.nc > 0) {              /* E-766: the polish holds the constraints too */
+                if (c.starts > 0) {      /* the winner's multipliers were its start's; begin again */
+                    int j;
+                    for (j = 0; j < c.nc; j++) c.con[j].lam_hi = c.con[j].lam_lo = 0.0;
+                    c.rho = 0.0;
+                }
+                al_solve(&c, lm ? 2 : 1, ubest, &fbest);
+            } else if (lm) levenberg_marquardt(&c, ubest, &fbest);
             else    nelder_mead(&c, ubest, &fbest);
             c.nm_step = 0.0;
             fprintf(cp_out, "optimize: polish %s -- cost %.6g -> %.6g in %d evaluations\n",
@@ -3231,6 +3600,36 @@ void com_optimize(wordlist *wl)
             fprintf(cp_out, "optimize: NOTE -- the iteration cap ended the search before "
                             "its own criterion did; raise -maxiter, or loosen -tol if the "
                             "reported value is close enough.\n");
+        /* Enhancement-766: every constraint at the optimum -- its value, whether
+         * it is active, and the multiplier as the objective's sensitivity to
+         * the bound (lambda/s: what one unit of the bound costs or saves) */
+        if (c.nc > 0 && fbest < OPT_PENALTY) {
+            int j;
+            for (j = 0; j < c.nc; j++) {
+                const struct opt_con *k = &c.con[j];
+                int up;
+                for (up = 1; up >= 0; up--) {
+                    double b, s, g, lam;
+                    if (up ? !k->hashi : !k->haslo) continue;
+                    b = up ? k->hi : k->lo; s = opt_con_scale(k, up);
+                    g = opt_con_g(k, up); lam = up ? k->lam_hi : k->lam_lo;
+                    if (g > c.ctol)
+                        fprintf(cp_out, "optimize: constraint %s %s %g -- %.6g, VIOLATED by %.3g\n",
+                                k->expr, up ? "<=" : ">=", b, k->val, g * s);
+                    else if (lam > 0.0)
+                        fprintf(cp_out, "optimize: constraint %s %s %g -- %.6g, active (multiplier %.4g: "
+                                        "raising the bound %s the objective by about that much per unit)\n",
+                                k->expr, up ? "<=" : ">=", b, k->val, lam / s, up ? "lowers" : "raises");
+                    else if (-g <= c.ctol)   /* at the bound, the last round landed feasible */
+                        fprintf(cp_out, "optimize: constraint %s %s %g -- %.6g, active (at the bound; the last "
+                                        "round landed feasible, so the multiplier estimate is 0)\n",
+                                k->expr, up ? "<=" : ">=", b, k->val);
+                    else
+                        fprintf(cp_out, "optimize: constraint %s %s %g -- %.6g, slack %.4g\n",
+                                k->expr, up ? "<=" : ">=", b, k->val, -g * s);
+                }
+            }
+        }
         opt_publish_outcome(&c, fbest, 1);
     }
     /* Enhancement-499: "converged" describes the SEARCH stopping, not the answer
@@ -3305,5 +3704,7 @@ cleanup:
         tfree(c.tgt[k].expr);
     for (k = 0; k < c.nobj; k++)          /* Enhancement-216 */
         tfree(c.obj[k]);
+    for (k = 0; k < c.nc; k++)            /* Enhancement-766 */
+        tfree(c.con[k].expr);
     tfree(c.objective);
 }

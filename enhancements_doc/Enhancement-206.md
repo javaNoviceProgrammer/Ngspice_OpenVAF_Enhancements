@@ -69,3 +69,5 @@ Synthetic problems with **known optimal centres** (`examples/dcenter_examples`):
 Front-end only; solver-independent. Composes with everything the optimizer and the MC
 suite already support — `-lhs`, `mccorr`/`mvnorm` correlations, all optimizer methods,
 and the `-param`/`-mparam`/`-dparam` knob kinds.
+
+**Update ([E-766](Enhancement-766.md)).** `-max` and `-min` now also bound a `-constrain <expr>` when one precedes them, with the same strict finite readers; after a `-spec` they are the spec's as before, and `-constrain` under `-center` is refused, since the spec limits are the yield's and a constraint bounds a nominal metric.

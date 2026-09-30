@@ -175,3 +175,5 @@ the line.
 - `-starts` and `-polish` do not apply to NSGA-II, whose result is a front.
 
 **Update ([E-765](Enhancement-765.md)).** The polish machinery carries Bayesian optimization's hand-off: when the surrogate's criterion is met with budget left, the local method runs with the remaining evaluations as its cap (`polish -- ... up to M iterations (the remaining budget)`) and a first simplex edge of 0.02 instead of 0.05, since a surrogate's best is close; `-polish` after a population method is unchanged. The `-polish` NOTE and the method lists name `bayes`; `-starts` runs the surrogate per start without a hand-off and polishes the winner as before.
+
+**Update ([E-766](Enhancement-766.md)).** Under `-constrain` the polish runs its own augmented-Lagrangian rounds from the global best, so the polished point holds the constraint; `-starts` begins every start with fresh multipliers and a penalty re-balanced at that start, and the winner's polish likewise.

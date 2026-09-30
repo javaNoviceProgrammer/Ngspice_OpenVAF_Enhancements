@@ -1,11 +1,11 @@
-# optmethods_examples — the optimization methods added to `optimize` from the 2026-09-29 proposal on (Enhancements 764, 765)
+# optmethods_examples — the optimization methods added to `optimize` from the 2026-09-29 proposal on (Enhancements 764, 765, 766)
 
 ```
 python3 verify_optmethods.py
 ```
 
-61 checks, one solver (a front-end command; the linear solver does not enter). 6 of 61
-on the E-763 binary, which refuses both method names and the two flags.
+81 checks, one solver (a front-end command; the linear solver does not enter). 7 of 81
+on the E-763 binary, which refuses both method names, the two flags and `-constrain`.
 
 The [`optimize` suite](../optimize_examples/) keeps the command's original coverage; this
 one checks the methods' claims on standard test functions posed **inside ngspice**: the
@@ -46,3 +46,18 @@ of it to the local method.
 | [17] | `-swarmsize` a NOTE and ignored, `bo` an alias; two `-seed 1` runs identical and `-seed 2` different; `-verbose`'s `(design)` then `max EI` lines, one per evaluation |
 | [18] | `-starts 1`: `evaluations each` in the banner, two per-start lines, the winner polished, no per-start hand-off |
 | [19] | `optimize_status`, `optimize_converged`, `optimize_evals` equal to the line |
+
+Sections [20]–[27] are [Enhancement-766](../../enhancements_doc/Enhancement-766.md):
+constraints, `-constrain <expr> -max <hi> | -min <lo>` with `-ctol`, an augmented
+Lagrangian around any scalar method.
+
+| section | what it pins |
+|---|---|
+| [20] | "minimise the current subject to v(out) >= 0.9" on the divider under Nelder-Mead from (2k, 5k) and from (1k, 1k): the banner, one line per round, R1 = 1111 to 1 %, R2 = 10k, the bound held to `-ctol`, `active (multiplier 1e-4 ...)` within 15 % of dI*/db = 1/R2, `optimize_feasible` 1 |
+| [21] | the same under CMA-ES, the swarm with `-polish` and the surrogate with its hand-off (the hand-off line not repeated inside the rounds) |
+| [22] | an inactive constraint: the unconstrained knob and cost, `slack 0.4`, no multiplier, one round |
+| [23] | an infeasible pair: ten rounds, `INFEASIBLE -- v(out) >= 0.9 missed by ...`, both sides VIOLATED, status infeasible, `optimize_feasible` 0, `optimize_converged` 0 |
+| [24] | a band with both sides slack; LM with a current bound in one stage (rms below 1e-6, R1 = R2) and over two stages (the bound active to 1e-4) |
+| [25] | seven refusals with their messages; `-min` still the `-minimize` alias without a `-constrain` before it |
+| [26] | a `-constrain` before `-analysis` belongs to stage 0; `-starts 2` with every start constrained and the winner polished |
+| [27] | a compiled conductance refused at g ≤ 0 under CMA-ES with `v(out) <= 0.5`: g = 1m, active |
