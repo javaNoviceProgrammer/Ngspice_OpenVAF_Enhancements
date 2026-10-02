@@ -24,7 +24,7 @@ spaced levels from v1 to v2), which is PRBS13Q at order 13 and PRBS31Q at 31.
 python3 verify_prbs.py
 ```
 
-42 checks per solver, both solvers:
+44 checks per solver, both solvers:
 
 - **[1]** 254 bits of PRBS7 are the reference LFSR's, bit for bit, on the
   voltage and on the current source; period 127, 64 ones, longest runs 7 ones
@@ -58,6 +58,12 @@ python3 verify_prbs.py
   over tr and tf, the current source gives the same stream, order 31 is
   PRBS31Q, three refusals name `pam4` and the symbol time, and an
   `alter @vtx[pam4] = [...]` turns a PRBS source into a PAM4 one.
+- **[11]** (Enhancement-774) a batch `.op` prints the voltage- and
+  current-source tables without an error row, and `show` lists a PRBS source's
+  description under `prbs` and `-` under `pam4`, a PAM4 source's the other way
+  round. The source query had no answer for either keyword: every source's two
+  rows read `<<NAN, error = 7>>`, repeated by an unset row count -- three times
+  on macOS, without end on aarch64 Linux. The E-769 binaries fail both.
 
 On the E-751 binary, which has neither keyword, 1 of 27 passes (the Python
 taps check; the data checks are skipped when a run fails).

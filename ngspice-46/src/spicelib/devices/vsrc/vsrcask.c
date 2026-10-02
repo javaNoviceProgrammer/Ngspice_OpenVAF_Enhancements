@@ -15,6 +15,7 @@ Author: 1987 Thomas L. Quarles
 #include "ngspice/devdefs.h"
 #include "ngspice/ifsim.h"
 #include "vsrcdefs.h"
+#include "ngspice/prbs.h"     /* Enhancement-774: prbs_state levels */
 #include "ngspice/sperror.h"
 #include "ngspice/suffix.h"
 
@@ -49,6 +50,26 @@ VSRCask(CKTcircuit *ckt, GENinstance *inst, int which, IFvalue *value, IFvalue *
     NG_IGNORE(select);
 
     switch(which) {
+        /* Enhancement-774: E-752's prbs and pam4 descriptions had no case here
+           and answered E_BADPARM, so every `.op` or `show` table of a source
+           printed them as errors (and, read with an unset length, printed them
+           without end on aarch64 Linux). Both are a PRBS function, told apart
+           by the register's level count; as for the other waveforms (E-447),
+           only the active one answers, any other is empty. */
+        case VSRC_PRBS:
+        case VSRC_PAM4:
+            if (here->VSRCfunctionType != PRBS || !here->VSRCprbs_state ||
+                here->VSRCprbs_state->levels != (which == VSRC_PAM4 ? 4 : 2)) {
+                value->v.numValue = 0;
+                value->v.vec.rVec = NULL;
+                return (OK);
+            }
+            temp = value->v.numValue = here->VSRCfunctionOrder;
+            v = value->v.vec.rVec = TMALLOC(double, here->VSRCfunctionOrder);
+            w = here->VSRCcoeffs;
+            while (temp--)
+                *v++ = *w++;
+            return (OK);
         case VSRC_DC:
             value->rValue = here->VSRCdcValue;
             return (OK);

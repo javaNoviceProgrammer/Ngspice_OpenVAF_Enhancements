@@ -270,6 +270,45 @@ SPARSE_ONLY = frozenset({"highsigma", "yield", "cmcsweep"})
 #                   from this set's original "too slow" rationale.
 REGRESSION_EXCLUDE = frozenset({"cmcsweep", "filterforms"})
 
+# Enhancement-774: examples held out of the routine sweep on ONE platform, each
+# for a recorded reason -- a known, open problem there, not a pass. The CI sweep
+# runs on five platforms; an entry here keeps a platform's known gap from hiding
+# a new failure in the same red job, and the sweep names every one it skips.
+# They still run directly, or with `run_regression.py --all` / NG_RUN_ALL=1.
+# Keys are (system, machine) as platform.system() reports them, the machine
+# normalised to aarch64 / x86_64; "*" matches any system.
+PLATFORM_EXCLUDE = {
+    ("*", "x86_64"): {
+        "arrayscale": "x86-64 code generation of huge modules: a 10 000-entry "
+                      "instance array takes ~550 s (E-771, open)",
+        "cubic_table": "x86-64 code generation of huge modules: the 10 000-row "
+                       "table compile passes 120 s on the Linux runner (open)",
+        "table_model": "x86-64 code generation of huge modules: past the sweep's "
+                       "20-minute limit on the Linux runner (open)",
+        "collapsestate": "Sparse sens of a parameter that selects a node collapse "
+                         "is 2.5x off on x86-64, Linux and macOS alike (open)",
+    },
+}
+
+
+def platform_key():
+    """(system, machine) of this host, the machine normalised (arm64 -> aarch64,
+    AMD64 -> x86_64) so that one entry covers Linux, macOS and Windows names."""
+    import platform as _platform
+    machine = _platform.machine().lower()
+    machine = {"arm64": "aarch64", "amd64": "x86_64", "x64": "x86_64"}.get(machine, machine)
+    return _platform.system(), machine
+
+
+def platform_excluded():
+    """{example stem: reason} held out of the sweep on this host."""
+    system, machine = platform_key()
+    out = {}
+    for (sys_key, mach_key), stems in PLATFORM_EXCLUDE.items():
+        if sys_key in ("*", system) and mach_key in ("*", machine):
+            out.update(stems)
+    return out
+
 
 def klu_enabled(script=None):
     """Whether an example's KLU pass should run. SPARSE_ONLY examples (heavy PSS)

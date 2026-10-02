@@ -458,6 +458,43 @@ if d is not None and d2 is not None:
 else:
     check("[10] alter to pam4 runs", False, out[-160:])
 
+# [11] Enhancement-774: the device tables. VSRCask and ISRCask had no answer
+# for prbs and pam4, so a batch .op printed every source's two rows as
+# "<<NAN, error = 7>>" -- with the row count read from an unset value: three
+# rows on macOS, and on aarch64 Linux without end (the CI runner ran out of
+# memory in every suite whose .op printed a voltage source).
+print("\n[11] Enhancement-774: the .op and show tables answer prbs and pam4")
+TBL = ("* prbs tables\nvdc a 0 dc 1\nva b 0 prbs(0 1 1n 0 0.1n 0.1n 7 1)\nvb c 0 pam4(0 1 1n)\n"
+       "ia 0 d prbs(0 1m 1n)\nr1 a 0 1k\nr2 b 0 1k\nr3 c 0 1k\nr4 d 0 1k\n")
+out = run(TBL + ".op\n.end\n", timeout=60)
+check("[11] a batch .op prints the source tables without an error row (they were '<<NAN, error = 7>>', "
+      "repeated by an unset row count)",
+      "Vsource" in out and "Isource" in out and "<<NAN" not in out,
+      out[out.find("<<NAN") - 120:out.find("<<NAN") + 40].replace("\n", " | ") if "<<NAN" in out else "")
+
+
+def show_rows(dev, param):
+    """The values `show dev : param` prints, as a list of words ('-' for none)."""
+    o = run(TBL + f".control\nop\necho BEGIN\nshow {dev} : {param}\necho END\n.endc\n.end\n", timeout=60)
+    block = o[o.find("BEGIN"):o.find("END", o.find("BEGIN"))]
+    words = []
+    for line in block.splitlines():
+        parts = line.split()
+        if parts and parts[0] == param:
+            words += parts[1:]
+        elif words and parts and not parts[0].isalpha():
+            words += parts
+    return words
+
+
+va_p, va_q, vb_p, vb_q, ia_p = (show_rows("va", "prbs"), show_rows("va", "pam4"),
+                                show_rows("vb", "prbs"), show_rows("vb", "pam4"),
+                                show_rows("ia", "prbs"))
+check("[11] `show` lists a PRBS source's description under prbs and '-' under pam4, a PAM4 source's the "
+      "other way round (the E-447 rule: only the active waveform answers), a current source alike",
+      len(va_p) == 8 and va_q == ["-"] and vb_p == ["-"] and len(vb_q) == 3 and len(ia_p) == 3,
+      f"va prbs {va_p} pam4 {va_q}; vb prbs {vb_p} pam4 {vb_q}; ia prbs {ia_p}")
+
 for f in GENERATED:
     p = os.path.join(HERE, f)
     if os.path.exists(p):

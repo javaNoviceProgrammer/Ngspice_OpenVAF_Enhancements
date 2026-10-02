@@ -1108,16 +1108,21 @@ int
 printvals(dgen *dg, IFparm *p, int i)
 {
     IFvalue     val;
-    int         n;
+    int         n, error;
 
+    /* Enhancement-774: a query that fails leaves val as it found it; the
+       length below was read from it all the same (see printvals_old) */
+    memset(&val, 0, sizeof val);
     if (dg->flags & DGEN_INSTANCE)
-        ft_sim->askInstanceQuest
+        error = ft_sim->askInstanceQuest
             (ft_curckt->ci_ckt, dg->instance, p->id, &val, &val);
     else
-        ft_sim->askModelQuest
+        error = ft_sim->askModelQuest
             (ft_curckt->ci_ckt, dg->model, p->id, &val, &val);
 
-    if (p->dataType & IF_VECTOR)
+    if (error)
+        n = 0;                  /* nothing to show: "-" */
+    else if (p->dataType & IF_VECTOR)
         n = val.v.numValue;
     else
         n = 1;
@@ -1198,6 +1203,15 @@ printvals_old(dgen *dg, IFparm *p, int i)
     IFvalue     val;
     int         n, error;
 
+    /* Enhancement-774: a failed query leaves val as it found it, and the row
+       count of a vector parameter was read from it all the same -- a value off
+       the stack. The caller prints row after row until this returns 0, so a
+       parameter whose query failed printed "<<NAN, error = 7>>" as many times
+       as that value said: three on macOS, and on aarch64 Linux without end, at
+       some 70 MB/s, until the machine ran out of memory (the CI sweep's linux-
+       arm runner, in every suite whose .op printed a voltage source -- E-752's
+       prbs and pam4 had no answer in VSRCask). A failed query is one row. */
+    memset(&val, 0, sizeof val);
     if (dg->flags & DGEN_INSTANCE)
         error = ft_sim->askInstanceQuest
             (ft_curckt->ci_ckt, dg->instance, p->id, &val, &val);
@@ -1222,7 +1236,9 @@ printvals_old(dgen *dg, IFparm *p, int i)
     }
 
     if (error) {
-        fprintf(cp_out, " <<NAN, error = %d>>", error);
+        if (i == 0)
+            fprintf(cp_out, " <<NAN, error = %d>>", error);
+        return 0;
     } else if (p->dataType & IF_VECTOR) {
         /* va: ' ' is no flag for %s */
         switch ((p->dataType & IF_VARTYPES) & ~IF_VECTOR) {

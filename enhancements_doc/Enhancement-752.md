@@ -129,3 +129,5 @@ binary, which does not know either keyword, 1 of 27 passes.
   is no `show` of the decoded bits.
 - The eye example's own figure script still writes its PWL; it is not
   rewritten to the new source.
+
+**Update ([E-774](Enhancement-774.md)).** `prbs` and `pam4` had no answer in the sources' parameter query, so every source's device table printed both rows as `<<NAN, error = 7>>`, repeated by a row count read from an unset value -- three times on macOS, without end on aarch64 Linux, where it ran the CI runner out of memory. Both keywords answer now, only the active one with its description.

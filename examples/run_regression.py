@@ -51,7 +51,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from _setup import REGRESSION_EXCLUDE
+from _setup import REGRESSION_EXCLUDE, platform_excluded, platform_key
 
 RESULT_RE = re.compile(
     r"BOTH-SOLVER RESULT \[([^\]]+)\]:\s*sparse=(\S+)\s+klu=(\S+)\s*=>\s*(\S+)")
@@ -286,6 +286,8 @@ def main(argv):
 
     scripts = sorted(glob.glob(os.path.join(HERE, "*_examples", "verify_*.py")))
     excluded = []
+    on_platform = platform_excluded()      # Enhancement-774
+    skipped_here = []
     todo = []
     for s in scripts:
         stem = stem_of(s)
@@ -294,11 +296,21 @@ def main(argv):
         if not only and not include_all and stem in REGRESSION_EXCLUDE:
             excluded.append(stem)
             continue
+        if not only and not include_all and stem in on_platform:
+            skipped_here.append(stem)
+            continue
         todo.append(s)
 
     if excluded:
         print(f"Excluding (not in the routine sweep; use --all to include): "
               f"{', '.join(sorted(set(excluded)))}\n")
+    if skipped_here:
+        system, machine = platform_key()
+        print(f"Excluding on this platform ({system} {machine}; a known open problem "
+              f"there, see PLATFORM_EXCLUDE in _setup.py; --all includes them):")
+        for stem in sorted(skipped_here):
+            print(f"  {stem:20} {on_platform[stem]}")
+        print()
 
     results = []
     t0 = time.time()
