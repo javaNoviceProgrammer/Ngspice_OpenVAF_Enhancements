@@ -67,7 +67,11 @@ SERIAL = {"benchmark", "nested_cond", "reusesetup",
           "abstolperf", "progressbar",
           # Enhancement-773: plotname's per-point flatness ratio (1.74 against
           # 1.6 beside two other suites on the 3-core macOS runner)
-          "plotname"}
+          "plotname",
+          # solvercore's Sparse reorder time on a 150 x 150 mesh (4.5 s against
+          # 4 s beside three other suites on the macOS Intel runner; it passed
+          # alone)
+          "solvercore"}
 
 
 def stem_of(path):
