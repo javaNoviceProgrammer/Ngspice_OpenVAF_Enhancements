@@ -958,7 +958,12 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
     for (int b = 1; b < OSDI_MCD_ALLOC_BITS; b++) {
       if (osdi_mcd_table[b] == NULL) {
         // LRM 9.5.1.1's append-on-rewrite rule applies here too.
+#ifdef _WIN32
+        // Enhancement-778: binary, as on the file-descriptor path below (E-776)
+        const char *m = osdi_name_was_written(name) ? "ab" : "wb";
+#else
         const char *m = osdi_name_was_written(name) ? "a" : "w";
+#endif
         void *f = fopen(name, m);
         if (f == NULL) {
           return 0;

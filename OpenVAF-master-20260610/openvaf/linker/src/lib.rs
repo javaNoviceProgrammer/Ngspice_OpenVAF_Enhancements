@@ -60,7 +60,23 @@ pub fn link(
     check_tmpdir()?;
     let mut linker = linker_with_args(path, target, out_filename, add_objects);
 
-    let import_lib_path = out_filename.with_file_name("__openvaf__import.lib");
+    // Enhancement-778: link.exe writes an import library and an export file
+    // beside every DLL it links -- `<model>.lib` and `<model>.exp`, which an
+    // OSDI model has no use for, left in the user's directory by every compile
+    // (and in `pre_osdi -va`'s osdi/ folder). They go to a name derived from the
+    // output and are removed with the other scratch files below.
+    let msvc_implib = (target.options.linker_flavor == LinkerFlavor::Msvc)
+        .then(|| out_filename.with_extension("openvaf_implib.lib"));
+    if let Some(implib) = &msvc_implib {
+        linker.cmd().arg(format!("/IMPLIB:{implib}"));
+    }
+
+    // Enhancement-778: named after the output, not one fixed name per
+    // directory -- two compiles into the same directory (a parallel build, a
+    // suite's two solver passes) wrote and deleted the same
+    // `__openvaf__import.lib`, and on Windows the second create failed with
+    // "failed to create importlib" while the first still held it.
+    let import_lib_path = out_filename.with_extension("openvaf_ucrt.lib");
     if !target.options.import_lib.is_empty() {
         let mut file = File::create(&import_lib_path).context("failed to create importlib")?;
         file.write_all(target.options.import_lib).context("failed to write importlib")?;
@@ -100,6 +116,10 @@ pub fn link(
     }
     if !target.options.import_lib.is_empty() {
         remove_file(import_lib_path).context("failed to delete importlib")?;
+    }
+    if let Some(implib) = &msvc_implib {
+        let _ = remove_file(implib);
+        let _ = remove_file(implib.with_extension("exp"));
     }
     match res {
         Ok(prog) if !prog.status.success() => {

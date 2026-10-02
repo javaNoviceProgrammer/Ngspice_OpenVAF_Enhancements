@@ -154,7 +154,8 @@ def main():
     src = os.path.join(d, "m.va")
     open(src, "w").write(OK_VA)
     missing = os.path.join(d, "definitely_not_here")
-    env = dict(os.environ, RAYON_NUM_THREADS="1", TMPDIR=missing)
+    # TMPDIR on POSIX; Windows takes its temporary directory from TMP / TEMP
+    env = dict(os.environ, RAYON_NUM_THREADS="1", TMPDIR=missing, TMP=missing, TEMP=missing)
     r = subprocess.run([OPENVAF, src, "-o", os.path.join(d, "m.osdi")],
                        capture_output=True, text=True, env=env, timeout=600)
     out = r.stdout + r.stderr

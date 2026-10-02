@@ -353,7 +353,11 @@ nloop:
                 {
                     if ((c == '\n') || (c == EOF) || (c == ESCAPE))
                         goto gotchar;
-                    if (c == '\\' && !raw) {
+                    /* Enhancement-779: on Windows a backslash inside quotes is
+                       the path separator, as it already is outside them (the
+                       DIR_TERM test above): `pre_osdi "C:\dir with space\m.osdi"`
+                       lost every separator and named C:dir with spacem.osdi */
+                    if (c == '\\' && !raw && DIR_TERM != '\\') {
                         push(&linebuf, c);
                         c = cp_readchar(&string, cp_inp_cur);
                         push(&buf, c);

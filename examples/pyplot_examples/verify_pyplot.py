@@ -408,10 +408,17 @@ check("E-557d: pyplot_decimate=1 is said not to be a bin count and the plot rend
       "pyplot_decimate=1 is not a bin count" in log and status_of(log) == 0
       and is_png(os.path.join(HERE, "dec1.png")), log.strip()[-200:])
 
-badpy = os.path.join(HERE, "badpy.sh")
-with open(badpy, "w") as f:
-    f.write("#!/bin/sh\necho 'ModuleNotFoundError: No module named matplotlib' >&2\nexit 3\n")
-os.chmod(badpy, os.stat(badpy).st_mode | stat.S_IXUSR)
+if os.name == "nt":
+    # a batch file is what cmd.exe runs; '/' because a deck's lexer takes a
+    # backslash as an escape (Enhancement-775)
+    badpy = os.path.join(HERE, "badpy.bat").replace("\\", "/")
+    with open(badpy, "w") as f:
+        f.write("@echo ModuleNotFoundError: No module named matplotlib 1>&2\n@exit /b 3\n")
+else:
+    badpy = os.path.join(HERE, "badpy.sh")
+    with open(badpy, "w") as f:
+        f.write("#!/bin/sh\necho 'ModuleNotFoundError: No module named matplotlib' >&2\nexit 3\n")
+    os.chmod(badpy, os.stat(badpy).st_mode | stat.S_IXUSR)
 deck = os.path.join(HERE, "status.sp")
 with open(deck, "w") as f:
     # setcs: a deck's .control lines are lowercased, quoted `set` values
@@ -428,8 +435,11 @@ check("E-547c: an interpreter that exits 3 is named, the missing image is named,
 with open(deck, "w") as f:
     f.write(statusdeck.format(extra="set pyplot_python=no_such_python_xyz", name="status"))
 log = run_deck(deck, HERE)
-check("E-547d: a missing interpreter reports status 127 and no image",
-      "exited with status 127" in log and status_of(log) == 127
+# a shell reports a missing command as 127; cmd.exe, through system(), as 1
+# (9009 when it runs the name directly)
+MISSING = (1, 9009) if os.name == "nt" else (127,)
+check(f"E-547d: a missing interpreter reports status {'/'.join(map(str, MISSING))} and no image",
+      status_of(log) in MISSING and f"exited with status {status_of(log)}" in log
       and not os.path.exists(os.path.join(HERE, "status.png")),
       log.strip()[-240:])
 
@@ -440,7 +450,9 @@ check("E-547e: a success publishes pyplot_status=0",
       is_png(os.path.join(HERE, "status.png")) and status_of(log) == 0, log.strip()[-200:])
 
 with open(deck, "w") as f:
-    f.write(statusdeck.format(extra="set pyplot_python=\"/usr/bin/env python3\"", name="status2"))
+    # an interpreter with an option: /usr/bin/env on POSIX, python -B on Windows
+    opt_py = "python -B" if os.name == "nt" else "/usr/bin/env python3"
+    f.write(statusdeck.format(extra=f"set pyplot_python=\"{opt_py}\"", name="status2"))
 log = run_deck(deck, HERE)
 check("E-547f: pyplot_python still carries options (/usr/bin/env python3)",
       is_png(os.path.join(HERE, "status2.png")) and status_of(log) == 0, log.strip()[-200:])
@@ -449,8 +461,13 @@ real_py = shutil.which("python3")
 pydir = os.path.join(HERE, "py dir")
 os.makedirs(pydir, exist_ok=True)
 e547_dirs.append(pydir)
-spaced_py = os.path.join(pydir, "python3")
-if os.name != "nt" and not os.path.exists(spaced_py):
+spaced_py = os.path.join(pydir, "python.bat" if os.name == "nt" else "python3")
+if os.name == "nt":
+    # a batch file running this suite's interpreter; '/' for the deck's lexer
+    with open(spaced_py, "w") as f:
+        f.write('@"%s" %%*\n' % sys.executable)
+    spaced_py = spaced_py.replace("\\", "/")
+elif not os.path.exists(spaced_py):
     # A script that runs this suite's own interpreter, not a link to the first
     # python3 on PATH: a virtual environment's interpreter started through a
     # link outside the environment does not find it (no pyvenv.cfg beside the
@@ -843,7 +860,7 @@ if os.path.exists(os.path.join(HERE, "e551.sp")):
 
 for d in e547_dirs:
     shutil.rmtree(d, ignore_errors=True)
-for f in ("badpy.sh", "status.sp", "status.py", "status.data", "status.npy", "status.png",
+for f in ("badpy.sh", "badpy.bat", "status.sp", "status.py", "status.data", "status.npy", "status.png",
           "status2.py", "status2.data", "status2.npy", "status2.png",
           "status3.py", "status3.data", "status3.npy", "status3.png"):
     p = os.path.join(HERE, f)

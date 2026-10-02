@@ -34,7 +34,9 @@ def opval(log, tag):
 
 # fixed input file so the expected values are deterministic
 TEXT = "Hello, VA!\n"
-with open(os.path.join(HERE, "fgetc_input.txt"), "w") as f:
+# newline="\n": the model reads bytes (Enhancement-776), and a text-mode write
+# on Windows would put "\r\n" in the file
+with open(os.path.join(HERE, "fgetc_input.txt"), "w", newline="\n") as f:
     f.write(TEXT)
 
 for f in ("fgetc_demo.osdi", "_gc.sp"):

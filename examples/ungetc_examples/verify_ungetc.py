@@ -36,7 +36,7 @@ def opval(log, tag):
 
 # fixed input: leading integer 4271 then a non-digit ';'
 TEXT = "4271;rest\n"
-with open(os.path.join(HERE, "ungetc_input.txt"), "w") as f:
+with open(os.path.join(HERE, "ungetc_input.txt"), "w", newline="\n") as f:   # LF: the model reads bytes
     f.write(TEXT)
 
 for f in ("ungetc_demo.osdi", "_ug.sp"):

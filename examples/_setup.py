@@ -157,6 +157,28 @@ def _install_trace(trace_dir):
             lines.append("--- stdout (tail):\n" + text(res.stdout)[-3000:])
             lines.append("--- stderr (tail):\n" + text(res.stderr)[-2000:])
             rc = res.returncode
+            # a Windows crash is an NTSTATUS exit code (0xC0000005 an access
+            # violation): run it again under cdb, which GitHub's Windows
+            # images ship with the Windows SDK, for the faulting stack
+            cdb = None
+            if os.name == "nt" and rc is not None and rc >= 0xC0000000:
+                import shutil as _sh
+                for c in (_sh.which("cdb"),
+                          r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe"):
+                    if c and os.path.isfile(c):
+                        cdb = c
+                        break
+            if cdb:
+                try:
+                    dbg = real_run([cdb, "-g", "-G", "-lines", "-c", ".ecxr; kv 30; lm; q"] + argv,
+                                   cwd=cwd, input=kw.get("input"), capture_output=True,
+                                   text=isinstance(kw.get("input"), str) or kw.get("input") is None,
+                                   timeout=300)
+                    lines.append("--- cdb:\n" + text(dbg.stdout)[-6000:])
+                except Exception as e:      # noqa: BLE001
+                    lines.append(f"--- cdb failed: {e}")
+            elif os.name == "nt" and rc is not None and rc >= 0xC0000000:
+                lines.append(f"--- crash 0x{rc:08X}; no cdb found for a stack")
             if (rc is not None and rc < 0 and _sys.platform == "darwin"
                     and os.environ.get("NG_TRACE_LLDB")):
                 try:

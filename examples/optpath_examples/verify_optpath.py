@@ -80,11 +80,12 @@ check("[E-452] ...and the message names the problem",
 
 # Root may write anywhere (the Linux CI job runs as root in its container): there
 # "/" is a writable directory, the compile would succeed and leave a file in it.
-if hasattr(os, "geteuid") and os.geteuid() == 0:
+if (hasattr(os, "geteuid") and os.geteuid() == 0) or os.name == "nt":
+    # root, and the Windows CI account, may write to the drive's root
     for label in ("[E-452] an unwritable output directory is refused",
                   "[E-452] ...and does NOT panic",
                   "[E-452] ...and the message names the directory"):
-        check(label, True, "skipped: running as root, for whom / is writable")
+        check(label, True, "skipped: running as root or on Windows, where / is writable")
 else:
     rc, out, _ = run(["SRC", "-o", "/_e452_cannot_write.osdi"], "unwrit")
     check("[E-452] an unwritable output directory is refused", rc != 0, f"rc={rc}")

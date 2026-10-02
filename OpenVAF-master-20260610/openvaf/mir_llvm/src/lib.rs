@@ -369,7 +369,58 @@ fn capture_stderr(f: impl FnOnce()) -> Option<String> {
     }
 }
 
-#[cfg(not(unix))]
+/// Enhancement-778: the same capture on Windows, through the C runtime's
+/// descriptor calls (`_pipe`, `_dup`, `_dup2`, `_read`), which is where LLVM's
+/// errs() writes. Without it LLVM's "'bogus' is not a recognized processor"
+/// was never seen, the CPU went on into code generation, and the build died
+/// with 0xC0000409 instead of E-695's one-line refusal.
+#[cfg(windows)]
+fn capture_stderr(f: impl FnOnce()) -> Option<String> {
+    use std::os::raw::{c_int, c_uint, c_void};
+    extern "C" {
+        fn _pipe(fds: *mut c_int, size: c_uint, mode: c_int) -> c_int;
+        fn _dup(fd: c_int) -> c_int;
+        fn _dup2(from: c_int, to: c_int) -> c_int;
+        fn _read(fd: c_int, buf: *mut c_void, n: c_uint) -> c_int;
+        fn _close(fd: c_int) -> c_int;
+    }
+    const O_BINARY: c_int = 0x8000;
+    unsafe {
+        let mut fds = [0 as c_int; 2];
+        // room for everything the probe can print: it is read after `f` returns
+        if _pipe(fds.as_mut_ptr(), 1 << 16, O_BINARY) != 0 {
+            f();
+            return None;
+        }
+        let saved = _dup(2);
+        if saved < 0 || _dup2(fds[1], 2) < 0 {
+            if saved >= 0 {
+                _close(saved);
+            }
+            _close(fds[0]);
+            _close(fds[1]);
+            f();
+            return None;
+        }
+        _close(fds[1]);
+        f();
+        _dup2(saved, 2);
+        _close(saved);
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = _read(fds[0], buf.as_mut_ptr() as *mut c_void, buf.len() as c_uint);
+            if n <= 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..n as usize]);
+        }
+        _close(fds[0]);
+        Some(String::from_utf8_lossy(&out).into_owned())
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn capture_stderr(f: impl FnOnce()) -> Option<String> {
     f();
     None

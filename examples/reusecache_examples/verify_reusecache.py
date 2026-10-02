@@ -146,7 +146,9 @@ def main():
           f"{values(out3, ['i(v1)'])}")
 
     print("[3] a compiler newer than the object rebuilds it")
-    ovf = os.path.join(HERE, "_w_cmp", "ovf")
+    # Windows runs only a file with an executable extension
+    EXE = ".exe" if os.name == "nt" else ""
+    ovf = os.path.join(HERE, "_w_cmp", "ovf" + EXE)
     p = deck("cmp", ONE_R, opt=".option osdicache\n")
     shutil.copy(OPENVAF, ovf); os.chmod(ovf, 0o755)
     ngspice(p, compiler=ovf)
@@ -167,7 +169,7 @@ def main():
     # same deck cached or rebuilt depending on how the compiler had been named
     pathdir = os.path.join(HERE, "_w_cmp", "onpath")
     os.makedirs(pathdir, exist_ok=True)
-    shutil.copy(OPENVAF, os.path.join(pathdir, "openvaf-r")); os.chmod(os.path.join(pathdir, "openvaf-r"), 0o755)
+    shutil.copy(OPENVAF, os.path.join(pathdir, "openvaf-r" + EXE)); os.chmod(os.path.join(pathdir, "openvaf-r" + EXE), 0o755)
     env = dict(os.environ, PATH=pathdir + os.pathsep + os.environ.get("PATH", ""))
     env.pop("OPENVAF", None)
     # The step of the lookup just before PATH is $SPICE_LIB_DIR/openvaf-r, and
@@ -182,12 +184,13 @@ def main():
         env["SPICE_LIB_DIR"] = nolib
     r = subprocess.run([NGSPICE, "-b", p], cwd=HERE, capture_output=True, text=True, timeout=300, env=env)
     t = time.time() + 2
-    os.utime(os.path.join(pathdir, "openvaf-r"), (t, t))
+    os.utime(os.path.join(pathdir, "openvaf-r" + EXE), (t, t))
     r = subprocess.run([NGSPICE, "-b", p], cwd=HERE, capture_output=True, text=True, timeout=300, env=env)
     out = r.stdout + r.stderr
     check("a compiler found by bare name on PATH is located and checked too: `older than the compiler .../onpath/openvaf-r`",
-          "older than the compiler" in out and "onpath/openvaf-r" in out and "rmod.va -> " in out,
-          "" if "onpath/openvaf-r" in out else out.strip().splitlines()[-1][:80] if out.strip() else "")
+          "older than the compiler" in out and "onpath/openvaf-r" in out.replace("\\", "/")
+          and "rmod.va -> " in out,
+          "" if "onpath/openvaf-r" in out.replace("\\", "/") else out.strip().splitlines()[-1][:80] if out.strip() else "")
 
     print("[4] two sources with the same stem in different directories")
     body = ("v1 1 0 1\nn1 1 0 dma\nn2 1 0 dmb\n.model dma ra\n.model dmb rb\n"

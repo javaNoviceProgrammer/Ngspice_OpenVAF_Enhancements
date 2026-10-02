@@ -54,7 +54,7 @@ def clean():
 clean()
 
 # first field 2.0 -> 2e-3 S -> 500 ohm
-with open(os.path.join(HERE, "scanbody_data.txt"), "w") as f:
+with open(os.path.join(HERE, "scanbody_data.txt"), "w", newline="\n") as f:   # LF: the model reads bytes
     f.write("2.0 first\n3.0 second\n5.0 third\n")
 WANT = 500.0 / 1500.0
 

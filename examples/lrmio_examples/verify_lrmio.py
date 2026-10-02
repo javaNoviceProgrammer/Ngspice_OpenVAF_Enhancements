@@ -132,7 +132,7 @@ if ok:
           f"fd={fd} c={c_txt!r}")
 
 # ------------------------------------------------------- 9.5.1 / 1364 reads --
-with open(os.path.join(HERE, "lrmio_data.txt"), "w") as f:
+with open(os.path.join(HERE, "lrmio_data.txt"), "w", newline="\n") as f:   # LF: the model reads bytes
     f.write("10 1.5 alpha\n20 2.5 beta\n30 3.5 gamma\n")
 
 ok, msg = compile_va("lrmio_read.va")
