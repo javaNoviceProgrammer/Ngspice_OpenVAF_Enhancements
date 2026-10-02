@@ -833,6 +833,37 @@ static char *osdi_stage_reload_copy(const char *path) {
   return dst;
 }
 
+#if defined(__MINGW32__) || defined(_MSC_VER)
+#include <io.h>   /* _findfirst: Enhancement-775 */
+/* Enhancement-775: remove the staged copies earlier sessions left in TMPDIR.
+ * Windows cannot delete a DLL that is loaded, so a session's copies outlive
+ * it; one still in use by a running ngspice refuses the remove and stays. */
+static void osdi_sweep_stale_copies(void) {
+  static bool swept = FALSE;
+  const char *tmpdir = getenv("TMPDIR");
+  struct _finddata_t fd;
+  intptr_t h;
+  char *pat;
+  if (swept)
+    return;
+  swept = TRUE;
+  if (!tmpdir || !*tmpdir) tmpdir = getenv("TMP");
+  if (!tmpdir || !*tmpdir) tmpdir = getenv("TEMP");
+  if (!tmpdir || !*tmpdir) return;
+  pat = tprintf("%s/ngspice_osdi_reload_*.osdi", tmpdir);
+  h = _findfirst(pat, &fd);
+  tfree(pat);
+  if (h == -1)
+    return;
+  do {
+    char *f = tprintf("%s/%s", tmpdir, fd.name);
+    (void) remove(f);
+    tfree(f);
+  } while (_findnext(h, &fd) == 0);
+  _findclose(h);
+}
+#endif
+
 int load_osdi(const char *path, bool force) {
   OsdiObjectFile file;
   int k;
@@ -851,23 +882,37 @@ int load_osdi(const char *path, bool force) {
   }
 
   /* On a forced reload, load a fresh copy under a unique path so the recompiled
-   * file is actually re-read (see osdi_stage_reload_copy). */
+   * file is actually re-read (see osdi_stage_reload_copy).
+   * Enhancement-775: on Windows every load is of a copy. Windows locks a loaded
+   * DLL against writes, so a model ngspice had loaded could be neither
+   * recompiled (openvaf-r: permission denied) nor replaced (`copy` refused),
+   * and the edit -> recompile -> `pre_osdi -f` loop of Enhancement-229 could
+   * not start. The copy is what is locked; the user's file stays free. */
   const char *loadpath = path;
   char *staged = NULL;
-  if (reloading) {
+#if defined(__MINGW32__) || defined(_MSC_VER)
+  bool stage = TRUE;
+  osdi_sweep_stale_copies();
+#else
+  bool stage = reloading;
+#endif
+  if (stage) {
     staged = osdi_stage_reload_copy(path);
-    if (!staged) {
+    if (!staged && reloading) {
       fprintf(stderr, "Error(osdi): could not stage a reload copy of \"%s\"\n",
               path);
       return -1;
     }
-    loadpath = staged;
+    if (staged)
+      loadpath = staged;   /* else: a first load of a file that cannot be read
+                              goes ahead and reports it by its own name */
   }
 
   file = load_object_file(loadpath);
 
   if (staged) {
-    remove(staged);   /* mapping is established; drop the on-disk copy */
+    remove(staged);   /* mapping is established; drop the on-disk copy (on
+                         Windows it is locked; a later session sweeps it) */
     tfree(staged);
   }
 

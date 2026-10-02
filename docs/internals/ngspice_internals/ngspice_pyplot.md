@@ -161,7 +161,7 @@ them to return to the default.
 |---|---|---|
 | `pyplot_terminal` | `png` / `svg` / `pdf` (see above) | interactive window |
 | `pyplot_backend` | matplotlib backend, e.g. `Agg` | matplotlib's choice |
-| `pyplot_python` | interpreter to run | `python3` |
+| `pyplot_python` | interpreter to run | `python3` (`python` on Windows, Enhancement-775) |
 | `pyplot_style` | matplotlib style sheet; `dark` aliases `dark_background` | matplotlib default |
 | `pyplot_figsize` | figure size in inches, `W,H` (also `WxH`) | matplotlib default |
 | `pyplot_linewidth` | line width in points, applied to every trace | matplotlib default |

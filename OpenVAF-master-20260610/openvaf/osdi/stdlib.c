@@ -1106,6 +1106,23 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
     mode_buf[0] = 'a';
     mode = mode_buf;
   }
+#ifdef _WIN32
+  // Enhancement-776: a Verilog-A file is a byte stream. The Windows C runtime
+  // opens a file in TEXT mode unless the mode says "b", writing every "\n" as
+  // "\r\n" and reading "\r\n" back as "\n": $ftell counted 171 bytes for the
+  // 160 a model wrote, and $fseek to an offset taken from $ftell landed
+  // elsewhere. Binary mode is what every other platform does anyway.
+  char bin_buf[8];
+  if (strchr(mode, 'b') == NULL) {
+    size_t n = strlen(mode);
+    if (n + 1 < sizeof(bin_buf)) {
+      memcpy(bin_buf, mode, n);
+      bin_buf[n] = 'b';
+      bin_buf[n + 1] = '\0';
+      mode = bin_buf;
+    }
+  }
+#endif
   for (int i = OSDI_FD_FIRST; i < OSDI_MAX_FILES; i++) {
     if (osdi_file_table[i] == NULL) {
       void *f = fopen(name, mode);

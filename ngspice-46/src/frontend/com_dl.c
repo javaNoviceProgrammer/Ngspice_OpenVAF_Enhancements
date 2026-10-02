@@ -324,7 +324,17 @@ static char *va_compile(const char *va, bool force)
     ovf = osdi_find_openvaf();
     cmdlen = strlen(ovf) + strlen(src) + strlen(osdi) + 32;
     cmd = TMALLOC(char, cmdlen);
+#if defined(__MINGW32__) || defined(_MSC_VER)
+    /* Enhancement-775: system() runs the line through `cmd.exe /c`, which
+       strips the first and the last quote of a line that starts with one and
+       holds more than two: `"C:\...\openvaf-r.exe" "src" -o "out"` lost the
+       quotes around the program and cmd answered "is not recognized" (exit 1)
+       -- every pre_osdi -va compile on Windows. One extra outer pair is what
+       cmd strips, as pyplot's launch has done since Enhancement-547. */
+    (void) snprintf(cmd, cmdlen, "\"\"%s\" \"%s\" -o \"%s\"\"", ovf, src, osdi);
+#else
     (void) snprintf(cmd, cmdlen, "\"%s\" \"%s\" -o \"%s\"", ovf, src, osdi);
+#endif
     rc = system(cmd);
     tfree(cmd);
     /* Enhancement-510: `system()` returns a WAIT STATUS, not an exit code, so

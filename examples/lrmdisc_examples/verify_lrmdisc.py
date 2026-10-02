@@ -323,6 +323,9 @@ for cand in ("cc", "gcc", "clang"):
         break
 if cc is None:
     check("[16] (skipped: no C compiler on PATH for the dump harness)", True)
+elif os.name == "nt":
+    # the harness loads the object with dlopen (<dlfcn.h>), which is POSIX
+    check("[16] (skipped on Windows: the dump harness uses POSIX dlopen)", True)
 else:
     rc, out, osdi = compile_file("lrmdisc.va")
     exe = os.path.join(HERE, "_lc_dump")

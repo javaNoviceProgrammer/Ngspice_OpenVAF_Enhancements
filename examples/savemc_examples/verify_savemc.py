@@ -210,10 +210,11 @@ fs = files("xlsx")
 ok = False
 detail = str(fs)
 if fs:
-    z = zipfile.ZipFile(fs[0])
-    bad = z.testzip()
-    names = z.namelist()
-    x = z.read("xl/worksheets/sheet1.xml").decode()
+    # closed at once: Windows refuses to delete a file a process holds open
+    with zipfile.ZipFile(fs[0]) as z:
+        bad = z.testzip()
+        names = z.namelist()
+        x = z.read("xl/worksheets/sheet1.xml").decode()
     xrows = re.findall(r'<row r="(\d+)">(.*?)</row>', x)
     cells = [[c[0] or c[1] for c in re.findall(r'<c r="[A-Z]+\d+"(?: s="\d+")?(?: t="inlineStr")?>(?:<is><t>(.*?)</t></is>|<v>(.*?)</v>)</c>', b)]
              for _, b in xrows]     # E-617: a header cell may carry a style

@@ -77,6 +77,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from _setup import NG as NGSPICE  # noqa: E402
 from _setup import VAF as OPENVAF  # noqa: E402
+from _setup import exported_symbols  # noqa: E402
 from _setup import check_both_solvers  # noqa: E402
 
 check_both_solvers(__file__)
@@ -154,12 +155,12 @@ check("[1] the statistics-carrying model compiles with ZERO warnings",
 
 rc, out, PLAIN = compile_va("smcplain.va")
 check("[2] the attribute-free control model compiles", rc == 0)
-nm = subprocess.run(["nm", PLAIN], capture_output=True, text=True)
+nm = exported_symbols(PLAIN)
 check("[3] ...and exports NO statistics symbols (old-object shape)",
-      "OSDI_STAT_PARAM" not in nm.stdout)
-nm = subprocess.run(["nm", OSDI], capture_output=True, text=True)
+      "OSDI_STAT_PARAM" not in nm)
+nm = exported_symbols(OSDI)
 check("[4] the statistics model exports OSDI_STAT_PARAM_{COUNTS,INFOS}",
-      "OSDI_STAT_PARAM_COUNTS" in nm.stdout and "OSDI_STAT_PARAM_INFOS" in nm.stdout)
+      "OSDI_STAT_PARAM_COUNTS" in nm and "OSDI_STAT_PARAM_INFOS" in nm)
 
 rc, out, _ = compile_va("smcwarn.va")
 check("[5] unknown dist / integer param / localparam / dist-without-sigma "
@@ -902,7 +903,7 @@ check("[44] the draw: n1:dr, n2:dr and n2:dg (nominal 0) are said ONCE each and 
 print("\nEnhancement-633: a drawn parameter whose default depends on another drawn parameter:")
 rc, out, DRV = compile_va("smcderiv.va")
 check("[45] the derived-default model compiles and exports OSDI_STAT_PARAM_DERIVED",
-      rc == 0 and subprocess.run(["nm", DRV], capture_output=True, text=True).stdout.count("OSDI_STAT_PARAM_DERIVED") == 1,
+      rc == 0 and exported_symbols(DRV).count("OSDI_STAT_PARAM_DERIVED") == 1,
       out[-300:])
 DRVDECK = f"""osdimc derived default
 V1 a 0 1

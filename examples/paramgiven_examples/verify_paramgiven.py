@@ -52,6 +52,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from _setup import NG as NGSPICE  # noqa: E402
 from _setup import VAF as OPENVAF  # noqa: E402
+from _setup import exported_symbols  # noqa: E402
 from _setup import check_both_solvers  # noqa: E402
 
 check_both_solvers(__file__)
@@ -145,7 +146,7 @@ rc, log, VPG = compile_va("vpg", GATED, GATED_BODY)
 rc2, _, VPGI = compile_va("vpgi", GATED.replace("(* std=25.0 *)", '(* type="instance", std=25.0 *)'),
                           GATED_BODY)
 assert rc == 0 and rc2 == 0, log
-nm = subprocess.run(["nm", VPG], capture_output=True, text=True).stdout
+nm = exported_symbols(VPG)
 check("[1] the objects export OSDI_PARAM_GIVEN_FNS", "OSDI_PARAM_GIVEN_FNS" in nm)
 
 DECK = """pg {tag}
@@ -277,7 +278,7 @@ if PREBUILT:
                          model="vold", obj="vold"), "o1")
     vals = seq(out, "@mm[r]")
     check("[16] an object compiled without the entry point (a pre-E-555 compiler from git) still loads and draws",
-          rc == 0 and "OSDI_PARAM_GIVEN_FNS" not in subprocess.run(["nm", OLD], capture_output=True, text=True).stdout
+          rc == 0 and "OSDI_PARAM_GIVEN_FNS" not in exported_symbols(OLD)
           and len(vals) == 3 and vals[0] == 1000.0 and vals[1] != 1000.0 and "not drawn" not in out, f"r={vals}")
 else:
     check("[16] (no pre-E-555 compiler for this platform; skipped)", True)

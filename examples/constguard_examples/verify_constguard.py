@@ -313,8 +313,10 @@ if rc == 0:
     m = re.findall(r"N=(\S+) P=(\S+)", o)
     got = m[-1] if m else ("?", "?")
     check("[29] 0.0*NaN still folds to 0 (Enhancement-337 keeps that deliberately)",
-          # glibc prints the x86 default NaN (0/0) as -nan, macOS as nan
-          (got[0].lstrip("-"), got[1]) == ("nan", "0"), f"nan={got[0]} product={got[1]}")
+          # glibc prints the x86 default NaN (0/0) as -nan, macOS as nan, the
+          # Windows runtime as -nan(ind)
+          (got[0].lstrip("-").lower().startswith("nan"), got[1]) == (True, "0"),
+          f"nan={got[0]} product={got[1]}")
 
 rc, out, osdi = compile_va(H + "module m(a,b); inout a,b; electrical a,b;\n"
                            " localparam real k = 1e-324;\n"

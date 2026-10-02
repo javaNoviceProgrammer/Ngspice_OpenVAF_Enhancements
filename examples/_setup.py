@@ -113,6 +113,86 @@ NG = _resolve(("ngspice-46", "build", "src", "ngspice"), "ngspice", "NGSPICE_BIN
 os.environ["OPENVAF"] = VAF
 
 
+# Enhancement-777: NG_TRACE_DIR=<dir> records every ngspice and openvaf-r run a
+# suite makes through subprocess.run -- the command, its directory, the deck it
+# was given, the exit status and the tail of its output -- in <dir>/<suite>.log.
+# A suite's own report says which check failed; this says what the simulator
+# printed, which on a CI machine nobody can otherwise see. With NG_TRACE_LLDB=1
+# on macOS a run killed by a signal is run again under lldb for a backtrace.
+# run_regression.py sets it when it re-runs the failed suites (NG_TRACE_FAILED).
+def _install_trace(trace_dir):
+    import subprocess as _sp
+    import sys as _sys
+    import time as _time
+    real_run = _sp.run
+    tools = {"ngspice", "openvaf-r", os.path.basename(NG).split(".")[0],
+             os.path.basename(VAF).split(".")[0]}
+    suite = os.path.basename(os.path.dirname(os.path.abspath(_sys.argv[0] or "x")))
+    log_path = os.path.join(trace_dir, suite + ".log")
+    count = [0]
+
+    def text(v):
+        if v is None:
+            return ""
+        return v.decode("utf-8", "replace") if isinstance(v, bytes) else str(v)
+
+    def record(args, kw, res, exc, dt):
+        argv = [str(a) for a in args] if isinstance(args, (list, tuple)) else [str(args)]
+        if not argv or os.path.basename(argv[0]).split(".")[0] not in tools:
+            return
+        count[0] += 1
+        cwd = kw.get("cwd") or os.getcwd()
+        lines = [f"=== run {count[0]}  {dt:.1f}s  rc={getattr(res, 'returncode', exc)}  cwd={cwd}",
+                 "args: " + " ".join(argv)]
+        for a in argv[1:]:
+            p = a if os.path.isabs(a) else os.path.join(cwd, a)
+            if a.endswith((".cir", ".sp", ".net")) and os.path.isfile(p):
+                try:
+                    lines.append(f"--- deck {a}:\n" + open(p, errors="replace").read()[:3000])
+                except OSError:
+                    pass
+        if kw.get("input") is not None:
+            lines.append("--- stdin:\n" + text(kw.get("input"))[:3000])
+        if res is not None:
+            lines.append("--- stdout (tail):\n" + text(res.stdout)[-3000:])
+            lines.append("--- stderr (tail):\n" + text(res.stderr)[-2000:])
+            rc = res.returncode
+            if (rc is not None and rc < 0 and _sys.platform == "darwin"
+                    and os.environ.get("NG_TRACE_LLDB")):
+                try:
+                    bt = real_run(["lldb", "--batch", "-o", "run", "-o", "bt 30", "-o", "quit", "--"] + argv,
+                                  cwd=cwd, input=kw.get("input"), capture_output=True,
+                                  text=isinstance(kw.get("input"), str) or kw.get("input") is None,
+                                  timeout=300)
+                    lines.append("--- lldb:\n" + text(bt.stdout)[-4000:])
+                except Exception as e:      # noqa: BLE001 -- a trace must not fail a suite
+                    lines.append(f"--- lldb failed: {e}")
+        os.makedirs(trace_dir, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8", errors="replace") as fh:
+            fh.write("\n".join(lines) + "\n\n")
+
+    def traced(args, *a, **kw):
+        t0 = _time.time()
+        res = exc = None
+        try:
+            res = real_run(args, *a, **kw)
+            return res
+        except BaseException as e:
+            exc = type(e).__name__
+            raise
+        finally:
+            try:
+                record(args, kw, res, exc, _time.time() - t0)
+            except Exception:              # noqa: BLE001
+                pass
+
+    _sp.run = traced
+
+
+if os.environ.get("NG_TRACE_DIR"):
+    _install_trace(os.environ["NG_TRACE_DIR"])
+
+
 # ---------------------------------------------------------------------------
 # XSPICE code models (SPICE_LIB_DIR)
 # ---------------------------------------------------------------------------
@@ -278,6 +358,12 @@ REGRESSION_EXCLUDE = frozenset({"cmcsweep", "filterforms"})
 # Keys are (system, machine) as platform.system() reports them, the machine
 # normalised to aarch64 / x86_64; "*" matches any system.
 PLATFORM_EXCLUDE = {
+    ("Windows", "*"): {
+        "helpcmd": "drives an interactive ngspice through a POSIX pseudo-terminal "
+                   "(pty, termios), which Windows has no counterpart of",
+        "syntaxhl": "tests terminal syntax colouring through a POSIX pseudo-terminal",
+        "vafcolor": "tests the compiler's terminal colours through a POSIX pseudo-terminal",
+    },
     ("*", "x86_64"): {
         "arrayscale": "x86-64 code generation of huge modules: a 10 000-entry "
                       "instance array takes ~550 s (E-771, open)",
@@ -289,6 +375,54 @@ PLATFORM_EXCLUDE = {
                          "is 2.5x off on x86-64, Linux and macOS alike (open)",
     },
 }
+
+
+def _pe_exports(path):
+    """The names in a PE (Windows DLL) export table, read from the file."""
+    import struct
+    with open(path, "rb") as fh:
+        data = fh.read()
+    pe = struct.unpack_from("<I", data, 0x3C)[0]
+    if data[pe:pe + 4] != b"PE\0\0":
+        return []
+    coff = pe + 4
+    nsec, = struct.unpack_from("<H", data, coff + 2)
+    optsz, = struct.unpack_from("<H", data, coff + 16)
+    opt = coff + 20
+    magic, = struct.unpack_from("<H", data, opt)
+    exp_rva, _ = struct.unpack_from("<II", data, opt + (96 if magic == 0x10B else 112))
+    secs = opt + optsz
+
+    def off(rva):
+        for i in range(nsec):
+            vsize, vaddr, rawsize, rawptr = struct.unpack_from("<IIII", data, secs + 40 * i + 8)
+            if vaddr <= rva < vaddr + max(vsize, rawsize):
+                return rawptr + rva - vaddr
+        return None
+
+    e = off(exp_rva) if exp_rva else None
+    if e is None:
+        return []
+    nnames, = struct.unpack_from("<I", data, e + 24)
+    names = off(struct.unpack_from("<I", data, e + 32)[0])
+    out = []
+    for k in range(nnames):
+        o = off(struct.unpack_from("<I", data, names + 4 * k)[0])
+        out.append(data[o:data.index(b"\0", o)].decode(errors="replace"))
+    return out
+
+
+def exported_symbols(path):
+    """Enhancement-775: the symbols a compiled model exports, as text a check can
+    search -- `nm` on POSIX, the DLL's export table on Windows, which has no nm
+    (the osdidist, osdimc and paramgiven checks read "no such file" there)."""
+    import subprocess as _sp
+    if os.name == "nt":
+        try:
+            return "\n".join(_pe_exports(path))
+        except Exception:          # not a readable PE file: no exports
+            return ""
+    return _sp.run(["nm", path], capture_output=True, text=True).stdout
 
 
 def platform_key():

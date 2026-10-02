@@ -228,13 +228,19 @@ def main():
           val(out, "-i(vin)") is not None and abs(val(out, "-i(vin)") - 5e-4) < 1e-12)
 
     print("[15] Enhancement-707: an exec failure names the linker and the cause")
-    r = subprocess.run([OPENVAF, "trio.va", "-o", "_nolinker.osdi"], cwd=HERE,
-                       capture_output=True, text=True, env=dict(os.environ, PATH="/nonexistent"))
-    out = r.stdout + r.stderr
-    check("with no linker on PATH: \"linker not found: '<program>' is not installed or not on "
-          "PATH (...)\" -- an oversized argument vector used to be reported the same way",
-          r.returncode != 0 and "linker not found: '" in out
-          and "is not installed or not on PATH" in out)
+    label = ("with no linker on PATH: \"linker not found: '<program>' is not installed or not on "
+             "PATH (...)\" -- an oversized argument vector used to be reported the same way")
+    if os.name == "nt":
+        # MSVC's link.exe is found through the Visual Studio installation, not
+        # PATH, so emptying PATH leaves the linker where it was
+        check(label, True)
+        print("      (skipped on Windows: the linker is not looked up on PATH there)")
+    else:
+        r = subprocess.run([OPENVAF, "trio.va", "-o", "_nolinker.osdi"], cwd=HERE,
+                           capture_output=True, text=True, env=dict(os.environ, PATH="/nonexistent"))
+        out = r.stdout + r.stderr
+        check(label, r.returncode != 0 and "linker not found: '" in out
+              and "is not installed or not on PATH" in out)
 
     n_pass = sum(checks)
     n_fail = len(checks) - n_pass

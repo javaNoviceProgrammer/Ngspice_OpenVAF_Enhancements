@@ -3,7 +3,8 @@
 A new ngspice command, `pyplot`, plots simulated vectors with **matplotlib** —
 a Python counterpart to `gnuplot`. Same syntax: `pyplot <file> <expr...>`. With
 `set pyplot_terminal=png` it renders headless (Agg) to `<file>.png`;
-`set pyplot_python=<interp>` picks the interpreter (default `python3`). In a deck's
+`set pyplot_python=<interp>` picks the interpreter (default `python3`, `python` on
+Windows -- Enhancement-775). In a deck's
 `.control` block a `set` value is lowercased, quoted or not, so a path with capitals
 on a case-sensitive volume (Linux) is set with `setcs pyplot_python=...`, as the
 suite does (Enhancement-770).

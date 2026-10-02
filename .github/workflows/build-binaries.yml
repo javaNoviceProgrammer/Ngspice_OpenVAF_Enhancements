@@ -316,6 +316,11 @@ jobs:
         env:
           MPLBACKEND: Agg     # no display on a runner; the pyplot suites draw off-screen
           PYTHONUTF8: "1"     # suites print and read UTF-8 whatever the runner's locale
+          # Enhancement-777: re-run each failed suite once with a trace of every
+          # ngspice / openvaf-r run (examples/_trace/, uploaded below); on macOS
+          # a run killed by a signal is re-run under lldb for a backtrace
+          NG_TRACE_FAILED: "1"
+          NG_TRACE_LLDB: "1"
         run: |
           # The staged bundle: the stripped binaries, their XSPICE code models
           # and the portable spinit -- what users get from bin/<os>/<arch>/.
@@ -383,6 +388,7 @@ jobs:
           path: |
             regression.log
             examples/_failures/
+            examples/_trace/
           if-no-files-found: ignore
 
   # --------------------------------------------------------------- Windows
@@ -554,6 +560,7 @@ jobs:
         env:
           MPLBACKEND: Agg
           PYTHONUTF8: "1"     # cp1252 stdout cannot print the suites' σ, ≤ and →
+          NG_TRACE_FAILED: "1"   # Enhancement-777: trace the failed suites' runs
         run: |
           $B = Join-Path $PWD "out\bin\windows\intel"
           $env:NGSPICE_BIN   = Join-Path $B "ngspice.exe"
@@ -584,6 +591,7 @@ jobs:
           path: |
             regression.log
             examples/_failures/
+            examples/_trace/
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------- Collect

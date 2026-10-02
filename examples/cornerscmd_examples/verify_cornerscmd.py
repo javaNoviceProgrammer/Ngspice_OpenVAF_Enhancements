@@ -253,9 +253,9 @@ hdr, data = csv_rows("c12.csv")
 rc2, out2 = run(f"op\ncorners -list ss -output {A}rm[rsh]\n", "c12x", ".option osdimc savemc=c12x.xlsx")
 xl_ok = False
 try:
-    z = zipfile.ZipFile(os.path.join(WORK, "c12x.xlsx"))
-    sheet = [n for n in z.namelist() if "sheet1" in n][0]
-    x = z.read(sheet).decode()
+    with zipfile.ZipFile(os.path.join(WORK, "c12x.xlsx")) as z:   # closed: Windows
+        sheet = [n for n in z.namelist() if "sheet1" in n][0]           # cannot delete an
+        x = z.read(sheet).decode()                                      # open file
     row1 = re.search(r'<row r="1".*?</row>', x, re.S).group(0)
     row3 = re.search(r'<row r="3".*?</row>', x, re.S).group(0)
     xl_ok = ('<c r="D1"' in row1 and "corner" in row1) and ('<c r="D3"' in row3 and ">ss<" in row3)

@@ -197,11 +197,13 @@ out = run(".option savemc=excel\n" + RLC, "t6", MC + "-writemc pk\nrepeat 2\n  r
 fs = files("xlsx")
 ok = False
 if fs:
-    z = zipfile.ZipFile(fs[0]); x = z.read("xl/worksheets/sheet1.xml").decode()
+    with zipfile.ZipFile(fs[0]) as z:   # closed: Windows cannot delete an open file
+        x = z.read("xl/worksheets/sheet1.xml").decode()
+        zip_ok = z.testzip() is None
     xrows = re.findall(r'<row r="(\d+)">(.*?)</row>', x)
     cells = [[c[0] or c[1] for c in re.findall(r'<c r="[A-Z]+\d+"(?: s="\d+")?(?: t="inlineStr")?>(?:<is><t>(.*?)</t></is>|<v>(.*?)</v>)</c>', b)]
              for _, b in xrows]     # E-617/E-619: a header cell may carry a style
-    ok = z.testzip() is None and cells[0] == ["trial", "analysis", "status", "r1", "pk"] and len(cells) == 9 \
+    ok = zip_ok and cells[0] == ["trial", "analysis", "status", "r1", "pk"] and len(cells) == 9 \
         and all(len(c) == 5 for c in cells[1:])
 check("[6] savemc=excel: every row's writemc value is in the .xlsx at exit", ok, str(fs))
 

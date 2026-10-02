@@ -188,7 +188,9 @@ else:
         dups = [ln for ln in msgs.splitlines() if "duplicate symbol" in ln]
         undef = sorted({ln.split("undefined symbol:")[1].strip() for ln in msgs.splitlines()
                         if "undefined symbol:" in ln})
-        crt = {"__acrt_iob_func", "fclose", "fputs", "free", "fseek", "ftell", "fopen", "fgets", "fprintf",
+        # _fltused: the x64 CRT's marker that floating point is used (an
+        # x86_64-pc-windows object references it; an arm64 one does not)
+        crt = {"_fltused", "__acrt_iob_func", "fclose", "fputs", "free", "fseek", "ftell", "fopen", "fgets", "fprintf",
                "malloc", "realloc", "calloc", "memcpy", "memset", "strlen", "strcmp", "strcpy", "printf",
                "snprintf", "vsnprintf", "fflush", "fwrite", "fread", "getenv", "exit", "abort", "puts",
                "fgetc", "ungetc", "strtod", "strtol", "strncmp", "strncpy", "memmove", "memcmp", "putchar",

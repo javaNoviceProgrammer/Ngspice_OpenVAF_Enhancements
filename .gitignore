@@ -13,6 +13,7 @@ _artifacts/
 out/
 # run_regression.py keeps a failing suite's output here (Enhancement-579)
 examples/_failures/
+examples/_trace/
 
 # ----------------------------------------------------------------------------
 # ngspice: its own per-directory .gitignore files were removed so that source

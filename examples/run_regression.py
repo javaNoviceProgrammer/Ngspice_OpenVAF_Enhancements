@@ -345,6 +345,20 @@ def main(argv):
     results = [r[:3] for r in results]
 
     bad = [r for r in results if r[1] != "OK"]
+    # Enhancement-777: NG_TRACE_FAILED=1 re-runs each failed suite once, alone,
+    # with NG_TRACE_DIR set, so _trace/<suite>.log holds what ngspice and
+    # openvaf-r printed for every run of it (see _setup.py). At most 30.
+    if bad and os.environ.get("NG_TRACE_FAILED"):
+        tdir = os.path.join(HERE, "_trace")
+        print(f"\nrun_regression: re-running {min(len(bad), 30)} failed suite(s) with a trace "
+              f"into {tdir}", flush=True)
+        os.environ["NG_TRACE_DIR"] = tdir
+        by_stem = {stem_of(s): s for s in todo}
+        for stem, _, _ in bad[:30]:
+            if stem in by_stem:
+                r = run_one(by_stem[stem])
+                print(f"  traced {stem:28} {r[1]}", flush=True)
+        del os.environ["NG_TRACE_DIR"]
     print("\n" + "=" * 70)
     print(f"TOTAL {len(results)}  OK {len(results)-len(bad)}  NOT-OK {len(bad)}"
           f"   ({time.time()-t0:.0f}s)")

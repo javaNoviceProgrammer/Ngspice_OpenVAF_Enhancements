@@ -133,7 +133,8 @@ def check(label, ok, detail=""):
 def build(src, tag, extra=None):
     d = os.path.join(HERE, "_op_%s" % tag)
     shutil.rmtree(d, ignore_errors=True)
-    os.makedirs(d)
+    # exist_ok: on Windows a file a process still holds keeps the directory
+    os.makedirs(d, exist_ok=True)
     open(os.path.join(d, "m.va"), "w").write(src)
     for name, content in (extra or {}).items():
         open(os.path.join(d, name), "w").write(content)

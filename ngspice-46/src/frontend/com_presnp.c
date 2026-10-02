@@ -186,7 +186,13 @@ void com_pre_snp(wordlist *wl)
     ovf = osdi_find_openvaf();
     cmdlen = strlen(ovf) + strlen(va) + strlen(osdi) + 32;
     cmd = TMALLOC(char, cmdlen);
+#if defined(__MINGW32__) || defined(_MSC_VER)
+    /* Enhancement-775: one extra outer pair of quotes for cmd.exe, which
+       strips the first and last of a line that starts with one (see com_dl.c) */
+    (void) snprintf(cmd, cmdlen, "\"\"%s\" \"%s\" -o \"%s\"\"", ovf, va, osdi);
+#else
     (void) snprintf(cmd, cmdlen, "\"%s\" \"%s\" -o \"%s\"", ovf, va, osdi);
+#endif
     rc = system(cmd);
     tfree(cmd);
     if (rc != 0) {

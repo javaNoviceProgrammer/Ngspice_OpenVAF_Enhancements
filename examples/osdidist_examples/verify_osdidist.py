@@ -54,6 +54,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from _setup import NG as NGSPICE  # noqa: E402
 from _setup import VAF as OPENVAF  # noqa: E402
+from _setup import exported_symbols  # noqa: E402
 from _setup import check_both_solvers  # noqa: E402
 
 check_both_solvers(__file__)
@@ -154,8 +155,8 @@ rc3, log3, VT2 = compile_va("vt2", '(* std=25.0, trunc=2.0 *) parameter real r =
 rc4, log4, VGW = compile_va("vgw", '(* std_rel=1.0 *) parameter real w = 1000.0 from (0:inf);',
                             "analog I(a,b) <+ V(a,b)/w;")
 assert rc == rc2 == rc3 == rc4 == 0, (log, log2, log3, log4)
-nm_log = subprocess.run(["nm", VLOG], capture_output=True, text=True).stdout
-nm_tr = subprocess.run(["nm", VTR], capture_output=True, text=True).stdout
+nm_log = exported_symbols(VLOG)
+nm_tr = exported_symbols(VTR)
 check("[2] the object without a truncation exports no TRUNCS symbol; one with it does",
       "OSDI_STAT_PARAM_INFOS" in nm_log and "OSDI_STAT_PARAM_TRUNCS" not in nm_log
       and "OSDI_STAT_PARAM_TRUNCS" in nm_tr)

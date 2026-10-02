@@ -21,6 +21,17 @@
 #endif
 #include <locale.h>
 
+/* Enhancement-775: the interpreter `pyplot_python` defaults to. A Windows
+   Python is `python` -- the python.org installer and a virtual environment
+   provide python.exe, and `python3` is at best another installation and
+   usually the Microsoft Store's stub, so the default found a Python without
+   numpy and matplotlib, or none. Elsewhere `python3`, as before. */
+#if defined(__MINGW32__) || defined(_MSC_VER)
+#define PYPLOT_DEFAULT_PYTHON "python"
+#else
+#define PYPLOT_DEFAULT_PYTHON "python3"
+#endif
+
 #define PY_MAXVECTORS 64
 
 /* Enhancement-548: one number in the data table. `%e` carried six significant
@@ -596,7 +607,7 @@ void ft_pyplot(double *xlims, double *ylims,
 
     /* the Python interpreter, overridable with `set pyplot_python=...`. */
     if (!cp_getvar("pyplot_python", CP_STRING, python, sizeof(python)))
-        strcpy(python, "python3");
+        strcpy(python, PYPLOT_DEFAULT_PYTHON);
 
     /* Enhancement-183: `set pyplot_backend=<name>` -> select the matplotlib
        backend explicitly (e.g. TkAgg, QtAgg, MacOSX, WebAgg, Agg). Overrides
@@ -1383,7 +1394,7 @@ ft_pyplot_contour(const char *filename, const char *title, struct dvec *vecs)
         }
     }
     if (!cp_getvar("pyplot_python", CP_STRING, python, sizeof(python)))
-        strcpy(python, "python3");
+        strcpy(python, PYPLOT_DEFAULT_PYTHON);
     have_backend = cp_getvar("pyplot_backend", CP_STRING, backend, sizeof(backend))
                    ? TRUE : FALSE;
     have_figsize = FALSE;
@@ -1571,7 +1582,7 @@ ft_pyplot_smith(const char *filename, const char *title, struct dvec *vecs)
         }
     }
     if (!cp_getvar("pyplot_python", CP_STRING, python, sizeof(python)))
-        strcpy(python, "python3");
+        strcpy(python, PYPLOT_DEFAULT_PYTHON);
     have_backend = cp_getvar("pyplot_backend", CP_STRING, backend, sizeof(backend))
                    ? TRUE : FALSE;
     have_figsize = FALSE;
@@ -1751,7 +1762,7 @@ ft_pyplot_ac(const char *filename, const char *title, struct dvec *vecs, int ac_
         }
     }
     if (!cp_getvar("pyplot_python", CP_STRING, python, sizeof(python)))
-        strcpy(python, "python3");
+        strcpy(python, PYPLOT_DEFAULT_PYTHON);
     have_backend = cp_getvar("pyplot_backend", CP_STRING, backend, sizeof(backend))
                    ? TRUE : FALSE;
     have_figsize = FALSE;
@@ -1983,7 +1994,7 @@ ft_pyplot_eye(const char *filename, const char *expr)
         }
     }
     if (!cp_getvar("pyplot_python", CP_STRING, python, sizeof(python)))
-        strcpy(python, "python3");
+        strcpy(python, PYPLOT_DEFAULT_PYTHON);
     have_backend = cp_getvar("pyplot_backend", CP_STRING, backend, sizeof(backend))
                    ? TRUE : FALSE;
     have_figsize = FALSE;

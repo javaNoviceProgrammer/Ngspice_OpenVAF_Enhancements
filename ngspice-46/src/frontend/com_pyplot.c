@@ -222,7 +222,19 @@ com_pyplot(wordlist *wl)
             strchr(fname, DIR_TERM) == NULL && strchr(fname, '/') == NULL) {
         char *dir = ngdirname(ft_curckt->ci_filename);
         if (dir && dir[0] && !(dir[0] == '.' && dir[1] == '\0')) {
+#if defined(__MINGW32__) || defined(_MSC_VER)
+            /* Enhancement-775: '/' on Windows too, which it accepts. The name
+               goes on through the plot command's argument handling, where a
+               backslash is an escape: C:\Users\... became "C: sers\...",
+               and the script, its data and the image went nowhere. */
+            char *s;
+            for (s = dir; *s; s++)
+                if (*s == '\\')
+                    *s = '/';
+            fullname = tprintf("%s/%s", dir, fname);
+#else
             fullname = tprintf("%s%s%s", dir, DIR_PATHSEP, fname);
+#endif
             fname = fullname;
         }
         tfree(dir);
