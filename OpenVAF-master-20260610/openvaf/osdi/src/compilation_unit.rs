@@ -96,7 +96,77 @@ pub fn new_codegen<'a, 'll>(
         LLVMSetLinkage(NonNull::from(char_table).as_ptr(), LLVMLinkage::LLVMInternalLinkage);
     }
 
+    // Enhancement-769: on a Windows target each weak definition gets a COMDAT of
+    // its own name (see coff_comdat_weak_definitions).
+    if back.target().options.is_like_windows {
+        unsafe { coff_comdat_weak_definitions(llmod.llmod()) }
+    }
+
     cx
+}
+
+/// Enhancement-769: put every weak definition of a Windows (COFF) unit in a
+/// COMDAT of its own name with "any" selection.
+///
+/// A module is linked from five objects -- the descriptor module and the
+/// access, setup_model, setup_instance and eval units -- and each carries the
+/// whole stdlib bitcode. E-516 made the stdlib's mutable state (the
+/// `OSDI_SHARED` descriptor tables, the deferred-write buffer, the scan cursor:
+/// nineteen variables) weak, and the two I/O hooks the simulator looks up
+/// (`osdi_io_iter_begin`, `osdi_io_flush`) weak_odr, so the five copies merge
+/// into one. ELF and Mach-O linkers merge weak definitions. On COFF, LLVM emits
+/// a weak definition WITHOUT a COMDAT as a weak external whose default is named
+/// after the first external symbol of its object (`.weak.osdi_io_iter_begin.
+/// default.access_0`, `...default.setup_model_0`, ...): five different defaults
+/// for one symbol, which MSVC's link.exe refuses (LNK1227, "conflicting weak
+/// extern definition") and lld-link reports as a duplicate symbol. Every model
+/// failed to link on Windows from E-516 on. In a COMDAT with "any" selection a
+/// weak definition is an ordinary external in its own section and the linker
+/// keeps one copy -- the mechanism MSVC itself uses for inline functions and
+/// `__declspec(selectany)` data -- which is the sharing E-516 intended; a
+/// dllexport hook stays exported. Mach-O has no COMDATs and ELF does not need
+/// them here, so only Windows targets (MSVC and MinGW alike) take this path.
+unsafe fn coff_comdat_weak_definitions(module: &llvm_sys::LLVMModule) {
+    use llvm_sys::comdat::{
+        LLVMComdatSelectionKind, LLVMGetComdat, LLVMGetOrInsertComdat, LLVMSetComdat,
+        LLVMSetComdatSelectionKind,
+    };
+    use llvm_sys::core::{LLVMGetFirstGlobal, LLVMGetLinkage, LLVMGetNextGlobal, LLVMGetValueName2};
+
+    let m = NonNull::from(module).as_ptr();
+    let give = |v: *mut llvm_sys::LLVMValue| {
+        if LLVMIsDeclaration(v) != 0 || !LLVMGetComdat(v).is_null() {
+            return;
+        }
+        let weak = matches!(
+            LLVMGetLinkage(v),
+            LLVMLinkage::LLVMWeakAnyLinkage
+                | LLVMLinkage::LLVMWeakODRLinkage
+                | LLVMLinkage::LLVMLinkOnceAnyLinkage
+                | LLVMLinkage::LLVMLinkOnceODRLinkage
+        );
+        if !weak {
+            return;
+        }
+        let mut len = 0usize;
+        let name = LLVMGetValueName2(v, &mut len);
+        if name.is_null() || len == 0 {
+            return;
+        }
+        let name = std::slice::from_raw_parts(name as *const u8, len);
+        let Ok(name) = std::ffi::CString::new(name) else { return };
+        let comdat = LLVMGetOrInsertComdat(m, name.as_ptr());
+        LLVMSetComdatSelectionKind(comdat, LLVMComdatSelectionKind::LLVMAnyComdatSelectionKind);
+        LLVMSetComdat(v, comdat);
+    };
+    for fun in function_iter(module) {
+        give(fun);
+    }
+    let mut global = LLVMGetFirstGlobal(m);
+    while !global.is_null() {
+        give(global);
+        global = LLVMGetNextGlobal(global);
+    }
 }
 
 pub struct OsdiCompilationUnit<'a, 'b, 'll> {

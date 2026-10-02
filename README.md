@@ -28,7 +28,7 @@ https://ngspice.sourceforge.io/
 
 ## The Enhancements
 
-Seven hundred and forty-nine enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
+Seven hundred and fifty enhancements so far — language features, correctness fixes, systematic audits, and simulator-side workflow tooling, each verified end-to-end by a committed example suite and released with a detailed write-up.
 
 **🗂️ Browse them all in the [live feature catalog](https://javanoviceprogrammer.github.io/Ngspice_OpenVAF_Enhancements/)** — every enhancement grouped into 19 feature areas across the compiler and the simulator, searchable, with each entry linking to its write-up.
 
@@ -722,6 +722,8 @@ bin\windows\intel\openvaf-r.exe
 > **Note:** Windows may show a SmartScreen warning on first run ("Windows protected your PC"). Click **More info → Run anyway**.
 
 > **Note:** `openvaf-r.exe` is a command-line tool. Run it from **Command Prompt** or **PowerShell**, not by double-clicking.
+
+> **Note:** `openvaf-r.exe` links each compiled model with MSVC's `link.exe`, which it finds through a Visual Studio installation. Compiling Verilog-A on Windows therefore needs Visual Studio or the free **Build Tools for Visual Studio** with the *Desktop development with C++* workload; `ngspice.exe` alone needs nothing. (Before Enhancement-769 every model failed to link there with `LNK1227: conflicting weak extern definition for 'osdi_io_iter_begin'`.)
 
 ---
 

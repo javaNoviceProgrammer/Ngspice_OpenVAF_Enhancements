@@ -1,0 +1,6 @@
+`include "disciplines.vams"
+// Enhancement-769: a one-resistor module for the Windows link checks
+module winres(p, n); inout p, n; electrical p, n;
+  parameter real r = 1k;
+  analog I(p,n) <+ V(p,n)/r;
+endmodule

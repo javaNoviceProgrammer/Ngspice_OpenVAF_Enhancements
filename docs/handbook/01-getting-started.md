@@ -33,8 +33,10 @@ CI builds both tools for five platforms and commits them under `bin/`:
 | Windows x86-64 | `bin/windows/intel/` |
 
 Each platform has small runtime prerequisites (X11/readline on Linux,
-XQuartz + Homebrew readline on macOS, nothing on Windows — the DLLs are
-bundled). The [Prebuilt Binaries section of the top-level
+XQuartz + Homebrew readline on macOS, nothing for `ngspice.exe` on Windows —
+the DLLs are bundled). `openvaf-r.exe` links each compiled model with MSVC's
+`link.exe`, so compiling Verilog-A on Windows needs Visual Studio or its Build
+Tools with the C++ workload ([E-769](../../enhancements_doc/Enhancement-769.md)). The [Prebuilt Binaries section of the top-level
 README](../../README.md#prebuilt-binaries) has the exact per-OS install
 commands and the notes for macOS Gatekeeper / Windows SmartScreen warnings.
 

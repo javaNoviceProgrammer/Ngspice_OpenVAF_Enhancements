@@ -296,8 +296,10 @@ jobs:
       # different path through a 5-pole fit and fails, because 3.14 changed how
       # mixed real and complex arithmetic rounds. numpy and matplotlib are the
       # only third-party modules a suite imports.
+      # A full version: setup-uv publishes no moving major tag after v7, and
+      # `@v10` failed every job at "Set up job" (unable to find version v10).
       - name: Python for the regression sweep
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.14"
           activate-environment: true
@@ -500,7 +502,7 @@ jobs:
       # openvaf-r.exe links each .osdi with MSVC's link.exe, which it finds
       # through the Visual Studio installation the runner image carries.
       - name: Python for the regression sweep
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.2.0   # a full version: no moving major tag after v7
         with:
           python-version: "3.14"
           activate-environment: true
