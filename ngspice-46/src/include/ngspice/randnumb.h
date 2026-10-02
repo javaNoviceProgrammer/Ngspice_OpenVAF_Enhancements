@@ -16,6 +16,11 @@ extern int poisson(double);
 extern double exprand(double);
 
 extern void TausSeed(void);
+/* Enhancement-772: the platform-independent rand()/srand() pair the seeding
+   uses (macOS libc's generator, reproduced exactly on every platform) */
+#define NG_RAND_MAX 2147483647
+extern void ng_srand(unsigned int seed);
+extern int ng_rand(void);
 extern unsigned int CombLCGTausInt(void);
 extern unsigned int CombLCGTausInt2(void);
 

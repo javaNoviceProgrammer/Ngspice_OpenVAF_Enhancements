@@ -875,6 +875,17 @@ int load_osdi(const char *path, bool force) {
     return file.num_entries;
   }
 
+  /* Enhancement-772: a forced reload whose copy the system loader answered
+   * with the object it already had (load_object_file returns an empty object
+   * for a known handle) changed nothing, yet reported "reloaded (0 devices)"
+   * and left the old model in place. Say so. */
+  if (reloading && file.num_entries == 0) {
+    fprintf(stderr, "Error(osdi): the reload copy of \"%s\" was resolved by the "
+            "system loader to the object already loaded; the reload did not "
+            "take effect\n", path);
+    return -1;
+  }
+
   if (!reloading) {
     osdi_loaded_paths = TREALLOC(char *, osdi_loaded_paths, osdi_num_loaded + 1);
     osdi_loaded_paths[osdi_num_loaded++] = copy(path);

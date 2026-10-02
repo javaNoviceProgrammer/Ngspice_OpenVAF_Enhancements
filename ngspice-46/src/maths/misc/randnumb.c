@@ -68,6 +68,42 @@ float  CombLCGTaus2(void);
 void rgauss(double* py1, double* py2);
 static bool seedinfo = FALSE;
 
+/* Enhancement-772: the seeding generator, the same on every platform.
+ *
+ * TausSeed() derives the eight Tausworthe/LCG states from the C library's
+ * rand() after srand(seed), so the whole stream -- every agauss, montecarlo
+ * sample and trnoise draw -- followed the C library. glibc's rand() (a TYPE_3
+ * additive generator), macOS's (Park-Miller) and the Windows runtime's (an LCG
+ * with RAND_MAX 32767) differ, and one seed gave three different Monte Carlo
+ * runs: a yield of 30/40 on macOS was 28/40 on Linux. ng_rand() is the macOS
+ * libc rand() itself -- the "minimal standard" generator x' = 16807 x mod
+ * (2^31 - 1), Schrage's factorisation, a zero seed replaced by 123459876 --
+ * written with fixed-width integers so that `long` being 32 bits on Windows
+ * changes nothing. It reproduces macOS's rand() draw for draw (13 million
+ * draws over seeds from 0 to 2^32 - 1 compared), so a seed's stream on macOS is
+ * unchanged, and Linux and Windows now draw the same one. */
+static uint64_t ng_rand_next = 1;
+
+void ng_srand(unsigned int seed)
+{
+    ng_rand_next = seed;
+}
+
+int ng_rand(void)
+{
+    int64_t hi, lo, x;
+
+    if (ng_rand_next == 0)
+        ng_rand_next = 123459876;
+    hi = (int64_t) (ng_rand_next / 127773);
+    lo = (int64_t) (ng_rand_next % 127773);
+    x = 16807 * lo - 2836 * hi;
+    if (x < 0)
+        x += 0x7fffffff;
+    ng_rand_next = (uint64_t) x;
+    return (int) (ng_rand_next % ((uint64_t) NG_RAND_MAX + 1));
+}
+
 
 /* Check if a seed has been set by the command 'set rndseed=value'
    in spinit, .spiceinit or in a .control section
@@ -82,7 +118,7 @@ void checkseed(void)
 /*   printf("Enter checkseed()\n"); */
    if (cp_getvar("rndseed", CP_NUM, &newseed, 0)) {
       if ((newseed > 0) && (oldseed != newseed)) {
-         srand((unsigned int)newseed);
+         ng_srand((unsigned int)newseed);
          TausSeed();
          if (oldseed > 0) /* no printout upon start-up */
              printf("Seed value for random number generator is set to %d\n", newseed);
@@ -103,17 +139,17 @@ void TausSeed(void)
 {    
    /* The Tausworthe initial states should be greater than 128.
       We restrict the values up to 32767. 
-      Here we use the standard random functions srand, called in main.c
-      upon ngspice startup or later in fcn checkseed(),
-      rand() and the maximum return value RAND_MAX*/
-   CombState1 = (unsigned int)((double)rand()/(double)RAND_MAX * 32638.) + 129;
-   CombState2 = (unsigned int)((double)rand()/(double)RAND_MAX * 32638.) + 129;
-   CombState3 = (unsigned int)((double)rand()/(double)RAND_MAX * 32638.) + 129;
-   CombState4 = (unsigned int)((double)rand()/(double)RAND_MAX * 32638.) + 129;
-   CombState5 = (unsigned int)((double)rand()/(double)RAND_MAX * 32638.) + 129;
-   CombState6 = (unsigned int)((double)rand()/(double)RAND_MAX * 32638.) + 129;
-   CombState7 = (unsigned int)((double)rand()/(double)RAND_MAX * 32638.) + 129;
-   CombState8 = (unsigned int)((double)rand()/(double)RAND_MAX * 32638.) + 129;
+      Here we use ng_srand(), called in main.c upon ngspice startup or
+      later in fcn checkseed(), ng_rand() and its maximum NG_RAND_MAX
+      (Enhancement-772: the same generator on every platform) */
+   CombState1 = (unsigned int)((double)ng_rand()/(double)NG_RAND_MAX * 32638.) + 129;
+   CombState2 = (unsigned int)((double)ng_rand()/(double)NG_RAND_MAX * 32638.) + 129;
+   CombState3 = (unsigned int)((double)ng_rand()/(double)NG_RAND_MAX * 32638.) + 129;
+   CombState4 = (unsigned int)((double)ng_rand()/(double)NG_RAND_MAX * 32638.) + 129;
+   CombState5 = (unsigned int)((double)ng_rand()/(double)NG_RAND_MAX * 32638.) + 129;
+   CombState6 = (unsigned int)((double)ng_rand()/(double)NG_RAND_MAX * 32638.) + 129;
+   CombState7 = (unsigned int)((double)ng_rand()/(double)NG_RAND_MAX * 32638.) + 129;
+   CombState8 = (unsigned int)((double)ng_rand()/(double)NG_RAND_MAX * 32638.) + 129;
 
 #ifdef HVDEBUG
    printf("\nTausworthe Double generator init states: %d, %d, %d, %d\n", 
@@ -315,7 +351,7 @@ com_sseed(wordlist *wl)
             newseed = getpid();
             cp_vset("rndseed", CP_NUM, &newseed);
         }
-        srand((unsigned int)newseed);
+        ng_srand((unsigned int)newseed);
         TausSeed();
     }
     /* Enhancement-497: `%d` stops at the first character it cannot use, so
@@ -338,7 +374,7 @@ com_sseed(wordlist *wl)
         return;
     }
     else {
-        srand((unsigned int)newseed);
+        ng_srand((unsigned int)newseed);
         TausSeed();
         cp_vset("rndseed", CP_NUM, &newseed);
     }
@@ -875,7 +911,7 @@ void mc_wcd_shift(const double *u, int n, unsigned seed)
     lhs_seed = seed;
     /* seed the global PRNG the same way SSS does, so a given seed reproduces
      * the shifted sample sequence bit-for-bit */
-    srand(seed);
+    ng_srand(seed);
     TausSeed();
     sss_logw = 0.0;
 }
@@ -916,7 +952,7 @@ void mc_sss_config(int nsamples, double lambda, unsigned seed)
     sss_logw = 0.0;
     /* SSS draws through gauss1() (the global PRNG); seed it so a given seed
      * reproduces the sample sequence bit-for-bit. */
-    srand(seed);
+    ng_srand(seed);
     TausSeed();
 }
 

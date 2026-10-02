@@ -52,7 +52,11 @@ RESULT_RE = re.compile(
 # -- benchmark (OSDI against built-in), nested_cond (compile time against
 # nesting depth), reusesetup ([26], the setup reuse against a rebuild). Run
 # alongside seven other suites the ratio is noise; they run alone, last.
-SERIAL = {"benchmark", "nested_cond", "reusesetup"}
+SERIAL = {"benchmark", "nested_cond", "reusesetup",
+          # Enhancement-772: a scaling ratio (abstolperf) and output-path
+          # timings (progressbar) the first Linux CI run pushed over their
+          # bounds while sharing the runner's cores
+          "abstolperf", "progressbar"}
 
 
 def stem_of(path):

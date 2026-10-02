@@ -114,7 +114,10 @@ def main():
     compile_va("_lrv2.va", "_lrv2.osdi")
     out = run("* reload\n.control\npre_osdi _lr.osdi\n"
               "source _deck0.cir\nop\nprint -i(vin)\n"
-              "shell cp _lrv2.osdi _lr.osdi\n"
+              # replaced by a rename, as a compiler writes its output: a `cp`
+              # over the mapped library rewrites the pages it runs on Linux
+              # (two lines: ngspice's lexer splits `&&` into `& &`)
+              "shell cp _lrv2.osdi _lr.osdi.new\nshell mv -f _lr.osdi.new _lr.osdi\n"
               "pre_osdi _lr.osdi\nremcirc\nsource _deck0.cir\nop\n"
               "print -i(vin)\n.endc\n.end\n", "reload")
     check("skip note points at the -f reload flag (E-229)",

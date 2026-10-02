@@ -1387,7 +1387,7 @@ int main(int argc, char **argv)
         /* Enhancement-374: initw() no longer seeds itself, so the
          * per-run-random default is established here. `setseed` later
          * overrides it and rebuilds the pools. */
-        srand((unsigned int) getpid());
+        ng_srand((unsigned int) getpid());   /* Enhancement-772 */
         initw();
 #endif
         /* write out the ngspice start command */

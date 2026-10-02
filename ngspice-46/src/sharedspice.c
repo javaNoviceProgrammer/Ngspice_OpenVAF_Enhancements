@@ -1065,7 +1065,7 @@ ngSpice_Init(SendChar* printfcn, SendStat* statusfcn, ControlledExit* ngspiceexi
 #elif defined (WaGauss)
         /* Enhancement-374: initw() no longer seeds itself; establish the
          * per-run-random default here (setseed overrides it later). */
-        srand((unsigned int) getpid());
+        ng_srand((unsigned int) getpid());   /* Enhancement-772 */
         initw();
 #endif
 

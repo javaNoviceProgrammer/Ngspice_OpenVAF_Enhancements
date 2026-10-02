@@ -137,9 +137,10 @@ cx_rnd_i(double x)
 
 /* random integers drawn from a uniform distribution
  *   data in: integer numbers, their absolut values are used,
- *            maximum is RAND_MAX (32767)
+ *            maximum is NG_RAND_MAX (2^31 - 1)
  *   data out: random integers in interval [0, data[i][
- *             standard library function rand() is used
+ *             Enhancement-772: ng_rand(), the seeding generator, which is
+ *             the same on every platform (the C library's rand() was not)
  */
 
 void *
@@ -158,8 +159,8 @@ cx_rnd(void *data, short int type, int length, int *newlength, short int *newtyp
             int j, k;
             j = cx_rnd_i(realpart(cc[i]));   /* Enhancement-276 */
             k = cx_rnd_i(imagpart(cc[i]));
-            realpart(c[i]) = j ? rand() % j : 0;
-            imagpart(c[i]) = k ? rand() % k : 0;
+            realpart(c[i]) = j ? ng_rand() % j : 0;
+            imagpart(c[i]) = k ? ng_rand() % k : 0;
         }
         return ((void *) c);
     } else {
@@ -172,7 +173,7 @@ cx_rnd(void *data, short int type, int length, int *newlength, short int *newtyp
         for (i = 0; i < length; i++) {
             int j;
             j = cx_rnd_i(dd[i]);             /* Enhancement-276 */
-            d[i] = j ? rand() % j : 0;
+            d[i] = j ? ng_rand() % j : 0;
         }
         return ((void *) d);
     }

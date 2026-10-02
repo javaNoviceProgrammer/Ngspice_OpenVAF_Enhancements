@@ -2494,7 +2494,7 @@ Spice_Init(Tcl_Interp *interp)
         /* program name*/
         cp_program = ft_sim->simulator;
 
-        srand((unsigned int) getpid());
+        ng_srand((unsigned int) getpid());   /* Enhancement-772 */
         TausSeed();
 
         /*parameter fetcher, used in show*/

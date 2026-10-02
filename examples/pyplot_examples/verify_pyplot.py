@@ -450,7 +450,16 @@ pydir = os.path.join(HERE, "py dir")
 os.makedirs(pydir, exist_ok=True)
 e547_dirs.append(pydir)
 spaced_py = os.path.join(pydir, "python3")
-if real_py and not os.path.exists(spaced_py):
+if os.name != "nt" and not os.path.exists(spaced_py):
+    # A script that runs this suite's own interpreter, not a link to the first
+    # python3 on PATH: a virtual environment's interpreter started through a
+    # link outside the environment does not find it (no pyvenv.cfg beside the
+    # link) and runs without its matplotlib -- as on the CI runners, whose
+    # python3 is a uv venv's.
+    with open(spaced_py, "w") as f:
+        f.write('#!/bin/sh\nexec "%s" "$@"\n' % sys.executable)
+    os.chmod(spaced_py, 0o755)
+elif real_py and not os.path.exists(spaced_py):
     os.symlink(real_py, spaced_py)
 with open(deck, "w") as f:
     f.write(statusdeck.format(extra=f"setcs pyplot_python=\"{spaced_py}\"", name="status3"))

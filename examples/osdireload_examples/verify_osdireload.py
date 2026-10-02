@@ -49,7 +49,15 @@ from _setup import VAF as OPENVAF, NG as NGSPICE
 
 checks = passed = 0
 D = tempfile.mkdtemp(prefix="osdireload229_")
-CP = "copy /Y" if os.name == "nt" else "cp -f"
+def replace_cmd(src, dst):
+    """The `shell` line that puts SRC in DST's place. On POSIX by a rename, as
+    a compiler or linker writes its output: `cp` over a library ngspice has
+    mapped rewrites the pages it is running (Linux shares them with the file),
+    and the first Linux CI run lost the rest of the session to it."""
+    if os.name == "nt":
+        return 'shell copy /Y "%s" "%s"' % (src, dst)
+    # two `shell` lines: ngspice's lexer splits `&&` into `& &`
+    return 'shell cp -f "%s" "%s.new"\nshell mv -f "%s.new" "%s"' % (src, dst, dst, dst)
 
 
 def check(label, ok, detail=""):
@@ -91,7 +99,7 @@ with open(os.path.join(D, "run.cir"), "w") as f:
 script = "\n".join([
     "osdi m.osdi",
     "source run.cir", "op", "print i(v1)",
-    "shell %s mv2.osdi m.osdi" % CP,
+    replace_cmd("mv2.osdi", "m.osdi"),
     "osdi m.osdi",            # plain: already loaded -> skipped
     "osdi -f m.osdi",         # forced: reloaded
     "op",                     # hunt F16: the circuit built against v1 is refused
@@ -128,7 +136,7 @@ with open(os.path.join(D, "mc.cir"), "w") as f:
     f.write("* osdi reload mc\nN1 a 0 rmod\nV1 a 0 1\n.model rmod vares\n.option osdimc mcseed=3\n.end\n")
 script = "\n".join([
     "osdi m.osdi", "source mc.cir", "op",
-    "shell %s mv2.osdi m.osdi" % CP, "osdi -f m.osdi",
+    replace_cmd("mv2.osdi", "m.osdi"), "osdi -f m.osdi",
     "op",
     "montecarlo 3 -seed 1 -analysis op -expr rr=i(v1)",
     "highsigma 3 -analysis op -metric i(v1) -max 0 -seed 1",
@@ -169,7 +177,7 @@ for label, want, cmds in (
          ["osdi 'dir with space/va res.osdi'", "source run.cir", "op", "print i(v1)"]),
         ("...an absolute double-quoted path, then recompiled in place and `-f` on the same quoted path: -0.5 mA", -0.5e-3,
          ['osdi "%s"' % os.path.join(SP, "va res.osdi"), "source run.cir", "op", "print i(v1)",
-          'shell %s "%s" "%s"' % (CP, os.path.join(SP, "va res2.osdi"), os.path.join(SP, "va res.osdi")),
+          replace_cmd(os.path.join(SP, "va res2.osdi"), os.path.join(SP, "va res.osdi")),
           'osdi -f "%s"' % os.path.join(SP, "va res.osdi"), "reset", "op", "print i(v1)"]),
         ("...`-va` with a double-quoted source in a spaced directory compiles and loads (2k: -0.5 mA)", -0.5e-3,
          ['osdi -va "dir with space/va res.va"', "source run.cir", "op", "print i(v1)"])):

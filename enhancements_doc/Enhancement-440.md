@@ -215,3 +215,5 @@ which had appeared as a failure in any test I ran, because both had happened
 inside runs I had already scored as passing.
 
 **Update ([E-770](Enhancement-770.md)).** The say-it-once memo was reset whenever the `CKTcircuit` address changed, so montecarlo, which rebuilds the circuit for every sample, repeated the warning or not depending on where the allocator put the rebuilt one (2, 3 or 4 times in identical runs). It is keyed on a front-end circuit serial that a rebuild from the kept deck (`mc_source`, `reset`) keeps and a newly sourced deck replaces: a montecarlo reports once, every time.
+
+**Update ([E-772](Enhancement-772.md)).** On Linux an overflowing B-source expression never reached the warning above: glibc no longer defines `HUGE`, ngspice's fallback made it infinity, and `PTeval` refuses a result equal to `HUGE` as "out of range", so `1e300*1e300` stopped the analysis there. `HUGE` is `FLT_MAX` on every platform now, as macOS's `<math.h>` has it, and the overflow is evaluated and warned about everywhere.

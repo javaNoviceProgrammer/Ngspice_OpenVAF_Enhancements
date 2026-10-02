@@ -78,12 +78,20 @@ check("[E-452] ...and does NOT panic (exit 101 + crash report)", rc != 101, f"rc
 check("[E-452] ...and the message names the problem",
       "does not name a file" in out, out.strip().splitlines()[0][:60] if out.strip() else "")
 
-rc, out, _ = run(["SRC", "-o", "/_e452_cannot_write.osdi"], "unwrit")
-check("[E-452] an unwritable output directory is refused", rc != 0, f"rc={rc}")
-check("[E-452] ...and does NOT panic", rc != 101, f"rc={rc}")
-check("[E-452] ...and the message names the directory",
-      "cannot write to the output directory" in out,
-      out.strip().splitlines()[0][:60] if out.strip() else "")
+# Root may write anywhere (the Linux CI job runs as root in its container): there
+# "/" is a writable directory, the compile would succeed and leave a file in it.
+if hasattr(os, "geteuid") and os.geteuid() == 0:
+    for label in ("[E-452] an unwritable output directory is refused",
+                  "[E-452] ...and does NOT panic",
+                  "[E-452] ...and the message names the directory"):
+        check(label, True, "skipped: running as root, for whom / is writable")
+else:
+    rc, out, _ = run(["SRC", "-o", "/_e452_cannot_write.osdi"], "unwrit")
+    check("[E-452] an unwritable output directory is refused", rc != 0, f"rc={rc}")
+    check("[E-452] ...and does NOT panic", rc != 101, f"rc={rc}")
+    check("[E-452] ...and the message names the directory",
+          "cannot write to the output directory" in out,
+          out.strip().splitlines()[0][:60] if out.strip() else "")
 
 rc, out, _ = run(["SRC", "-o", "_op_nodir/x.osdi"], "nodir")
 check("[E-452] a non-existent output directory is refused", rc != 0, f"rc={rc}")

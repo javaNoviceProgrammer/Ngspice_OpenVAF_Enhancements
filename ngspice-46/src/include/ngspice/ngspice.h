@@ -228,10 +228,17 @@ extern FILE *newfopen(const char *fn, const char* md);
 #   define strrchr rindex
 #endif
 
-/* added for CYGWIN */
-#ifndef HUGE
-#define HUGE HUGE_VAL
-#endif
+/* Enhancement-772: one HUGE on every platform. ngspice uses it as the
+ * "out of range" flag of the expression functions (PTeval refuses a result
+ * equal to it), as the start of a minimum search, and for db(0) = 20*-log(HUGE).
+ * macOS's <math.h> defines it as MAXFLOAT; glibc dropped the SVID macro in
+ * 2.27, and the old fallback here made it HUGE_VAL, infinity -- so on Linux
+ * every expression that merely overflowed (`1e300*1e300` in a B-source) was
+ * refused as "out of range" and stopped the analysis, where macOS evaluated
+ * it to infinity and warned (Enhancement-440), and db(0) was -inf instead of
+ * -1774. It is now FLT_MAX everywhere, macOS's value. */
+#undef HUGE
+#define HUGE ((double) 3.40282347e+38F)
 
 void findtok_noparen(char **p_str, char **p_token, char **p_token_end);
 extern char *gettok_noparens(char **s);

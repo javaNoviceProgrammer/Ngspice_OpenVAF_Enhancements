@@ -342,7 +342,9 @@ if rc == 0:
     c_it, c_n = load_per_iter("N1 in out m1\n.model m1 optprobe", "optt")
     b_it, b_n = load_per_iter("R1 in out 1k", "optb")
     check("[speed] one compiled instance's load per Newton iteration is under 4x a built-in resistor's (was 8x: ~0.6 us of bookkeeping against 0.08 us)",
-          c_it is not None and b_it is not None and b_it > 0 and c_it < 4.0 * b_it and c_it < 1e-6,
+          # the ratio only: an absolute cap held on one machine (1.5 us/iter on
+          # the Linux CI runner, against a built-in resistor's 0.57 there)
+          c_it is not None and b_it is not None and b_it > 0 and c_it < 4.0 * b_it,
           f"compiled {c_it * 1e6:.3f} us/iter over {c_n}, built-in {b_it * 1e6:.3f} us/iter over {b_n}" if (c_it and b_it) else "no timing")
 
 print(f"\n{'ALL PASS' if checks == passed else 'FAILURES'}: {passed}/{checks} passed")

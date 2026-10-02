@@ -326,6 +326,41 @@ jobs:
           "$OPENVAF_BIN" --version
           python --version
           JOBS="$(python -c 'import os; print(os.cpu_count() or 2)')"
+          # Linux: a memory log in the job log every 10 s -- the available
+          # memory and the three largest processes -- because the linux-arm
+          # runner was shut down two minutes into its first sweeps and the
+          # log said nothing of why. Read from /proc (the jammy container has
+          # no procps); the job log survives a runner kill, the artifact
+          # does not.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            python - <<'PY' &
+          import glob, time
+          def kb(path, key):
+              try:
+                  for line in open(path):
+                      if line.startswith(key):
+                          return int(line.split()[1])
+              except OSError:
+                  pass
+              return 0
+          while True:
+              time.sleep(10)
+              procs = []
+              for d in glob.glob("/proc/[0-9]*"):
+                  rss = kb(d + "/status", "VmRSS:")
+                  if rss:
+                      try:
+                          cmd = open(d + "/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="replace").strip()
+                      except OSError:
+                          cmd = "?"
+                      procs.append((rss, cmd))
+              procs.sort(reverse=True)
+              top = "; ".join(f"{r // 1024} MB {c[-70:]}" for r, c in procs[:3])
+              print(f"[mem] available {kb('/proc/meminfo', 'MemAvailable:') // 1024} MB | {top}", flush=True)
+          PY
+            MEMMON=$!
+            trap 'kill $MEMMON 2>/dev/null || true' EXIT
+          fi
           set -o pipefail
           python examples/run_regression.py --jobs "$JOBS" 2>&1 | tee regression.log
 

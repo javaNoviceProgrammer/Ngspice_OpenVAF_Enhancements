@@ -21,8 +21,10 @@ only the algorithm differing:
     pre-fix  (quadratic)   8000 -> 16000 devices : 3.52x
     post-fix (linear)      8000 -> 16000 devices : 1.85x - 1.98x  (both solvers)
 
-so LINEAR_RATIO_MAX sits at 2.8: ~41% clear of the fixed measurement and ~20%
-below the broken one.
+so LINEAR_RATIO_MAX sits at 3.0: ~50% clear of the fixed measurement and ~15%
+below the broken one (2.8 until the first Linux CI run measured 2.88 with seven
+other suites running beside it; the suite now runs alone, after the parallel
+batch).
 
   [1] the fixture model compiles
   [2] the nature-abstol path is ACTIVE on this deck -- nodes really do receive a
@@ -47,7 +49,7 @@ from _setup import check_both_solvers as _check_both_solvers; _check_both_solver
 # circuit sizes for the doubling; both are cheap once the cost is linear
 SMALL, LARGE = 8000, 16000
 REPEATS = 5                 # the MINIMUM of these is the estimate: robust to load spikes
-LINEAR_RATIO_MAX = 2.8      # see the note above
+LINEAR_RATIO_MAX = 3.0      # see the note above
 SANITY_SECONDS = 1.5        # a baseline slower than this means the machine is too
                             # busy to time anything; report rather than fail
 

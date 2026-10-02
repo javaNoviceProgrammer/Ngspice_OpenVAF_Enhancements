@@ -92,3 +92,5 @@ ngspice frontend + device registry only, four files (`frontend/com_dl.c`,
 regression: 188/188.
 
 **Update ([E-770](Enhancement-770.md)).** The staged copy is now `ngspice_osdi_reload_<pid>_<time>_<counter>.osdi`. Without the process id, two ngspice processes reloading within the same second chose the same file in TMPDIR, and one copied over, or removed, the copy the other was about to map.
+
+**Update ([E-772](Enhancement-772.md)).** A forced reload whose copy the system loader answers with the object it already has (an empty object for a known handle) is an error now; it used to report "reloaded (0 devices)" and keep the old model. Replace a loaded `.osdi` by writing a new file and renaming it, as the compiler does: on Linux a `cp` over it rewrites the pages the running object executes.

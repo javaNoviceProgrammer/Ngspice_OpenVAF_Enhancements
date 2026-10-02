@@ -32,8 +32,9 @@ the algorithm differing:
 | pre-fix (quadratic) | **3.53x** |
 | post-fix (linear) | **1.77x – 1.98x** (both solvers) |
 
-`LINEAR_RATIO_MAX = 2.8` sits ~41% clear of the fixed measurement and ~20% below
-the broken one. The estimate is the **minimum** of five runs, not the mean — the
+`LINEAR_RATIO_MAX = 3.0` sits ~50% clear of the fixed measurement and ~15% below
+the broken one (2.8 until the first Linux CI run measured 2.88 beside seven other
+suites; the sweep now runs this suite alone, Enhancement-772). The estimate is the **minimum** of five runs, not the mean — the
 run least disturbed by whatever else the machine was doing — and if the baseline
 itself exceeds 1.5 s the ratio is reported as un-timeable rather than failed,
 since at that point it says more about machine load than about the code.

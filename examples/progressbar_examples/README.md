@@ -21,4 +21,7 @@ to grow, the variable is re-read when the variable lists change, and the throttl
 the wall clock through `seconds()`. The checks: a 1.2 M-point built-in RC transient
 spends under 3× the timed phases (load, factor, solve, trunc) outside them and under
 1.5 µs per accepted point (the E-760 binary: 4.6× and 1.8 µs), and the progress line is
-drawn between 2 and 12 times over the run.
+drawn at least twice and at most once per quarter second of the run. On a CI runner
+(`CI` set) the absolute time per point is reported, not asserted -- it holds only on
+the machine it was measured on; the 3× ratio is what catches the cost returning
+(Enhancement-772). The suite runs alone, after the sweep's parallel batch.

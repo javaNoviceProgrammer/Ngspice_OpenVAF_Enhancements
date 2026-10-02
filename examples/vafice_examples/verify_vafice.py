@@ -163,13 +163,18 @@ def main():
           (out.strip().splitlines() or ["(no output)"])[0][:70])
 
     # read-only TMPDIR fails through a different errno and must also be named
-    env = dict(os.environ, RAYON_NUM_THREADS="1", TMPDIR="/")
-    r = subprocess.run([OPENVAF, src, "-o", os.path.join(d, "m.osdi")],
-                       capture_output=True, text=True, env=env, timeout=600)
-    out = r.stdout + r.stderr
-    check("a read-only TMPDIR is reported by name too",
-          "TMPDIR" in out and "uncaught exception" not in out,
-          (out.strip().splitlines() or ["(no output)"])[0][:70])
+    # (root may write to "/", as in the Linux CI container: nothing to report)
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        check("a read-only TMPDIR is reported by name too", True,
+              "skipped: running as root, for whom / is writable")
+    else:
+        env = dict(os.environ, RAYON_NUM_THREADS="1", TMPDIR="/")
+        r = subprocess.run([OPENVAF, src, "-o", os.path.join(d, "m.osdi")],
+                           capture_output=True, text=True, env=env, timeout=600)
+        out = r.stdout + r.stderr
+        check("a read-only TMPDIR is reported by name too",
+              "TMPDIR" in out and "uncaught exception" not in out,
+              (out.strip().splitlines() or ["(no output)"])[0][:70])
 
     # ======================= ACCEPT HALF ====================================
     # The parser change touches every parenthesised expression in every model,
