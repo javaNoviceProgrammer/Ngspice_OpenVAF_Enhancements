@@ -71,6 +71,10 @@ struct circ {
        variable a user's `set temp` overwrites; `unset temp` gives it back. */
     bool ci_deck_temp_given;
     double ci_deck_temp;
+    /* Enhancement-770: a number no other circuit of this session has had.
+       Code that remembers "this circuit" keys on it, never on the address of
+       the circuit or of its CKTcircuit, which the allocator hands out again. */
+    unsigned long ci_serial;
 
     int ci_dicos;               /* index to the numparam dicoS structure
                                    for this circuit */

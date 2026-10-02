@@ -24,6 +24,10 @@ void com_run(wordlist *wl);
 void com_sp(wordlist* wl);
 #endif
 
+/* Enhancement-770: unlink a rawfile a run wrote nothing to, if it is a
+   regular file (never a device such as /dev/null) */
+void ft_drop_empty_rawfile(const char *path);
+
 extern FILE *rawfileFp;
 extern bool rawfileBinary;
 extern char *last_used_rawfile;

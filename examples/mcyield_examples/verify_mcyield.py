@@ -91,7 +91,7 @@ def yields(out):
 
 
 def val(out, name):
-    m = re.findall(rf"^{re.escape(name)} = ([-+.\deE]+|nan)", out, re.M)
+    m = re.findall(rf"^{re.escape(name)} = ([-+]?nan|[-+.\deE]+)", out, re.M)  # glibc: -nan on x86
     return [float(x) for x in m]
 
 

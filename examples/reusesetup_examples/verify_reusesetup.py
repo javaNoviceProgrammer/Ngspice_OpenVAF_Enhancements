@@ -250,7 +250,7 @@ o, _ = run(deck(CS, "sweep @cgm[rd] lin 5 -2k 2k -output v(out)\nprint v(out)",
                 dbg=True), "fl")
 g = [r[0] for r in rows(o)]
 check("[10b] the forbidden points are NaN and the legal ones keep real values",
-      len(g) == 5 and g[0] == "nan" and g[1] == "nan"
+      len(g) == 5 and g[0].lstrip("-") == "nan" and g[1].lstrip("-") == "nan"  # glibc: -nan on x86
       and all(abs(float(a) - b) < 1e-6 for a, b in
               zip(g[2:], (0.5, 1000.0 / 3000.0, 0.25))), f"{g}")
 check("[10c] ...because reuse is declined after a point that failed",

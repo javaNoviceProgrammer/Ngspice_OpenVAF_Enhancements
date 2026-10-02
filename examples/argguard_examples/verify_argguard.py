@@ -170,7 +170,9 @@ check("[E-440] and pwr(0,-1) behaves the same way (the sibling it now matches)",
 # an expression that merely OVERFLOWS is reported but deliberately not clamped
 rc, out, _ = run(BS.format("1e300*1e300"), "op\nprint v(nb)", "ovf")
 check("[E-440] an overflow to infinity is reported instead of passing silently",
-      re.search(r"(?i)evaluated to (infinity|nan)", out) is not None, "")
+      re.search(r"(?i)evaluated to (infinity|nan)", out) is not None,
+      " | ".join(l.strip() for l in out.splitlines()
+                 if re.search(r"(?i)b1|v\(nb\)|warn|error|inf|nan", l))[:300])
 # CONTROLS: ordinary powers must be untouched
 for expr, want in (("pow(2,3)", 8.0), ("pow(0,2)", 0.0), ("pow(0.5,-1)", 2.0),
                    ("1/0", 1e32)):

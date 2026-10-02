@@ -30,13 +30,23 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from _setup import NG as NGSPICE
+from _setup import NG as NGSPICE, VAF as OPENVAF
 from _setup import check_both_solvers as _check_both_solvers
 _check_both_solvers(__file__)
 
 SCRATCH = tempfile.mkdtemp(prefix="reduce_verify_")
-shutil.copy(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                         "rfanalyses_examples", "rf_blocks.osdi"), SCRATCH)
+# The RF blocks are compiled here, from the rfanalyses suite's source: the
+# rf_blocks.osdi beside it is that suite's build product, ignored by git, so a
+# fresh checkout (a CI runner) has none, and in a parallel sweep the other suite
+# may be rewriting it.
+_cr = subprocess.run([OPENVAF, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                            "rfanalyses_examples", "rf_blocks.va"),
+                      "-o", os.path.join(SCRATCH, "rf_blocks.osdi")],
+                     capture_output=True, text=True)
+if _cr.returncode != 0:
+    print("  [FAIL] rf_blocks.va compiles -- " + (_cr.stdout + _cr.stderr).strip()[-300:])
+    shutil.rmtree(SCRATCH, ignore_errors=True)
+    sys.exit(1)
 _fail = 0
 
 
@@ -186,5 +196,6 @@ bn, brn = (int(mb.group(1)), int(mb.group(2))) if mb else (0, 0)
 check("[6] scales past the old ~2500-node dense cap (sparse min-degree)",
       bn > 5000 and 0 < brn < bn, f"{bn} nodes -> {brn} (dense build capped at 2500)")
 
+shutil.rmtree(SCRATCH, ignore_errors=True)
 print(f"\n{'ALL PASS' if _fail == 0 else 'FAILURES'}: {_fail} failed check(s)")
 sys.exit(0 if _fail == 0 else 1)

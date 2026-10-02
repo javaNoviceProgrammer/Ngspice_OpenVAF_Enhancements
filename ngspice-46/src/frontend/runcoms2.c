@@ -153,7 +153,7 @@ com_resume(wordlist *wl)
     if (rawfileFp) {
         if (ftell(rawfileFp) == 0) {
             (void) fclose(rawfileFp);
-            (void) unlink(last_used_rawfile);
+            ft_drop_empty_rawfile(last_used_rawfile);
         } else {
             (void) fclose(rawfileFp);
         }

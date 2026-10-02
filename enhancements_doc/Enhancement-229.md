@@ -90,3 +90,5 @@ ngspice frontend + device registry only, four files (`frontend/com_dl.c`,
 `frontend/commands.c` help text, `spicelib/devices/dev.c`,
 `spicelib/devices/dev.h`); no solver, analysis, or compiler change. Full
 regression: 188/188.
+
+**Update ([E-770](Enhancement-770.md)).** The staged copy is now `ngspice_osdi_reload_<pid>_<time>_<counter>.osdi`. Without the process id, two ngspice processes reloading within the same second chose the same file in TMPDIR, and one copied over, or removed, the copy the other was about to map.

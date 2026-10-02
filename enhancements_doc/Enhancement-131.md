@@ -128,3 +128,5 @@ devices, Sparse solver) across linear, breakpoint-driven, nonlinear and OSDI
 circuits, including a fresh process. Natural follow-ups: KLU support (rebuild the
 factorization on restore), checkpointing other analyses, an architecture-portable
 file format, and a periodic auto-checkpoint option during a long run.
+
+**Update ([E-770](Enhancement-770.md)).** `savestate` was missing from the deck reader's list of commands whose arguments keep their case (`loadstate` is covered by `load`), so a checkpoint path written in a deck's `.control` block was lowercased: the same file on a case-insensitive macOS volume, a missing directory on Linux. It keeps its case now.

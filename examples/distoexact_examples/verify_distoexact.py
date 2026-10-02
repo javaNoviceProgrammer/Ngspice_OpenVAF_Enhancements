@@ -108,11 +108,17 @@ if ok:
     # disto output scales EXACTLY as A^2 (HD2) and A^3 (HD3): DISTOF1 applied exactly
     scale2 = abs(dA1[0] / dA4[0] - 100.0) / 100.0        # (1e-3/1e-4)^2 = 100
     scale3 = abs(dA1[1] / dA4[1] - 1000.0) / 1000.0      # (1e-3/1e-4)^3 = 1000
-    ok = (r2_A4 < 1e-5 and r3_A4 < 5e-5 and r2_A4 < r2_A1
+    # HD3 at A=1e-4 is 6.1e-13 V on a 0.55 V bias: HB's own double-precision
+    # rounding is ~1e-4 of it. An arm64 build (fused multiply-add) lands at
+    # 4.0e-6 and an x86-64 build at 4.9e-5, with the same .disto value to 11
+    # digits (the first Linux CI run failed this check at 5e-5) -- the bound is
+    # HB's noise floor; .disto's own exactness is the A^n scaling above.
+    ok = (r2_A4 < 1e-5 and r3_A4 < 2e-4 and r2_A4 < r2_A1
           and scale2 < 1e-6 and scale3 < 1e-6)
 check("[1] diode HD2/HD3 == HB (A->0), HB->disto convergence ~A^2, exact A^n scaling",
       ok, (f"(HD2 rel {r2_A4:.1e}@1e-4 vs {r2_A1:.1e}@1e-3; HD3 rel {r3_A4:.1e}; "
-           f"A-scale {max(scale2, scale3):.1e})") if ok else "(parse/tol fail)")
+           f"A-scale {max(scale2, scale3):.1e})") if ok else
+      f"(parse/tol fail: disto {dA1} {dA4}, hb {hA1} {hA4})")
 
 # ---------- [2] two-tone IM3 (2f1-f2) vs QPSS-HB ----------
 f1, f2, R2 = 1.0e9, 1.3e9, 50.0

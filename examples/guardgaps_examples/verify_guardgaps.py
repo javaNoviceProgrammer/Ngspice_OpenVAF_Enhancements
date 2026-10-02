@@ -227,13 +227,14 @@ SW = ("gg\nV1 in 0 dc 1\nRs in nb {rs}\nN1 nb 0 mo\n.model mo gapres n=1 r=1k\n"
       "wrdata _gg_sw.dat vo\n.endc\n.end\n")
 rc, out = run(SW.format(rs="1k"), "sweep")
 rows = re.findall(r"^\s*\d+\s+(\S+)", out, re.M)
-nans = [r for r in rows if r.lower().startswith("nan")]
+# a NaN may print signed (glibc: -nan for the x86 default NaN)
+nans = [r for r in rows if r.lower().lstrip("-").startswith("nan")]
 check("[E-445] the sweep still runs and reports the failures",
       rc == 0 and "did not converge" in out, f"rc={rc}")
 check("[E-445] the 3 forbidden points are NaN, not a value",
       len(nans) == 3, f"{rows}")
 check("[E-445] ...and the 2 legal points keep real values",
-      len(rows) == 5 and not rows[3].lower().startswith("nan")
+      len(rows) == 5 and not rows[3].lower().lstrip("-").startswith("nan")
       and abs(float(rows[3]) - 0.5) < 1e-6, f"{rows}")
 try:
     dat = open(os.path.join(HERE, "_gg_sw.dat")).read()
@@ -246,7 +247,7 @@ rc, out = run(SW.format(rs="250"), "sweep2")
 rows2 = re.findall(r"^\s*\d+\s+(\S+)", out, re.M)
 check("[E-445] a DIFFERENT prior operating point gives the same NaNs "
       "(the stale value is gone)",
-      len([r for r in rows2 if r.lower().startswith("nan")]) == 3, f"{rows2}")
+      len([r for r in rows2 if r.lower().lstrip("-").startswith("nan")]) == 3, f"{rows2}")
 
 # ---------------------------------------------------- autobus token guards ---
 print("\n`.option autobus` refuses a token that cannot carry an index")

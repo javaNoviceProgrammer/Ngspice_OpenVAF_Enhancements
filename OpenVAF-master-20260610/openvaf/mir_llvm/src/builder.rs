@@ -183,6 +183,33 @@ impl<'ll> BuilderVal<'ll> {
     }
 }
 
+/// Enhancement-771: LLVM's `select`, with a constant condition resolved here.
+///
+/// E-579 made the setup functions branchless -- one `select` per parameter
+/// (given ? value : default) in one straight-line block -- and a module that
+/// large is built at -O0, where no pass folds anything. A localparam is never
+/// given, so a 20 000-element localparam array became 20 000
+/// `select i1 false, double %value, double 1.0` in one block. On arm64 each is
+/// one `fcsel`; x86 has no select of a double, and every one became a
+/// CMOV_FR64 pseudo whose expansion splits the block and moves the rest of it,
+/// so the module took 30 s to code-generate on x86-64 (the Linux CI runner
+/// took 36.6 s for the whole compile) against 0.24 s on arm64. A constant
+/// condition now picks its operand, as LLVM's own folder would at -O1: the
+/// same module takes 0.11 s on x86-64.
+pub(crate) unsafe fn build_select(
+    llbuilder: &mut llvm_sys::LLVMBuilder,
+    cond: *mut llvm_sys::LLVMValue,
+    then_val: *mut llvm_sys::LLVMValue,
+    else_val: *mut llvm_sys::LLVMValue,
+) -> *mut llvm_sys::LLVMValue {
+    use llvm_sys::core::{LLVMBuildSelect, LLVMConstIntGetZExtValue, LLVMIsAConstantInt};
+
+    if !LLVMIsAConstantInt(cond).is_null() {
+        return if LLVMConstIntGetZExtValue(cond) != 0 { then_val } else { else_val };
+    }
+    LLVMBuildSelect(llbuilder, cond, then_val, else_val, UNNAMED)
+}
+
 // All Builders must have an llfn associated with them
 #[must_use]
 pub struct Builder<'a, 'cx, 'll> {
@@ -363,12 +390,11 @@ impl<'ll> Builder<'_, '_, 'll> {
         then_val: &'ll llvm_sys::LLVMValue,
         else_val: &'ll llvm_sys::LLVMValue,
     ) -> &'ll llvm_sys::LLVMValue {
-        let result = llvm_sys::core::LLVMBuildSelect(
+        let result = build_select(
             self.llbuilder,
             NonNull::from(cond).as_ptr(),
             NonNull::from(then_val).as_ptr(),
             NonNull::from(else_val).as_ptr(),
-            UNNAMED,
         );
         &*(result as *const _)
     }
@@ -775,7 +801,7 @@ impl<'ll> Builder<'_, '_, 'll> {
                 let cond = NonNull::from(self.values[args[0]].get(self)).as_ptr();
                 let then_val = NonNull::from(self.values[args[1]].get(self)).as_ptr();
                 let else_val = NonNull::from(self.values[args[2]].get(self)).as_ptr();
-                llvm_sys::core::LLVMBuildSelect(self.llbuilder, cond, then_val, else_val, UNNAMED)
+                build_select(self.llbuilder, cond, then_val, else_val)
             }
             Opcode::Inot | Opcode::Bnot => {
                 let arg = NonNull::from(self.values[args[0]].get(self)).as_ptr();

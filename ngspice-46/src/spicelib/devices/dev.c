@@ -804,8 +804,13 @@ static char *osdi_stage_reload_copy(const char *path) {
   if (!tmpdir || !*tmpdir) tmpdir = getenv("TEMP");
   if (!tmpdir || !*tmpdir) tmpdir = "/tmp";
 
-  char *dst = tprintf("%s/ngspice_osdi_reload_%ld_%u.osdi",
-                      tmpdir, (long) time(NULL), counter++);
+  /* Enhancement-770: the process id is part of the name. The time (in
+     seconds) and a per-process counter alone gave two ngspice processes that
+     reloaded within the same second the same path in the shared TMPDIR, and
+     one copied over, or removed, the copy the other was about to map: a
+     reload that kept the old model, or "could not stage a reload copy". */
+  char *dst = tprintf("%s/ngspice_osdi_reload_%ld_%ld_%u.osdi",
+                      tmpdir, (long) getpid(), (long) time(NULL), counter++);
   /* Enhancement-599: open the name the way the first load did (the deck's
      directory, NGSPICE_OSDI_DIR, ...), not against the working directory */
   char *src = osdi_resolve_input_path(path);

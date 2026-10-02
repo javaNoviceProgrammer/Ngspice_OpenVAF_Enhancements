@@ -12,11 +12,10 @@ pub fn target() -> Target {
         ],
     );
 
-    // Link against libSystem which provides dyld_stub_binder
-    base.post_link_args.insert(
-        LinkerFlavor::Ld64,
-        vec!["-lSystem".to_string()],
-    );
+    // Enhancement-771: no explicit -lSystem. clang links libSystem into every
+    // -dynamiclib itself (the arm64 target never passed it), and the second
+    // copy made Apple's linker warn "ignoring duplicate libraries: '-lSystem'"
+    // on every model.
 
     Target {
         llvm_target: "x86_64-apple-macosx10.15.0".to_owned(),

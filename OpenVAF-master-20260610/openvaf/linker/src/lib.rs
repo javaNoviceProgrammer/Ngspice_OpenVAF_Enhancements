@@ -367,6 +367,32 @@ impl dyn Linker + '_ {
     }
 }
 
+/// Enhancement-771: the macOS SDK the model is linked against, named to the
+/// linker explicitly.
+///
+/// The link runs `clang`, whichever is first on PATH, and that clang finds
+/// libSystem through its default SDK. Apple's /usr/bin/clang asks xcrun for
+/// it; Homebrew's LLVM clang (first on PATH wherever llvm@18 is set up to build
+/// openvaf-r) uses a Command Line Tools path compiled in for the running macOS
+/// version, which a machine with Xcode alone does not have: on the macOS 26
+/// Intel CI runner every model failed with `ld: library 'System' not found`.
+/// So when the user has not chosen an SDK through SDKROOT, the one xcrun
+/// reports is passed as `--sysroot=`, which both clangs hand to ld as its
+/// -syslibroot (Homebrew's configuration file outranks an `-isysroot` or
+/// SDKROOT for the link, not a `--sysroot`). None when SDKROOT is set, when
+/// xcrun is absent (a link from another host) or names nothing.
+fn macos_sdk_root() -> Option<PathBuf> {
+    if env::var_os("SDKROOT").is_some_and(|v| !v.is_empty()) {
+        return None;
+    }
+    let out = std::process::Command::new("xcrun").arg("--show-sdk-path").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let sdk = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+    sdk.is_dir().then_some(sdk)
+}
+
 pub struct LdLinker<'a> {
     cmd: Command,
     target: &'a Target,
@@ -387,6 +413,11 @@ impl<'a> LdLinker<'a> {
         if self.target.options.is_like_osx {
             self.linker_arg("-dynamiclib");
             // clang automatically handles -lSystem
+            if let Some(sdk) = macos_sdk_root() {
+                let mut arg = OsString::from("--sysroot=");
+                arg.push(sdk);
+                self.cmd.arg(arg);
+            }
         } else {
             self.linker_arg("-shared");
         }

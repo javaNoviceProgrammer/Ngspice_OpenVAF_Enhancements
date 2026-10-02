@@ -2157,7 +2157,13 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
                     ciprefix("pre_snp", buffer) ||
                     ciprefix("echo", buffer) || ciprefix("shell", buffer) ||
                     ciprefix("source", buffer) ||ciprefix("cd", buffer) ||
-                    ciprefix("load", buffer) || ciprefix("setcs", buffer))))) {
+                    ciprefix("load", buffer) || ciprefix("setcs", buffer) ||
+                    /* Enhancement-770: savestate names a file, as loadstate
+                     * (under "load") does; lowered, a checkpoint path with
+                     * capitals was written beside a lower-case directory --
+                     * the same file on a case-insensitive macOS volume, a
+                     * missing directory and no checkpoint on Linux */
+                    ciprefix("savestate", buffer))))) {
                 /* lower case for all other lines -- Enhancement-553: except the
                  * raw string literals of a control line, copied through as they
                  * are */

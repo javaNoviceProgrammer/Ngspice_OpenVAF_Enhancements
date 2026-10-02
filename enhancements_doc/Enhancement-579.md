@@ -153,3 +153,5 @@ line, `$param_given` per element, a dependent default, a bounded instance parame
 dynamic write landing on the indexed element only, an out-of-range read yielding
 element 0, `alter`/`altermod` of array elements, and a `select` feeding a contribution
 whose AC conductance is the selected element.
+
+**Update ([E-771](Enhancement-771.md)).** A `select` whose condition is a constant is resolved to its operand before LLVM sees it. In a setup module built at -O0 nothing folded them, and a localparam is never given, so a 20 000-element localparam array reached the backend as 20 000 `select i1 false, double ...`; x86-64 has no select of a double and expanded each by splitting the block (30 s of code generation, against 0.24 s on arm64; 0.11 s now).

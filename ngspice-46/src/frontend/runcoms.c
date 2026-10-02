@@ -26,6 +26,7 @@ Modified: 2000 AlansFixes
 #include "variable.h"
 #include "spiceif.h"
 #include "runcoms2.h"
+#include <sys/stat.h>     /* Enhancement-770: S_ISREG */
 
 #ifdef XSPICE
 /* gtri - add - 12/12/90 - wbk - include ipc stuff */
@@ -36,6 +37,22 @@ Modified: 2000 AlansFixes
 
 
 static int dosim(char *what, wordlist *wl);
+
+/* Enhancement-770: a run that wrote nothing to its rawfile removes it, so an
+ * analysis that failed or saved no vector leaves no empty file behind. That
+ * unlink took any path: `ngspice -b -r /dev/null deck`, whose .control block
+ * writes nothing to the rawfile, unlinked /dev/null, which as root (a
+ * container, a CI job) deletes the device node, and every later open of
+ * /dev/null in the machine fails. Only a regular file is removed now. */
+void
+ft_drop_empty_rawfile(const char *path)
+{
+    struct stat st;
+
+    if (path && stat(path, &st) == 0 && S_ISREG(st.st_mode))
+        (void) unlink(path);
+}
+
 /* Enhancement-602: where plot_list stood before the current run */
 static struct plot *plot_before_run = NULL;
 extern struct INPmodel *modtab;
@@ -418,7 +435,7 @@ static int dosim(
         if (ftell(rawfileFp) == 0) {
             (void) fclose(rawfileFp);
             if (wl) {
-                (void) unlink(wl->wl_word);
+                ft_drop_empty_rawfile(wl->wl_word);
             }
         }
         else {

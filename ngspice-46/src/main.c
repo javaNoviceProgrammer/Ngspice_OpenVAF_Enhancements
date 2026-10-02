@@ -688,7 +688,15 @@ app_rl_readlines(void)
         }
 
 #if defined(SIGTTIN) && !defined(X_DISPLAY_MISSING)
-        if (cp_background) {
+        /* Enhancement-770: only when the X11 device is the one in use. With
+         * no display (DISPLAY unset: a CI runner, ssh without forwarding)
+         * DevInit falls back to the "error" device and X is never opened,
+         * yet a process without a controlling terminal -- input from a pipe
+         * under cron, CI or ssh -T -- is "in background" from the first
+         * line, and X11_Input then read the NULL display: every such run of
+         * an X build crashed before its first command. The readline event
+         * hook above was already guarded this way. */
+        if (cp_background && dispdev->Input == X11_Input) {
             /* This process is running in the background, so reading from
              * the terminal will fail.  Instead, call the X11 input loop
              * directly.  It will process X11 events until terminal input

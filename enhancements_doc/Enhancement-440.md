@@ -213,3 +213,5 @@ macOS's own crash reports. Twenty-six `.ips` files grouped by faulting frame
 turned up the `cp_usrset` heap abort and the `PP_mkfnode` overflow, neither of
 which had appeared as a failure in any test I ran, because both had happened
 inside runs I had already scored as passing.
+
+**Update ([E-770](Enhancement-770.md)).** The say-it-once memo was reset whenever the `CKTcircuit` address changed, so montecarlo, which rebuilds the circuit for every sample, repeated the warning or not depending on where the allocator put the rebuilt one (2, 3 or 4 times in identical runs). It is keyed on a front-end circuit serial that a rebuild from the kept deck (`mc_source`, `reset`) keeps and a newly sourced deck replaces: a montecarlo reports once, every time.

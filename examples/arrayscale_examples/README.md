@@ -27,10 +27,10 @@ array or coefficient list") turned out to be five separate quadratic walks, fixe
 
 | check | what it pins |
 |---|---|
-| array literal | a 20 000-element `localparam` array literal compiles in under 8 s (0.8 s; 15.5 s before: every element re-flattened the whole literal in the front end) |
+| array literal | a 20 000-element `localparam` array literal compiles in under 8 s (0.8 s; 15.5 s before: every element re-flattened the whole literal in the front end; 36.6 s on the Linux x86-64 CI runner until Enhancement-771 resolved its 20 000 constant-condition selects before LLVM) |
 | given flags | the descriptor's `given_flag_model` and `given_flag_instance` are under 40 IR lines for 2 000 parameters (31 and 18) and the same size for a two-parameter module — a bitfield read, where a `switch` with a case per parameter was 79 000 lines for 10 000 |
 | noise table | a 2 000-pair `noise_table` loads through a loop of under 80 IR lines (44) and the same size as a five-pair table — the table is data, the search a loop, where a chain of selects took LLVM's instruction combiner a minute at 5 000 pairs |
-| cross events | 300 `@(cross)` events leave at most three blocks per event in the evaluation MIR (601; ten per event before) and compile in under 10 s (0.3 s; 17 s before in LLVM's list scheduler on the one giant block — the eval is emitted through the fast instruction selector above 12 288 SelectionDAG nodes) |
+| cross events | 300 `@(cross)` events leave at most three blocks per event in the evaluation MIR (601; ten per event before) and compile in under 10 s, 30 s on an x86-64 host (0.3 s; 14.7 s on the Linux x86-64 CI runner, whose backend expands each select of a double by splitting the block, Enhancement-771; 17 s before in LLVM's list scheduler on the one giant block — the eval is emitted through the fast instruction selector above 12 288 SelectionDAG nodes) |
 | variables | 50 000 real variables compile in under 20 s (2.7 s; 47 s before: a linear scan of the item map per lookup and a re-walk of the declaration's attributes per variable) |
 | loop fill | the 10 000-element array filled in a loop compiles in under 40 s (10.5 s; 25 s before) — the "cannot be compiled at a lower level" of the paragraph above is answered by emitting the giant-block eval through the fast instruction selector after its middle-end passes ran at -O3 |
 

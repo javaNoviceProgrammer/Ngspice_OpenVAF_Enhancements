@@ -51,6 +51,16 @@ static struct card *com_options = NULL;
 static struct card *mc_deck = NULL;
 static struct card *recent_deck = NULL;
 
+/* Enhancement-770: circuit serials (struct circ, ci_serial). A deck read from
+ * a file gets a new one; a circuit rebuilt from a kept copy of a deck -- the
+ * per-sample re-source of montecarlo (mc_source), reset -- keeps the serial of
+ * the deck it rebuilds, so "the same circuit" survives the rebuild and a newly
+ * sourced deck is a new circuit, whatever addresses the allocator returns. */
+static unsigned long circ_serial_last = 0;  /* the last serial handed out */
+static unsigned long reload_serial = 0;     /* inp_spsource -> inp_dodeck: kept serial, 0 = new */
+static unsigned long mc_deck_serial = 0;    /* the serial of the circuit mc_deck belongs to */
+static unsigned long recent_serial = 0;     /* ... and of recent_deck */
+
 static void cktislinear(CKTcircuit *ckt, struct card *deck);
 void create_circbyline(char *line, bool reset, bool lastline);
 static bool doedit(char *filename);
@@ -712,6 +722,7 @@ inp_mc_free(void)
             line_free(recent_deck, TRUE);
         }
         recent_deck = ft_curckt->ci_mcdeck;
+        recent_serial = ft_curckt->ci_serial;   /* Enhancement-770 */
         ft_curckt->ci_mcdeck = NULL;
     }
 }
@@ -768,6 +779,7 @@ inp_parse_option_cards(struct card *options, struct variable **head)
 void
 inp_source_recent(void) {
     mc_deck = recent_deck;
+    mc_deck_serial = recent_serial;             /* Enhancement-770 */
     mc_reload = TRUE;
     inp_spsource(NULL, FALSE, NULL, FALSE);
 }
@@ -1156,6 +1168,7 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
        inp_source() called with fp: load circuit netlist from file, */
     /* called with *fp == NULL and intfile: we want to load circuit from circarray */
     if (fp || intfile) {
+        reload_serial = 0;                      /* Enhancement-770: a new deck */
         deck = inp_readall(fp, dir_name, filename, comfile, intfile, &expr_w_temper);
 
         /* files starting with *ng_script are user supplied command files */
@@ -1165,6 +1178,7 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
         if (deck && !comfile) {
         /* stored to new circuit ci_mcdeck in fcn */
             mc_deck = inp_deckcopy_oc(deck);
+            mc_deck_serial = circ_serial_last + 1;  /* the circuit built next */
         }
     }
     /* called with *fp == NULL and not intfile: we want to reload circuit from mc_deck */
@@ -1172,6 +1186,7 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
         /* re-load deck due to command 'reset' via function inp_source_recent() */
         if (mc_reload && mc_deck) {
             deck = inp_deckcopy(mc_deck);
+            reload_serial = mc_deck_serial;     /* Enhancement-770 */
             expr_w_temper = TRUE;
             mc_reload = FALSE;
             if (!ft_optimizing)   /* Enhancement-144: quiet during optimizer re-source */
@@ -1184,11 +1199,13 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
         /* re-load input deck from the current circuit structure */
         else if (ft_curckt && ft_curckt->ci_mcdeck) {
             deck = inp_deckcopy(ft_curckt->ci_mcdeck);
+            reload_serial = ft_curckt->ci_serial;   /* Enhancement-770 */
             expr_w_temper = TRUE;
         }
         /* re-load input deck from the recent circuit structure with mc_source */
         else if (!ft_curckt && mc_deck) {
             deck = inp_deckcopy(mc_deck);
+            reload_serial = mc_deck_serial;     /* Enhancement-770 */
             expr_w_temper = TRUE;
         }
         /* no circuit available, should not happen */
@@ -2323,6 +2340,9 @@ inp_dodeck(
         }
         /* create new circuit structure */
         ft_curckt = ct = TMALLOC(struct circ, 1);
+        /* Enhancement-770: a rebuilt deck keeps its serial, a new one gets one */
+        ct->ci_serial = reload_serial ? reload_serial : ++circ_serial_last;
+        reload_serial = 0;
 
         /*PN FTESTATS*/
         ft_curckt->FTEstats = TMALLOC(FTESTATistics, 1);

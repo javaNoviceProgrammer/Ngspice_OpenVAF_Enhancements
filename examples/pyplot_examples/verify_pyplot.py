@@ -414,9 +414,10 @@ with open(badpy, "w") as f:
 os.chmod(badpy, os.stat(badpy).st_mode | stat.S_IXUSR)
 deck = os.path.join(HERE, "status.sp")
 with open(deck, "w") as f:
-    # quoted: an unquoted `set` value is lowercased by ngspice, which a
-    # case-sensitive file system would not forgive
-    f.write(statusdeck.format(extra=f"set pyplot_python=\"{badpy}\"", name="status"))
+    # setcs: a deck's .control lines are lowercased, quoted `set` values
+    # included, which a case-sensitive file system does not forgive (a Linux
+    # checkout under /__w/Ngspice_OpenVAF_Enhancements); setcs keeps the case
+    f.write(statusdeck.format(extra=f"setcs pyplot_python=\"{badpy}\"", name="status"))
 log = run_deck(deck, HERE)
 check("E-547c: an interpreter that exits 3 is named, the missing image is named, pyplot_status=3",
       "Error: pyplot:" in log and "exited with status 3" in log
@@ -452,7 +453,7 @@ spaced_py = os.path.join(pydir, "python3")
 if real_py and not os.path.exists(spaced_py):
     os.symlink(real_py, spaced_py)
 with open(deck, "w") as f:
-    f.write(statusdeck.format(extra=f"set pyplot_python=\"{spaced_py}\"", name="status3"))
+    f.write(statusdeck.format(extra=f"setcs pyplot_python=\"{spaced_py}\"", name="status3"))
 log = run_deck(deck, HERE)
 check("E-547g: an interpreter path with a space is one word",
       is_png(os.path.join(HERE, "status3.png")) and status_of(log) == 0, log.strip()[-200:])

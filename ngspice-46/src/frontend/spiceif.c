@@ -2476,9 +2476,13 @@ static int phys_bad(double v, enum phys_rule r)
  * non-physical range should report each distinct bad value, because those are
  * genuinely different findings. Only the unchanged repeat is suppressed.
  *
- * The memo is per circuit; a different circuit pointer clears it, so re-sourcing
- * a deck reports afresh. */
-static const CKTcircuit *phys_memo_ckt = NULL;
+ * The memo is per circuit; a different circuit clears it, so re-sourcing a deck
+ * reports afresh. Enhancement-770: "a different circuit" is the front end's
+ * circuit serial, not the CKTcircuit's address. montecarlo rebuilds the
+ * CKTcircuit, and whether the rebuilt one landed at the old address -- the memo
+ * kept, no repeat -- or elsewhere -- the memo dropped, the warning again -- was
+ * up to the allocator: identical runs reported 2, 3 or 4 times. */
+static unsigned long phys_memo_serial = 0;
 static char **phys_memo = NULL;
 static int phys_memo_n = 0, phys_memo_max = 0;
 
@@ -2488,13 +2492,16 @@ static int phys_seen(const CKTcircuit *ckt, const char *kind, const char *name,
     char key[512];
     int i;
 
-    if (ckt != phys_memo_ckt) {
+    unsigned long serial = ft_curckt ? ft_curckt->ci_serial : 0;
+
+    NG_IGNORE(ckt);
+    if (serial != phys_memo_serial || serial == 0) {
         for (i = 0; i < phys_memo_n; i++)
             tfree(phys_memo[i]);
         tfree(phys_memo);
         phys_memo = NULL;
         phys_memo_n = phys_memo_max = 0;
-        phys_memo_ckt = ckt;
+        phys_memo_serial = serial;
     }
 
     (void) snprintf(key, sizeof key, "%s|%s|%s|%.17g", kind, name, param, v);
