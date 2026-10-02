@@ -130,6 +130,7 @@ def _install_trace(trace_dir):
     suite = os.path.basename(os.path.dirname(os.path.abspath(_sys.argv[0] or "x")))
     log_path = os.path.join(trace_dir, suite + ".log")
     count = [0]
+    cdb_runs = [0]
 
     def text(v):
         if v is None:
@@ -168,12 +169,21 @@ def _install_trace(trace_dir):
                     if c and os.path.isfile(c):
                         cdb = c
                         break
-            if cdb:
+            # Two stacks a suite: the first Windows trace spent 300 s on each
+            # of transedge's thirty crashes (cdb waiting on the inherited
+            # stdin, or on the symbol server) and ran the job past three
+            # hours. The commands also go in on stdin, so cdb reads EOF after
+            # them whatever it does with -c; no symbol server is consulted
+            # (MinGW's ngspice has no PDB to find).
+            if cdb and cdb_runs[0] < 2:
+                cdb_runs[0] += 1
+                cmds = ".ecxr; r; u @rip L3; kv 20; q"
+                env = dict(os.environ, _NT_SYMBOL_PATH="", _NT_ALT_SYMBOL_PATH="")
                 try:
-                    dbg = real_run([cdb, "-g", "-G", "-lines", "-c", ".ecxr; kv 30; lm; q"] + argv,
-                                   cwd=cwd, input=kw.get("input"), capture_output=True,
-                                   text=isinstance(kw.get("input"), str) or kw.get("input") is None,
-                                   timeout=300)
+                    dbg = real_run([cdb, "-g", "-G", "-snul", "-y", os.path.dirname(argv[0]) or ".",
+                                    "-c", cmds] + argv,
+                                   cwd=cwd, input=cmds.replace("; ", "\n") + "\n",
+                                   capture_output=True, text=True, env=env, timeout=120)
                     lines.append("--- cdb:\n" + text(dbg.stdout)[-6000:])
                 except Exception as e:      # noqa: BLE001
                     lines.append(f"--- cdb failed: {e}")
