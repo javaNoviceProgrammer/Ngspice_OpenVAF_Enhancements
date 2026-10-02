@@ -3995,12 +3995,28 @@ enum PortBinding {
 struct AbsPrefixes {
     map: HashMap<String, String>,
     ancestors: HashSet<String>,
+    /// Enhancement-782: the inverse of `map` -- each flattening prefix to the
+    /// shortest chain that names it (the shorter string on a tie), for `%m`'s
+    /// `hier_path_of_prefix`. That function scanned all of `map` once per
+    /// instance, and the flatten was O(N^2) again: a 32 001-instance array
+    /// took 28 s to compile on a macOS Intel runner (vafhang [A]).
+    by_prefix: HashMap<String, String>,
 }
 
 impl AbsPrefixes {
     fn new(map: HashMap<String, String>) -> Self {
         let ancestors = build_ancestors(&map);
-        AbsPrefixes { map, ancestors }
+        let mut by_prefix: HashMap<String, String> = HashMap::new();
+        for (chain, pfx) in &map {
+            let shorter = match by_prefix.get(pfx) {
+                Some(best) => (chain.len(), chain.as_str()) < (best.len(), best.as_str()),
+                None => true,
+            };
+            if shorter {
+                by_prefix.insert(pfx.clone(), chain.clone());
+            }
+        }
+        AbsPrefixes { map, ancestors, by_prefix }
     }
 }
 
@@ -6706,11 +6722,8 @@ impl ElabCtx<'_> {
     /// unaliased one. Empty when the prefix is the top module's own.
     fn hier_path_of_prefix(&self, prefix: &str) -> String {
         self.abs_prefixes
-            .map
-            .iter()
-            .filter(|(_, pfx)| pfx.as_str() == prefix)
-            .map(|(chain, _)| chain.as_str())
-            .min_by_key(|chain| chain.len())
+            .by_prefix
+            .get(prefix)
             .and_then(|chain| chain.split_once('.').map(|(_, rest)| rest.to_owned()))
             .unwrap_or_default()
     }

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use basedb::lints::{Lint, LintSrc};
@@ -72,15 +73,50 @@ pub struct ContributionSite {
 #[derive(Debug, Default)]
 pub struct ContributionMap {
     branches: Vec<(BranchWrite, Vec<ContributionSite>)>,
+    /// Enhancement-782: each bucket's index in `branches`, by its `branch_key`. Finding a
+    /// bucket used to scan `branches` with `same_branch`, and since E-757 a flattened
+    /// instance array gives every instance's contribution its own named branch: building
+    /// the map, and every per-branch lookup the DAE build makes, was O(N^2) in the
+    /// instance count.
+    index: HashMap<BranchKey, usize>,
+}
+
+/// Enhancement-782: what [`same_branch`] compares -- a named branch by identity, a node
+/// pair ground-free. A two-node key is looked up both ways round, which makes it
+/// order-free as well.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum BranchKey {
+    Named(Branch),
+    One(Node),
+    Two(Node, Node),
+}
+
+/// The key of `write` and, for a node pair, the same pair swapped; `None` when
+/// [`same_branch`] matches nothing (every node of the write is ground).
+fn branch_key(db: &CompilationDB, write: BranchWrite) -> Option<(BranchKey, Option<BranchKey>)> {
+    match write {
+        BranchWrite::Named(branch) => Some((BranchKey::Named(branch), None)),
+        BranchWrite::Unnamed { hi, lo } => {
+            let mut nodes = [Some(hi), lo].into_iter().flatten().filter(|node| !node.is_gnd(db));
+            match (nodes.next(), nodes.next()) {
+                (Some(a), None) => Some((BranchKey::One(a), None)),
+                (Some(a), Some(b)) => Some((BranchKey::Two(a, b), Some(BranchKey::Two(b, a)))),
+                _ => None,
+            }
+        }
+    }
 }
 
 impl ContributionMap {
     /// The contributions written to `branch`, in source order; empty if there are none.
     pub fn get(&self, db: &CompilationDB, branch: BranchWrite) -> &[ContributionSite] {
-        self.branches
-            .iter()
-            .find(|(candidate, _)| same_branch(db, branch, *candidate))
-            .map_or(&[], |(_, sites)| sites.as_slice())
+        self.find(db, branch).map_or(&[], |i| self.branches[i].1.as_slice())
+    }
+
+    /// The bucket [`same_branch`] would match first: the only one with that key.
+    fn find(&self, db: &CompilationDB, branch: BranchWrite) -> Option<usize> {
+        let (key, swapped) = branch_key(db, branch)?;
+        self.index.get(&key).or_else(|| swapped.and_then(|k| self.index.get(&k))).copied()
     }
 
     /// Enhancement-406: a DIFFERENT branch that spans the same nodes as `branch` and
@@ -153,9 +189,14 @@ impl ContributionMap {
                 lint_src: sm.lint_src(stmt, lint),
             };
             let write: BranchWrite = write.into();
-            match self.branches.iter_mut().find(|(branch, _)| same_branch(db, write, *branch)) {
-                Some((_, sites)) => sites.push(site),
-                None => self.branches.push((write, vec![site])),
+            match self.find(db, write) {
+                Some(i) => self.branches[i].1.push(site),
+                None => {
+                    if let Some((key, _)) = branch_key(db, write) {
+                        self.index.insert(key, self.branches.len());
+                    }
+                    self.branches.push((write, vec![site]));
+                }
             }
         }
     }
@@ -265,6 +306,20 @@ pub(crate) fn collect_flow_probes(
         let body = db.body(def);
         let sm = db.body_source_map(def);
         let infere = db.inference_result(def);
+        // Enhancement-782: every statement with a source range, by start and then
+        // longest first (lowest id first among equal ranges, read backwards). Statement
+        // ranges nest, so the innermost statement containing a probe is the first
+        // containing one met walking back from the last statement that starts at or
+        // before it. Scanning every statement per probe was O(probes x statements):
+        // 1.6 s of a 64 001-instance array's compile.
+        let mut stmt_ranges: Vec<(TextRange, StmtId)> = sm
+            .stmt_map_back
+            .iter_enumerated()
+            .filter_map(|(stmt, ptr)| ptr.as_ref().map(|p| (p.range(), stmt)))
+            .collect();
+        stmt_ranges.sort_by(|(a, a_id), (b, b_id)| {
+            a.start().cmp(&b.start()).then(b.len().cmp(&a.len())).then(b_id.cmp(a_id))
+        });
 
         for (expr, call) in infere.resolved_calls.iter() {
             if !matches!(call, inference::ResolvedFun::BuiltIn(BuiltIn::flow)) {
@@ -299,15 +354,12 @@ pub(crate) fn collect_flow_probes(
             // on the innermost statement containing it. That makes
             // `(* openvaf_allow="probe_only_branch_short" *)` work on the probing
             // statement and on every enclosing scope, exactly as it does elsewhere.
-            let mut lint_src = LintSrc::GLOBAL;
-            let mut best: Option<TextRange> = None;
-            for (stmt, ptr) in sm.stmt_map_back.iter_enumerated() {
-                let Some(sr) = ptr.as_ref().map(|p| p.range()) else { continue };
-                if sr.contains_range(range) && best.map_or(true, |b| sr.len() < b.len()) {
-                    best = Some(sr);
-                    lint_src = sm.lint_src(stmt, lint);
-                }
-            }
+            let before = stmt_ranges.partition_point(|(sr, _)| sr.start() <= range.start());
+            let lint_src = stmt_ranges[..before]
+                .iter()
+                .rev()
+                .find(|(sr, _)| sr.contains_range(range))
+                .map_or(LintSrc::GLOBAL, |&(_, stmt)| sm.lint_src(stmt, lint));
             res.push(FlowProbeSite { branch, range, lint_src });
         }
     }

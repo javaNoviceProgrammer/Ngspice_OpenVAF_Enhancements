@@ -355,6 +355,20 @@ typedef struct OsdiExtraInstData {
   bool lim_has_old;
 } OSDI_ALIGN(MAX_ALIGN) OsdiExtraInstData;
 
+/* Enhancement-781: the offset of OsdiExtraInstData in an instance block. It
+ * follows the compiled model's instance data, whose size is only a multiple
+ * of 8, and the struct is aligned to MAX_ALIGN (16 on x86-64, 8 on arm64):
+ * placed straight after the model's data it was misaligned whenever the size
+ * was 8 mod 16. A compiler may then use an aligned 16-byte store into it --
+ * clang's `movapd` into lim_old killed every BSIM4-class model on macOS Intel
+ * (EXC_I386_GPFLT), and every transition/slew model the Windows job lost has
+ * the same misalignment (0xC0000005). Rounded up here, in the one helper both
+ * the block's size (osdiinit.c) and the accessor (osdiregistry.c) use. */
+static inline size_t osdi_extra_data_off(size_t inst_off, size_t instance_size) {
+  size_t off = inst_off + instance_size;
+  return (off + (MAX_ALIGN - 1)) / MAX_ALIGN * MAX_ALIGN;
+}
+
 /* Enhancement-698: the number of simulator-stamped "wire" slots -- absdelay,
  * transition, slew -- whose (z,y) and (z,z) matrix entries share the
  * delay_jac_* arrays, in that order. */

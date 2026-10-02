@@ -1083,8 +1083,9 @@ inline void *osdi_instance_data(const OsdiRegistryEntry *entry,
 inline OsdiExtraInstData *
 osdi_extra_instance_data(const OsdiRegistryEntry *entry, GENinstance *inst) {
   OsdiDescriptor *descr = (OsdiDescriptor *)entry->descriptor;
-  return (OsdiExtraInstData *)(((char *)inst) + entry->inst_offset +
-                               descr->instance_size);
+  return (OsdiExtraInstData *)(((char *)inst) +
+                               osdi_extra_data_off(entry->inst_offset,
+                                                   descr->instance_size));
 }
 
 /* Enhancement-416: the collapse-owner map, one entry per descriptor node,

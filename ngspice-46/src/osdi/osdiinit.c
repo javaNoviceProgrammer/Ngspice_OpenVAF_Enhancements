@@ -403,7 +403,7 @@ extern SPICEdev *osdi_create_spicedev(const OsdiRegistryEntry *entry) {
    * Enhancement-417 appends a second trailing array: one bool per collapsible
    * pair, the collapse set the mapping above was actually built from. Both are
    * per-descriptor constants, so the block stays a fixed size. */
-  *inst_size = (int)(inst_off + descr->instance_size +
+  *inst_size = (int)(osdi_extra_data_off(inst_off, descr->instance_size) +
                      sizeof(OsdiExtraInstData) +
                      (size_t)descr->num_nodes * sizeof(uint32_t) +
                      (size_t)descr->num_collapsible * sizeof(bool));
