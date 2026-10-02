@@ -651,6 +651,7 @@ fn generate_case_tail(p: &mut Parser, m: Marker, top: bool) {
     expr(p);
     p.expect(T![')']);
     while !p.at(ENDCASE_KW) && !p.at(EOF) && !p.at(ENDGENERATE_KW) && !p.at(ENDMODULE_KW) {
+        let start = p.pos();
         let arm = p.start();
         if p.eat(DEFAULT_KW) {
             p.eat(T![:]);
@@ -663,6 +664,11 @@ fn generate_case_tail(p: &mut Parser, m: Marker, top: bool) {
         }
         generate_block(p);
         arm.complete(p, GENERATE_CASE_ARM);
+        // Enhancement-780: an arm that consumed nothing ends the list (see
+        // `case_stmt`)
+        if p.pos() == start {
+            break;
+        }
     }
     p.expect(ENDCASE_KW);
     if top {

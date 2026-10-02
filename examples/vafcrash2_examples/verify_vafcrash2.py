@@ -40,6 +40,7 @@ Each check confirms the pathological input now yields a clean ERROR (nonzero exi
 no panic/crash/hang), and that valid code still compiles. See Enhancement-220.md.
 """
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -152,6 +153,36 @@ except subprocess.TimeoutExpired:
 check("...and no 'unexpected token EOF' in the middle of it", "unexpected token EOF" not in out and "TIMEOUT" not in out)
 v = run(wr("stuck.va", HDR + MOD + "analog begin " + "module analog begin end case for " * 40 + " end endmodule\n"))
 check(f"the keyword-salad recovery stress of Enhancement-220 still ends cleanly [{v}]", v == "ERROR")
+
+# --- Enhancement-780: a case item that consumes nothing ends the item list ----
+# `case` with no `(expr)` in front of an `end` parsed an empty item at that
+# token forever, until the step guard's ten million steps ran out: 2.3 s and
+# 2.9 million errors on an Apple M-series machine, past the 25 s above on a
+# macOS Intel CI runner (the keyword salad is one such input).
+print("\nEnhancement-780: a case list that makes no progress ends at once")
+
+
+def errors_and_time(src):
+    p = wr("stall.va", src)
+    t0 = time.time()
+    try:
+        r = subprocess.run([OPENVAF, p, "-o", os.path.join(D, "out.osdi")],
+                           capture_output=True, text=True, timeout=60, errors="replace")
+    except subprocess.TimeoutExpired:
+        return None, 60.0
+    err = r.stderr or ""
+    m = re.search(r"due to (\d+) previous error", err)
+    return (int(m.group(1)) if m else len(re.findall(r"^error", err, re.M))), time.time() - t0
+
+
+for label, src in (
+        ("`case end` in an analog block", HDR + MOD + "analog begin case end end endmodule\n"),
+        ("`casex ) <+` in an analog block", HDR + MOD + "analog begin casex ) <+ end endmodule\n"),
+        ("`case (x) end` with no item", HDR + MOD + "real x; analog begin case (x) end end endmodule\n"),
+        ("a generate `case` with no `(expr)`", HDR + MOD + "generate case end endgenerate\nendmodule\n"),
+        ("the keyword salad", HDR + MOD + "analog begin " + "module analog begin end case for " * 40 + " end endmodule\n")):
+    n, dt = errors_and_time(src)
+    check(f"{label}: {n} errors in {dt:.2f} s (< 1000, < 5 s)", n is not None and 0 < n < 1000 and dt < 5.0)
 
 print(f"\n{'ALL PASS' if passed == checks else 'FAILURES'}: {passed}/{checks} passed")
 sys.exit(0 if passed == checks else 1)

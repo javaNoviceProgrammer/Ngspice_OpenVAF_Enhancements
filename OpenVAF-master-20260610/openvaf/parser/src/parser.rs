@@ -54,6 +54,12 @@ impl<'t> Parser<'t> {
         self.events
     }
 
+    /// The index of the current token: a grammar loop compares it before and
+    /// after an iteration to see whether the iteration consumed anything.
+    pub(crate) fn pos(&self) -> u32 {
+        self.pos
+    }
+
     /// Returns the kind of the current token.
     /// If parser has already reached the end of input,
     /// the special `EOF` kind is returned.

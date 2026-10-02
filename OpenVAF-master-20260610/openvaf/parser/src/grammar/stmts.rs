@@ -214,8 +214,17 @@ fn case_stmt(p: &mut Parser, m: Marker) {
 
     let mut nitems = 0;
     while !p.at_ts(CASE_ITEM_RECOVERY) {
+        let start = p.pos();
         case_item(p);
         nitems += 1;
+        // Enhancement-780: an item that consumed nothing (`case` with no
+        // `(expr)` before an `end`) would be parsed again at the same token
+        // until the stall guard's ten million steps ran out -- 2.3 s and
+        // 2.9 million errors here, past vafcrash2's 25 s on a macOS Intel
+        // runner. The token belongs to an enclosing construct: leave it.
+        if p.pos() == start {
+            break;
+        }
     }
     // Enhancement-589 (hunt F7 of 2026-09-07): `case (s) endcase` compiled. The
     // grammar (IEEE 1364 A.6.7, Verilog-AMS 2.4) requires at least one case item.
@@ -242,9 +251,14 @@ fn vals_or_default(p: &mut Parser) {
         p.eat(T![:]);
     } else {
         while !p.at_ts(CASE_COND_RECOVERY) {
+            let start = p.pos();
             expr(p);
             if !p.at(T![:]) {
                 p.expect_with(T![,], &[T![:], T![,]]);
+            }
+            // Enhancement-780: as in `case_stmt`, no progress ends the list
+            if p.pos() == start {
+                break;
             }
         }
         p.expect(T![:]);
