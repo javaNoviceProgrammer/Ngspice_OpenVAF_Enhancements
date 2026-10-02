@@ -733,9 +733,17 @@ Builds run on push to `main` (source changes only; binary commits are skipped) o
 |---|---|---|
 | `ubuntu-latest` | `bin/linux/intel/` | LLVM 18 from apt |
 | `ubuntu-24.04-arm` | `bin/linux/arm/` | LLVM 18 from apt |
-| `macos-14` | `bin/macos/apple-silicon/` | LLVM 18 via Homebrew, XQuartz |
+| `macos-15` | `bin/macos/apple-silicon/` | LLVM 18 via Homebrew, XQuartz; minimum macOS 14.0 |
 | `macos-26-intel` | `bin/macos/intel/` | LLVM 18 via Homebrew, XQuartz; macOS 26 "Tahoe" image, currently in beta. GitHub has signaled Intel macOS runners will be retired entirely in 2027. |
 | `windows-latest` | `bin/windows/intel/` | LLVM 18 official tarball, ngspice via MSYS2/MinGW (static) |
+
+After building, every job runs the **full example regression sweep** — `examples/run_regression.py`, every `verify_*.py` suite under both linear solvers — against the binaries it just staged, on the machine that built them, with Python 3.14 installed by uv. The sweep runs after the binaries are uploaded, so it reports rather than gates: a failing suite marks that platform's job failed, the result is summarised on the run page, the per-suite logs are uploaded as the `regression-<platform>` artifact, and the binaries are still committed.
+
+To repeat one platform's sweep locally against the committed binaries:
+
+```bash
+B=bin/macos/apple-silicon; NGSPICE_BIN=$B/ngspice OPENVAF_BIN=$B/openvaf-r SPICE_LIB_DIR=$B python3 examples/run_regression.py --jobs 8
+```
 
 See [`.github/workflows/build-binaries.yml`](.github/workflows/build-binaries.yml) for the full workflow.
 

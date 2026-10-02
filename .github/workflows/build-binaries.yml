@@ -3,6 +3,15 @@ name: Build binaries
 # Builds ngspice and openvaf-r natively on each platform and drops the
 # resulting binaries into bin/<os>/<arch>/.  Native runners are used per
 # target so each build links against its own LLVM 18 — no cross-compilation.
+#
+# Every build job then runs the full example regression sweep
+# (examples/run_regression.py: every examples/*_examples/verify_*.py, both
+# linear solvers) against the binaries it just staged -- the same files the
+# collect job commits -- on the machine that built them, where every runtime
+# dependency (LLVM 18, readline, the X libraries, XQuartz, the MinGW DLLs) is
+# already in place. The sweep runs AFTER the artifact upload: it reports, it
+# does not gate. A failing suite marks that platform's job failed and uploads
+# its logs as `regression-<platform>`, and the binaries are committed as before.
 
 on:
   workflow_dispatch:
@@ -279,6 +288,66 @@ jobs:
           path: out/
           if-no-files-found: error
 
+      # ------------------------------------------------ regression sweep
+      # One Python for every platform: uv installs CPython 3.14 into a venv on
+      # the bare macOS runners and inside the jammy container alike (the
+      # container's own python3 is 3.10). 3.14 is what the suites are run under
+      # locally; under 3.13 the nport suite's pure-Python vector fitter takes a
+      # different path through a 5-pole fit and fails, because 3.14 changed how
+      # mixed real and complex arithmetic rounds. numpy and matplotlib are the
+      # only third-party modules a suite imports.
+      - name: Python for the regression sweep
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.14"
+          activate-environment: true
+          enable-cache: false
+
+      - name: Regression dependencies
+        shell: bash
+        run: uv pip install numpy matplotlib
+
+      - name: Regression sweep
+        id: regression
+        shell: bash
+        timeout-minutes: 180
+        env:
+          MPLBACKEND: Agg     # no display on a runner; the pyplot suites draw off-screen
+          PYTHONUTF8: "1"     # suites print and read UTF-8 whatever the runner's locale
+        run: |
+          # The staged bundle: the stripped binaries, their XSPICE code models
+          # and the portable spinit -- what users get from bin/<os>/<arch>/.
+          # The env overrides keep _setup.py from preferring the unstripped
+          # target/opt/openvaf-r this job also built.
+          B="$PWD/out/bin/${{ matrix.bin }}"
+          export NGSPICE_BIN="$B/ngspice" OPENVAF_BIN="$B/openvaf-r" SPICE_LIB_DIR="$B"
+          "$OPENVAF_BIN" --version
+          python --version
+          JOBS="$(python -c 'import os; print(os.cpu_count() or 2)')"
+          set -o pipefail
+          python examples/run_regression.py --jobs "$JOBS" 2>&1 | tee regression.log
+
+      - name: Regression summary
+        if: ${{ always() && steps.regression.outcome != 'skipped' }}
+        shell: bash
+        run: |
+          {
+            echo "### Regression sweep -- ${{ matrix.name }}"
+            echo '```'
+            if [ -f regression.log ]; then sed -n '/^======/,$p' regression.log | head -120; else echo "no log"; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload regression logs
+        if: ${{ always() && steps.regression.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: regression-${{ matrix.name }}
+          path: |
+            regression.log
+            examples/_failures/
+          if-no-files-found: ignore
+
   # --------------------------------------------------------------- Windows
   # ngspice builds via MSYS2/MinGW. openvaf-r builds with the NATIVE MSVC
   # toolchain against LLVM 18 (official GitHub release tarball).
@@ -425,6 +494,61 @@ jobs:
           path: out/
           if-no-files-found: warn
 
+      # ------------------------------------------------ regression sweep
+      # As on the other platforms (see build-unix): the full sweep against the
+      # bundle just staged, after the upload, reporting rather than gating.
+      # openvaf-r.exe links each .osdi with MSVC's link.exe, which it finds
+      # through the Visual Studio installation the runner image carries.
+      - name: Python for the regression sweep
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.14"
+          activate-environment: true
+          enable-cache: false
+
+      - name: Regression dependencies
+        shell: pwsh
+        run: uv pip install numpy matplotlib
+
+      - name: Regression sweep
+        id: regression
+        shell: pwsh
+        timeout-minutes: 180
+        env:
+          MPLBACKEND: Agg
+          PYTHONUTF8: "1"     # cp1252 stdout cannot print the suites' σ, ≤ and →
+        run: |
+          $B = Join-Path $PWD "out\bin\windows\intel"
+          $env:NGSPICE_BIN   = Join-Path $B "ngspice.exe"
+          $env:OPENVAF_BIN   = Join-Path $B "openvaf-r.exe"
+          $env:SPICE_LIB_DIR = $B
+          & $env:OPENVAF_BIN --version
+          python --version
+          $jobs = python -c "import os; print(os.cpu_count() or 2)"
+          python examples/run_regression.py --jobs $jobs | Tee-Object -FilePath regression.log
+          exit $LASTEXITCODE
+
+      - name: Regression summary
+        if: ${{ always() && steps.regression.outcome != 'skipped' }}
+        shell: bash
+        run: |
+          {
+            echo "### Regression sweep -- windows-intel"
+            echo '```'
+            if [ -f regression.log ]; then sed -n '/^======/,$p' regression.log | head -120; else echo "no log"; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload regression logs
+        if: ${{ always() && steps.regression.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: regression-windows-intel
+          path: |
+            regression.log
+            examples/_failures/
+          if-no-files-found: ignore
+
   # ---------------------------------------------------------------- Collect
   # Download every platform's artifact and commit the binaries into bin/.
   collect:
@@ -437,14 +561,19 @@ jobs:
         with:
           ref: main
 
-      # Pull artifacts from EVERY build job that succeeded this run. Only the
-      # jobs that finished green uploaded an artifact, so whatever lands here is
-      # exactly the set of platforms that built — partial runs are fine.
+      # Pull the binaries of EVERY platform that built this run. A build that
+      # failed before its upload step left no bin-* artifact, so whatever lands
+      # here is exactly the set of platforms that built -- partial runs are
+      # fine. A platform whose REGRESSION SWEEP failed did upload (the sweep
+      # runs after the upload and does not gate), so its binaries are committed
+      # too; the failed job and its regression-<platform> logs say what broke.
+      # `pattern` keeps those regression-* log artifacts out of the merge.
       # merge-multiple combines each platform's bin/<os>/<arch> tree into one.
       - name: Download successful platform artifacts
         uses: actions/download-artifact@v8
         with:
           path: _artifacts
+          pattern: bin-*
           merge-multiple: true
         continue-on-error: true   # don't fail if a run produced zero artifacts
 

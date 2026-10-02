@@ -170,6 +170,16 @@ def main():
     shutil.copy(OPENVAF, os.path.join(pathdir, "openvaf-r")); os.chmod(os.path.join(pathdir, "openvaf-r"), 0o755)
     env = dict(os.environ, PATH=pathdir + os.pathsep + os.environ.get("PATH", ""))
     env.pop("OPENVAF", None)
+    # The step of the lookup just before PATH is $SPICE_LIB_DIR/openvaf-r, and
+    # the shipped bin/<os>/<arch> bundle -- the SPICE_LIB_DIR of a run against
+    # the committed binaries, as the CI sweep is -- holds the compiler, so the
+    # PATH copy was never reached there. Point SPICE_LIB_DIR at a directory
+    # with no compiler for this check; the deck needs no code models.
+    lib = env.get("SPICE_LIB_DIR")
+    if lib and any(os.path.isfile(os.path.join(lib, n)) for n in ("openvaf-r", "openvaf-r.exe")):
+        nolib = os.path.join(HERE, "_w_cmp", "nolib")
+        os.makedirs(nolib, exist_ok=True)
+        env["SPICE_LIB_DIR"] = nolib
     r = subprocess.run([NGSPICE, "-b", p], cwd=HERE, capture_output=True, text=True, timeout=300, env=env)
     t = time.time() + 2
     os.utime(os.path.join(pathdir, "openvaf-r"), (t, t))

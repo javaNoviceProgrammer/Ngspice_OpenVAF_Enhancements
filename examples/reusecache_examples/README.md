@@ -10,7 +10,7 @@ and the behaviour that was already right.
 |---|---|
 | [1] spellings | `osdicache` caches; `osdicache=0`, `osdicache = 0`, `osdicache=off` and `noosdicache` recompile, and none of them is called an unknown option (`noosdicache` was) |
 | [2] `inc.va` + `body.inc` | an edit to a file the source `` `include``s rebuilds the object; the staleness test walks the includes the way the compiler resolves them, relative to the including file |
-| [3] the compiler | an object older than `openvaf-r` is rebuilt and the run says so; with the compiler older again the object is up to date; a compiler named by bare name on `PATH` is located there and checked the same way (E-574) |
+| [3] the compiler | an object older than `openvaf-r` is rebuilt and the run says so; with the compiler older again the object is up to date; a compiler named by bare name on `PATH` is located there and checked the same way (E-574); for that check `SPICE_LIB_DIR` is pointed at a directory with no compiler when it names one that has it -- the shipped `bin/<os>/<arch>` bundle does, and the lookup tries `$SPICE_LIB_DIR/openvaf-r` before `PATH` |
 | [4] `a/m.va`, `b/m.va` | two sources with the same stem in different directories both load: a source with a directory names its object after it, `osdi/a_m.osdi` and `osdi/b_m.osdi`; a bare `rmod.va` still lands in `osdi/rmod.osdi` |
 
 ## `.option reusesetup` — a sweep keeps the circuit standing between points
