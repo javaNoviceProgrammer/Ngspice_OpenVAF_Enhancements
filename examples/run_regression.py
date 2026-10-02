@@ -25,6 +25,11 @@ Usage:
     python3 run_regression.py --jobs 8   # eight suites at a time (NG_JOBS=8 works too)
 Exit code is non-zero if any run is not OK.
 
+On Linux (Enhancement-773) a suite whose process group holds more than
+NG_SUITE_MEM_MB (4096) of memory is stopped and reported as MEMORY, with its
+processes, the deck each ngspice was running and a sample of its output in
+_failures/<suite>.log -- a runaway suite must not take the machine with it.
+
 `--jobs N` (Enhancement-576) runs N suites at once. Every suite works in its own
 directory and cleans its own scratch files, and none writes outside it, so
 they do not collide; the per-suite lines then come in COMPLETION order, each
@@ -37,8 +42,11 @@ import concurrent.futures
 import glob
 import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -56,7 +64,10 @@ SERIAL = {"benchmark", "nested_cond", "reusesetup",
           # Enhancement-772: a scaling ratio (abstolperf) and output-path
           # timings (progressbar) the first Linux CI run pushed over their
           # bounds while sharing the runner's cores
-          "abstolperf", "progressbar"}
+          "abstolperf", "progressbar",
+          # Enhancement-773: plotname's per-point flatness ratio (1.74 against
+          # 1.6 beside two other suites on the 3-core macOS runner)
+          "plotname"}
 
 
 def stem_of(path):
@@ -118,29 +129,130 @@ def parse_jobs(argv):
     return max(1, n), rest
 
 
+# Enhancement-773: a suite whose process group (the script and every ngspice or
+# openvaf-r it runs) holds more than this much memory is stopped and reported as
+# MEMORY, with what its processes were running. On the linux-arm CI runner three
+# suites' scripts grew by ~70 MB/s each -- a child writing output without end
+# into a captured pipe -- until the 16 GB machine ran out and the runner shut
+# down, taking the whole sweep and its log with it. Linux only (it reads /proc).
+MEM_CAP_MB = int(os.environ.get("NG_SUITE_MEM_MB", "4096"))
+HAVE_PROC = sys.platform.startswith("linux") and os.path.isdir("/proc/self")
+
+
+def _group_procs(pgid):
+    """[(pid, rss_kb, cmdline, cwd)] for the processes of process group PGID."""
+    procs = []
+    for d in glob.glob("/proc/[0-9]*"):
+        try:
+            st = open(d + "/stat").read()
+            if int(st[st.rindex(")") + 2:].split()[2]) != pgid:   # state ppid pgrp
+                continue
+            rss = 0
+            for line in open(d + "/status"):
+                if line.startswith("VmRSS:"):
+                    rss = int(line.split()[1])
+                    break
+            cmd = open(d + "/cmdline", "rb").read().replace(b"\0", b" ")
+            try:
+                cwd = os.readlink(d + "/cwd")
+            except OSError:
+                cwd = "?"
+            procs.append((int(d[6:]), rss, cmd.decode(errors="replace").strip(), cwd))
+        except (OSError, ValueError, IndexError):
+            continue
+    return procs
+
+
+def _memory_report(stem, procs):
+    """What a runaway suite's processes were doing: their command lines, the
+    deck each ngspice was running (copied to _failures/<suite>.deck-<pid>), and
+    up to 16 kB of what each was writing, read from its own output pipe."""
+    fdir = os.path.join(HERE, "_failures")
+    os.makedirs(fdir, exist_ok=True)
+    lines = [f"MEMORY: the process group passed {MEM_CAP_MB} MB and was stopped"]
+    for pid, rss, cmd, cwd in sorted(procs, key=lambda p: -p[1]):
+        lines.append(f"  pid {pid}  {rss // 1024} MB  cwd {cwd}\n    {cmd}")
+        words = cmd.split()
+        if words and os.path.basename(words[0]).startswith("ngspice"):
+            deck = os.path.join(cwd, words[-1]) if words[-1] and not words[-1].startswith("-") else ""
+            if deck and os.path.isfile(deck):
+                try:
+                    shutil.copy(deck, os.path.join(fdir, f"{stem}.deck-{pid}"))
+                    lines.append(f"    deck copied to _failures/{stem}.deck-{pid}")
+                except OSError:
+                    pass
+            try:
+                fd = os.open(f"/proc/{pid}/fd/1", os.O_RDONLY | os.O_NONBLOCK)
+                try:
+                    sample = os.read(fd, 16384).decode(errors="replace")
+                finally:
+                    os.close(fd)
+                lines.append("    its output (a sample from the pipe):\n" + sample[-4000:])
+            except OSError as e:
+                lines.append(f"    (its output could not be sampled: {e})")
+    return "\n".join(lines) + "\n\n"
+
+
 def run_one(script):
     """Run one verify script from its own directory; (stem, status, detail, seconds)."""
     stem = stem_of(script)
     d = os.path.dirname(script)
     ts = time.time()
-    try:
-        # stdin=DEVNULL so no test can inherit a live stdin and leave an
-        # ngspice spinning at the interactive prompt (see _setup.py).
-        # Enhancement-574: a dumb terminal and NO_COLOR for every suite, so
-        # no compiler or simulator colours the output a script parses
-        # (_setup.py sets the same for its own children; this covers a
-        # script that does not import it).
-        r = subprocess.run([sys.executable, os.path.basename(script)], cwd=d,
-                           capture_output=True, text=True,
-                           stdin=subprocess.DEVNULL, timeout=1200,
-                           env=dict(os.environ, TERM="dumb", NO_COLOR="1"))
-        out, rc = r.stdout + r.stderr, r.returncode
-    except subprocess.TimeoutExpired as e:
-        out = (e.stdout or "") if isinstance(e.stdout, str) else ""
-        rc = 124
+    # stdin=DEVNULL so no test can inherit a live stdin and leave an
+    # ngspice spinning at the interactive prompt (see _setup.py).
+    # Enhancement-574: a dumb terminal and NO_COLOR for every suite, so
+    # no compiler or simulator colours the output a script parses
+    # (_setup.py sets the same for its own children; this covers a
+    # script that does not import it).
+    # Enhancement-773: its own session (POSIX), so the group can be measured
+    # and stopped as a whole; output and errors in one stream.
+    posix = os.name == "posix"
+    p = subprocess.Popen([sys.executable, os.path.basename(script)], cwd=d,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         stdin=subprocess.DEVNULL, start_new_session=posix,
+                         env=dict(os.environ, TERM="dumb", NO_COLOR="1"))
+    chunks = []
+    reader = threading.Thread(
+        target=lambda: chunks.extend(iter(lambda: p.stdout.read(65536), b"")), daemon=True)
+    reader.start()
+
+    def stop():
+        try:
+            os.killpg(p.pid, signal.SIGKILL) if posix else p.kill()
+        except OSError:
+            pass
+
+    note = ""
+    rc = None
+    watch = HAVE_PROC
+    while rc is None:
+        try:
+            rc = p.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            if time.time() - ts > 1200:
+                stop()
+                p.wait()
+                rc = 124
+            elif watch:
+                try:
+                    procs = _group_procs(p.pid)
+                    if sum(r for _, r, _, _ in procs) // 1024 > MEM_CAP_MB:
+                        try:
+                            note = _memory_report(stem, procs)
+                        except Exception as e:      # the report must not lose the kill
+                            note = f"MEMORY: the process group passed {MEM_CAP_MB} MB ({e})\n\n"
+                        stop()
+                        p.wait()
+                        rc = 137
+                except Exception:
+                    watch = False                   # a watchdog fault never stops the sweep
+    reader.join(timeout=10)
+    out = note + b"".join(chunks).decode("utf-8", errors="replace")
     dt = time.time() - ts
     m = RESULT_RE.search(out)
-    if m:
+    if note:
+        status, detail = "MEMORY", f"(>{MEM_CAP_MB} MB)"
+    elif m:
         status, detail = m.group(4), f"sparse={m.group(2)} klu={m.group(3)}"
     elif rc == 124:
         status, detail = "TIMEOUT", "(>1200s)"
