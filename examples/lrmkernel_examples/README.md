@@ -40,4 +40,5 @@ string parse and the compiled runtime's file-slot walk. `optprobe.va` strobes
 reach the next run (1, 2.5, 1), a deck's `.option scale=4` is what the first run reads,
 `set osdilim_verbose` between two runs reports the limiter decision only after the set,
 and one compiled instance's load per iteration is under 4× a built-in resistor's over
-20 000 iterations (0.16 against 0.12 µs; the E-759 binary took 0.57–0.66 µs, 5×).
+20 000 iterations (0.16 against 0.12 µs; the E-759 binary took 0.57–0.66 µs, 5×) -- 6× on
+a CI runner (`CI` set), where a shared linux-arm machine measured the fixed code at 4.2×.
