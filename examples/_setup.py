@@ -249,6 +249,75 @@ if os.environ.get("NG_TRACE_DIR"):
     _install_trace(os.environ["NG_TRACE_DIR"])
 
 
+# Enhancement-785: a failure that does not repeat leaves the trace re-run
+# nothing to show -- four Windows suites failed once on their first (Sparse)
+# pass and passed when re-run alone. With NG_RING_DIR (run_regression.py sets
+# it for every suite) each process keeps its last 12 ngspice / openvaf-r runs
+# in memory and writes them to <dir>/<suite>-<pid>.log when it exits; the
+# sweep appends them to _failures/<suite>.log for a suite that failed and
+# deletes them otherwise.
+def _install_ring(ring_dir):
+    import atexit as _atexit
+    import collections as _collections
+    import subprocess as _sp
+    import sys as _sys
+    import time as _time
+    real_run = _sp.run
+    tools = {"ngspice", "openvaf-r", os.path.basename(NG).split(".")[0],
+             os.path.basename(VAF).split(".")[0]}
+    suite = os.path.basename(os.path.dirname(os.path.abspath(_sys.argv[0] or "x")))
+    ring = _collections.deque(maxlen=12)
+
+    def text(v):
+        if v is None:
+            return ""
+        return v.decode("utf-8", "replace") if isinstance(v, bytes) else str(v)
+
+    def ringed(args, *a, **kw):
+        argv = [str(x) for x in args] if isinstance(args, (list, tuple)) else [str(args)]
+        mine = bool(argv) and os.path.basename(argv[0]).split(".")[0] in tools
+        t0 = _time.time()
+        res = exc = None
+        try:
+            res = real_run(args, *a, **kw)
+            return res
+        except BaseException as e:
+            exc = type(e).__name__
+            raise
+        finally:
+            if mine:
+                try:
+                    rc = getattr(res, "returncode", exc)
+                    rec = [f"=== {_time.strftime('%H:%M:%S')}  {_time.time() - t0:.1f}s  rc={rc}  "
+                           f"cwd={kw.get('cwd') or os.getcwd()}", "args: " + " ".join(argv)]
+                    if res is not None:
+                        rec.append("--- stdout (tail):\n" + text(res.stdout)[-1500:])
+                        rec.append("--- stderr (tail):\n" + text(res.stderr)[-800:])
+                    ring.append("\n".join(rec))
+                except Exception:          # noqa: BLE001 -- the ring never fails a suite
+                    pass
+
+    def dump():
+        if not ring:
+            return
+        try:
+            os.makedirs(ring_dir, exist_ok=True)
+            with open(os.path.join(ring_dir, f"{suite}-{os.getpid()}.log"), "w",
+                      encoding="utf-8", errors="replace") as fh:
+                fh.write(f"--- the last {len(ring)} ngspice / openvaf-r runs of pid {os.getpid()} "
+                         f"({os.environ.get('_NG_SOLVER') or os.environ.get('NGSPICE_SOLVER') or 'solver from the deck'}) ---\n\n")
+                fh.write("\n\n".join(ring) + "\n")
+        except OSError:
+            pass
+
+    _atexit.register(dump)
+    _sp.run = ringed
+
+
+if os.environ.get("NG_RING_DIR") and not os.environ.get("NG_TRACE_DIR"):
+    _install_ring(os.environ["NG_RING_DIR"])
+
+
 # ---------------------------------------------------------------------------
 # XSPICE code models (SPICE_LIB_DIR)
 # ---------------------------------------------------------------------------

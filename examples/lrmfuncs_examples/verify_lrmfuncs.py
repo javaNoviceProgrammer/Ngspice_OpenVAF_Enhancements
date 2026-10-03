@@ -82,7 +82,8 @@ def build(src, tag, extra=None):
     os.makedirs(d)
     open(os.path.join(d, "m.va"), "w").write(src)
     for n, c in (extra or {}).items():
-        open(os.path.join(d, n), "w").write(c)
+        # the model reads bytes (E-776): "\n" as written, not Windows' "\r\n"
+        open(os.path.join(d, n), "w", newline="\n").write(c)
     env = dict(os.environ, RAYON_NUM_THREADS="1", TMPDIR=d)
     r = subprocess.run([OPENVAF, os.path.join(d, "m.va"), "-o", os.path.join(d, "m.osdi")],
                        capture_output=True, text=True, env=env, cwd=d, timeout=900,

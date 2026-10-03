@@ -52,6 +52,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -337,6 +338,8 @@ def _memory_report(stem, procs):
 # Windows jobs ran their 180-minute step out and the runner was lost with them.
 _budget = os.environ.get("NG_SWEEP_BUDGET_S")
 DEADLINE = time.time() + float(_budget) if _budget else None
+# Enhancement-785: where each suite's processes leave their last runs (_setup.py)
+RING_DIR = None
 
 
 def run_one(script, limit=SUITE_LIMIT_S):
@@ -357,10 +360,12 @@ def run_one(script, limit=SUITE_LIMIT_S):
     # Enhancement-773: its own session (POSIX), so the group can be measured
     # and stopped as a whole; output and errors in one stream.
     posix = os.name == "posix"
+    env = dict(os.environ, TERM="dumb", NO_COLOR="1")
+    if RING_DIR:
+        env["NG_RING_DIR"] = RING_DIR
     p = subprocess.Popen([sys.executable, os.path.basename(script)], cwd=d,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         stdin=subprocess.DEVNULL, start_new_session=posix,
-                         env=dict(os.environ, TERM="dumb", NO_COLOR="1"))
+                         stdin=subprocess.DEVNULL, start_new_session=posix, env=env)
     job = None
     if os.name == "nt":
         try:
@@ -452,6 +457,18 @@ def run_one(script, limit=SUITE_LIMIT_S):
         ok = "ALL PASS" in out or (rc == 0 and "FAIL" not in out)
         status = "OK" if (rc == 0 and ok) else "FAILURE"
         detail = f"rc={rc}"
+    ring = ""
+    if RING_DIR:
+        for rp in sorted(glob.glob(os.path.join(RING_DIR, os.path.basename(d) + "-*.log"))):
+            try:
+                if status != "OK":
+                    with open(rp, encoding="utf-8", errors="replace") as fh:
+                        ring += "\n" + fh.read()
+                os.remove(rp)
+            except OSError:
+                pass
+    if ring:
+        out += "\n\n===== Enhancement-785: the suite's last ngspice / openvaf-r runs =====\n" + ring
     if status != "OK":
         # Enhancement-579: keep a failing suite's output. A parallel sweep prints
         # one line per suite and nothing else, so a failure that does not repeat
@@ -504,6 +521,8 @@ def main(argv):
             print(f"  {stem:20} {on_platform[stem]}")
         print()
 
+    global RING_DIR
+    RING_DIR = tempfile.mkdtemp(prefix="ng_ring_")
     results = []
     t0 = time.time()
     n = len(todo)
@@ -559,6 +578,7 @@ def main(argv):
                 r = run_one(by_stem[stem], limit=300)
                 print(f"  traced {stem:28} {r[1]}", flush=True)
         del os.environ["NG_TRACE_DIR"]
+    shutil.rmtree(RING_DIR, ignore_errors=True)
     print("\n" + "=" * 70)
     print(f"TOTAL {len(results)}  OK {len(results)-len(bad)}  NOT-OK {len(bad)}"
           f"   ({time.time()-t0:.0f}s)")
