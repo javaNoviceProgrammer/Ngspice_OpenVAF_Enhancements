@@ -29,6 +29,12 @@ On Linux (Enhancement-773) a suite whose process group holds more than
 NG_SUITE_MEM_MB (4096) of memory is stopped and reported as MEMORY, with its
 processes, the deck each ngspice was running and a sample of its output in
 _failures/<suite>.log -- a runaway suite must not take the machine with it.
+Enhancement-783 extends that to macOS (the group read with ps) and Windows (each
+suite runs in a job object: committed memory capped at NG_SUITE_JOB_MEM_MB, one
+and a half times NG_SUITE_MEM_MB, and a stop ends the whole process tree). A
+suite stopped at its time limit reports the command line of every process it
+still had running, and NG_SWEEP_BUDGET_S bounds the whole sweep: past it no
+suite starts (NOT RUN) and a running one is stopped as a TIMEOUT.
 
 `--jobs N` (Enhancement-576) runs N suites at once. Every suite works in its own
 directory and cleans its own scratch files, and none writes outside it, so
@@ -141,10 +147,19 @@ def parse_jobs(argv):
 # down, taking the whole sweep and its log with it. Linux only (it reads /proc).
 MEM_CAP_MB = int(os.environ.get("NG_SUITE_MEM_MB", "4096"))
 HAVE_PROC = sys.platform.startswith("linux") and os.path.isdir("/proc/self")
+# Enhancement-783: macOS lists a process group with ps; Windows puts each suite
+# in a job object instead (below), which caps the memory and stops the tree.
+HAVE_PS = sys.platform == "darwin" and shutil.which("ps") is not None
+SUITE_LIMIT_S = 1200
+# the job object caps COMMITTED memory, which runs well above the resident set
+# the Linux and macOS watchdogs measure, so its cap is half again as high
+JOB_MEM_MB = int(os.environ.get("NG_SUITE_JOB_MEM_MB", str(MEM_CAP_MB * 3 // 2)))
 
 
 def _group_procs(pgid):
     """[(pid, rss_kb, cmdline, cwd)] for the processes of process group PGID."""
+    if not HAVE_PROC:
+        return _ps_group_procs(pgid)
     procs = []
     for d in glob.glob("/proc/[0-9]*"):
         try:
@@ -165,6 +180,125 @@ def _group_procs(pgid):
         except (OSError, ValueError, IndexError):
             continue
     return procs
+
+
+def _ps_group_procs(pgid):
+    """Enhancement-783: the same list from ps (macOS); the cwd is not shown."""
+    if not HAVE_PS:
+        return []
+    out = subprocess.run(["ps", "-axo", "pid=,pgid=,rss=,command="], capture_output=True,
+                         text=True, errors="replace", timeout=30).stdout
+    procs = []
+    for line in out.splitlines():
+        f = line.split(None, 3)
+        if len(f) >= 3 and f[1] == str(pgid):
+            procs.append((int(f[0]), int(f[2]), f[3] if len(f) > 3 else "", "?"))
+    return procs
+
+
+class _WinJob:
+    """Enhancement-783: a Windows job object around one suite. Every process
+    the suite starts is in it, so a timeout or the memory cap stops the whole
+    tree (`p.kill()` stopped the suite's Python alone and left a hung ngspice
+    or openvaf-r running), the job's committed memory is capped at
+    NG_SUITE_JOB_MEM_MB, and the processes still running can be listed. Any
+    failure here leaves the suite running as before, unguarded."""
+
+    def __init__(self, popen):
+        import ctypes
+        from ctypes import wintypes
+        self.ct, self.k32 = ctypes, ctypes.WinDLL("kernel32", use_last_error=True)
+
+        class Basic(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                        ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t),
+                        ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class Extended(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", Basic),
+                        ("IoInfo", ctypes.c_ulonglong * 6),
+                        ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        self.Extended = Extended
+        k = self.k32
+        k.CreateJobObjectW.restype = wintypes.HANDLE
+        k.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        k.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                              wintypes.DWORD]
+        k.QueryInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                                wintypes.DWORD, ctypes.c_void_p]
+        k.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        k.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        k.CloseHandle.argtypes = [wintypes.HANDLE]
+        self.job = k.CreateJobObjectW(None, None)
+        if not self.job:
+            raise OSError("CreateJobObjectW failed")
+        info = Extended()
+        # JOB_OBJECT_LIMIT_JOB_MEMORY | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        info.BasicLimitInformation.LimitFlags = 0x200 | 0x2000
+        info.JobMemoryLimit = JOB_MEM_MB * 1024 * 1024
+        if not k.SetInformationJobObject(self.job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            raise OSError("SetInformationJobObject failed")
+        if not k.AssignProcessToJobObject(self.job, int(popen._handle)):
+            raise OSError("AssignProcessToJobObject failed")
+
+    def stop(self):
+        self.k32.TerminateJobObject(self.job, 1)
+
+    def peak_mb(self):
+        info = self.Extended()
+        ok = self.k32.QueryInformationJobObject(self.job, 9, self.ct.byref(info),
+                                                self.ct.sizeof(info), None)
+        return info.PeakJobMemoryUsed // (1024 * 1024) if ok else 0
+
+    def pids(self):
+        n = 256
+        buf = (self.ct.c_size_t * (n + 1))()      # two DWORD counts, then the ids
+        if not self.k32.QueryInformationJobObject(self.job, 3, buf, self.ct.sizeof(buf), None):
+            return []
+        listed = buf[0] >> 32
+        return [int(buf[1 + i]) for i in range(min(listed, n))]
+
+    def close(self):
+        self.k32.CloseHandle(self.job)
+
+
+def _win_procs(pids):
+    """Enhancement-783: [(pid, rss_kb, cmdline, cwd)] for PIDS (Windows)."""
+    if not pids:
+        return []
+    flt = " OR ".join(f"ProcessId={p}" for p in pids)
+    cmd = ("Get-CimInstance Win32_Process -Filter '" + flt + "' | ForEach-Object { "
+           "'{0}|{1}|{2}' -f $_.ProcessId,[int64]($_.WorkingSetSize/1KB),$_.CommandLine }")
+    out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
+                         capture_output=True, text=True, errors="replace", timeout=60).stdout
+    procs = []
+    for line in out.splitlines():
+        f = line.split("|", 2)
+        if len(f) == 3 and f[0].strip().isdigit():
+            procs.append((int(f[0]), int(f[1] or 0), f[2].strip(), "?"))
+    return procs
+
+
+def _timeout_report(stem, procs, limit):
+    """Enhancement-783: what a suite stopped at its time limit was still
+    running -- the command line of every process left in its group or job, so
+    a hang names the run that hung."""
+    lines = [f"TIMEOUT: {stem} was stopped after {limit:.0f} s; still running:"]
+    for pid, rss, cmd, _cwd in procs:
+        lines.append(f"  pid {pid}  {rss // 1024} MB  {cmd[:600]}")
+    if not procs:
+        lines.append("  (no process list on this platform)")
+    return "\n".join(lines) + "\n\n"
 
 
 def _memory_report(stem, procs):
@@ -197,11 +331,23 @@ def _memory_report(stem, procs):
     return "\n".join(lines) + "\n\n"
 
 
-def run_one(script):
+# Enhancement-783: NG_SWEEP_BUDGET_S bounds the whole sweep. Past it no suite
+# starts (NOT RUN) and a running one is stopped as a TIMEOUT, so the summary is
+# printed and the logs are uploaded while the CI step still has time: two
+# Windows jobs ran their 180-minute step out and the runner was lost with them.
+_budget = os.environ.get("NG_SWEEP_BUDGET_S")
+DEADLINE = time.time() + float(_budget) if _budget else None
+
+
+def run_one(script, limit=SUITE_LIMIT_S):
     """Run one verify script from its own directory; (stem, status, detail, seconds)."""
     stem = stem_of(script)
     d = os.path.dirname(script)
     ts = time.time()
+    if DEADLINE is not None:
+        if ts >= DEADLINE:
+            return stem, "NOT RUN", "(sweep budget)", 0.0
+        limit = min(limit, DEADLINE - ts)
     # stdin=DEVNULL so no test can inherit a live stdin and leave an
     # ngspice spinning at the interactive prompt (see _setup.py).
     # Enhancement-574: a dumb terminal and NO_COLOR for every suite, so
@@ -215,6 +361,12 @@ def run_one(script):
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          stdin=subprocess.DEVNULL, start_new_session=posix,
                          env=dict(os.environ, TERM="dumb", NO_COLOR="1"))
+    job = None
+    if os.name == "nt":
+        try:
+            job = _WinJob(p)
+        except Exception:                   # noqa: BLE001 -- unguarded, as before
+            job = None
     chunks = []
     reader = threading.Thread(
         target=lambda: chunks.extend(iter(lambda: p.stdout.read(65536), b"")), daemon=True)
@@ -222,22 +374,46 @@ def run_one(script):
 
     def stop():
         try:
-            os.killpg(p.pid, signal.SIGKILL) if posix else p.kill()
-        except OSError:
+            if posix:
+                os.killpg(p.pid, signal.SIGKILL)
+            elif job is not None:
+                job.stop()
+            else:
+                # the whole tree: p.kill() alone left the suite's children running
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)],
+                               capture_output=True, timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            try:
+                p.kill()
+            except OSError:
+                pass
+
+    def still_running():
+        try:
+            if posix:
+                return _group_procs(p.pid)
+            if job is not None:
+                return _win_procs(job.pids())
+        except Exception:                   # noqa: BLE001 -- the report is a courtesy
             pass
+        return []
 
     note = ""
     rc = None
-    watch = HAVE_PROC
+    mem = False
+    watch = HAVE_PROC or HAVE_PS
+    last_watch = 0.0
     while rc is None:
         try:
             rc = p.wait(timeout=1.0)
         except subprocess.TimeoutExpired:
-            if time.time() - ts > 1200:
+            if time.time() - ts > limit:
+                note = _timeout_report(stem, still_running(), limit)
                 stop()
                 p.wait()
                 rc = 124
-            elif watch:
+            elif watch and (HAVE_PROC or time.time() - last_watch >= 5.0):
+                last_watch = time.time()
                 try:
                     procs = _group_procs(p.pid)
                     if sum(r for _, r, _, _ in procs) // 1024 > MEM_CAP_MB:
@@ -248,18 +424,30 @@ def run_one(script):
                         stop()
                         p.wait()
                         rc = 137
+                        mem = True
                 except Exception:
                     watch = False                   # a watchdog fault never stops the sweep
     reader.join(timeout=10)
+    if job is not None:
+        try:
+            # the job refuses memory past the cap rather than stopping the
+            # tree: a run that reached it failed for that reason
+            if not mem and rc != 124 and job.peak_mb() >= JOB_MEM_MB * 0.98:
+                note = (f"MEMORY: the job's processes reached {JOB_MEM_MB} MB "
+                        f"(peak {job.peak_mb()} MB) and allocations failed\n\n")
+                mem = True
+            job.close()
+        except Exception:                   # noqa: BLE001
+            pass
     out = note + b"".join(chunks).decode("utf-8", errors="replace")
     dt = time.time() - ts
     m = RESULT_RE.search(out)
-    if note:
+    if mem:
         status, detail = "MEMORY", f"(>{MEM_CAP_MB} MB)"
+    elif rc == 124:
+        status, detail = "TIMEOUT", f"(>{limit:.0f}s)"
     elif m:
         status, detail = m.group(4), f"sparse={m.group(2)} klu={m.group(3)}"
-    elif rc == 124:
-        status, detail = "TIMEOUT", "(>1200s)"
     else:
         ok = "ALL PASS" in out or (rc == 0 and "FAIL" not in out)
         status = "OK" if (rc == 0 and ok) else "FAILURE"
@@ -319,6 +507,9 @@ def main(argv):
     results = []
     t0 = time.time()
     n = len(todo)
+    if DEADLINE is not None:
+        print(f"run_regression: sweep budget {DEADLINE - t0:.0f} s (NG_SWEEP_BUDGET_S); "
+              f"suites not started by then are NOT RUN\n", flush=True)
 
     def report(i, r):
         stem, status, detail, dt = r
@@ -352,15 +543,20 @@ def main(argv):
     # Enhancement-777: NG_TRACE_FAILED=1 re-runs each failed suite once, alone,
     # with NG_TRACE_DIR set, so _trace/<suite>.log holds what ngspice and
     # openvaf-r printed for every run of it (see _setup.py). At most 30.
-    if bad and os.environ.get("NG_TRACE_FAILED"):
+    # Enhancement-783: a suite that never ran is not traced, and a traced run
+    # gets 300 s: one hung suite re-run with the full 1200 s, after a sweep
+    # that had already waited that long for it, is how a CI step ran out.
+    traceable = [b for b in bad if b[1] != "NOT RUN"]
+    if (traceable and os.environ.get("NG_TRACE_FAILED")
+            and (DEADLINE is None or time.time() < DEADLINE)):
         tdir = os.path.join(HERE, "_trace")
-        print(f"\nrun_regression: re-running {min(len(bad), 30)} failed suite(s) with a trace "
-              f"into {tdir}", flush=True)
+        print(f"\nrun_regression: re-running {min(len(traceable), 30)} failed suite(s) with a "
+              f"trace into {tdir}", flush=True)
         os.environ["NG_TRACE_DIR"] = tdir
         by_stem = {stem_of(s): s for s in todo}
-        for stem, _, _ in bad[:30]:
+        for stem, _, _ in traceable[:30]:
             if stem in by_stem:
-                r = run_one(by_stem[stem])
+                r = run_one(by_stem[stem], limit=300)
                 print(f"  traced {stem:28} {r[1]}", flush=True)
         del os.environ["NG_TRACE_DIR"]
     print("\n" + "=" * 70)

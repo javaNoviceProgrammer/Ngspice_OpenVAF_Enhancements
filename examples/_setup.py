@@ -137,14 +137,26 @@ def _install_trace(trace_dir):
             return ""
         return v.decode("utf-8", "replace") if isinstance(v, bytes) else str(v)
 
-    def record(args, kw, res, exc, dt):
+    def ours(args):
         argv = [str(a) for a in args] if isinstance(args, (list, tuple)) else [str(args)]
-        if not argv or os.path.basename(argv[0]).split(".")[0] not in tools:
-            return
+        return argv if argv and os.path.basename(argv[0]).split(".")[0] in tools else None
+
+    def append(lines):
+        os.makedirs(trace_dir, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8", errors="replace") as fh:
+            fh.write("\n".join(lines) + "\n\n")
+
+    # Enhancement-783: the run is announced BEFORE it starts, deck and all, so
+    # a run that never returns (a hang the sweep stops at its time limit)
+    # still shows in the trace as the last "start" with no "run" after it.
+    def record_start(args, kw):
+        argv = ours(args)
+        if argv is None:
+            return None
         count[0] += 1
+        n = count[0]
         cwd = kw.get("cwd") or os.getcwd()
-        lines = [f"=== run {count[0]}  {dt:.1f}s  rc={getattr(res, 'returncode', exc)}  cwd={cwd}",
-                 "args: " + " ".join(argv)]
+        lines = [f"=== start {n}  cwd={cwd}", "args: " + " ".join(argv)]
         for a in argv[1:]:
             p = a if os.path.isabs(a) else os.path.join(cwd, a)
             if a.endswith((".cir", ".sp", ".net")) and os.path.isfile(p):
@@ -154,6 +166,16 @@ def _install_trace(trace_dir):
                     pass
         if kw.get("input") is not None:
             lines.append("--- stdin:\n" + text(kw.get("input"))[:3000])
+        append(lines)
+        return n
+
+    def record(args, kw, res, exc, dt, n):
+        argv = ours(args)
+        if argv is None:
+            return
+        cwd = kw.get("cwd") or os.getcwd()
+        lines = [f"=== run {n}  {dt:.1f}s  rc={getattr(res, 'returncode', exc)}  cwd={cwd}",
+                 "args: " + " ".join(argv)]
         if res is not None:
             lines.append("--- stdout (tail):\n" + text(res.stdout)[-3000:])
             lines.append("--- stderr (tail):\n" + text(res.stderr)[-2000:])
@@ -199,13 +221,15 @@ def _install_trace(trace_dir):
                     lines.append("--- lldb:\n" + text(bt.stdout)[-4000:])
                 except Exception as e:      # noqa: BLE001 -- a trace must not fail a suite
                     lines.append(f"--- lldb failed: {e}")
-        os.makedirs(trace_dir, exist_ok=True)
-        with open(log_path, "a", encoding="utf-8", errors="replace") as fh:
-            fh.write("\n".join(lines) + "\n\n")
+        append(lines)
 
     def traced(args, *a, **kw):
         t0 = _time.time()
-        res = exc = None
+        res = exc = n = None
+        try:
+            n = record_start(args, kw)
+        except Exception:                  # noqa: BLE001
+            pass
         try:
             res = real_run(args, *a, **kw)
             return res
@@ -214,7 +238,7 @@ def _install_trace(trace_dir):
             raise
         finally:
             try:
-                record(args, kw, res, exc, _time.time() - t0)
+                record(args, kw, res, exc, _time.time() - t0, n)
             except Exception:              # noqa: BLE001
                 pass
 

@@ -309,6 +309,21 @@ jobs:
         shell: bash
         run: uv pip install numpy matplotlib
 
+      # Enhancement-783: one compile and one simulation, timed, before the
+      # sweep -- a compiler or simulator that hangs on this runner shows here
+      # within minutes instead of as a sweep that never ends
+      - name: Smoke test (one compile, one simulation)
+        shell: bash
+        timeout-minutes: 5
+        continue-on-error: true
+        run: |
+          B="$PWD/out/bin/${{ matrix.bin }}"
+          d="$RUNNER_TEMP/smoke"; mkdir -p "$d"; cd "$d"
+          printf '`include "disciplines.vams"\nmodule smokeres(a, b); inout a, b; electrical a, b;\nanalog I(a, b) <+ V(a, b) / 1k;\nendmodule\n' > r.va
+          time "$B/openvaf-r" r.va -o r.osdi
+          printf 'smoke\nV1 1 0 1\nN1 1 0 rm\n.model rm smokeres\n.control\npre_osdi r.osdi\nop\nprint i(V1)\n.endc\n.end\n' > r.cir
+          time SPICE_LIB_DIR="$B" "$B/ngspice" -b r.cir
+
       - name: Regression sweep
         id: regression
         shell: bash
@@ -316,6 +331,10 @@ jobs:
         env:
           MPLBACKEND: Agg     # no display on a runner; the pyplot suites draw off-screen
           PYTHONUTF8: "1"     # suites print and read UTF-8 whatever the runner's locale
+          # Enhancement-783: the sweep stops itself at 150 minutes (suites not
+          # started are NOT RUN), inside the step's 180, so its summary and
+          # logs are always written and uploaded
+          NG_SWEEP_BUDGET_S: "9000"
           # Enhancement-777: re-run each failed suite once with a trace of every
           # ngspice / openvaf-r run (examples/_trace/, uploaded below); on macOS
           # a run killed by a signal is re-run under lldb for a backtrace
@@ -553,6 +572,40 @@ jobs:
         shell: pwsh
         run: uv pip install numpy matplotlib
 
+      # Enhancement-783: see the Unix job's smoke step
+      - name: Smoke test (one compile, one simulation)
+        shell: pwsh
+        timeout-minutes: 5
+        continue-on-error: true
+        run: |
+          $B = Join-Path $PWD "out\bin\windows\intel"
+          $d = Join-Path $env:RUNNER_TEMP "smoke"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          Set-Location $d
+          @'
+          `include "disciplines.vams"
+          module smokeres(a, b); inout a, b; electrical a, b;
+          analog I(a, b) <+ V(a, b) / 1k;
+          endmodule
+          '@ | Set-Content -Encoding ascii r.va
+          $t = Measure-Command { & (Join-Path $B "openvaf-r.exe") r.va -o r.osdi | Out-Host }
+          "openvaf-r: $($t.TotalSeconds) s, exit $LASTEXITCODE"
+          @'
+          smoke
+          V1 1 0 1
+          N1 1 0 rm
+          .model rm smokeres
+          .control
+          pre_osdi r.osdi
+          op
+          print i(V1)
+          .endc
+          .end
+          '@ | Set-Content -Encoding ascii r.cir
+          $env:SPICE_LIB_DIR = $B
+          $t = Measure-Command { & (Join-Path $B "ngspice.exe") -b r.cir | Out-Host }
+          "ngspice: $($t.TotalSeconds) s, exit $LASTEXITCODE"
+
       - name: Regression sweep
         id: regression
         shell: pwsh
@@ -561,6 +614,7 @@ jobs:
           MPLBACKEND: Agg
           PYTHONUTF8: "1"     # cp1252 stdout cannot print the suites' σ, ≤ and →
           NG_TRACE_FAILED: "1"   # Enhancement-777: trace the failed suites' runs
+          NG_SWEEP_BUDGET_S: "9000"   # Enhancement-783: see the Unix job
         run: |
           $B = Join-Path $PWD "out\bin\windows\intel"
           $env:NGSPICE_BIN   = Join-Path $B "ngspice.exe"
