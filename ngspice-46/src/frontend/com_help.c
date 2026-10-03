@@ -7,9 +7,38 @@
 
 #include "hcomp.h"
 #include "com_help.h"
+#include "com_optimize.h"
 #include "ngspice/fteext.h"
 
 #define N_CMD_DFLT  512
+
+/* Enhancement-788: the full description of a command whose options do not
+ * fit its one-line text, printed by `help <name>` beneath that line -- never
+ * by `help all`, whose list stays one line per command (Enhancement-753).
+ * Each text lives beside its command's parser as NULL-terminated lines and
+ * goes out as it stands: out_send, not out_printf, so no format conversion. */
+static const struct {
+    const char *name;
+    const char *const *text;
+} help_details[] = {
+    { "optimize", com_optimize_help },
+};
+
+static void help_detail(const char *name)
+{
+    size_t i;
+    for (i = 0; i < sizeof help_details / sizeof help_details[0]; i++)
+        if (eq(help_details[i].name, name)) {
+            const char *const *t;
+            out_send("\n");
+            for (t = help_details[i].text; *t; t++) {
+                out_send((char *) *t);
+                out_send("\n");
+            }
+            return;
+        }
+}
+
 void com_help(wordlist *wl)
 {
     bool allflag = FALSE;
@@ -97,6 +126,7 @@ void com_help(wordlist *wl)
                     if (c->co_spiceonly && ft_nutmeg)
                         out_send(" (Not available in nutmeg)");
                     out_send("\n");
+                    help_detail(c->co_comname);   /* Enhancement-788 */
                     break;
                 }
             }

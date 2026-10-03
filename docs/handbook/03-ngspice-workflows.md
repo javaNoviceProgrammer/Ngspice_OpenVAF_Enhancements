@@ -268,6 +268,11 @@ token, a second `-minimize` under a scalar method, a knob named twice. An expres
 begins with `-` must be quoted (`-minimize "-v(out)"`) or written `0-v(out)`, and a
 `-target` expression must be one token (`v(out)-v(in)`).
 
+At the prompt, `help optimize` prints all of this as a reference
+([E-788](../../enhancements_doc/Enhancement-788.md)): every option with its aliases and
+default, the nine methods, the constraints, the results a script reads and three examples
+that run as printed. `help all` keeps the command to its one line.
+
 `examples/optimize_examples/`, `examples/optmethods_examples/` (the methods added from
 the 2026-09-29 proposal on), `examples/pareto_examples/`, `examples/dcenter_examples/`.
 The write-ups: [E-130](../../enhancements_doc/Enhancement-130.md),

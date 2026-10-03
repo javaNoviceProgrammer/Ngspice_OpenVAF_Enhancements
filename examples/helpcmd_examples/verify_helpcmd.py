@@ -43,6 +43,13 @@ Enhancement-753 adds the listing itself (batch mode):
       before; the manual links still follow the list
   [8] `newhelp` at the advanced level lists the keywords and what follows them
 
+Enhancement-788 gives `help optimize` the full description beneath its line:
+  [10] it follows the one-line text after a blank line; every flag, alias and
+       -method name the parser in com_optimize.c accepts appears in it, and
+       every result the command publishes; it fits 79 columns with only its
+       section headers in column 0; `help all` keeps optimize to one line; the
+       three examples run as printed on the deck the description names
+
 Not a circuit simulation, so the dual-solver harness does not apply.
 """
 import os
@@ -281,6 +288,97 @@ doc_desc = {r[0]: norm(r[2]) for r in rows}
 bad = [n for n in names_doc if doc_desc.get(n) != bin_desc.get(n)]
 check("[9] ...and each description is the one the command table carries (rerun make_commands_table.py otherwise)",
       not bad, f"differs for {bad[:5]}")
+
+# ------------------------------------------------------------------- [10]
+# Enhancement-788: `help optimize` prints the full description beneath the
+# one-line text -- every option, the methods, the results and examples. The
+# one line had stayed at E-145's options (two of the nine methods, nothing of
+# -center, -constrain, -polish or -starts). The description lives beside the
+# parser in com_optimize.c; these checks scrape the parser, so an option added
+# there without being described fails here.
+print("\n[10] help optimize")
+osrc = open(os.path.join(REPO, "ngspice-46", "src", "frontend", "com_optimize.c")).read()
+out5 = run_batch("help optimize\necho ====\nhelp all")
+p5 = out5.split("====")
+ho = p5[0].split("\n")
+i_one = next((i for i, l in enumerate(ho) if l.startswith("optimize ")), None)
+i_use = next((i for i, l in enumerate(ho) if l == "Usage:"), None)
+i_end = next((i for i, l in enumerate(ho) if l.startswith("For further details")), None)
+desc = ho[i_use:i_end - 1] if i_use is not None and i_end is not None else []
+text = "\n".join(desc)
+check("[10] `help optimize` prints its one-line text, a blank line, then the description",
+      i_one is not None and i_use == i_one + 2 and ho[i_one + 1] == "" and len(desc) > 100,
+      f"{len(desc)} lines")
+
+
+def word_in(w, t):
+    return re.search(r"(?<![\w-])" + re.escape(w) + r"(?![\w-])", t) is not None
+
+
+flags = sorted(set(re.findall(r'eq\(w, "(-[a-z]+)"\)', osrc)))
+miss = [f for f in flags if not word_in(f, text)]
+check(f"[10] every flag the parser accepts is described, aliases included ({len(flags)})",
+      len(flags) > 30 and not miss, f"missing {miss[:6]}")
+methods = sorted(set(re.findall(r'eq\(mm, "([a-z-]+)"\)', osrc)))
+miss = [m for m in methods if not word_in(m, text)]
+check(f"[10] every -method name the parser accepts is described ({len(methods)})",
+      len(methods) > 25 and not miss, f"missing {miss[:6]}")
+results = sorted(set(re.findall(r'(?:dc_set_result|cp_vset)\("([a-z_]+)"', osrc)))
+miss = [r for r in results if not word_in(r, text)]
+check(f"[10] every result the command publishes is described ({len(results)}), "
+      "with optimize_<name> and pareto1 ... paretoM",
+      len(results) >= 8 and not miss and "optimize_<name>" in text and "paretoM" in text,
+      f"missing {miss[:6]}")
+long_ = [l for l in desc if len(l) > 79 or "\t" in l or l != l.rstrip()]
+col0 = [l for l in desc if l and l[0] != " " and not l.endswith(":")]
+check("[10] the description fits 79 columns, and only its section headers start in column 0 "
+      "(so [6] cannot read a line as a command's)", desc and not long_ and not col0,
+      f"{long_[:2]} {col0[:2]}")
+lst5 = p5[1].split("\n") if len(p5) > 1 else []
+oline = [l for l in lst5 if l.startswith("optimize ")]
+check("[10] `help all` keeps optimize to one line naming the nine methods, without the description",
+      len(oline) == 1 and "nm|lm|tr|pso|de|sa|cmaes|bayes|nsga2" in oline[0]
+      and "Usage:" not in p5[1] and oline[0].endswith("."), f"{oline[:1]}")
+
+# the examples, run as printed on the deck the description names
+ex = desc[desc.index("Examples:") + 1:] if "Examples:" in desc else []
+deck_txt, cmds = "", []
+for l in ex:
+    if l.startswith("    optimize "):
+        cmds.append(l.strip())
+    elif l.startswith("             ") and cmds:
+        cmds[-1] += " " + l.strip()
+    elif not cmds and l.startswith("  "):
+        deck_txt += " " + l.strip()
+m = re.search(r"On a deck with (.*):$", deck_txt.strip())
+deck = re.split(r",\s*|\s+and\s+", m.group(1)) if m else []
+res = []
+if deck and len(cmds) == 3:
+    ctl = "\n".join(c + "\necho status=$optimize_status" for c in cmds)
+    p = os.path.join(HERE, "_hx.cir")
+    open(p, "w").write("* help optimize examples\n" + "\n".join(deck) + "\n.control\n" + ctl +
+                       "\necho feasible=$optimize_feasible\nquit\n.endc\n.end\n")
+    r = subprocess.run([NGSPICE, "-b", "_hx.cir"], cwd=HERE, capture_output=True, text=True,
+                       timeout=300, errors="replace")
+    os.remove(p)
+    res = r.stdout.split("status=")
+
+
+def knob(chunk, name):
+    m = re.search(r"^\s+" + re.escape(name) + r" = (\S+)", chunk, re.M)
+    return float(m.group(1)) if m else None
+
+
+ok1 = len(res) == 4 and res[1].startswith("converged") and abs((knob(res[0], "r2") or 0) - 1000) < 1
+AT = "@"     # split from the model name: check_mentions reads this file
+is_, n_ = (knob(res[1], AT + "dmod[is]"), knob(res[1], AT + "dmod[n]")) if len(res) == 4 else (None, None)
+ok2 = (len(res) == 4 and res[2].startswith("converged") and is_ and n_
+       and 0.9e-13 < is_ < 1.4e-13 and 1.15 < n_ < 1.25)
+ok3 = (len(res) == 4 and res[3].startswith("converged") and "feasible=1" in res[3]
+       and abs((knob(res[2], "r2") or 0) - 1500) < 2)
+check("[10] the three examples run as printed on the deck the description names: R2 = 1k; "
+      "is ~ 1.1e-13 and n ~ 1.2 fitted; R2 = 1.5k with v(out) <= 0.6 met",
+      bool(ok1 and ok2 and ok3), f"deck {len(deck)} lines, {len(cmds)} examples, is {is_} n {n_}")
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)

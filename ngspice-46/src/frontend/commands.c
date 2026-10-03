@@ -506,10 +506,15 @@ struct comm spcp_coms[] = {
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
       "devspecs : parmname value : Alter .param parameters." },
-    { "optimize", com_optimize, TRUE, FALSE,     /* Enhancement-130 / -143 / -144 / -145 */
+    { "optimize", com_optimize, TRUE, FALSE,     /* Enhancement-130 / -143 / -144 / -145 / -788 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,
-      "(-param|-mparam|-dparam) name init lo hi ... -analysis <cmd> (-minimize <expr> | -target <expr> <val> [<w>] ...) [-method nm|lm] [-maxiter N] [-tol T] [-verbose] : parameter optimizer (Nelder-Mead / least-squares Levenberg-Marquardt; -param = alter device/instance, -mparam = @model[param] via altermod, -dparam = symbolic .param via re-source; multi-analysis)." },
+      "(-param|-mparam|-dparam) name init lo hi ... -analysis <cmd> ... (-minimize <expr> "
+      "| -target <expr> <val> [<w>] ... | -center -spec <expr> -max|-min <v> ...) "
+      "[-constrain <expr> -max|-min <v> ...] [-method nm|lm|tr|pso|de|sa|cmaes|bayes|nsga2] "
+      "[-maxiter N] [-tol T] [-polish] [-starts k] [-verbose] ... : tune instance, model or "
+      ".param values to minimise an objective, fit targets, centre a design for yield or find "
+      "a Pareto front; help optimize describes every option, the results and examples." },
     { "track", com_track, TRUE, FALSE,           /* Enhancement-577 */
       { 040, 040, 040, 040 }, E_DEFHMASK, 1, LOTS,
       NULL,

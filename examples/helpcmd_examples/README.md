@@ -1,10 +1,10 @@
-# helpcmd_examples — Enhancement-174 and Enhancement-753
+# helpcmd_examples — Enhancement-174, Enhancement-753 and Enhancement-788
 
 ```
 python3 verify_helpcmd.py
 ```
 
-20 checks (the last two hold the internals document `ngspice_commands.md` to the binary's `help all`). Not a circuit simulation, so the dual-solver harness does not apply.
+27 checks ([9]'s two hold the internals document `ngspice_commands.md` to the binary's `help all`). Not a circuit simulation, so the dual-solver harness does not apply.
 
 **[1]–[4], [E-174](../../enhancements_doc/Enhancement-174.md): `help` must not
 crash.** Each help string is passed to printf as the format, so a bare `%` in
@@ -28,3 +28,20 @@ one-line form (`setscale`'s embedded newline among them).
 - **[8]** `newhelp` at the advanced level lists the keywords too.
 
 On the E-752 binary 9 of 18 pass.
+
+**[10], [E-788](../../enhancements_doc/Enhancement-788.md): `help optimize`
+describes every option.** The one-line text had stayed at E-145's options (two
+of the nine methods, nothing of `-center`, `-constrain`, `-polish` or
+`-starts`); `help optimize` now prints a full description beneath it, kept
+beside the parser in `com_optimize.c`.
+
+- **[10]** the description follows the one-line text after a blank line; every
+  flag and alias (39) and every `-method` name (31) the parser accepts appears
+  in it, scraped from the source, and every result the command publishes; it
+  fits 79 columns with only its section headers in column 0; `help all` keeps
+  optimize to one line naming the nine methods; the three examples run as
+  printed on the deck the description names (R2 = 1k; is and n fitted;
+  R2 = 1.5k with the constraint met).
+
+On the E-787 binaries 8 of 27 fail ([9]'s description check and all seven of
+[10]).

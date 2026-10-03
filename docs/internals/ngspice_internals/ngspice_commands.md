@@ -604,7 +604,7 @@ montecarlo 500 -analysis ac -spec 'vdb(out)' -min -3.5 -max -2.5
 | `corners` | run the analysis at every process corner the loaded Verilog-A models declare (`(* corner="..." *)` on a parameter, Enhancement-654), the nominal `tt` first, recording each `-output` into a `corners<n>` plot on a `corner` index scale; `-mc N <montecarlo arguments>` runs a `montecarlo` per corner instead and records yield, npass, nsamples and nfailed per corner |
 | `writemc` | put each value (a scalar, evaluated on the current plot) onto the row `.option savemc` wrote for the last analysis run — a value computed in the `.control` block, beside the draws behind it; a column is added on first use (`writemc [name=]<expression> ...`) |
 | `writecorner` / `writecr` | the same as `writemc`, under the corner file's name: each value onto the row `.option savecorner` (and `.option savemc`, when set) wrote for the last analysis run; on an autocorner combined plot each value goes onto every corner's own row (Enhancement-742) |
-| `optimize` | Nelder-Mead / Levenberg-Marquardt parameter optimizer against an objective |
+| `optimize` | tune instance, model or `.param` values: minimise an objective, fit `-target`s, centre a design for yield (`-center`), hold `-constrain`ed metrics, or find a Pareto front; nine methods (nm, lm, tr, pso, de, sa, cmaes, bayes, nsga2), `-polish` and `-starts`; `help optimize` prints every option, the results and examples (Enhancement-788) |
 
 See the [statistics](ngspice_statistics.md) and [optimizer](ngspice_optimizer.md)
 references for full treatments with plots.
@@ -805,7 +805,7 @@ carries no help text, so `help all` does not list it.
 | `noise` | `[.noise line args]` | Do a noise analysis. |
 | `oldhelp` | `[command name] ...` | Print help. |
 | `op` | `[.op line args]` | Determine the operating point of the circuit. |
-| `optimize` | `(-param\|-mparam\|-dparam) name init lo hi ... -analysis <cmd> (-minimize <expr> \| -target <expr> <val> [<w>] ...) [-method nm\|lm] [-maxiter N] [-tol T] [-verbose]` | parameter optimizer (Nelder-Mead / least-squares Levenberg-Marquardt; -param = alter device/instance, -mparam = `@model[param]` via altermod, -dparam = symbolic .param via re-source; multi-analysis). |
+| `optimize` | `(-param\|-mparam\|-dparam) name init lo hi ... -analysis <cmd> ... (-minimize <expr> \| -target <expr> <val> [<w>] ... \| -center -spec <expr> -max\|-min <v> ...) [-constrain <expr> -max\|-min <v> ...] [-method nm\|lm\|tr\|pso\|de\|sa\|cmaes\|bayes\|nsga2] [-maxiter N] [-tol T] [-polish] [-starts k] [-verbose] ...` | tune instance, model or .param values to minimise an objective, fit targets, centre a design for yield or find a Pareto front; help optimize describes every option, the results and examples. |
 | `option` | `[option] [option = value] ...` | Set a simulator option. |
 | `options` | `[option] [option = value] ...` | Set a simulator option. |
 | `optran` |  | Prepare optran by setting 6 flags. |
