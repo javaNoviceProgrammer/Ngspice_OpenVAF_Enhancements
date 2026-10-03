@@ -835,9 +835,36 @@ static char *osdi_stage_reload_copy(const char *path) {
 
 #if defined(__MINGW32__) || defined(_MSC_VER)
 #include <io.h>   /* _findfirst: Enhancement-775 */
+#include <windows.h>
+#ifndef PROCESS_QUERY_LIMITED_INFORMATION
+#define PROCESS_QUERY_LIMITED_INFORMATION 0x1000
+#endif
+/* Enhancement-786: whether the ngspice that staged a copy is still running.
+ * A process that exists but will not open for us counts as running. */
+static bool osdi_pid_alive(long pid) {
+  HANDLE h;
+  DWORD code = STILL_ACTIVE;
+  if (pid <= 0)
+    return FALSE;
+  if ((DWORD) pid == GetCurrentProcessId())
+    return TRUE;
+  h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD) pid);
+  if (!h)
+    return GetLastError() == ERROR_ACCESS_DENIED;
+  if (!GetExitCodeProcess(h, &code))
+    code = STILL_ACTIVE;
+  CloseHandle(h);
+  return code == STILL_ACTIVE;
+}
+
 /* Enhancement-775: remove the staged copies earlier sessions left in TMPDIR.
  * Windows cannot delete a DLL that is loaded, so a session's copies outlive
- * it; one still in use by a running ngspice refuses the remove and stays. */
+ * it; one still in use by a running ngspice refuses the remove and stays.
+ * Enhancement-786: but a copy another ngspice has staged and NOT YET loaded
+ * is not locked, and the sweep deleted it under that process -- "The
+ * specified module could not be found" for two to four random suites of
+ * every parallel Windows sweep. The name carries the owner's pid (E-770);
+ * only the copies of processes that are no longer running are removed. */
 static void osdi_sweep_stale_copies(void) {
   static bool swept = FALSE;
   const char *tmpdir = getenv("TMPDIR");
@@ -856,6 +883,9 @@ static void osdi_sweep_stale_copies(void) {
   if (h == -1)
     return;
   do {
+    long owner = 0;
+    if (sscanf(fd.name, "ngspice_osdi_reload_%ld_", &owner) == 1 && osdi_pid_alive(owner))
+      continue;
     char *f = tprintf("%s/%s", tmpdir, fd.name);
     (void) remove(f);
     tfree(f);

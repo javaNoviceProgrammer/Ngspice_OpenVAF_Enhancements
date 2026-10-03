@@ -188,6 +188,39 @@ for label, want, cmds in (
     check(label, len(vals) >= 1 and abs(vals[-1] - want) < 1e-6 and "couldn't be loaded" not in out
           and 'lib ""' not in out, f"vals={vals} {out[-300:]}")
 
+# --- Enhancement-786: ngspice processes started together, one model ----------
+# On Windows every load is of a staged copy in TMPDIR (E-775), and each
+# process's first load swept the copies it found there -- including one another
+# ngspice had staged and not yet loaded: "The specified module could not be
+# found" for two to four random suites of every parallel Windows sweep. Three
+# rounds of eight processes at once; every one must load the model and simulate.
+print("\nEnhancement-786: ngspice processes started together all load the model")
+okc = compile_va(MOD % 1000, "mpar.osdi")
+with open(os.path.join(D, "par.cir"), "w") as f:
+    f.write("* parallel load\nv1 1 0 dc 1\nn1 1 0 mm\n.model mm vares\n"
+            ".control\npre_osdi mpar.osdi\nop\nprint i(v1)\n.endc\n.end\n")
+good = total = 0
+bad = ""
+for _round in range(3):
+    procs = [subprocess.Popen([NGSPICE, "-b", "par.cir"], cwd=D, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True,
+                              errors="replace") for _ in range(8)]
+    for pr in procs:
+        try:
+            o = pr.communicate(timeout=120)[0] or ""
+        except subprocess.TimeoutExpired:
+            pr.kill()
+            o = pr.communicate()[0] or ""
+            o += "\n[timeout]"
+        total += 1
+        v = re.findall(r"i\(v1\)\s*=\s*([-\d.eE+]+)", o)
+        if v and abs(float(v[-1]) + 1e-3) < 1e-9 and "couldn't be loaded" not in o:
+            good += 1
+        elif not bad:
+            bad = o.strip()[-300:]
+check(f"[E-786] three rounds of eight ngspice processes loading one model at once: "
+      f"{good}/{total} load it and simulate", okc and good == total == 24, bad)
+
 shutil.rmtree(D, ignore_errors=True)
 print(f"\n{passed}/{checks} checks passed")
 raise SystemExit(0 if passed == checks else 1)
