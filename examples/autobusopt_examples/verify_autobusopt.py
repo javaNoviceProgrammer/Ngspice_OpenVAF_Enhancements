@@ -170,12 +170,17 @@ SPELLINGS = [
 ]
 for opt, want in SPELLINGS:
     tag = re.sub(r"\W", "", opt)[-10:] or "none"
-    s_got, _ = run(sub_deck(opt), "s" + tag)
-    t_got, _ = run(top_deck(opt), "t" + tag, TOP_NAMES)
+    s_got, s_out = run(sub_deck(opt), "s" + tag)
+    t_got, t_out = run(top_deck(opt), "t" + tag, TOP_NAMES)
     s, t = state(s_got, SUB_ON, SUB_OFF), state(t_got, TOP_ON, TOP_OFF)
     label = opt if opt else "(no option at all)"
+    # a run matching neither state says what it printed (one Windows sweep
+    # read "?" once on one solver and passed alone)
+    odd = "".join(f" | {k} read {g}: {o.strip()[-240:]!r}"
+                  for k, st, g, o in (("subckt", s, s_got, s_out), ("toplevel", t, t_got, t_out))
+                  if st == "?")
     check(f"[E-454] {label:22s} -> {want} on both paths",
-          s == want and t == want, f"subckt={s} toplevel={t}")
+          s == want and t == want, f"subckt={s} toplevel={t}{odd}")
 
 print("\nprecedence, and it is the same on both paths")
 # Within one card the later token wins; ACROSS cards the options machinery keeps

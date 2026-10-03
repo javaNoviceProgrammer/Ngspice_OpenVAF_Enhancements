@@ -939,6 +939,32 @@ static void osdi_pending_flush_fd(int fd) {
 // $fopen(name, mode) -> descriptor (0 on failure). An EMPTY mode is how the
 // lowering spells the LRM's one-argument `$fopen(name)`, which returns a
 // multichannel descriptor rather than a file descriptor.
+// Enhancement-776/784: a Verilog-A file is a byte stream. The Windows C
+// runtime opens a file in TEXT mode unless the mode says "b", writing every
+// "\n" as "\r\n" and reading "\r\n" back as "\n" -- $ftell counted 171 bytes
+// for the 160 a model wrote. E-776 and E-778 made the two fopen paths binary;
+// the two freopen paths below (a stream the model closed and opens again,
+// which is how a hoisted $fopen meets ngspice's second instance setup) still
+// passed the mode through, so the file the run left behind was text. Every
+// open now goes through here. Elsewhere the mode is returned as it is.
+static const char *osdi_byte_mode(const char *mode, char *buf, size_t size) {
+#ifdef _WIN32
+  if (strchr(mode, 'b') == NULL) {
+    size_t n = strlen(mode);
+    if (n + 2 <= size) {
+      memcpy(buf, mode, n);
+      buf[n] = 'b';
+      buf[n + 1] = '\0';
+      return buf;
+    }
+  }
+#else
+  (void)buf;
+  (void)size;
+#endif
+  return mode;
+}
+
 OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
   if (mode[0] == '\0') {
     // Multichannel: one bit per file, bit 0 reserved for stdout. Same-name
@@ -958,12 +984,9 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
     for (int b = 1; b < OSDI_MCD_ALLOC_BITS; b++) {
       if (osdi_mcd_table[b] == NULL) {
         // LRM 9.5.1.1's append-on-rewrite rule applies here too.
-#ifdef _WIN32
-        // Enhancement-778: binary, as on the file-descriptor path below (E-776)
-        const char *m = osdi_name_was_written(name) ? "ab" : "wb";
-#else
-        const char *m = osdi_name_was_written(name) ? "a" : "w";
-#endif
+        char bin[8];
+        const char *m = osdi_byte_mode(osdi_name_was_written(name) ? "a" : "w", bin,
+                                       sizeof(bin));
         void *f = fopen(name, m);
         if (f == NULL) {
           return 0;
@@ -1033,7 +1056,9 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
         osdi_pending_flush_fd(enc);
         osdi_close_deferred(enc, 1);
         {
-          void *nf = freopen(name, mode, osdi_file_table[i]);
+          char bin[8];
+          void *nf = freopen(name, osdi_byte_mode(mode, bin, sizeof(bin)),
+                             osdi_file_table[i]);
           if (nf == NULL) {
             osdi_file_table[i] = NULL;
             if (osdi_file_names[i]) {
@@ -1076,7 +1101,8 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
         // this file, so behave like the first run's fresh open -- honoring
         // the requested mode (truncating for "w") -- instead of continuing
         // at the previous run's position.
-        void *nf = freopen(name, mode, osdi_file_table[i]);
+        char bin[8];
+        void *nf = freopen(name, osdi_byte_mode(mode, bin, sizeof(bin)), osdi_file_table[i]);
         if (nf == NULL) {
           osdi_file_table[i] = NULL;
           if (osdi_file_names[i]) {
@@ -1111,23 +1137,8 @@ OSDI_NOINLINE int osdi_fopen(const char *name, const char *mode) {
     mode_buf[0] = 'a';
     mode = mode_buf;
   }
-#ifdef _WIN32
-  // Enhancement-776: a Verilog-A file is a byte stream. The Windows C runtime
-  // opens a file in TEXT mode unless the mode says "b", writing every "\n" as
-  // "\r\n" and reading "\r\n" back as "\n": $ftell counted 171 bytes for the
-  // 160 a model wrote, and $fseek to an offset taken from $ftell landed
-  // elsewhere. Binary mode is what every other platform does anyway.
   char bin_buf[8];
-  if (strchr(mode, 'b') == NULL) {
-    size_t n = strlen(mode);
-    if (n + 1 < sizeof(bin_buf)) {
-      memcpy(bin_buf, mode, n);
-      bin_buf[n] = 'b';
-      bin_buf[n + 1] = '\0';
-      mode = bin_buf;
-    }
-  }
-#endif
+  mode = osdi_byte_mode(mode, bin_buf, sizeof(bin_buf));
   for (int i = OSDI_FD_FIRST; i < OSDI_MAX_FILES; i++) {
     if (osdi_file_table[i] == NULL) {
       void *f = fopen(name, mode);

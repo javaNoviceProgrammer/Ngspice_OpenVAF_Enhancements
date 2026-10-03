@@ -195,7 +195,8 @@ print all
 m = re.search(r"v1_acmag = ([0-9.eE+-]+),(-?[0-9.eE+-]+)", log)
 # at f = 1/(2*pi*RC): H = 1/(1+j) = 0.5 - 0.5j
 check("AC sens dV/dacmag == 0.5 - 0.5j (pole frequency)",
-      m and abs(float(m.group(1)) - 0.5) < 1e-5 and abs(float(m.group(2)) + 0.5) < 1e-5)
+      m and abs(float(m.group(1)) - 0.5) < 1e-5 and abs(float(m.group(2)) + 0.5) < 1e-5,
+      f"({m.group(1)}, {m.group(2)})" if m else f"no v1_acmag in: {log.strip()[-240:]!r}")
 
 print("[4] .dc temp sweep ($temperature per point, degC->K)")
 log = run_deck("_temp.cir", """* temp sweep osdi

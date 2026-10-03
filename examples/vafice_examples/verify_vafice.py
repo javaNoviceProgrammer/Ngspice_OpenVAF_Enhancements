@@ -168,6 +168,11 @@ def main():
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         check("a read-only TMPDIR is reported by name too", True,
               "skipped: running as root, for whom / is writable")
+    elif os.name == "nt":
+        # Windows takes the temporary directory from TMP / TEMP, not TMPDIR,
+        # and the drive's root is writable: there is no read-only case to make
+        check("a read-only TMPDIR is reported by name too", True,
+              "skipped on Windows: TMPDIR is not consulted and the drive root is writable")
     else:
         env = dict(os.environ, RAYON_NUM_THREADS="1", TMPDIR="/")
         r = subprocess.run([OPENVAF, src, "-o", os.path.join(d, "m.osdi")],

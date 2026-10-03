@@ -433,10 +433,12 @@ rows = [len(read_csv(p)[1]) if os.path.exists(p) else -1 for p in (p1, p2, p3)]
 heads = [read_csv(p)[0][3:] if os.path.exists(p) else [] for p in (p1, p2, p3)]
 note2 = f"Note: savemc: {p1} holds the rows of '* savemc first deck' from earlier in this session and is kept; this deck's rows go to {p2}"
 note3 = f"holds the rows of '* savemc first deck' from earlier in this session and is kept; this deck's rows go to {p3}"
-ok = rows[0] == 2 and rows[1] == 1 and heads[1] == ["r1"] and note2 in out
+# ngspice joins with '/'; os.path.join with '\\' on Windows -- compare both as '/'
+out_n = out.replace("\\", "/")
+ok = rows[0] == 2 and rows[1] == 1 and heads[1] == ["r1"] and note2.replace("\\", "/") in out_n
 check("[17] the same fixed name from a second deck: Shared_2.csv, the note names the first deck; the first file keeps its two rows",
       ok, "" if ok else f"rows={rows} heads={heads} {out[-400:]}")
-ok = rows[2] == 2 and heads[2] == heads[0] and note3 in out and out.count(NOTE) == 3
+ok = rows[2] == 2 and heads[2] == heads[0] and note3.replace("\\", "/") in out_n and out.count(NOTE) == 3
 check("[17] ...the first deck sourced again after it: Shared_3.csv (its own file is kept too), with its two rows",
       ok, "" if ok else f"rows={rows} {out[-300:]}")
 out = run(".option savemc=Shared.csv\n" + DIV, "t17b", "op")
