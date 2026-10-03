@@ -43,7 +43,6 @@ mod path_interner;
 pub mod va_std;
 mod vfs_path;
 
-use std::char::REPLACEMENT_CHARACTER;
 use std::ops::Range;
 use std::sync::Arc;
 use std::{fmt, io, mem};
@@ -433,8 +432,8 @@ impl InvalidTextFormatErr {
         for it in src.chars() {
             #[allow(clippy::match_same_arms)]
             match (start, it) {
-                (None, REPLACEMENT_CHARACTER) => start = Some(pos),
-                (Some(_), REPLACEMENT_CHARACTER) => (),
+                (None, char::REPLACEMENT_CHARACTER) => start = Some(pos),
+                (Some(_), char::REPLACEMENT_CHARACTER) => (),
                 (Some(old), _) => {
                     spans.push(old..pos);
                     start = None

@@ -1,5 +1,4 @@
 use super::*;
-use core::f64;
 use core::fmt::Display;
 use core::str::FromStr;
 
