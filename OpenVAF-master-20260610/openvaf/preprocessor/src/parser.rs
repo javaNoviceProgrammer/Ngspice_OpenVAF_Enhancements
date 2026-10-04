@@ -468,30 +468,7 @@ impl<'a, 'd> Parser<'a, 'd> {
     }
 
     pub(crate) fn compiler_directive(&self) -> CompilerDirective {
-        match self.current_text() {
-            "`include" => CompilerDirective::Include,
-            "`ifdef" => CompilerDirective::IfDef,
-            "`ifndef" => CompilerDirective::IfNotDef,
-            "`else" => CompilerDirective::Else,
-            "`elsif" => CompilerDirective::ElseIf,
-            "`endif" => CompilerDirective::EndIf,
-            "`undef" => CompilerDirective::Undef,
-            "`resetall" => CompilerDirective::ResetAll,
-            "`undefineall" => CompilerDirective::UndefineAll,
-            "`celldefine" => CompilerDirective::CellDefine,
-            "`endcelldefine" => CompilerDirective::EndCellDefine,
-            "`default_discipline" => CompilerDirective::DefaultDiscipline,
-            "`default_transition" => CompilerDirective::DefaultTransition,
-            "`default_nettype" => CompilerDirective::DefaultNetType,
-            "`unconnected_drive" => CompilerDirective::UnconnectedDrive,
-            "`nounconnected_drive" => CompilerDirective::NoUnconnectedDrive,
-            "`timescale" => CompilerDirective::TimeScale,
-            "`line" => CompilerDirective::Line,
-            "`pragma" => CompilerDirective::Pragma,
-            "`begin_keywords" => CompilerDirective::BeginKeywords,
-            "`end_keywords" => CompilerDirective::EndKeywords,
-            _ => CompilerDirective::Macro,
-        }
+        directive_named(self.current_text())
     }
 
     /// Skips (without emitting into the output token stream) every token that
@@ -582,4 +559,41 @@ pub enum CompilerDirective {
     BeginKeywords,
     EndKeywords,
     Macro,
+}
+
+/// The directive a `` `name `` token is, `Macro` when it is none.
+fn directive_named(text: &str) -> CompilerDirective {
+    match text {
+        "`include" => CompilerDirective::Include,
+        "`ifdef" => CompilerDirective::IfDef,
+        "`ifndef" => CompilerDirective::IfNotDef,
+        "`else" => CompilerDirective::Else,
+        "`elsif" => CompilerDirective::ElseIf,
+        "`endif" => CompilerDirective::EndIf,
+        "`undef" => CompilerDirective::Undef,
+        "`resetall" => CompilerDirective::ResetAll,
+        "`undefineall" => CompilerDirective::UndefineAll,
+        "`celldefine" => CompilerDirective::CellDefine,
+        "`endcelldefine" => CompilerDirective::EndCellDefine,
+        "`default_discipline" => CompilerDirective::DefaultDiscipline,
+        "`default_transition" => CompilerDirective::DefaultTransition,
+        "`default_nettype" => CompilerDirective::DefaultNetType,
+        "`unconnected_drive" => CompilerDirective::UnconnectedDrive,
+        "`nounconnected_drive" => CompilerDirective::NoUnconnectedDrive,
+        "`timescale" => CompilerDirective::TimeScale,
+        "`line" => CompilerDirective::Line,
+        "`pragma" => CompilerDirective::Pragma,
+        "`begin_keywords" => CompilerDirective::BeginKeywords,
+        "`end_keywords" => CompilerDirective::EndKeywords,
+        _ => CompilerDirective::Macro,
+    }
+}
+
+/// Enhancement-795 (hunt D5 of 2026-10-04): whether `name` (without the
+/// accent grave) is a compiler directive -- one of the names above or
+/// `define` itself, which the lexer reads as its own token. A macro of such a
+/// name can never be called: `` `name `` is always the directive.
+pub(crate) fn is_directive_name(name: &str) -> bool {
+    name == "define"
+        || !matches!(directive_named(&format!("`{name}")), CompilerDirective::Macro)
 }

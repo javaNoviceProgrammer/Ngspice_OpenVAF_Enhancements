@@ -1,0 +1,8 @@
+// Enhancement-791: a diagnostic on a line longer than 240 bytes quotes
+// windows around the label, the cuts marked `...`; the location keeps the
+// line's real column.
+module long_line(a);
+    inout a;
+    real x0, x1, x2, x3, x4, x5, x6, x7, x8, x9;
+    analog x0 = x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x0+x1+x2+x3+x4+x5+x6+x7+x8+x9 + ;
+endmodule

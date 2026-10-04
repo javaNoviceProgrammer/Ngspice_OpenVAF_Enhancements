@@ -680,6 +680,8 @@ fn print_callback<'ll>(
         let fmt_char_idx_ty = cx.ty_func(&[cx.ty_double()], cx.ty_int());
         let fmt_binary = cx.get_func_by_name("fmt_binary").expect("fmt_binary missing from stdlib");
         let fmt_binary_ty = cx.ty_func(&[cx.ty_int()], cx.ty_ptr());
+        let fmt_char = cx.get_func_by_name("fmt_char").expect("fmt_char missing from stdlib");
+        let fmt_char_ty = cx.ty_func(&[cx.ty_int()], cx.ty_ptr());
         let mut free = Vec::new();
 
         for (i, arg) in arg_tys.iter().enumerate() {
@@ -755,6 +757,20 @@ fn print_callback<'ll>(
                         UNNAMED,
                     );
                     args.push(&*scale_char);
+                }
+                // Enhancement-793: `%c` as `%s` of a constant one-character
+                // string (empty for 0); nothing to free
+                FmtArgKind::Char => {
+                    let mut val_array = [val];
+                    let char_str = LLVMBuildCall2(
+                        llbuilder,
+                        NonNull::from(fmt_char_ty).as_ptr(),
+                        NonNull::from(fmt_char).as_ptr(),
+                        val_array.as_mut_ptr(),
+                        1,
+                        UNNAMED,
+                    );
+                    args.push(&*char_str);
                 }
                 FmtArgKind::Other => args.push(&*val),
             }

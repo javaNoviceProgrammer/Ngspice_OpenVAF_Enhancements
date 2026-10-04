@@ -448,6 +448,23 @@ impl Diagnostic for PreprocessorDiagnostic {
                             .to_owned(),
                     ])
             }
+            // Enhancement-795 (hunt D5 of 2026-10-04)
+            PreprocessorDiagnostic::MacroNameIsDirective { span, ref name } => {
+                let span = span.to_file_span(&sm);
+                Report::error()
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: span.file,
+                        range: span.range.into(),
+                        message: format!("`{name} is always read as the directive"),
+                    }])
+                    .with_notes(vec![
+                        "help: IEEE 1364-2005 19.3.1 (adopted by LRM 10.4): every compiler \
+                         directive is a predefined macro name, and redefining one is illegal; \
+                         pick a different name"
+                            .to_owned(),
+                    ])
+            }
             PreprocessorDiagnostic::UnknownKeywordSet { span, .. } => {
                 let span = span.to_file_span(&sm);
                 Report::warning()

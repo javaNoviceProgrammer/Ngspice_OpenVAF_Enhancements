@@ -309,13 +309,29 @@ int fmt_char_idx(double val) {
   return pos;
 }
 
+/* Enhancement-793 (hunt D3 of 2026-10-04): `%c` is rendered as `%s` of the
+ * character's one-character string. C's own `%c` of 0 wrote a NUL into the
+ * formatted line, and the rest of the line was lost when the line was passed
+ * on as a C string. Entry 0 is the empty string -- what a terminal shows for a
+ * NUL. Like C's `%c`, the low eight bits are the character. A constant table:
+ * nothing to allocate or free. */
+#define FC1(c) {(char)(c), 0}
+#define FC4(c) FC1(c), FC1((c) + 1), FC1((c) + 2), FC1((c) + 3)
+#define FC16(c) FC4(c), FC4((c) + 4), FC4((c) + 8), FC4((c) + 12)
+#define FC64(c) FC16(c), FC16((c) + 16), FC16((c) + 32), FC16((c) + 48)
+static const char FMT_CHAR_STR[256][2] = {FC64(0), FC64(64), FC64(128),
+                                          FC64(192)};
+
+const char *fmt_char(int val) { return FMT_CHAR_STR[(unsigned char)val]; }
+
+/* Enhancement-793: `%b` of 0 is "0". `__builtin_clz(0)` is undefined: AArch64
+ * gave 32, a length of 0 and an empty string; x86-64 compiles it to `bsr`,
+ * which leaves its result unset for 0, so the length (and the malloc and the
+ * loop that fill it) came from whatever the register held. */
 char *fmt_binary(int val) {
-  int len = 32 - __builtin_clz(val);
+  int len = val ? 32 - __builtin_clz((unsigned int)val) : 1;
   char *res = malloc(len + 1);
   res[len] = '\0';
-  if (len == 0) {
-    return res;
-  }
   for (int i = 1; i < len + 1; i++) {
     if (val & 1) {
       res[len - i] = '1';

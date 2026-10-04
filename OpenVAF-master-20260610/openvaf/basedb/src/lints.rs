@@ -282,5 +282,17 @@ pub mod builtin {
         // so the dependence the author wrote never reaches the table. Warn; -E
         // raises it.
         pub const table_data_captured = LintData{default_lvl: Warn, documentation_id: 38};
+        // Enhancement-794 (hunt D4 of 2026-10-04): an infinite bound of a value
+        // range written with a bracket, `from [0:inf]`. LRM 3.4.2: a bracket
+        // includes its end point, and infinity is not a value a parameter takes
+        // (ngspice refuses a non-finite one), so the range admits what
+        // `[0:inf)` admits; every example in the LRM writes `inf)`, and the
+        // CMC's VAMPyRE checker reports the bracket as an error ("Invalid range
+        // [0:inf] ... should be [0:inf)"). ALLOW by default: the spelling is
+        // all through standard models -- PSP103's and BSIMBULK's range macros
+        // (`MPRcc(..., lower, inf, ...)` expands to `from [lower:inf]`),
+        // HICUM, EKV, HiSIM2 -- where it changes nothing and the reader cannot
+        // edit it; `-W inclusive_infinite_bound` asks for VAMPyRE's strictness.
+        pub const inclusive_infinite_bound = LintData{default_lvl: Allow, documentation_id: 39};
     }
 }

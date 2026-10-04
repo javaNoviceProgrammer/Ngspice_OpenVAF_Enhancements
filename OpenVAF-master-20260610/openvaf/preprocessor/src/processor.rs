@@ -248,6 +248,19 @@ impl<'a> Processor<'a> {
                 span: def.head_span(),
             });
         }
+        // Enhancement-795 (hunt D5 of 2026-10-04): `` `define include 7 `` was
+        // stored without a word, and the macro could never be called --
+        // `` `include `` is always the directive, so a body that named it failed
+        // later with "unexpected character(s)". IEEE 1364-2005 19.3.1 makes the
+        // definition illegal. Applies to `-D` too: no predefined macro has a
+        // directive's name.
+        if crate::parser::is_directive_name(name) {
+            diagnostics.push(PreprocessorDiagnostic::MacroNameIsDirective {
+                name: name.to_owned(),
+                span: def.head_span(),
+            });
+            return;
+        }
         let span = def.head_span();
         if let Some(old) = self.macros.insert(name, def) {
             diagnostics.push(PreprocessorDiagnostic::MacroOverwritten {

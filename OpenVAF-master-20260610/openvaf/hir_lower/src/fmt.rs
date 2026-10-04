@@ -26,6 +26,8 @@ pub enum DisplayKind {
 pub enum FmtArgKind {
     Binary,
     EngineerReal,
+    /// Enhancement-793: `%c`, rendered as a one-character string (`fmt_char`)
+    Char,
     Other,
 }
 
@@ -180,9 +182,16 @@ impl BodyLoweringCtx<'_, '_, '_> {
                                 fmt_lit.push('o');
                                 Type::Integer.into()
                             }
+                            // Enhancement-793 (hunt D3 of 2026-10-04): through a
+                            // one-character string, not C's `%c`. `%c` of 0 wrote a
+                            // NUL into the formatted line, and everything after it
+                            // was lost when the line was passed on as a C string.
+                            // `fmt_char` gives "" for 0 (the character a terminal
+                            // shows for NUL) and the rest of the line survives;
+                            // a width still pads.
                             'c' | 'C' => {
-                                fmt_lit.push('c');
-                                Type::Integer.into()
+                                fmt_lit.push('s');
+                                FmtArg { ty: Type::Integer, kind: FmtArgKind::Char }
                             }
                             's' | 'S' => {
                                 fmt_lit.push('s');

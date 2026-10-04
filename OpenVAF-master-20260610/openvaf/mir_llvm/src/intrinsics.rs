@@ -88,7 +88,12 @@ impl<'a, 'll> CodegenCx<'a, 'll> {
         }
 
         ifn!("strcmp", fn(t_str, t_str) -> t_i32);
+        // Enhancement-792: the real-to-integer conversion (`FIcast`) is
+        // `llvm.round.f64` then `llvm.fptosi.sat.i32.f64`; `llvm.lround.i32.f64`
+        // is kept for anything else that names it.
         ifn!("llvm.lround.i32.f64", fn(t_f64) -> t_i32);
+        ifn!("llvm.round.f64", fn(t_f64) -> t_f64);
+        ifn!("llvm.fptosi.sat.i32.f64", fn(t_f64) -> t_i32);
 
         if name == "snprintf" {
             return Some(self.insert_intrinsic("snprintf", &[t_str, t_isize, t_str], t_i32, true));

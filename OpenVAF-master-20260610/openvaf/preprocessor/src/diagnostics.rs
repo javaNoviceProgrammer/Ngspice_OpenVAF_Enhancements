@@ -31,6 +31,12 @@ pub enum PreprocessorDiagnostic {
     /// LRM 10.4: a user `` `define `` whose name begins with `__VAMS_` collides
     /// with the reserved predefined-macro namespace.
     ReservedMacroName { name: String, span: CtxSpan },
+    /// Enhancement-795 (hunt D5 of 2026-10-04): a `` `define `` of a compiler
+    /// directive's name (`` `define include 7 ``). IEEE 1364-2005 19.3.1, which
+    /// LRM 10.4 adopts for `` `define ``: "it shall be illegal to redefine a
+    /// compiler directive as a macro name". `` `include `` stays the directive,
+    /// so the macro could never be called.
+    MacroNameIsDirective { name: String, span: CtxSpan },
     /// `` `begin_keywords `` with a version specifier this implementation does
     /// not recognize (LRM 10.6 names VAMS-2023, VAMS-2.3, 1364-2005,
     /// 1364-2001, 1364-1995).
@@ -87,6 +93,7 @@ impl_display! {
         UndefPredefined { name, .. } => "'`undef' has no effect on the predefined macro '`{}'", name;
         AmsOnlyDirective { name, .. } => "'`{}' is an AMS-only directive and is ignored in Verilog-A", name;
         ReservedMacroName { name, .. } => "macro name '{}' is reserved for a predefined macro", name;
+        MacroNameIsDirective { name, .. } => "'`{}' is a compiler directive and cannot be defined as a macro", name;
         UnknownKeywordSet { name, .. } => "unknown '`begin_keywords' version specifier \"{}\"", name;
         KeywordSetNotSwitched { name, .. } => "keyword set \"{}\" is treated as \"VAMS-2023\"", name;
         UnmatchedEndKeywords { .. } => "'`end_keywords' without a matching '`begin_keywords'";

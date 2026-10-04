@@ -2,7 +2,7 @@ use std::fmt::Display;
 use std::sync::Arc;
 
 use codespan_reporting::diagnostic::Severity;
-use codespan_reporting::files::Files;
+use codespan_reporting::files::{Files, Location};
 pub use codespan_reporting::term::termcolor::{Ansi, Buffer, ColorChoice, NoColor};
 use codespan_reporting::term::termcolor::{StandardStream, WriteColor};
 use codespan_reporting::term::{emit, Chars, Config};
@@ -89,6 +89,9 @@ pub struct ConsoleSink<'a> {
     /// Enhancement-414: set when a diagnostic was reported against one of the
     /// synthesised elaboration buffers, so the summary can explain the position.
     saw_elaborated_buffer: bool,
+    /// Enhancement-791: per file, whether it has a line longer than
+    /// `MAX_QUOTED_LINE` (checked once, on the first report against it).
+    long_lines: Vec<(FileId, bool)>,
 }
 
 
@@ -196,7 +199,7 @@ impl<'a> ConsoleSink<'a> {
         config.styles.primary_label_warning.set_bold(true);
         config.styles.secondary_label.set_bold(true);
 
-        ConsoleSink { warning_cnt: 0, error_cnt: 0, config, db, dst, anon_paths: false, saw_elaborated_buffer: false }
+        ConsoleSink { warning_cnt: 0, error_cnt: 0, config, db, dst, anon_paths: false, saw_elaborated_buffer: false, long_lines: Vec::new() }
     }
 
     /// only print the filename instead of the full path, this is useful for UI tests where we do not want to expose the full path
@@ -245,7 +248,7 @@ pub fn is_elaboration_buffer_name(name: &str) -> bool {
 }
 
 impl DiagnosticSink for ConsoleSink<'_> {
-    fn add_report(&mut self, report: Report) {
+    fn add_report(&mut self, mut report: Report) {
         match report.severity {
             Severity::Error => self.error_cnt += 1,
             Severity::Warning => self.warning_cnt += 1,
@@ -287,13 +290,238 @@ impl DiagnosticSink for ConsoleSink<'_> {
             self.saw_elaborated_buffer = true;
         }
 
-        emit(
-            &mut self.dst,
-            &self.config,
-            &FileSrc { db: self.db, anon_paths: self.anon_paths },
-            &report,
-        )
+        let src = FileSrc { db: self.db, anon_paths: self.anon_paths };
+        match self.clip_long_lines(&src, &mut report) {
+            Some(clipped) => emit(&mut self.dst, &self.config, &clipped, &report),
+            None => emit(&mut self.dst, &self.config, &src, &report),
+        }
         .expect("Span emitting should never fail");
+    }
+}
+
+impl<'a> ConsoleSink<'a> {
+    /// Enhancement-791: when a file a label points into has a line longer than
+    /// `MAX_QUOTED_LINE`, quote a copy of it with those lines clipped and move the
+    /// labels into the copy. `None` (quote the file as it is) otherwise.
+    fn clip_long_lines<'s>(
+        &mut self,
+        src: &'s FileSrc<'a>,
+        report: &mut Report,
+    ) -> Option<ClippedSrc<'s, 'a>> {
+        let mut files: Vec<FileId> = report.labels.iter().map(|l| l.file_id).collect();
+        files.sort_unstable();
+        files.dedup();
+        let mut clipped = Vec::new();
+        for file in files {
+            let has_long = match self.long_lines.iter().find(|(f, _)| *f == file) {
+                Some(&(_, long)) => long,
+                None => {
+                    let text = src.source(file).ok()?;
+                    let long = text.split('\n').any(|line| line.len() > MAX_QUOTED_LINE);
+                    self.long_lines.push((file, long));
+                    long
+                }
+            };
+            if !has_long {
+                continue;
+            }
+            let mut points: Vec<usize> = report
+                .labels
+                .iter()
+                .filter(|l| l.file_id == file)
+                .flat_map(|l| [l.range.start, l.range.end])
+                .collect();
+            points.sort_unstable();
+            points.dedup();
+            let copy = ClippedFile::new(src.source(file).ok()?, &points);
+            for label in report.labels.iter_mut().filter(|l| l.file_id == file) {
+                label.range = copy.to_copy(label.range.start)..copy.to_copy(label.range.end);
+            }
+            clipped.push((file, copy));
+        }
+        if clipped.is_empty() {
+            None
+        } else {
+            Some(ClippedSrc { base: src, clipped })
+        }
+    }
+}
+
+/// Enhancement-791 (hunt D1 of 2026-10-04): the longest line, in bytes, a
+/// diagnostic quotes whole. codespan_reporting quotes every line a label
+/// touches in full, so the depth error E-718 reports at the 32 768th operator
+/// of a generated one-line sum quoted the whole line -- 500 KB for 100 000
+/// terms, with 164 KB of spaces under it to place the caret. A longer line is
+/// quoted as windows of `QUOTED_CONTEXT` bytes either side of each label's start
+/// and end, the cuts marked `...`; the location above the snippet keeps the
+/// line's real column.
+const MAX_QUOTED_LINE: usize = 240;
+const QUOTED_CONTEXT: usize = 60;
+const ELISION: &str = "...";
+
+/// A copy of one file in which every line longer than `MAX_QUOTED_LINE` is cut
+/// down to the windows around the label positions on it (its first
+/// `2 * QUOTED_CONTEXT` bytes when no label is on it: a line quoted as context).
+/// Line breaks are kept, so line numbers are the original's.
+struct ClippedFile {
+    text: Arc<str>,
+    line_starts: Vec<usize>,
+    /// The kept runs as `(start in the copy, start in the original, length)`,
+    /// in order in both.
+    runs: Vec<(usize, usize, usize)>,
+}
+
+impl ClippedFile {
+    fn new(orig: Arc<str>, points: &[usize]) -> ClippedFile {
+        let src: &str = &orig;
+        let mut text = String::new();
+        let mut line_starts = Vec::new();
+        let mut runs = Vec::new();
+        let mut start = 0;
+        loop {
+            let end = src[start..].find('\n').map_or(src.len(), |i| start + i);
+            let newline = usize::from(end < src.len());
+            line_starts.push(text.len());
+            if end - start <= MAX_QUOTED_LINE {
+                runs.push((text.len(), start, end - start + newline));
+                text.push_str(&src[start..end + newline]);
+            } else {
+                let on_line = &points
+                    [points.partition_point(|&p| p < start)..points.partition_point(|&p| p <= end)];
+                let mut windows: Vec<(usize, usize)> = Vec::new();
+                if on_line.is_empty() {
+                    windows.push((start, start + 2 * QUOTED_CONTEXT));
+                }
+                for &p in on_line {
+                    let lo = p.saturating_sub(QUOTED_CONTEXT).max(start);
+                    let hi = (p + QUOTED_CONTEXT).min(end);
+                    match windows.last_mut() {
+                        // windows closer than the marker would be are merged
+                        Some(last) if lo <= last.1 + ELISION.len() => last.1 = last.1.max(hi),
+                        _ => windows.push((lo, hi)),
+                    }
+                }
+                let mut at = start;
+                for (lo, hi) in windows {
+                    let lo = floor_char_boundary(src, lo).max(at);
+                    let hi = ceil_char_boundary(src, hi.min(end));
+                    if lo > at {
+                        text.push_str(ELISION);
+                    }
+                    runs.push((text.len(), lo, hi - lo));
+                    text.push_str(&src[lo..hi]);
+                    at = hi;
+                }
+                if at < end {
+                    text.push_str(ELISION);
+                }
+                if newline == 1 {
+                    runs.push((text.len(), end, 1));
+                    text.push('\n');
+                }
+            }
+            if end == src.len() {
+                break;
+            }
+            start = end + 1;
+        }
+        ClippedFile { text: Arc::from(text), line_starts, runs }
+    }
+
+    /// An offset of the original that lies in a kept run (every label point
+    /// does), as an offset of the copy.
+    fn to_copy(&self, pos: usize) -> usize {
+        let i = self.runs.partition_point(|&(_, orig, _)| orig <= pos).saturating_sub(1);
+        let (copy, orig, len) = self.runs[i];
+        copy + (pos - orig).min(len)
+    }
+
+    fn to_orig(&self, pos: usize) -> usize {
+        let i = self.runs.partition_point(|&(copy, _, _)| copy <= pos).saturating_sub(1);
+        let (copy, orig, len) = self.runs[i];
+        orig + (pos - copy).min(len)
+    }
+}
+
+fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    while !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+fn ceil_char_boundary(s: &str, mut i: usize) -> usize {
+    while !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
+/// The files a report is rendered from, with the clipped copies standing in for
+/// the files that needed them.
+struct ClippedSrc<'s, 'a> {
+    base: &'s FileSrc<'a>,
+    clipped: Vec<(FileId, ClippedFile)>,
+}
+
+impl ClippedSrc<'_, '_> {
+    fn copy(&self, id: FileId) -> Option<&ClippedFile> {
+        self.clipped.iter().find(|(f, _)| *f == id).map(|(_, c)| c)
+    }
+}
+
+impl Files<'_> for ClippedSrc<'_, '_> {
+    type FileId = FileId;
+    type Name = VfsPath;
+    type Source = Arc<str>;
+
+    fn name(&self, id: FileId) -> Result<VfsPath, codespan_reporting::files::Error> {
+        self.base.name(id)
+    }
+
+    fn source(&self, id: FileId) -> Result<Arc<str>, codespan_reporting::files::Error> {
+        match self.copy(id) {
+            Some(copy) => Ok(copy.text.clone()),
+            None => self.base.source(id),
+        }
+    }
+
+    fn line_index(
+        &self,
+        id: FileId,
+        byte_index: usize,
+    ) -> Result<usize, codespan_reporting::files::Error> {
+        match self.copy(id) {
+            Some(copy) => Ok(copy.line_starts.partition_point(|&s| s <= byte_index) - 1),
+            None => self.base.line_index(id, byte_index),
+        }
+    }
+
+    fn line_range(
+        &self,
+        id: FileId,
+        line_index: usize,
+    ) -> Result<std::ops::Range<usize>, codespan_reporting::files::Error> {
+        match self.copy(id) {
+            Some(copy) => {
+                let start = copy.line_starts[line_index];
+                let end = copy.line_starts.get(line_index + 1).copied().unwrap_or(copy.text.len());
+                Ok(start..end)
+            }
+            None => self.base.line_range(id, line_index),
+        }
+    }
+
+    /// The location above a snippet is the ORIGINAL line and column.
+    fn location(
+        &self,
+        id: FileId,
+        byte_index: usize,
+    ) -> Result<Location, codespan_reporting::files::Error> {
+        match self.copy(id) {
+            Some(copy) => self.base.location(id, copy.to_orig(byte_index)),
+            None => self.base.location(id, byte_index),
+        }
     }
 }
 

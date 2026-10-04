@@ -170,6 +170,10 @@ pub enum BodyValidationDiagnostic {
     /// (`value` as written, `sci` in scientific notation, `clipped` what an
     /// `integer` store makes of it).
     IntLiteralOverflow { expr: ExprId, stmt: StmtId, value: Box<str>, sci: Box<str>, clipped: i32 },
+    /// Enhancement-792 (hunt D2 of 2026-10-04): a real constant converted to an
+    /// `integer` (an assignment, an argument, an index) that rounds outside 32
+    /// bits or is a NaN; `stored` is what the conversion makes of it.
+    RealConstantSaturates { expr: ExprId, stmt: StmtId, value: Box<str>, stored: i32 },
     /// Enhancement-708 (robustness campaign F10 of 2026-09-23): a based literal
     /// whose digits carry more bits than its size (32 when unsized) --
     /// `'hFFFFFFFFFF` is 40 bits, is truncated to the low 32 and reads as -1,
@@ -643,6 +647,10 @@ pub enum BodyValidationDiagnostic {
     /// and is left alone (`intrange` pins `exclude 2.5` on an integer as a
     /// legitimate no-op beside real range BOUNDS, which the LRM allows).
     NonIntegerSetMember { param: ParamId, expr: ExprId, value: String, stmt: StmtId },
+    /// Enhancement-794 (hunt D4 of 2026-10-04): an infinite bound (`expr`) of a
+    /// `from` or `exclude` range closed with a bracket; `upper` is the end it
+    /// closes, `exclude` the kind of the range.
+    InclusiveInfiniteBound { param: ParamId, expr: ExprId, upper: bool, exclude: bool, stmt: StmtId },
 }
 
 impl BodyValidationDiagnostic {
@@ -969,6 +977,32 @@ struct BodyValidator<'a> {
 }
 
 impl BodyValidator<'_> {
+    /// Enhancement-792 (hunt D2 of 2026-10-04): `expr` is converted to an
+    /// `integer`; report a real constant the conversion cannot hold. `ic = 1e20;`
+    /// ran as 2147483647 without a word. The conversion saturates (since this
+    /// enhancement on every platform: x86-64 called libc `lround` and kept the
+    /// low 32 bits of its 64-bit result). A parameter's default is E-590's check
+    /// (`LossyIntegerDefault`), a literal wider than 32 bits is reported as the
+    /// literal.
+    fn check_real_constant_to_int(&mut self, expr: ExprId, stmt: StmtId) {
+        if self.int_overflow.contains(&expr)
+            || matches!(self.owner, DefWithBodyId::ParamId(_))
+            || self.infer.expr_types[expr].to_value() != Some(Type::Real)
+        {
+            return;
+        }
+        let Some(value) = const_num_in(self.db, self.body, self.infer, expr, 0) else { return };
+        let rounded = value.round();
+        if !(rounded >= i32::MIN as f64 && rounded <= i32::MAX as f64) {
+            self.diagnostics.push(BodyValidationDiagnostic::RealConstantSaturates {
+                expr,
+                stmt,
+                value: format!("{value}").into_boxed_str(),
+                stored: rounded as i32,
+            });
+        }
+    }
+
     /// Enhancement-396: check the constant arguments of an event expression.
     ///
     /// `@(timer(start, period))` with a period of zero, a negative period, or a
@@ -1472,6 +1506,11 @@ impl BodyValidator<'_> {
                 // Enhancement-375: reject a loop that provably cannot finish before
                 // it can be emitted into a model that hangs the simulator.
                 self.check_loop_termination(stmt, cond);
+                // Enhancement-792: a real count is converted by `lower_repeat`
+                // itself, not through an inferred cast
+                if matches!(self.body.stmts[stmt], Stmt::Repeat { .. }) {
+                    self.check_real_constant_to_int(cond, stmt);
+                }
                 // Enhancement-661 (hunt F18): not a Verilog-AMS loop
                 if matches!(self.body.stmts[stmt], Stmt::DoWhile { .. }) {
                     self.diagnostics.push(BodyValidationDiagnostic::NonStandardDoWhile { stmt });
@@ -2032,6 +2071,12 @@ impl ExprValidator<'_, '_> {
                     clipped: if value > 0.0 { i32::MAX } else { i32::MIN },
                 });
             }
+        }
+        // Enhancement-792: a real constant the implicit conversion to `integer`
+        // cannot hold (`check_real_constant_to_int`)
+        if self.parent.infer.casts.get(&expr) == Some(&Type::Integer) {
+            let stmt = self.stmt;
+            self.parent.check_real_constant_to_int(expr, stmt);
         }
         // Enhancement-708: a based literal truncated to its size
         if let Some((text, bits, size)) = self.parent.based_overflow.get(&expr).cloned() {
@@ -4934,6 +4979,30 @@ fn check_param_default_range(
     use syntax::ast::ConstraintKind;
 
     let exprs = db.param_exprs(param);
+
+    // Enhancement-794 (hunt D4 of 2026-10-04): `from [0:inf]` -- a bracket at
+    // an infinite bound. Judged before the default is looked at, like the set
+    // members below.
+    if let Some(&stmt) = body.entry_stmts.first() {
+        for constraint in exprs.bounds.iter() {
+            let ConstraintValue::Range(r) = constraint.val else { continue };
+            for (expr, inclusive, upper) in
+                [(r.start, r.start_inclusive, false), (r.end, r.end_inclusive, true)]
+            {
+                let infinite =
+                    const_num_in(db, body, infer, expr, 0).is_some_and(|v| v.is_infinite());
+                if inclusive && infinite {
+                    diagnostics.push(BodyValidationDiagnostic::InclusiveInfiniteBound {
+                        param,
+                        expr,
+                        upper,
+                        exclude: constraint.kind == ConstraintKind::Exclude,
+                        stmt,
+                    });
+                }
+            }
+        }
+    }
 
     // Enhancement-650 (hunt F6): a `from` set member no integer can equal. Judged
     // per member and before the default is looked at, so it is reported whether

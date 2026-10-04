@@ -1,6 +1,6 @@
 use basedb::diagnostics::{Diagnostic, Label, LabelStyle, Report};
 use basedb::lints::builtin::{
-    dead_range_member, const_simparam, contribution_to_input_port, mfactor_double_scaling, table_data_captured, lossy_integer_constant, param_default_out_of_range, rng_in_loop, runtime_format_string, trivial_probe, unknown_analysis_name, unknown_limit_function, unknown_simparam, variant_const_simparam, non_standard_code,
+    dead_range_member, const_simparam, inclusive_infinite_bound, contribution_to_input_port, mfactor_double_scaling, table_data_captured, lossy_integer_constant, param_default_out_of_range, rng_in_loop, runtime_format_string, trivial_probe, unknown_analysis_name, unknown_limit_function, unknown_simparam, variant_const_simparam, non_standard_code,
 };
 use basedb::lints::{self, Lint, LintSrc};
 use basedb::{AstIdMap, BaseDB, FileId};
@@ -198,6 +198,11 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                 let src = self.body_sm.lint_src(stmt, param_default_out_of_range);
                 Some((param_default_out_of_range, src))
             }
+            // Enhancement-794 (hunt D4 of 2026-10-04)
+            BodyValidationDiagnostic::InclusiveInfiniteBound { stmt, .. } => {
+                let src = self.body_sm.lint_src(stmt, inclusive_infinite_bound);
+                Some((inclusive_infinite_bound, src))
+            }
             // Enhancement-650 (hunt F6)
             BodyValidationDiagnostic::NonIntegerSetMember { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, dead_range_member);
@@ -205,6 +210,7 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
             }
             // Enhancement-590; Enhancement-708 adds the truncated based literal
             BodyValidationDiagnostic::IntLiteralOverflow { stmt, .. }
+            | BodyValidationDiagnostic::RealConstantSaturates { stmt, .. }
             | BodyValidationDiagnostic::BasedLiteralOverflow { stmt, .. }
             | BodyValidationDiagnostic::LossyIntegerDefault { stmt, .. } => {
                 let src = self.body_sm.lint_src(stmt, lossy_integer_constant);
@@ -659,6 +665,34 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
+            // Enhancement-794 (hunt D4 of 2026-10-04): `from [0:inf]`
+            BodyValidationDiagnostic::InclusiveInfiniteBound { param, expr, upper, exclude, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let name = self.db.param_data(param).name.clone();
+                let (bracket, paren, sign) =
+                    if upper { ("]", ")", "") } else { ("[", "(", "-") };
+                let kind = if exclude { "exclude" } else { "from" };
+                Report::warning()
+                    .with_message(format!(
+                        "the `{kind}` range of parameter '{name}' closes the infinite bound \
+                         {sign}inf with `{bracket}`"
+                    ))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: format!(
+                            "write `{paren}` here: the range admits the same values either way"
+                        ),
+                    }])
+                    .with_notes(vec![
+                        "LRM 3.4.2: a bracket includes its end point, and infinity is not a \
+                         value a parameter takes (the simulator refuses a non-finite one); \
+                         every example in the LRM writes an infinite bound with a parenthesis, \
+                         `from [0:inf)`"
+                            .to_owned(),
+                    ])
+            }
             // Enhancement-650 (hunt F6): a range member no integer can equal
             BodyValidationDiagnostic::NonIntegerSetMember { param, expr, ref value, .. } => {
                 let FileSpan { range, file } = self.expr_src(expr);
@@ -704,6 +738,28 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                     .with_notes(vec![
                         "LRM 9.21: one comma-separated sub-string per independent variable; \
                          an 'I' sub-string names a data column to ignore and does not count"
+                            .to_owned(),
+                    ])
+            }
+            // Enhancement-792: a real constant converted to an integer
+            BodyValidationDiagnostic::RealConstantSaturates { expr, ref value, stored, .. } => {
+                let FileSpan { range, file } = self.expr_src(expr);
+                let what = if value.as_ref() == "NaN" {
+                    format!("converted to an `integer` it is {stored}")
+                } else {
+                    format!("converted to an `integer` it saturates to {stored}")
+                };
+                Report::warning()
+                    .with_message(format!("the real {value} does not fit a 32-bit integer"))
+                    .with_labels(vec![Label {
+                        style: LabelStyle::Primary,
+                        file_id: file,
+                        range: range.into(),
+                        message: what,
+                    }])
+                    .with_notes(vec![
+                        "Verilog-A's `integer` holds -2147483648 to 2147483647 (LRM 3.2); a \
+                         real is converted to it by rounding to the nearest integer (LRM 4.2.1.1)"
                             .to_owned(),
                     ])
             }

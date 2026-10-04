@@ -25,7 +25,7 @@ Nothing was fixed; this is the list.
 | [F6](#f6) | *(fixed in [E-789](../../enhancements_doc/Enhancement-789.md): held from the base op to the end of the analysis)* under `sens`, `@(initial_step)` fires seven times and `@(final_step)` once | low (ngspice side) |
 | [F7](#f7) | *(fixed in [E-790](../../enhancements_doc/Enhancement-790.md): `$mfactor` reported when carried as a factor)* lint L037 ("`$mfactor` scales this flow contribution a second time") fires 20 times on the CMC standard `r3_cmc`, where `$mfactor` enters only the mismatch statistics | low |
 | [F8](#f8) | a complex pole or zero given without its conjugate is accepted, and the imaginary part of the resulting coefficient is dropped in silence: a different, real filter runs | medium |
-| [D](#d) | sixteen smaller slips | low |
+| [D](#d) | *(D1–D5 fixed in [E-791](../../enhancements_doc/Enhancement-791.md) to [E-795](../../enhancements_doc/Enhancement-795.md))* sixteen smaller slips | low |
 
 <a id="f1"></a>
 ## F1 — an analog function whose return value is not assigned on some path returns 0 without a word
@@ -259,14 +259,14 @@ compiles and runs.
 <a id="d"></a>
 ## D — smaller slips
 
-- **D1** The expression-depth error quotes the whole source line: a 100 000-term sum on one
+- **D1** *(fixed in [E-791](../../enhancements_doc/Enhancement-791.md): a line over 240 bytes is quoted as windows around each label, the real column kept; the parse of a space-free one-line chain stays quadratic, in rowan's node cache)* The expression-depth error quotes the whole source line: a 100 000-term sum on one
   line produces 800 KB of diagnostic.
-- **D2** A literal real outside the integer range assigned to an integer saturates without
+- **D2** *(fixed in [E-792](../../enhancements_doc/Enhancement-792.md): L030 for a real constant an integer cannot hold, a `repeat` count included; and the run-time conversion was `llvm.lround`, which on x86-64 kept the low 32 bits of libc `lround` (3e9 ran as -1294967296) -- it saturates on every platform now)* A literal real outside the integer range assigned to an integer saturates without
   a word (`ic = 1e20;` is 2147483647); conversion is otherwise exact (ties away from zero,
   the same folded and at run time).
-- **D3** `%c` of 0 in `$strobe` ends the C string: the rest of the line is lost.
-- **D4** `from [0:inf]` (a closed bracket at an infinite bound) is accepted without a word.
-- **D5** `` `define include 7 `` redefines a directive name without a diagnostic (IEEE 1364
+- **D3** *(fixed in [E-793](../../enhancements_doc/Enhancement-793.md): `%c` is a one-character string, empty for 0; the NUL had taken the line break too, gluing the next line on. `%b` of 0 printed nothing, fixed with it)* `%c` of 0 in `$strobe` ends the C string: the rest of the line is lost.
+- **D4** *(lint L039 `inclusive_infinite_bound` in [E-794](../../enhancements_doc/Enhancement-794.md), **allowed by default**: the range admits the same values as `[0:inf)`, and PSP103, BSIMBULK, HICUM and EKV write it through their range macros; `-W` reports it, `-E` refuses it as VAMPyRE does)* `from [0:inf]` (a closed bracket at an infinite bound) is accepted without a word.
+- **D5** *(fixed in [E-795](../../enhancements_doc/Enhancement-795.md): an error, for every directive the preprocessor knows and for `-D`)* `` `define include 7 `` redefines a directive name without a diagnostic (IEEE 1364
   19.3.1 makes that illegal); using it then fails with "expected a string literal".
 - **D6** `@(timer(0, 1e-18))` fires 416 times in a 2 µs transient instead of ~2·10¹², with
   no word about the period being below the time resolution.

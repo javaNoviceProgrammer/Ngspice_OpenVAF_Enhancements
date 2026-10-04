@@ -1072,7 +1072,19 @@ impl<'ll> Builder<'_, '_, 'll> {
                 NonNull::from(self.build_int_cmp(args, llvm_sys::LLVMIntPredicate::LLVMIntNE))
                     .as_ptr()
             }
-            Opcode::FIcast => NonNull::from(self.intrinsic(args, "llvm.lround.i32.f64")).as_ptr(),
+            // Enhancement-792 (hunt D2 of 2026-10-04): round half away from zero,
+            // then a SATURATING conversion (NaN -> 0) -- what the constant folder
+            // (`val.round() as i32`) and the MIR interpreter compute, and the rule
+            // E-392 gave the conversion. `llvm.lround.i32.f64` was that only on
+            // AArch64 (`fcvtas`); x86-64 lowers it to a tail call of libc
+            // `lround`, whose 64-bit `long` lost its upper half (3e9 became
+            // -1294967296 on Linux and macOS) and whose out-of-range result C
+            // leaves unspecified. AArch64 still emits the one `fcvtas`.
+            Opcode::FIcast => {
+                let x = NonNull::from(self.values[args[0]].get(self)).as_ptr();
+                let rounded = self.call_intrinsic1("llvm.round.f64", x);
+                self.call_intrinsic1("llvm.fptosi.sat.i32.f64", rounded)
+            }
             Opcode::Seq => NonNull::from(self.strcmp(args, false)).as_ptr(),
             Opcode::Sne => NonNull::from(self.strcmp(args, true)).as_ptr(),
             Opcode::Sqrt => NonNull::from(self.intrinsic(args, "llvm.sqrt.f64")).as_ptr(),
@@ -1385,6 +1397,26 @@ impl<'ll> Builder<'_, '_, 'll> {
         .unwrap()
         .as_ref()
     }
+    /// Enhancement-792: an intrinsic of one argument applied to an LLVM value
+    /// (`intrinsic` takes MIR values).
+    unsafe fn call_intrinsic1(
+        &mut self,
+        name: &'static str,
+        arg: *mut llvm_sys::LLVMValue,
+    ) -> *mut llvm_sys::LLVMValue {
+        let (ty, fun) =
+            self.cx.intrinsic(name).unwrap_or_else(|| unreachable!("intrinsic {} not found", name));
+        let mut args = [arg];
+        llvm_sys::core::LLVMBuildCall2(
+            self.llbuilder,
+            NonNull::from(ty).as_ptr(),
+            NonNull::from(fun).as_ptr(),
+            args.as_mut_ptr(),
+            1,
+            UNNAMED,
+        )
+    }
+
     unsafe fn intrinsic(&mut self, args: &[Value], name: &'static str) -> &'ll llvm_sys::LLVMValue {
         let (ty, fun) =
             self.cx.intrinsic(name).unwrap_or_else(|| unreachable!("intrinsic {} not found", name));
