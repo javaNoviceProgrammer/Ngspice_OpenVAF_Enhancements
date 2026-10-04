@@ -22,8 +22,8 @@ Nothing was fixed; this is the list.
 | [F3](#f3) | zero coefficients are not normalised: a `laplace_nd`/`laplace_zd` denominator whose highest-order coefficient is 0 stops every analysis with `$fatal`, the compile-time order check counts list lengths, and a pole-zero pair at the origin (any form) makes the operating point singular — all well-defined filters | medium |
 | [F4](#f4) | an instance parameter override outside the child's declared range runs: a literal draws only a warning naming the mangled `x1__r`, a value from the parent's card is not checked at all | high |
 | [F5](#f5) | the domain checks made on literal arguments have no run-time counterpart for nine arguments: a card value is clamped, ignored or projected in silence | medium |
-| [F6](#f6) | under `sens`, `@(initial_step)` fires seven times and `@(final_step)` once | low (ngspice side) |
-| [F7](#f7) | lint L037 ("`$mfactor` scales this flow contribution a second time") fires 20 times on the CMC standard `r3_cmc`, where `$mfactor` enters only the mismatch statistics | low |
+| [F6](#f6) | *(fixed in [E-789](../../enhancements_doc/Enhancement-789.md): held from the base op to the end of the analysis)* under `sens`, `@(initial_step)` fires seven times and `@(final_step)` once | low (ngspice side) |
+| [F7](#f7) | *(fixed in [E-790](../../enhancements_doc/Enhancement-790.md): `$mfactor` reported when carried as a factor)* lint L037 ("`$mfactor` scales this flow contribution a second time") fires 20 times on the CMC standard `r3_cmc`, where `$mfactor` enters only the mismatch statistics | low |
 | [F8](#f8) | a complex pole or zero given without its conjugate is accepted, and the imaginary part of the resulting coefficient is dropped in silence: a different, real filter runs | medium |
 | [D](#d) | sixteen smaller slips | low |
 
@@ -190,6 +190,12 @@ refused.
 <a id="f6"></a>
 ## F6 — `sens` fires `initial_step` seven times and `final_step` once
 
+*Fixed in [E-789](../../enhancements_doc/Enhancement-789.md).* `cktsens.c` re-runs the device's
+setup and temperature pass per perturbed parameter (and `CKTsetup`/`CKTtemp` per AC frequency),
+and each cleared the mark E-7 keys `@(initial_step)` on — 11 firings under `sens v(a)` for a
+two-parameter module, 4 under a three-frequency AC sensitivity. The sensitivity analysis now holds
+the mark from its base operating point to its end; finalstep [9] checks every analysis.
+
 ```verilog
 @(initial_step) $strobe("IS");  @(final_step) $strobe("FS");
 ```
@@ -206,6 +212,12 @@ The plumbing is ngspice's (the perturbation loop), not the compiler's.
 
 <a id="f7"></a>
 ## F7 — L037 fires 20 times on the CMC standard `r3_cmc`
+
+*Fixed in [E-790](../../enhancements_doc/Enhancement-790.md).* The twenty were ten in each of the
+corpus's two versions of the model. The taint now follows `$mfactor` as a factor — arithmetic, `?:`
+arms, variables and the operators linear in their first argument — and stops at any other call, a
+comparison and an array index; across the 1026 bundled files only the two `r3_cmc` versions change
+(10 → 0 each), and the LRM's `badres` is still warned.
 
 ```
 warning[L037]: `$mfactor` scales this flow contribution a second time

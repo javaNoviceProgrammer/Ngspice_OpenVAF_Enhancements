@@ -41,6 +41,10 @@ Checks (parsing the tagged $strobe lines from ngspice stdout):
      E-412 snapshot is kept only for an evaluation with no bias point); an op
      after an ac, at a new bias, sees the new bias (the capture does not go
      stale)
+  9. (E-789, openvaf-r hunt F6 of 2026-10-04) initial_step fires once in a
+     sensitivity analysis (dc and ac), where the perturbation and frequency
+     passes re-ran setup and re-fired it; an op after a sens fires its own;
+     op, dc, ac, tran, noise, tf, pz, disto and sp fire each event once
 
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
@@ -223,6 +227,41 @@ def main():
     fired, cf = run_cnt("op after ac", "ac dec 2 1k 10k\nalter V1 dc=0.4\nop")
     check("an op after an ac, at a new bias: final sees the new bias V=0.4 (the capture does not go stale)",
           len(fired) == 2 and abs(float(fired[0][1]) - 0.2) < 1e-9 and abs(float(fired[1][1]) - 0.4) < 1e-9 and cf == 1)
+
+    # Enhancement-789 (openvaf-r hunt F6 of 2026-10-04): sensitivity analysis
+    # re-runs setup and the temperature pass per perturbed parameter and per AC
+    # frequency, and each re-fired @(initial_step): 11 times under `sens v(a)`
+    # with this two-parameter model, 4 under a three-frequency AC sensitivity,
+    # against one @(final_step). The pair is balanced in every analysis.
+    print("[9] initial_step fires once per analysis, sensitivity included")
+    FSINIT = ("* fs init {name}\nV1 in 0 DC 0.2 AC 1 {vsrc}\nN1 in 0 minit\n.model minit fsinit\n"
+              "R1 in a 1k\nR2 a 0 1k\nC1 a 0 1n\n{extra}"
+              ".control\npre_osdi finalstep_demo.osdi\n{an}\n.endc\n.end\n")
+
+    def run_init(name, an, vsrc="", extra=""):
+        with open(os.path.join(HERE, "_fs.cir"), "w") as fh:
+            fh.write(FSINIT.format(name=name, an=an, vsrc=vsrc, extra=extra))
+        out = subprocess.run([NGSPICE, "-b", "_fs.cir"], cwd=HERE,
+                             capture_output=True, text=True, timeout=120).stdout
+        return (re.findall(r"FS_INIT opens=(\d+)", out),
+                re.findall(r"FS_BAL opens=(\d+)", out))
+
+    for name, an in (("sens (dc)", "sens v(a)"), ("sens (ac)", "sens v(a) ac lin 3 1k 10k")):
+        inits, bal = run_init(name, an)
+        check(f"{name}: initial_step fires once ({len(inits)}), final_step once, and the counter it "
+              f"keeps reads 1 at the end ({bal})", len(inits) == 1 and bal == ["1"])
+    inits, bal = run_init("op after sens", "sens v(a)\nop")
+    check(f"an op after a sens fires its own initial_step (the hold is released): {inits} {bal}",
+          inits == ["1", "1"] and bal == ["1", "1"])
+    for name, an, vsrc, extra in (
+            ("op", "op", "", ""), ("dc", "dc V1 0 0.4 0.2", "", ""), ("ac", "ac dec 2 1k 10k", "", ""),
+            ("tran", "tran 10n 100n", "", ""), ("noise", "noise v(a) V1 dec 2 1k 10k", "", ""),
+            ("tf", "tf v(a) V1", "", ""), ("pz", "pz in 0 a 0 vol pz", "", ""),
+            ("disto", "disto lin 1 1k 1k", "distof1 0.01", ""),
+            ("sp", "sp lin 2 1k 2k", "portnum 1 z0 50", "V2 a 0 DC 0 portnum 2 z0 50\n")):
+        inits, bal = run_init(name, an, vsrc, extra)
+        check(f"{name}: initial_step and final_step once each, the pair balanced",
+              len(inits) == 1 and bal == ["1"])
 
     print()
     print("ALL PASS" if ok else "SOME CHECKS FAILED")

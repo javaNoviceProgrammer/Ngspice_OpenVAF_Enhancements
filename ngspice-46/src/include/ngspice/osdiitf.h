@@ -202,6 +202,13 @@ extern int OSDIdeferredFatal(CKTcircuit *ckt, const char *where);
  * Defined in src/osdi/osdiload.c. */
 extern int OSDIfinalStep(CKTcircuit *ckt);
 
+/* Enhancement-789: while held, OSDI setup and the temperature pass leave each
+ * instance's "evaluated" mark alone, so @(initial_step) does not fire again.
+ * Held by sensitivity analysis from its base operating point to its end,
+ * where it re-runs setup and the temperature pass per perturbation and per
+ * frequency. Defined in src/osdi/osdisetup.c. */
+extern void OSDIholdInitialStep(bool hold);
+
 /* Deferred display/file output (LRM 9.4.6/9.5.9): flush the just-converged
  * point's buffered output. Called per accepted/converged solution point by the
  * analyses that solve a SEQUENCE of points without CKTaccept (.dc sweeps);

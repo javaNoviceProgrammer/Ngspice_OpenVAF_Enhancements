@@ -9,7 +9,7 @@ use hir_def::{
 use hir_def::expr::{CaseCond, Event};
 use stdx::impl_display;
 use syntax::ast::{AssignOp, BinaryOp, UnaryOp};
-use syntax::name::{sysfun, AsIdent, Name};
+use syntax::name::{kw, sysfun, AsIdent, Name};
 
 use crate::builtin::{
     ABSDELAY_MAX, DDT_TOL, IDT_IC_ASSERT_TOL, NATURE_ACCESS_BRANCH, NATURE_ACCESS_NODES,
@@ -4774,8 +4774,9 @@ pub(crate) fn const_param_value(db: &dyn HirTyDB, param: ParamId, depth: u32) ->
 /// the $mfactor in a manner that would result in double-scaling" -- its `badres`,
 /// `I(a,b) <+ V(a,b) / r * $mfactor`, "will generate an error". Nothing was said.
 ///
-/// The value of a flow contribution that reads `$mfactor`, directly or through a
-/// variable assigned (transitively) from it, is reported. A `?:` condition is not
+/// The value of a flow contribution that carries `$mfactor` as a factor, directly
+/// or through a variable assigned (transitively) from such a value, is reported
+/// (Enhancement-790 narrowed "reads" to "carries as a factor": see `tainted_read`). A `?:` condition is not
 /// a value -- the LRM's `parares` keeps `$mfactor` in its condition and is legal
 /// -- nor is a potential contribution, a display, or an operating-point
 /// variable. Taint is by variable name, whole body, without flow sensitivity: an
@@ -4794,37 +4795,72 @@ fn lint_mfactor_double_scaling(
             _ => None,
         }
     }
+    // Enhancement-790 (openvaf-r hunt F7 of 2026-10-04): a value is reported
+    // only when it carries `$mfactor` as a FACTOR -- the LRM's `badres`
+    // (`V / r * $mfactor`) and every shape like it, a division by it included
+    // (that undoes the simulator's scaling, the same misuse). The taint used to
+    // follow any data dependence, through every call, so the CMC mismatch rule
+    // -- a sigma divided by sqrt(m * area), m parallel devices averaging their
+    // mismatch -- drew L037 on all ten flow contributions of the standard
+    // `r3_cmc`, none of which is proportional to m. It now follows `* / + -`, a
+    // negation, `**` on a tainted base, both arms of a `?:`, a variable
+    // assigned such a value, and the operators linear in their first argument
+    // (`white_noise(1e-20 * $mfactor)` is scaled again by the simulator, as a
+    // `ddt` of a scaled charge is); any other call, a comparison and an array
+    // index end it.
+    const LINEAR_IN_FIRST_ARG: [Name; 15] = [
+        kw::ddt,
+        kw::idt,
+        kw::laplace_nd,
+        kw::laplace_np,
+        kw::laplace_zd,
+        kw::laplace_zp,
+        kw::zi_nd,
+        kw::zi_np,
+        kw::zi_zd,
+        kw::zi_zp,
+        kw::absdelay,
+        kw::transition,
+        kw::slew,
+        kw::white_noise,
+        kw::flicker_noise,
+    ];
     fn tainted_read(body: &Body, expr: ExprId, tainted: &HashSet<Name>) -> Option<ExprId> {
         match body.exprs[expr] {
             Expr::Path { ref path, .. } => {
                 let name = path.segments.last()?;
                 (*name == sysfun::mfactor || tainted.contains(name)).then_some(expr)
             }
-            Expr::BitSelect { ref base, ref indices } => {
-                if base.segments.last().map_or(false, |n| tainted.contains(n)) {
-                    return Some(expr);
-                }
-                indices.iter().find_map(|&i| tainted_read(body, i, tainted))
+            Expr::BitSelect { ref base, .. } => {
+                base.segments.last().map_or(false, |n| tainted.contains(n)).then_some(expr)
             }
             Expr::Select { then_val, else_val, .. } => tainted_read(body, then_val, tainted)
                 .or_else(|| tainted_read(body, else_val, tainted)),
+            Expr::BinaryOp { lhs, rhs, op: Some(op) } => match op {
+                BinaryOp::Addition
+                | BinaryOp::Subtraction
+                | BinaryOp::Multiplication
+                | BinaryOp::Division => tainted_read(body, lhs, tainted)
+                    .or_else(|| tainted_read(body, rhs, tainted)),
+                BinaryOp::Power => tainted_read(body, lhs, tainted),
+                _ => None,
+            },
+            Expr::UnaryOp { expr: operand, op: UnaryOp::Neg | UnaryOp::Identity } => {
+                tainted_read(body, operand, tainted)
+            }
             // a bare `$mfactor` is lowered as a zero-argument call of the system
             // function, not as a path (hir_def/src/body/lower.rs)
             Expr::Call { fun: Some(ref path), ref args } => {
-                if path.segments.last() == Some(&sysfun::mfactor) {
+                let name = path.segments.last()?;
+                if *name == sysfun::mfactor {
                     return Some(expr);
                 }
-                args.iter().find_map(|&a| tainted_read(body, a, tainted))
+                if LINEAR_IN_FIRST_ARG.contains(name) {
+                    return args.first().and_then(|&a| tainted_read(body, a, tainted));
+                }
+                None
             }
-            ref e => {
-                let mut found = None;
-                e.walk_child_exprs(|child| {
-                    if found.is_none() {
-                        found = tainted_read(body, child, tainted);
-                    }
-                });
-                found
-            }
+            _ => None,
         }
     }
 

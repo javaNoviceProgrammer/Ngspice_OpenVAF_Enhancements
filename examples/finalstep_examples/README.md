@@ -29,7 +29,7 @@ point of each analysis — and **analysis-phase lists** on both step events
 python3 verify_finalstep.py
 ```
 
-Checks (35, ALL PASS; 27 before [E-683](../../enhancements_doc/Enhancement-683.md), 23 before [E-677](../../enhancements_doc/Enhancement-677.md)): tran fires `final` exactly once at t = tstop seeing
+Checks (47, ALL PASS; 35 before [E-789](../../enhancements_doc/Enhancement-789.md), 27 before [E-683](../../enhancements_doc/Enhancement-683.md), 23 before [E-677](../../enhancements_doc/Enhancement-677.md)): tran fires `final` exactly once at t = tstop seeing
 the converged solution; op fires both `initial` and `final` (a single point
 is first and last); ac/noise fire `final` once after the sweep; a dc sweep's
 `final` sees the last sweep point (V = 2.0 exact); phase-qualified events
@@ -46,3 +46,10 @@ at the bias point (0.2 V; 0.1822 V for the `sp` deck, whose ports carry their 50
 a counter assigned in the block reads 1 afterwards under `ac` and `noise` too (the
 E-412 snapshot is kept only for an evaluation with no bias point); and an `op` after an
 `ac`, at a new bias, sees the new bias.
+
+Enhancement-789 (F6 of the 2026-10-04 openvaf-r hunt) adds a module (`fsinit`) and twelve
+checks: `@(initial_step)` fires once in a sensitivity analysis, where re-running setup and the
+temperature pass per perturbed parameter and per AC frequency had fired it 11 times under
+`sens v(a)` and 4 times under a three-frequency AC sensitivity, against one `@(final_step)`;
+an `op` after a `sens` fires its own; and op, dc, ac, tran, noise, tf, pz, disto and sp fire
+each event once. On the E-788 binaries 3 checks per solver fail.

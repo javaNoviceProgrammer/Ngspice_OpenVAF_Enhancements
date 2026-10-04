@@ -79,3 +79,26 @@ module fscnt(p, n);
     I(p, n) <+ V(p, n) / 1e3;
   end
 endmodule
+
+// Enhancement-789 (openvaf-r hunt F6 of 2026-10-04): sensitivity analysis
+// re-runs setup and the temperature pass once per perturbed parameter and once
+// per AC frequency, and each pass re-fired @(initial_step) -- 7 to 11 times
+// under `sens v(a)`, 4 under a three-frequency AC sensitivity -- against the
+// one @(final_step) of E-683. A model opening a file in one and closing it in
+// the other saw the pair unbalanced. The two parameters give the dc
+// sensitivity something to perturb.
+module fsinit(p, n);
+  inout p, n;
+  electrical p, n;
+  parameter real g = 1m;
+  parameter real h = 2;
+  integer opens;
+  analog begin
+    @(initial_step) begin
+      opens = opens + 1;
+      $strobe("FS_INIT opens=%d", opens);
+    end
+    @(final_step) $strobe("FS_BAL opens=%d", opens);
+    I(p, n) <+ V(p, n) * g * h;
+  end
+endmodule

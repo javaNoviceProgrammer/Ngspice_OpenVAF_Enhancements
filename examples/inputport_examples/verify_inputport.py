@@ -28,6 +28,20 @@ values of a flow contribution and stay silent.
   [7]  badres, the variable route, a noise contribution: each warned once at the read; parares, a ?: condition,
        a potential contribution, a display: silent
   [8]  the allow attribute and -A silence it, -E makes it an error, --lints lists it as L037
+
+Enhancement-790 (F7 of the 2026-10-04 openvaf-r hunt): the taint followed any
+data dependence on $mfactor, through every call, so the CMC mismatch rule -- a
+sigma divided by sqrt(m * area) -- drew L037 on all ten flow contributions of the
+standard r3_cmc (both corpus versions), none proportional to m. A value is now reported when it carries
+$mfactor as a factor: through * / + -, a negation, ** on a tainted base, either
+arm of ?:, a variable, and the operators linear in their first argument (ddt,
+idt, laplace_*, zi_*, absdelay, transition, slew, white_noise, flicker_noise);
+any other call, a comparison and an array index end it.
+  [9]  ddt of a scaled charge, a division by $mfactor, a negation, a ?: arm, a ** base, a laplace and a
+       transition of a scaled value: each warned once
+  [10] the CMC mismatch shape (through sqrt), an exp of it, a user function of $mfactor and a comparison
+       used as a number: silent
+  [11] the corpus r3_cmc compiles without L037 (it had ten)
 """
 import os
 import re
@@ -154,6 +168,48 @@ check("[8] the allow attribute and -A silence it, -E makes it an error that stop
       ok1 and not l037(m1) and ok2 and not l037(m2) and not ok3 and l037(m3) == ["error"]
       and re.search(r"mfactor_double_scaling\s+L037", lst) is not None,
       (m1 + m2 + m3)[-200:])
+
+print("\nEnhancement-790: L037 reports $mfactor carried as a factor, not any dependence on it")
+warned9 = {
+    "ddt of a scaled charge": B + "analog I(a,b) <+ V(a,b)/r + ddt(1e-12 * $mfactor * V(a,b)); endmodule\n",
+    "division by $mfactor": B + "analog I(a,b) <+ V(a,b) / (r * $mfactor); endmodule\n",
+    "negation": B + "real mm; analog begin mm = -$mfactor; I(a,b) <+ -mm * V(a,b) / r; end endmodule\n",
+    "?: arm": B + "real k; analog begin k = (r > 1.0) ? $mfactor : 1.0; I(a,b) <+ k * V(a,b) / r; end endmodule\n",
+    "** base": B + "analog I(a,b) <+ V(a,b) / r * $mfactor ** 1.0; endmodule\n",
+    "laplace": B + "analog I(a,b) <+ laplace_nd(V(a,b) * $mfactor / r, {1.0}, {1.0, 1e-9}); endmodule\n",
+    "transition": B + "analog I(a,b) <+ V(a,b)/r + transition($mfactor * 1e-6, 0, 1n); endmodule\n",
+}
+silent10 = {
+    "CMC mismatch (sqrt)": B + "parameter real l = 1e-6; parameter real smm = 1e-8; real w; analog begin "
+                           "w = 1e-6 + smm / sqrt($mfactor * l); I(a,b) <+ V(a,b) * w / (r * l); end endmodule\n",
+    "exp of it": B + "real d; analog begin d = exp(0.01 / sqrt($mfactor)); I(a,b) <+ V(a,b) / (r * d); end endmodule\n",
+    "user function": B + "analog function real sc; input m; real m; begin sc = 1.0 + 0.0 * m; end endfunction\n"
+                     "analog I(a,b) <+ V(a,b) / r * sc($mfactor); endmodule\n",
+    "comparison as a number": B + "analog I(a,b) <+ V(a,b) / r * (1.0 + (r > $mfactor)); endmodule\n",
+}
+r9, r10 = {}, {}
+for i, (k, src) in enumerate(warned9.items()):
+    ok, msg = compile_src(src, f"c9_{i}")
+    r9[k] = ok and len(l037(msg)) == 1
+for i, (k, src) in enumerate(silent10.items()):
+    ok, msg = compile_src(src, f"c10_{i}")
+    r10[k] = ok and not l037(msg)
+check("[9] ddt of a scaled charge, a division by $mfactor, a negation, a ?: arm, a ** base, a laplace and a "
+      "transition of a scaled value are each warned once",
+      all(r9.values()), " ".join(f"{k}:{'ok' if v else 'BAD'}" for k, v in r9.items()))
+check("[10] the CMC mismatch shape through sqrt, an exp of it, a user function of $mfactor and a comparison "
+      "used as a number are silent", all(r10.values()),
+      " ".join(f"{k}:{'ok' if v else 'BAD'}" for k, v in r10.items()))
+R3 = os.path.join(os.path.dirname(os.path.dirname(HERE)), "VA_TEST", "VA-Models-main", "code", "r3_cmc", "vacode")
+if os.path.isfile(os.path.join(R3, "r3_cmc.va")):
+    with tempfile.TemporaryDirectory() as td:
+        p = subprocess.run([VAF, "r3_cmc.va", "-o", os.path.join(td, "r3.osdi")], cwd=R3,
+                           capture_output=True, text=True, timeout=300)
+    n37 = len(l037(p.stdout + p.stderr))
+    check("[11] the corpus r3_cmc compiles without L037 (it had ten: $mfactor enters only its mismatch sigmas)",
+          p.returncode == 0 and n37 == 0, f"rc={p.returncode} L037 x{n37}")
+else:
+    check("[11] the corpus r3_cmc is present", False, R3)
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

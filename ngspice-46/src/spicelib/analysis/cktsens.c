@@ -478,6 +478,9 @@ int sens_sens(CKTcircuit* ckt, int restart)
             FREE(vec_names);
         if (error) {
         err:
+#ifdef OSDI
+            OSDIholdInitialStep(false);   /* Enhancement-789 */
+#endif
             FREE(sens_base_op);      /* Enhancement-683 */
             /* Enhancement-440: the error paths leave through here too, and a
              * half-finished perturbation loop is exactly when the models are
@@ -559,6 +562,14 @@ int sens_sens(CKTcircuit* ckt, int restart)
 
     /* Enhancement-440: snapshot the models before anything is perturbed. */
     saved_models = sens_save_models(ckt);
+
+#ifdef OSDI
+    /* Enhancement-789: the base operating point above fired @(initial_step);
+     * the setup and temperature passes the perturbations and the AC
+     * frequencies re-run below must not fire it again. Released on both
+     * exits. */
+    OSDIholdInitialStep(true);
+#endif
 
     for (i = 0; i < nfreqs; i++) {
         /* XXX handle restart */
@@ -1159,6 +1170,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
      * at that point, as the other analyses do (LRM 5.10.2). */
     if (sens_base_op && ckt->CKTrhsOld && ckt->CKTmaxEqNum == sens_base_n)
         memcpy(ckt->CKTrhsOld, sens_base_op, (size_t) sens_base_n * sizeof(double));
+    OSDIholdInitialStep(false);   /* Enhancement-789 */
     OSDIfinalStep(ckt);
 #endif
     FREE(sens_base_op);

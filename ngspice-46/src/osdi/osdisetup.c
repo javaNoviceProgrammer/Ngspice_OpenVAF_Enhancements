@@ -28,6 +28,24 @@
 #include <string.h>
 #include <ctype.h>               /* Enhancement-654: tolower */
 
+/* Enhancement-789 (openvaf-r hunt F6 of 2026-10-04): setup and the
+ * temperature pass mark every instance as not yet evaluated, so its next
+ * evaluation carries EVAL_FLAG_IS_INITIAL_STEP and fires @(initial_step).
+ * That is right at the start of an analysis. Sensitivity analysis, though,
+ * re-runs setup and the temperature pass inside itself -- once per perturbed
+ * parameter (DEVsetup + DEVtemperature on the device) and once per
+ * frequency of an AC sensitivity -- and each of those re-fired
+ * @(initial_step): `sens v(a)` fired it 7 to 11 times and @(final_step)
+ * once (E-683), so a model opening a file there or resetting a counter or a
+ * seed saw the pair unbalanced. cktsens.c holds the flag from its base
+ * operating point to its end; while held, the resets are skipped. */
+static bool osdi_initial_step_held = false;
+
+void OSDIholdInitialStep(bool hold)
+{
+  osdi_initial_step_held = hold;
+}
+
 /*
  * Handles any errors raised by the setup_instance and setup_model functions
  */
@@ -1120,7 +1138,8 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
         temp = ckt->CKTtemp;
       }
 
-      extra_inst_data->has_evaluated = false;
+      if (!osdi_initial_step_held)            /* Enhancement-789 */
+        extra_inst_data->has_evaluated = false;
 
       /* find number of connected ports to allow evaluation of $port_connected
        * and to handle node collapsing correctly later
@@ -1833,7 +1852,8 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
       } else if (extra_inst_data->dt_given) {
         temp += extra_inst_data->dt;
       }
-      extra_inst_data->has_evaluated = false;
+      if (!osdi_initial_step_held)            /* Enhancement-789 */
+        extra_inst_data->has_evaluated = false;
 
       handle = (OsdiNgspiceHandle){.kind = 2, .name = gen_inst->GENname};
       /* find number of connected ports to allow evaluation of $port_connected
