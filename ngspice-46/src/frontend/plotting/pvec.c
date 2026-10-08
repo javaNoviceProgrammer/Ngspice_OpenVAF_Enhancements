@@ -3,54 +3,58 @@
 #include "ngspice/plot.h"
 #include "ngspice/fteext.h"
 
+#include "ngspice/dstring.h"    /* Enhancement-812 */
 #include "pvec.h"
 #include "dimens.h"
 
 
+/* Enhancement-812 (hunt 2026-10-08 F21): the line is built in a growing
+ * string. It was sprintf'd into a 512-byte stack buffer with the vector's
+ * name, and `display` of a vector named by a ~470-character node or device
+ * (a noise contribution `onoise_<device>_thermal` included, and `load`,
+ * which lists what it reads through here) overran it: a fortified abort
+ * every time. The scale's name and the colour went through the same buffer. */
 void
 pvec(struct dvec *d)
 {
-    char buf[BSIZE_SP], buf2[BSIZE_SP], buf3[BSIZE_SP];
+    char buf3[BSIZE_SP];
+    DS_CREATE(line, 128);
 
-    sprintf(buf, "    %-20s: %s, %s, %d long",
-            d->v_name,
-            ft_typenames(d->v_type),
-            isreal(d) ? "real" : "complex",
-            d->v_length);
+    ds_cat_printf(&line, "    %-20s: %s, %s, %d long",
+                  d->v_name,
+                  ft_typenames(d->v_type),
+                  isreal(d) ? "real" : "complex",
+                  d->v_length);
 
-    if (d->v_flags & VF_MINGIVEN) {
-        sprintf(buf2, ", min = %g", d->v_minsignal);
-        strcat(buf, buf2);
-    }
+    if (d->v_flags & VF_MINGIVEN)
+        ds_cat_printf(&line, ", min = %g", d->v_minsignal);
 
-    if (d->v_flags & VF_MAXGIVEN) {
-        sprintf(buf2, ", max = %g", d->v_maxsignal);
-        strcat(buf, buf2);
-    }
+    if (d->v_flags & VF_MAXGIVEN)
+        ds_cat_printf(&line, ", max = %g", d->v_maxsignal);
 
     switch (d->v_gridtype) {
     case GRID_LOGLOG:
-        strcat(buf, ", grid = loglog");
+        ds_cat_str(&line, ", grid = loglog");
         break;
 
     case GRID_XLOG:
-        strcat(buf, ", grid = xlog");
+        ds_cat_str(&line, ", grid = xlog");
         break;
 
     case GRID_YLOG:
-        strcat(buf, ", grid = ylog");
+        ds_cat_str(&line, ", grid = ylog");
         break;
 
     case GRID_POLAR:
-        strcat(buf, ", grid = polar");
+        ds_cat_str(&line, ", grid = polar");
         break;
 
     case GRID_SMITH:
-        strcat(buf, ", grid = smith (xformed)");
+        ds_cat_str(&line, ", grid = smith (xformed)");
         break;
 
     case GRID_SMITHGRID:
-        strcat(buf, ", grid = smithgrid (not xformed)");
+        ds_cat_str(&line, ", grid = smithgrid (not xformed)");
         break;
 
     default: /* va: GRID_NONE or GRID_LIN */
@@ -60,41 +64,33 @@ pvec(struct dvec *d)
     switch (d->v_plottype) {
 
     case PLOT_COMB:
-        strcat(buf, ", plot = comb");
+        ds_cat_str(&line, ", plot = comb");
         break;
 
     case PLOT_POINT:
-        strcat(buf, ", plot = point");
+        ds_cat_str(&line, ", plot = point");
         break;
 
     default:  /* va: PLOT_LIN, */
         break;
     }
 
-    if (d->v_defcolor) {
-        sprintf(buf2, ", color = %s", d->v_defcolor);
-        strcat(buf, buf2);
-    }
+    if (d->v_defcolor)
+        ds_cat_printf(&line, ", color = %s", d->v_defcolor);
 
-    if (d->v_scale) {
-        sprintf(buf2, ", scale = %s", d->v_scale->v_name);
-        strcat(buf, buf2);
-    }
+    if (d->v_scale)
+        ds_cat_printf(&line, ", scale = %s", d->v_scale->v_name);
 
     if (d->v_numdims > 1) {
         dimstring(d->v_dims, d->v_numdims, buf3);
-        size_t icopy = BSIZE_SP - 1;
-        size_t len = (size_t)snprintf(buf2, icopy, ", dims = [%s]", buf3);
-        if (len > icopy) {
-            fprintf(stderr, "Warning: Potential buffer overflow while setting a vector dimension");
-        }
-        strcat(buf, buf2);
+        ds_cat_printf(&line, ", dims = [%s]", buf3);
     }
 
     if (d->v_plot->pl_scale == d)
-        strcat(buf, " [default scale]\n");
+        ds_cat_str(&line, " [default scale]\n");
     else
-        strcat(buf, "\n");
+        ds_cat_str(&line, "\n");
 
-    out_send(buf);
+    out_send(ds_get_buf(&line));
+    ds_free(&line);
 }

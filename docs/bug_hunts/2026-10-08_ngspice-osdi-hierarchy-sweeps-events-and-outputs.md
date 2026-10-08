@@ -55,9 +55,9 @@ Nothing was fixed; this is the list.
 | [F17](#f17) | an OSDI *internal* node with no DC path gets no dc-path gmin: every homotopy fails and the transient op answers 0.5 V where the built-in twin holds 0 | medium |
 | [F18](#f18) | under `osdimc` the bins of one binned model draw independently: one device type's process shift jumps at a bin boundary | medium |
 | [F19](#f19) | `.option savecurrents` in `ac` and `sp` records an OSDI device's terminal currents as the DC bias current, flat and real at every frequency | high |
-| [F20](#f20) | **crash**: `print` of a vector whose name is 512 characters or longer overruns a 512-byte heap buffer in `com_print` (intermittent SIGTRAP; deterministic under Guard Malloc) | high |
-| [F21](#f21) | **crash**: `display` (and `load`, which lists what it reads) of a vector whose name is about 470 characters or longer overflows a 512-byte stack buffer in `pvec` — a deterministic abort | high |
-| [F22](#f22) | **memory**: with any OSDI internal node, `OSDIload` copies `CKTmaxEqNum + 1` doubles out of `CKTrhsOld` at every bias point, past the end of its allocation (a heap over-read; a fault under Guard Malloc) | high |
+| [F20](#f20) | *(fixed in [E-811](../../enhancements_doc/Enhancement-811.md): the line is sized to the name)* **crash**: `print` of a vector whose name is 512 characters or longer overruns a 512-byte heap buffer in `com_print` (intermittent SIGTRAP; deterministic under Guard Malloc) | high |
+| [F21](#f21) | *(fixed in [E-812](../../enhancements_doc/Enhancement-812.md): `pvec` builds its line in a growing string)* **crash**: `display` (and `load`, which lists what it reads) of a vector whose name is about 470 characters or longer overflows a 512-byte stack buffer in `pvec` — a deterministic abort | high |
+| [F22](#f22) | *(fixed in [E-813](../../enhancements_doc/Enhancement-813.md): the capture copies `SMPmatSize + 1`, the vector's length)* **memory**: with any OSDI internal node, `OSDIload` copies `CKTmaxEqNum + 1` doubles out of `CKTrhsOld` at every bias point, past the end of its allocation (a heap over-read; a fault under Guard Malloc) | high |
 | [F23](#f23) | the LRM's `multiplicity="multiply"`/`"divide"` attribute on operating-point variables is ignored: with `m=4` the reports are per device | medium |
 | [F24](#f24) | `alter n1 dtemp=-400` (or `temp=-300`) says the below-absolute-zero value "is ignored", but the OSDI model receives the negative absolute temperature | medium |
 | [D](#d) | seventeen smaller slips *(D1–D5 and D7–D17 fixed in [E-796](../../enhancements_doc/Enhancement-796.md)…[E-810](../../enhancements_doc/Enhancement-810.md); D6 kept as designed)* | low |
@@ -408,6 +408,9 @@ terminal current is still open.*
 <a id="f20"></a>
 ## F20 — `print` of a long name overruns a heap buffer (a crash)
 
+*Fixed in [E-811](../../enhancements_doc/Enhancement-811.md): `com_print` grows its line buffer to the name before writing it; 600- and
+3000-character names print whole, under Guard Malloc too.*
+
 ```spice
 v1 1 0 2
 rxxxx…x 1 0 1k          ; an instance name of 512 characters or more
@@ -442,6 +445,9 @@ extractor, reach such names.
 <a id="f21"></a>
 ## F21 — `display` of a long name overflows a stack buffer (a deterministic crash)
 
+*Fixed in [E-812](../../enhancements_doc/Enhancement-812.md): `pvec` builds its line in a growing string; `display`, a noise plot's
+listing and `load` handle 600-character names.*
+
 ```spice
 v1 nyyyy…y 0 2          ; a node name of 500 characters
 r1 nyyyy…y 0 1k
@@ -471,6 +477,12 @@ print intact under Guard Malloc.
 
 <a id="f22"></a>
 ## F22 — `OSDIload` reads past the end of the right-hand side when a model has internal nodes
+
+*Fixed in [E-813](../../enhancements_doc/Enhancement-813.md). The cause is an off-by-one, not the internal node. The solution vectors
+hold `SMPmatSize + 1` doubles, which is `CKTmaxEqNum`, and the capture copied
+`CKTmaxEqNum + 1`. It ran at every `op` (DCop's closing `MODEINITSMSIG` load) and at every ac or
+noise bias point. It faulted whenever the vector's length filled its allocation slot, so it
+depends on the parity of the unknown count, as the wider note below found.*
 
 Found while chasing F20 under Guard Malloc. Any module with an internal node faults:
 

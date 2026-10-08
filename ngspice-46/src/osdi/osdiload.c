@@ -1398,8 +1398,23 @@ static bool osdi_op_solve_valid;
 static OsdiSimInfo osdi_uic_siminfo;      /* Enhancement-689: the uic evaluation's flags */
 static bool osdi_uic_siminfo_valid;
 
+/* Enhancement-813 (hunt 2026-10-08 F22): the length of the solution vectors.
+ * NIreinit allocates CKTrhsOld and its siblings with SMPmatSize + 1 doubles
+ * (row 0 is ground) -- which is CKTmaxEqNum, the next equation number. The
+ * capture copied CKTmaxEqNum + 1, one double past the end, at every `op`
+ * (DCop ends with a MODEINITSMSIG load) and at the bias point of every ac
+ * and noise analysis. The read usually landed in
+ * the allocator's rounding (an odd count of doubles) and was copied into the
+ * snapshot unused; when the count filled its slot exactly -- an OSDI internal
+ * node made it so in the hunt's first deck, a built-in R, C and D beside the
+ * device in others -- it was a read past the block, a fault under Guard
+ * Malloc. E-689's uic code already used this bound. */
+static int osdi_solution_len(const CKTcircuit *ckt) {
+  return ckt->CKTmatrix ? SMPmatSize(ckt->CKTmatrix) + 1 : 0;
+}
+
 static void osdi_op_solve_capture(CKTcircuit *ckt) {
-  int n = ckt->CKTmaxEqNum + 1;
+  int n = osdi_solution_len(ckt);
   if (ckt->CKTrhsOld == NULL || n <= 0)
     return;
   if (osdi_op_solve == NULL || osdi_op_solve_n < n) {
@@ -2152,7 +2167,7 @@ int OSDIfinalStep(CKTcircuit *ckt) {
    * CKTrhsOld before calling here. */
   bool at_bias = osdi_op_solve_valid && osdi_op_solve != NULL &&
                  osdi_op_solve_ckt == ckt &&
-                 osdi_op_solve_n >= ckt->CKTmaxEqNum + 1;
+                 osdi_op_solve_n >= osdi_solution_len(ckt);   /* Enhancement-813 */
   if (at_bias) {
     sim_info.prev_solve = osdi_op_solve;
   }

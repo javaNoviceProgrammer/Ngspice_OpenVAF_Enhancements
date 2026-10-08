@@ -133,12 +133,14 @@ com_print(wordlist *wl)
     char numbuf[BSIZE_SP], numbuf2[BSIZE_SP]; /* Printnum buffers */
     int ngood;
     wordlist *strwl = NULL;                     /* Enhancement-798 */
+    size_t bufsize;                             /* Enhancement-811: buf's capacity */
 
     if (wl == NULL)
         return;
 
     buf = TMALLOC(char, BSIZE_SP);
     buf2 = TMALLOC(char, BSIZE_SP);
+    bufsize = BSIZE_SP;                         /* Enhancement-811 */
 
     if (eq(wl->wl_word, "col")) {
         col = TRUE;
@@ -226,10 +228,24 @@ com_print(wordlist *wl)
             width = i;
         if (width < 60)
             width = 60;
-        if (width > BSIZE_SP - 2)
+        if (width > BSIZE_SP - 2) {
             buf = TREALLOC(char, buf, (size_t) width + 1);
+            bufsize = (size_t) width + 1;
+        }
         for (v = vecs; v; v = v->v_link2) {
             char *basename = vec_basename(v);
+            /* Enhancement-811 (hunt 2026-10-08 F20): the line is sized to the
+             * name. `buf` holds 512 bytes (or the terminal width), and a vector
+             * named by a 512-character instance, node or parameter -- a
+             * flattener's or an extractor's -- was strcpy'd past its end: heap
+             * corruption, a crash in some runs and a fault under Guard Malloc
+             * in every one. */
+            size_t need = strlen(basename) + 1 +
+                (plotnames ? strlen(v->v_plot->pl_typename) + 1 : 0);
+            if (need > bufsize) {
+                buf = TREALLOC(char, buf, need);
+                bufsize = need;
+            }
             if (plotnames)
                 (void) sprintf(buf, "%s.%s", v->v_plot->pl_typename, basename);
             else
@@ -305,6 +321,7 @@ com_print(wordlist *wl)
         if (width > BSIZE_SP - 2) {
             buf = TREALLOC(char, buf, (size_t) width + 1);
             buf2 = TREALLOC(char, buf2, (size_t) width + 1);
+            bufsize = (size_t) width + 1;
         }
         if (cp_getvar("height", CP_NUM, &i, 0))
             height = i;
@@ -354,7 +371,7 @@ com_print(wordlist *wl)
             out_send(p->pl_title);
             out_send("\n");
             out_send(buf2);
-            (void)sprintf(buf, "%s  %s", p->pl_name, p->pl_date);
+            (void)snprintf(buf, bufsize, "%s  %s", p->pl_name, p->pl_date);   /* E-811 */
             out_send(buf);
             out_send("\n");
         }
