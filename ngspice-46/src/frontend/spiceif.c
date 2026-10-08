@@ -141,6 +141,7 @@ if_inpdeck(struct card *deck, INPtables **tab)
         ft_sperror(err, "newTask");
         return (NULL);
     }
+    ft_curckt->ci_deck_ran = FALSE;         /* Enhancement-802: a new deck task */
 
     /*CDHW which options available for this simulator? CDHW*/
 
@@ -468,6 +469,8 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
                 return (2);
         }
         MCSAVErun(what, MCS_OK);            /* Enhancement-610: one row per run */
+        if (eq(what, "run"))
+            ft_curckt->ci_deck_ran = TRUE;  /* Enhancement-802 */
         CSAVErun(what, MCS_OK);             /* Enhancement-701: one row per corner run */
     } else if (eq(what, "resume")) {
         if ((err = ft_sim->doAnalyses (ckt, 0, ft_curckt->ci_curTask)) != OK) {
@@ -1197,6 +1200,102 @@ finddev_special(
 }
 
 
+/* Enhancement-802: is there a deck analysis card (a job of the default task,
+ * as opposed to one a .control command started) that no `run` has run yet? */
+bool
+if_deck_run_pending(void)
+{
+    return ft_curckt && ft_curckt->ci_defTask && ft_curckt->ci_defTask->jobs &&
+           !ft_curckt->ci_deck_ran;
+}
+
+
+/* Enhancement-798 (hunt 2026-10-08 D3): `print` of a STRING parameter.
+ *
+ * A vector holds numbers, so `print @t3m[mode]` died in vec_get with "can not
+ * handle string value of 'mode' in vec_get(...)" and a checkvalid warning, and
+ * `print @n1` dropped its string parameters with the same line each -- while
+ * `showmod` printed them. `word` is one `print` argument: if it is a plain
+ * accessor (`@name[param]`, `@name`, `@name[all]`), each STRING parameter it
+ * names is printed here as `@name[param] = value`, and nothing is said about
+ * anything else (the vector path reports it as before). Returns 1 when the
+ * accessor named only string parameters -- the caller then leaves the word out
+ * -- and 0 otherwise. */
+int
+if_print_string_params(CKTcircuit *ckt, const char *word, FILE *fp)
+{
+    char *buf, *name, *param, *e, *nm;
+    GENinstance *dev = NULL;
+    GENmodel *mod = NULL;
+    IFdevice *device;
+    IFparm *opt;
+    IFvalue *pv;
+    int typecode, ismodel, i, n, nstr = 0, nnum = 0, handled = 0;
+
+    if (!ckt || !ft_curckt || !word || word[0] != '@' || !word[1])
+        return 0;
+    buf = copy(word);
+    name = buf + 1;
+    param = ft_accessor_param_start(name);
+    if (param) {
+        e = param + strlen(param) - 1;
+        if (*e != ']' || e == param + 1 || strpbrk(param + 1, "[]") != e) {
+            tfree(buf);                         /* not a plain `@x[p]` */
+            return 0;
+        }
+        *param++ = '\0';
+        *e = '\0';
+    }
+    if (strpbrk(name, "()+*/,=<>!&|^ \t") || !*name) {
+        tfree(buf);
+        return 0;
+    }
+    nm = name;
+    INPretrieve(&nm, ft_curckt->ci_symtab);
+    typecode = finddev_special(ckt, nm, &dev, &mod, &ismodel);
+    if (typecode < 0 || ismodel > 1) {
+        tfree(buf);
+        return 0;
+    }
+    device = ft_sim->devices[typecode];
+
+    if (param && !eq(param, "all")) {
+        opt = parmlookup(device, &dev, param, ismodel, 0);
+        if (opt && (opt->dataType & IF_VARTYPES) == IF_STRING &&
+            (opt->dataType & IF_ASK)) {
+            pv = doask(ckt, typecode, ismodel ? NULL : dev, mod, opt, 0);
+            if (pv) {
+                fprintf(fp, "%s = %s\n", word, pv->sValue ? pv->sValue : "");
+                handled = 1;
+            }
+        }
+        tfree(buf);
+        return handled;
+    }
+
+    n = ismodel ? *(device->numModelParms) : *(device->numInstanceParms);
+    for (i = 0; i < n; i++) {
+        opt = ismodel ? &device->modelParms[i] : &device->instanceParms[i];
+        if (opt->dataType & IF_REDUNDANT || !opt->description ||
+            !(opt->dataType & IF_ASK) ||
+            (ismodel && (opt->dataType & IF_UNINTERESTING)))
+            continue;
+        if ((opt->dataType & IF_VARTYPES) != IF_STRING) {
+            nnum++;
+            continue;
+        }
+        pv = doask(ckt, typecode, ismodel ? NULL : dev, mod, opt, 0);
+        if (pv) {
+            fprintf(fp, "@%s[%s] = %s\n", name, opt->keyword,
+                    pv->sValue ? pv->sValue : "");
+            nstr++;
+        }
+    }
+    tfree(buf);
+    return nstr > 0 && nnum == 0;
+}
+
+
 /* Get a parameter value from the circuit. If name is left unspecified,
  * we want a circuit parameter. Now works both for devices and models.
  * A.Roldan (espice)
@@ -1508,6 +1607,34 @@ doset_user(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod,
                         val->v_realdata[i], opt->keyword);
                 return E_PARMVAL;
             }
+        }
+    }
+
+    /* Enhancement-796 (hunt 2026-10-08 D1): an integer write gets what the
+     * card gives it. `altermod ipm n=3.7` rounded to 4 without a word (the
+     * card warns), `n=-2.5` became -2 (the card, per Enhancement-399, gives
+     * -3), and `n=1e300` or `k=3e9` stored the saturated 2147483647 (the card
+     * refuses it, Enhancement-509). */
+    if ((opt->dataType & (IF_VARTYPES & ~IF_VECTOR)) == IF_INTEGER &&
+        val && val->v_realdata) {
+        int n = (opt->dataType & IF_VECTOR) ? val->v_length : 1;
+        const char *who = dev ? (const char *) dev->GENname
+                        : mod ? (const char *) mod->GENmodName : "";
+        int i;
+        for (i = 0; i < n; i++) {
+            double v = val->v_realdata[i];
+            double r = round(v);
+            if (!(r >= (double) INT_MIN && r <= (double) INT_MAX)) {
+                fprintf(cp_err,
+                        "Error: value %g for integer parameter '%s' does not "
+                        "fit an integer; not applied.\n", v, opt->keyword);
+                return E_PARMVAL;
+            }
+            if (r != v)
+                fprintf(cp_err,
+                        "Warning: %s%s: parameter (%s) is an integer; the given "
+                        "non-integral value %g was rounded to %d.\n",
+                        dev ? "" : "model ", who, opt->keyword, v, (int) r);
         }
     }
 
@@ -2951,8 +3078,11 @@ doset(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod, IFparm *op
         case IF_INTEGER:
             iptr = nval.v.vec.iVec = TMALLOC(int, n);
 
-            for (i = 0; i < n; i++)
-                *iptr++ = (int)floor(*dptr++ + 0.5);
+            /* Enhancement-796: an integer rounds half away from zero, as the
+             * card's does (Enhancement-399); a flag keeps floor(x + 0.5). */
+            for (i = 0; i < n; i++, dptr++)
+                *iptr++ = (opt->dataType & IF_VARTYPES & ~IF_VECTOR) == IF_INTEGER
+                              ? (int) round(*dptr) : (int) floor(*dptr + 0.5);
             break;
 
         case IF_REAL:
@@ -2968,8 +3098,11 @@ doset(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod, IFparm *op
     } else {
         switch (opt->dataType & IF_VARTYPES) {
         case IF_FLAG:
-        case IF_INTEGER:
             nval.iValue = (int)floor(*val->v_realdata + 0.5);
+            break;
+
+        case IF_INTEGER:
+            nval.iValue = (int) round(*val->v_realdata);   /* Enhancement-796 */
             break;
 
         case IF_REAL:

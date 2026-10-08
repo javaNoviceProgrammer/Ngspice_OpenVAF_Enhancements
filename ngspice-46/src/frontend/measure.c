@@ -311,6 +311,35 @@ get_double_value(
    This function returns TRUE if all measurements are ready and complete;
    FALSE otherwise.  If called with chk_only, we can exit early if we
    fail a test in order to reduce execution time.  */
+/* Enhancement-802 (hunt 2026-10-08 D8): a `.meas` card's result is a vector
+ * of the plot it measured, as the `meas` command's is -- `print vmax` after
+ * the run said "vector vmax is not available", though the value had just
+ * been printed. A name the plot already holds as simulation data (a node
+ * called like the result) is not overwritten; a failed measurement drops a
+ * stale result of the same name (Enhancement-475's rule). */
+static void
+meas_card_vector(const char *resname, double result, bool ok)
+{
+    struct dvec *d;
+
+    if (!resname || !*resname || !plot_cur)
+        return;
+    d = vec_fromplot((char *) resname, plot_cur);
+    if (d && (d->v_length != 1 || d->v_type != SV_NOTYPE || d == plot_cur->pl_scale))
+        return;                         /* simulation data: leave it */
+    if (!ok) {
+        if (d)
+            vec_remove(resname);        /* a previous result */
+        return;
+    }
+    {
+        wordlist *wl = wl_cons(tprintf("%s = %.15e", resname, result), NULL);
+        com_let(wl);
+        wl_free(wl);
+    }
+}
+
+
 bool
 do_measure(
     char *what,   /*in: analysis type*/
@@ -494,6 +523,8 @@ do_measure(
                 if (!chk_only)
                     nupa_add_param(resname, result);
             }
+            if (!chk_only)
+                meas_card_vector(resname, result, !fail);   /* Enhancement-802 */
             wl_free(measure_word_list);
         } else {
             measures_passed = FALSE;
@@ -617,6 +648,7 @@ do_measure(
                             fprintf(measout, "  %.*e\n", precision, result);
                     }
                     nupa_add_param(resname, result);
+                    meas_card_vector(resname, result, TRUE);   /* Enhancement-802 */
                 }
             } else {
                 if (!chk_only) {

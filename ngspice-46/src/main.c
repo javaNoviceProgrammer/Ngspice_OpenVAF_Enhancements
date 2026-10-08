@@ -1598,7 +1598,14 @@ int main(int argc, char **argv)
         }
         else if (ft_savedotargs()) {
             /* all dot card data to be put into dbs */
-            int error2 = ft_dorun(NULL);
+            /* Enhancement-802 (hunt 2026-10-08 D8): when the .control block
+             * ran the simulations, and the deck has no analysis card of its
+             * own or a `run` there already ran them, this `run` had nothing
+             * new to do: it printed "Doing analysis" and every .meas result a
+             * second time (from the plot already measured), or ran the deck's
+             * analyses over again. The .print/.plot/.four output below still
+             * comes. */
+            int error2 = (error3 == 0 && !if_deck_run_pending()) ? 0 : ft_dorun(NULL);
             /* Execute the .whatever lines found in the deck, after we are done running. */
             if (ft_cktcoms(FALSE) || error2)
                 sp_shutdown(EXIT_BAD);

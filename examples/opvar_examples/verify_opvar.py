@@ -195,7 +195,7 @@ want = math.asin(0.5) / (2 * math.pi) * 1e-6   # 83.333 ns
 got = grab(log, "tcross")
 check("crossing at asin(0.5)/2pi us", abs(got - want) < 1e-10, f"({got:.6g} s)")
 
-print("[6] string opvars: show works, vector path errs clearly")
+print("[6] string opvars: show works, and print shows the value (Enhancement-798)")
 log = run_deck("_st.cir", """* string opvar
 .control
 pre_osdi opvar_str.osdi
@@ -212,8 +212,10 @@ print @n1[modename]
 .end
 """)
 check("show displays the string value", "high" in log)
-check("vector access gives the clear string-value error (no crash)",
-      "can not handle string value" in log and "modename" in log)
+# Enhancement-798 (hunt 2026-10-08 D3): `print` used to answer "can not handle
+# string value of 'modename' in vec_get"; it prints the text now
+check("print shows the string value (no crash, no vec_get error)",
+      "@n1[modename] = high" in log and "can not handle string value" not in log)
 
 # Enhancement-680 (hunt F10 of 2026-09-19): under `.option interp` the two
 # interpolation routines of outitf.c read every "special" vector -- an opvar,

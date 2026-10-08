@@ -125,13 +125,14 @@ com_print(wordlist *wl)
 {
     struct dvec *v, *lv = NULL, *bv, *nv, *vecs = NULL;
     int i, j, ll, width = DEF_WIDTH, height = DEF_HEIGHT, npoints, lineno, npages = 0;
-    struct pnode *pn, *names;
+    struct pnode *pn, *names = NULL;
     struct plot *p;
     bool col = TRUE, nobreak = FALSE, noprintscale, plotnames = FALSE;
     bool optgiven = FALSE;
     char *s, *buf, *buf2; /*, buf[BSIZE_SP], buf2[BSIZE_SP];*/
     char numbuf[BSIZE_SP], numbuf2[BSIZE_SP]; /* Printnum buffers */
     int ngood;
+    wordlist *strwl = NULL;                     /* Enhancement-798 */
 
     if (wl == NULL)
         return;
@@ -150,6 +151,29 @@ com_print(wordlist *wl)
     }
 
     ngood = 0;
+
+    /* Enhancement-798 (hunt 2026-10-08 D3): a string parameter is printed as
+     * text here -- `@t3m[mode] = lin` -- since a vector cannot hold it; the
+     * words that named nothing else are left out of the vector list. */
+    if (ft_curckt && !ft_nutmeg) {
+        wordlist *w;
+        int dropped = 0;
+        for (w = wl; w; w = w->wl_next)
+            if (w->wl_word && w->wl_word[0] == '@' &&
+                if_print_string_params(ft_curckt->ci_ckt, w->wl_word, cp_out))
+                dropped++;
+            else
+                strwl = wl_cons(copy(w->wl_word), strwl);
+        if (dropped) {
+            strwl = wl_reverse(strwl);
+            if (!strwl)
+                goto done;
+            wl = strwl;
+        } else {
+            wl_free(strwl);
+            strwl = NULL;
+        }
+    }
 
     names = ft_getpnames_quotes(wl, TRUE);
 
@@ -427,6 +451,7 @@ com_print(wordlist *wl)
 done:
     /* Get rid of the vectors. */
     free_pnode(names);
+    wl_free(strwl);
     tfree(buf);
     tfree(buf2);
 }

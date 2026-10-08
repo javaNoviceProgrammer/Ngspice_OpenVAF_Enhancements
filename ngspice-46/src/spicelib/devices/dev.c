@@ -789,6 +789,7 @@ static int osdi_add_device(int n, OsdiRegistryEntry *devs, bool replace,
 /* Loading the same object file twice would only produce a page of duplicate
  * warnings; note it once and skip. */
 static char **osdi_loaded_paths = NULL;
+static char **osdi_loaded_mods = NULL;     /* Enhancement-803: what each registered */
 static int osdi_num_loaded = 0;
 
 /* Enhancement-229: stage a byte-for-byte copy of an already-loaded .osdi under
@@ -963,11 +964,40 @@ int load_osdi(const char *path, bool force) {
 
   if (!reloading) {
     osdi_loaded_paths = TREALLOC(char *, osdi_loaded_paths, osdi_num_loaded + 1);
+    osdi_loaded_mods = TREALLOC(char *, osdi_loaded_mods, osdi_num_loaded + 1);
+    osdi_loaded_mods[osdi_num_loaded] = NULL;
+    k = osdi_num_loaded;
     osdi_loaded_paths[osdi_num_loaded++] = copy(path);
   }
 
   int shadowed = 0;
   osdi_add_device(file.num_entries, file.entrys, reloading, path, &shadowed);
+
+  /* Enhancement-803: the modules this file now provides, for a bare `osdi` */
+  {
+    size_t len = 1;
+    char *mods;
+    int i, t;
+    for (i = 0; i < file.num_entries; i++)
+      for (t = 0; t < DEVNUM; t++)
+        if (DEVices[t] && DEVices[t]->DEVpublic.registry_entry &&
+            ((const OsdiRegistryEntry *) DEVices[t]->DEVpublic.registry_entry)->descriptor
+                == file.entrys[i].descriptor)
+          len += strlen(DEVices[t]->DEVpublic.name) + 2;
+    mods = TMALLOC(char, len);
+    mods[0] = '\0';
+    for (i = 0; i < file.num_entries; i++)
+      for (t = 0; t < DEVNUM; t++)
+        if (DEVices[t] && DEVices[t]->DEVpublic.registry_entry &&
+            ((const OsdiRegistryEntry *) DEVices[t]->DEVpublic.registry_entry)->descriptor
+                == file.entrys[i].descriptor) {
+          if (mods[0])
+            strcat(mods, ", ");
+          strcat(mods, DEVices[t]->DEVpublic.name);
+        }
+    tfree(osdi_loaded_mods[k]);
+    osdi_loaded_mods[k] = mods;
+  }
 
   if (reloading) {
     printf("Note(osdi): reloaded \"%s\" (%d device%s%s)\n", path,
@@ -975,5 +1005,22 @@ int load_osdi(const char *path, bool force) {
            shadowed ? ", shadowed by a built-in of the same name" : "");
   }
   return 0;
+}
+
+/* Enhancement-803 (hunt 2026-10-08 D9): `osdi` with no argument lists what is
+ * loaded -- it answered "too few args". */
+void osdi_list_loaded(void) {
+  int k;
+  if (osdi_num_loaded == 0) {
+    printf("No OSDI library is loaded. Load one with `osdi file.osdi` (in a "
+           "deck, `pre_osdi file.osdi` in a .control block), or compile and "
+           "load a source with `osdi -va file.va`.\n");
+    return;
+  }
+  printf("OSDI libraries loaded (%d):\n", osdi_num_loaded);
+  for (k = 0; k < osdi_num_loaded; k++)
+    printf("  %s: %s\n", osdi_loaded_paths[k],
+           osdi_loaded_mods && osdi_loaded_mods[k] && osdi_loaded_mods[k][0]
+               ? osdi_loaded_mods[k] : "(no module registered)");
 }
 #endif

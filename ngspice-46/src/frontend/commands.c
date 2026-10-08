@@ -351,9 +351,10 @@ struct comm spcp_coms[] = {
 #endif
 #ifdef OSDI
     { "osdi", com_osdi, FALSE, TRUE,
-      { 040000, 040000, 040000, 040000 }, E_BEGINNING, 1, LOTS,
+      { 040000, 040000, 040000, 040000 }, E_BEGINNING, 0, LOTS,
       NULL,
-      "[-f] [-va] library ... : Loads one or more OSDI libraries (use as `pre_osdi file.osdi`). "
+      "[-f] [-va] library ... : Loads one or more OSDI libraries (use as `pre_osdi file.osdi`); "
+      "with no argument, lists the loaded libraries and their modules. "
       "With -va, a `.va` argument is compiled by openvaf-r into an `osdi/` directory beside "
       "the netlist and the object it produces is loaded; recompiled every run unless the deck "
       "carries `.option osdicache`. "
@@ -362,7 +363,7 @@ struct comm spcp_coms[] = {
      * deck the `pre_` prefix hoists the line into the pre-pass; typed at the
      * prompt or reached at execution time it used to be "no such command". */
     { "pre_osdi", com_osdi, FALSE, TRUE,
-      { 040000, 040000, 040000, 040000 }, E_BEGINNING, 1, LOTS,
+      { 040000, 040000, 040000, 040000 }, E_BEGINNING, 0, LOTS,
       NULL,
       "[-f] [-va] library ... : the same as `osdi`. In a deck's .control block the pre_ prefix "
       "runs the line before the circuit is read; at the prompt it loads (or with -f reloads) now." } ,

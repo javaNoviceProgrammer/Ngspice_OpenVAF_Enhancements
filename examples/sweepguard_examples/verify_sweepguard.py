@@ -438,10 +438,14 @@ def main():
           t27 == 27.0 and not w27, f"TEMP={t27} warned={w27}")
 
     # the neighbours this fix must not disturb
-    for card, tag in ((".temp abc", "temp_abc"), (".temp 75 125", "temp_multi")):
-        vv, tt, ww, _ = temp_run(card, tag)
-        check(f"[E-437] `{card}` still warns and keeps 27 C",
-              ww and tt == 27.0, f"TEMP={tt} warned={ww}")
+    vv, tt, ww, _ = temp_run(".temp abc", "temp_abc")
+    check("[E-437] `.temp abc` still warns and keeps 27 C",
+          ww and tt == 27.0, f"TEMP={tt} warned={ww}")
+    # Enhancement-800 (hunt 2026-10-08 D5): a LIST of temperatures runs at the
+    # first one (it kept 27 C, which the deck may not list), and still warns
+    vv, tt, ww, _ = temp_run(".temp 75 125", "temp_multi")
+    check("[E-437/E-800] `.temp 75 125` warns and runs at the first, 75 C",
+          ww and tt == 75.0, f"TEMP={tt} warned={ww}")
     vo, to, _, outo = temp_run(".options temp=", "temp_opt")
     check("[E-437] the sibling `.options temp=` is unchanged",
           to == 27.0 and "equals what" in outo, f"TEMP={to}")

@@ -1067,19 +1067,13 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                                 "Warning: save '%s': device has no parameter "
                                 "'%s', so this vector will stay empty.\n",
                                 saves[i].name, parambuf);
-                    else if (err != OK && !saves[i].autosaved)
-                        /* Enhancement-600: said once (the device's own
-                         * "no operating point yet" was printed on top of it),
-                         * and not at all for a save `.option saveused`
-                         * inferred -- the author wrote no `save`, so there is
-                         * nothing to tell them about; E-496's rule for the
-                         * unmatched-name warning. */
-                        fprintf(cp_err,
-                                "Warning: save '%s': '%s' has no value yet -- it "
-                                "is an operating-point variable and no analysis "
-                                "has computed one. It is recorded per point once "
-                                "an analysis runs.\n",
-                                saves[i].name, parambuf);
+                    /* Enhancement-797 (hunt 2026-10-08 D2):
+                     * any other failure is the ask finding no operating point
+                     * yet -- the name resolved, and the vector is recorded per
+                     * point once the analysis runs. Enhancement-600 had cut the
+                     * message to one per item; it is none now. It warned about
+                     * a correct deck at every load, and a built-in device's
+                     * `.save @r1[i]`, in the same state, never said anything. */
                 }
             }
 

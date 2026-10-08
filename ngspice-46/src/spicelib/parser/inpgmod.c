@@ -86,13 +86,14 @@ find_instance_parameter(const char *name, IFdevice *device)
  */
 /* Enhancement-395: one message for both spellings of a doubly-set parameter.
  *
- * Deliberately does NOT name which value wins. A .model card carries two kinds
- * of parameter and they disagree: a model parameter is written straight through
- * so the LAST one on the card wins, while an instance-parameter default is
- * pushed onto `INPmodfast->defaults` with wl_cons and therefore replayed in
- * reverse, so the FIRST one on the card wins. Stating a rule here would be
- * wrong half the time; the actionable advice is to remove one of them. The
- * instance line has no such split and its message does say which wins.
+ * Enhancement-804 (hunt 2026-10-08 D10): it names the
+ * winner now. E-395 deliberately did not, because the two kinds of card
+ * parameter disagreed: a model parameter is written straight through, so the
+ * LAST one on the card won, while an instance-parameter default was pushed onto
+ * `INPmodfast->defaults` with wl_cons and replayed in reverse, so the FIRST one
+ * won. A repeated default now replaces the value already on the list, so the
+ * last one wins for both kinds -- as on an instance line, whose message always
+ * said so -- and `altermod`, which edits that entry, edits the one that counts.
  *
  * Enhancement-517: the ALIAS spelling is an ERROR, not a warning -- LRM 3.4.7:
  * "it shall be an error to specify an override for a parameter by its original
@@ -100,14 +101,14 @@ find_instance_parameter(const char *name, IFdevice *device)
  * the override is done". Returns nonzero for that case so the caller can
  * refuse the model card; the SAME name written twice stays a warning (a
  * netlist-level habit outside 3.4.7's rule). */
-static int inp_warn_dup_param(const char *dev, const char *first,
-                              const char *second)
+static int inp_warn_dup_param(const char *dev, const char *model,
+                              const char *first, const char *second)
 {
     if (strcmp(first, second) == 0) {
         fprintf(stderr,
-                "Warning: %s: parameter '%s' is set more than once on this "
-                "model card; only one value takes effect -- remove one.\n",
-                dev, first);
+                "Warning: .model %s: parameter '%s' is set more than once on "
+                "this card; the last value is used.\n",
+                model, first);
         return 0;
     }
     fprintf(stderr,
@@ -317,7 +318,7 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                 for (q = 0; q < nmid; q++)
                     if (mid[q] == p->id) { hit = q; break; }
                 if (hit >= 0) {
-                    if (inp_warn_dup_param(device->name, mseen[hit], p->keyword))
+                    if (inp_warn_dup_param(device->name, modtmp->INPmodName, mseen[hit], p->keyword))
                         return E_PARMVAL;
                 }
                 else if (nmid < n_mtrack) {
@@ -455,7 +456,7 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                         for (q = 0; q < niid; q++)
                             if (iid[q] == p->id) { hit = q; break; }
                         if (hit >= 0) {
-                            if (inp_warn_dup_param(device->name, iseen[hit],
+                            if (inp_warn_dup_param(device->name, modtmp->INPmodName, iseen[hit],
                                                    p->keyword))
                                 return E_PARMVAL;
                         }
@@ -467,9 +468,22 @@ create_model(CKTcircuit *ckt, INPmodel *modtmp, INPtables *tab)
                     }
                 }
                 if (p->dataType & IF_SET) {
-                    modtmp->INPmodfast->defaults =
-                        wl_cons(copy(parm),
-                                wl_cons(value, modtmp->INPmodfast->defaults));
+                    /* Enhancement-804: a repeat replaces the value already
+                     * listed (the same spelling: an alias pair is refused
+                     * above), so the last one on the card wins */
+                    wordlist *w;
+                    for (w = modtmp->INPmodfast->defaults; w && w->wl_next;
+                         w = w->wl_next->wl_next)
+                        if (cieq(w->wl_word, parm))
+                            break;
+                    if (w && w->wl_next) {
+                        tfree(w->wl_next->wl_word);
+                        w->wl_next->wl_word = value;
+                    } else {
+                        modtmp->INPmodfast->defaults =
+                            wl_cons(copy(parm),
+                                    wl_cons(value, modtmp->INPmodfast->defaults));
+                    }
                 } else {
                     fprintf(stderr,
                             "Ignoring attempt to set a default "

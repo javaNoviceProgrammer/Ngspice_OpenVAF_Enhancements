@@ -70,6 +70,7 @@ struct circ {
        card is implemented as a `set temp` (inp.c) and so lives in the SAME
        variable a user's `set temp` overwrites; `unset temp` gives it back. */
     bool ci_deck_temp_given;
+    bool ci_deck_ran;         /* Enhancement-802: a `run` of the deck's own analyses succeeded */
     double ci_deck_temp;
     /* Enhancement-770: a number no other circuit of this session has had.
        Code that remembers "this circuit" keys on it, never on the address of

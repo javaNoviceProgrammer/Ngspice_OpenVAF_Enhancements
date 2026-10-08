@@ -1082,13 +1082,19 @@ vec_get(const char *vec_name) {
                 *nd->v_realdata = v->va_real;
                 break;
             case CP_STRING:
-                fprintf(stderr,
-                        "ERROR: can not handle string value "
-                        "of '%s' in vec_get(%s)\nIgnoring...\n",
-                        v->va_name, new_vec_name);
+                /* Enhancement-798 (hunt 2026-10-08 D3): `print` shows a
+                 * string parameter itself (if_print_string_params), and in
+                 * a whole-device list (`@n1`) it was printed there, so only
+                 * an expression lands here -- and is told so. */
+                if (!multiple)
+                    fprintf(cp_err,
+                            "Error: %s is a string parameter (\"%s\"); a vector "
+                            "holds numbers, so an expression cannot use it. "
+                            "`print %s` shows it.\n",
+                            new_vec_name, v->va_string ? v->va_string : "",
+                            new_vec_name);
                 dvec_free(nd);
                 continue;
-                break;
             case CP_LIST:
                 {
                     struct variable *nv;

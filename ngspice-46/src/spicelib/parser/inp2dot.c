@@ -580,7 +580,6 @@ dot_pz(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
     int error;			/* error code temporary */
     IFvalue ptemp;		/* a value structure to package resistance into */
     int which;			/* which analysis we are performing */
-    char *steptype;		/* ac analysis, type of stepping function */
     char *nname;		/* a node name as written on the card */
     CKTnode *nnode;		/* the node it resolves to */
     int i;
@@ -607,12 +606,60 @@ dot_pz(char *line, CKTcircuit *ckt, INPtables *tab, struct card *current,
         ptemp.nValue = nnode;
         GCA(INPapName, (ckt, which, foo, pz_nodes[i], &ptemp));
     }
-    INPgetTok(&line, &steptype, 1);	/* get V or I */
-    ptemp.iValue = 1;
-    GCA(INPapName, (ckt, which, foo, steptype, &ptemp));
-    INPgetTok(&line, &steptype, 1);	/* get POL, ZER, or PZ */
-    ptemp.iValue = 1;
-    GCA(INPapName, (ckt, which, foo, steptype, &ptemp));
+    /* Enhancement-801 (hunt 2026-10-08 D7): the two keywords are checked
+     * before they are applied. `pz 1 0 1 0 pol` (no `vol`/`cur`) handed the
+     * empty token to INPapName and got "no such parameter on this device or
+     * parameter is missing", naming neither keyword nor the syntax; `pole`
+     * for `pol` got the same, and a third word was ignored. Either order
+     * stays accepted, as it was. */
+    {
+        char *kw[3] = {NULL, NULL, NULL};
+        int nkw = 0, ntransfer = 0, nkind = 0, bad = -1;
+        char msg[512];
+
+        for (i = 0; i < 3; i++) {
+            INPgetTok(&line, &kw[i], 1);
+            if (!kw[i] || !*kw[i])
+                break;
+            nkw++;
+            if (eq(kw[i], "vol") || eq(kw[i], "cur"))
+                ntransfer++;
+            else if (eq(kw[i], "pol") || eq(kw[i], "zer") || eq(kw[i], "pz"))
+                nkind++;
+            else if (bad < 0)
+                bad = i;
+        }
+        msg[0] = '\0';
+        if (bad >= 0)
+            snprintf(msg, sizeof msg, "pz: '%s' is not a pole-zero keyword: after the "
+                     "four nodes, pz takes the transfer type `vol` or `cur` and the "
+                     "analysis `pol`, `zer` or `pz` (pz in1 in2 out1 out2 vol|cur "
+                     "pol|zer|pz).\n", kw[bad]);
+        else if (nkw > 2)
+            snprintf(msg, sizeof msg, "pz: '%s' follows both keywords; pz takes two "
+                     "words after the four nodes (pz in1 in2 out1 out2 vol|cur "
+                     "pol|zer|pz).\n", kw[2]);
+        else if (ntransfer != 1 || nkind != 1)
+            snprintf(msg, sizeof msg, "pz: %s -- after the four nodes, pz takes the "
+                     "transfer type `vol` (output voltage over input voltage) or `cur` "
+                     "(output voltage over input current) and the analysis `pol`, "
+                     "`zer` or `pz` (pz in1 in2 out1 out2 vol|cur pol|zer|pz).\n",
+                     ntransfer > 1 ? "two transfer types are given"
+                     : nkind > 1 ? "two analysis keywords are given"
+                     : ntransfer == 0 && nkind == 0 ? "both keywords are missing"
+                     : ntransfer == 0 ? "the transfer type (`vol` or `cur`) is missing"
+                     : "the analysis (`pol`, `zer` or `pz`) is missing");
+        if (msg[0]) {
+            LITERR(msg);
+        } else {
+            for (i = 0; i < 2; i++) {
+                ptemp.iValue = 1;
+                GCA(INPapName, (ckt, which, foo, kw[i], &ptemp));
+            }
+        }
+        for (i = 0; i < 3; i++)
+            tfree(kw[i]);
+    }
     return (0);
 }
 

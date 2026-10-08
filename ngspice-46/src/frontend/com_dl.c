@@ -383,12 +383,43 @@ void com_osdi(wordlist *wl)
     wordlist *ww;
     bool force = FALSE;
     bool va = FALSE;                          /* Enhancement-500 */
+    int nfiles = 0;
+    /* Enhancement-803 (hunt 2026-10-08 D9): `osdi` alone lists what is loaded
+     * (it was "too few args"); an unknown option is refused rather than read
+     * as a file name (`osdi -l`: Error opening osdi lib "-l"); and `-f` or
+     * `-va` with no file says so -- `osdi -f` did nothing, without a word. */
+    if (!wl) {
+        osdi_list_loaded();
+        return;
+    }
     /* a `-f`/`-force` anywhere in the argument list applies to every file */
     for (ww = wl; ww; ww = ww->wl_next) {
         if (eq(ww->wl_word, "-f") || eq(ww->wl_word, "-force"))
             force = TRUE;
         else if (eq(ww->wl_word, "-va"))
             va = TRUE;                        /* Enhancement-500 */
+        else if (ww->wl_word[0] == '-' && ww->wl_word[1]) {
+            fprintf(cp_err, "Error: osdi: unknown option '%s'; the options are -f "
+                    "(reload a file already loaded) and -va (compile a .va source "
+                    "first). `osdi` alone lists the loaded libraries.\n", ww->wl_word);
+            ft_spiniterror = TRUE;
+            ft_osdierror = TRUE;
+            if (ft_stricterror)
+                controlled_exit(EXIT_BAD);
+            return;
+        } else {
+            nfiles++;
+        }
+    }
+    if (nfiles == 0) {
+        fprintf(cp_err, "Error: osdi: %s names no file to %s.\n",
+                force ? (va ? "-f -va" : "-f") : "-va",
+                force ? "reload" : "compile");
+        ft_spiniterror = TRUE;
+        ft_osdierror = TRUE;
+        if (ft_stricterror)
+            controlled_exit(EXIT_BAD);
+        return;
     }
     for (ww = wl; ww; ww = ww->wl_next) {
         char *unq = cp_unquote(ww->wl_word);  /* Enhancement-629 */

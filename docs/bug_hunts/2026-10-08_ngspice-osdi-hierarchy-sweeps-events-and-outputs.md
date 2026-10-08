@@ -60,7 +60,7 @@ Nothing was fixed; this is the list.
 | [F22](#f22) | **memory**: with any OSDI internal node, `OSDIload` copies `CKTmaxEqNum + 1` doubles out of `CKTrhsOld` at every bias point, past the end of its allocation (a heap over-read; a fault under Guard Malloc) | high |
 | [F23](#f23) | the LRM's `multiplicity="multiply"`/`"divide"` attribute on operating-point variables is ignored: with `m=4` the reports are per device | medium |
 | [F24](#f24) | `alter n1 dtemp=-400` (or `temp=-300`) says the below-absolute-zero value "is ignored", but the OSDI model receives the negative absolute temperature | medium |
-| [D](#d) | seventeen smaller slips | low |
+| [D](#d) | seventeen smaller slips *(D1–D5 and D7–D10 fixed in [E-796](../../enhancements_doc/Enhancement-796.md)…[E-804](../../enhancements_doc/Enhancement-804.md); D6 kept as designed)* | low |
 
 <a id="f1"></a>
 ## F1 — `alterparam` on a `.subckt`-line parameter overrides the instances' own values
@@ -537,29 +537,41 @@ properly.
 ## D — smaller slips
 
 - **D1** `altermod ipm n=3.7` on an integer model parameter rounds to 4 in silence; the same
-  value on the card warns "rounded to the nearest integer".
+  value on the card warns "rounded to the nearest integer". *(fixed in [E-796](../../enhancements_doc/Enhancement-796.md), which found
+  more: -2.5 became -2 where the card gives -3, and 1e300 or 3e9 was stored as 2147483647 where
+  the card refuses it.)*
 - **D2** `.save @n1[opvar]` prints `'iop' has no value yet … it is recorded per point once an
-  analysis runs` at every load: a warning on a correct deck.
+  analysis runs` at every load: a warning on a correct deck. *(fixed in [E-797](../../enhancements_doc/Enhancement-797.md))*
 - **D3** `print @t3m[mode]` of a string model parameter: `ERROR: can not handle string value of
-  'mode' in vec_get`; `showmod` shows it.
+  'mode' in vec_get`; `showmod` shows it. *(fixed in [E-798](../../enhancements_doc/Enhancement-798.md): `print` shows the text)*
 - **D4** A paramset family bound to member `rs` (`l` in `[1:10)`): `altermod rsm l=20` is
   refused "out of bounds … range from [1:10)" with no word that member `rs__2` covers 20 and
-  that members are chosen when the card is read (a `reset` re-binds).
+  that members are chosen when the card is read. *(fixed in [E-799](../../enhancements_doc/Enhancement-799.md). The "a `reset` re-binds"
+  first written here was wrong: `reset` reloads the netlist's own `l=2`; the remedy is to write
+  the value in the netlist.)*
 - **D5** `.temp 0 27 50`: `Could not set temperature to 0 27 50`, and the run continues at
-  27 °C (base ngspice; SPICE2 ran each temperature).
+  27 °C (base ngspice; SPICE2 ran each temperature). *(fixed in [E-800](../../enhancements_doc/Enhancement-800.md): it runs at the first
+  and says how to run each; a run per temperature is left for a decision)*
 - **D6** `@(timer(0, 1u))` fires at t = 0 in an `op` and at the first point of a `dc` sweep.
   The LRM bars `cross()` from dc/ac/noise and lets `above()` fire; the timer is unspecified.
-  A design question.
+  A design question. *(kept as designed: an equilibrium analysis sits at t = 0, so a timer
+  starting there fires once, which is the state the transient starts from, and one starting
+  later never fires; pinned in [`osdislips_examples`](../../examples/osdislips_examples/) [6])*
 - **D7** `pz 1 0 1 0 pol` (the transfer type `vol`/`cur` missing) is answered `no such
-  parameter on this device or parameter is missing` (base ngspice).
+  parameter on this device or parameter is missing` (base ngspice). *(fixed in [E-801](../../enhancements_doc/Enhancement-801.md))*
 - **D8** A `.meas` result prints twice in a batch run with a `.control` block (after the
   analysis and again at exit), and `print` of the measure name says "not available" (base).
+  *(fixed in [E-802](../../enhancements_doc/Enhancement-802.md); a deck `.tran` with `run` in the block was simulated twice as well)*
 - **D9** The `osdi` command:
   - `osdi` alone answers "too few args", with no list of loaded libraries;
   - an unknown flag `-l` is read as a file name;
   - `osdi -f` with no file is silently ignored.
+
+  *(fixed in [E-803](../../enhancements_doc/Enhancement-803.md))*
 - **D10** A parameter set twice on an OSDI card: "only one value takes effect -- remove one",
   without saying which (the last ran). The instance-line twin says "the last value is used".
+  *(fixed in [E-804](../../enhancements_doc/Enhancement-804.md); a repeated instance-parameter default on a card had kept its FIRST
+  value, which is why E-395 named neither)*
 - **D11** Too many nodes on an OSDI instance line: "too many nodes connected to instance",
   naming neither the model's terminal count nor its terminals. Too few, or a stray value, get
   good messages.

@@ -809,7 +809,7 @@ carries no help text, so `help all` does not list it.
 | `option` | `[option] [option = value] ...` | Set a simulator option. |
 | `options` | `[option] [option = value] ...` | Set a simulator option. |
 | `optran` |  | Prepare optran by setting 6 flags. |
-| `osdi` | `[-f] [-va] library ...` | Loads one or more OSDI libraries (use as `pre_osdi file.osdi`). With -va, a `.va` argument is compiled by openvaf-r into an `osdi/` directory beside the netlist and the object it produces is loaded; recompiled every run unless the deck carries `.option osdicache`. With -f, force-reloads an already-loaded file so a recompiled model is picked up without restarting. |
+| `osdi` | `[-f] [-va] library ...` | Loads one or more OSDI libraries (use as `pre_osdi file.osdi`); with no argument, lists the loaded libraries and their modules. With -va, a `.va` argument is compiled by openvaf-r into an `osdi/` directory beside the netlist and the object it produces is loaded; recompiled every run unless the deck carries `.option osdicache`. With -f, force-reloads an already-loaded file so a recompiled model is picked up without restarting. |
 | `phasenoise` | `fstart fstop [points]` | oscillator phase-noise spectrum L(df) via the PPV, around the `hbosc` operating point. |
 | `plot` | `expr ... [vs expr] [xl xlo xhi] [yl ylo yhi]` | Plot things. |
 | `pre_osdi` | `[-f] [-va] library ...` | the same as `osdi`. In a deck's .control block the pre_ prefix runs the line before the circuit is read; at the prompt it loads (or with -f reloads) now. |

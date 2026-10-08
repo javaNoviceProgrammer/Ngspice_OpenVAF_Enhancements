@@ -2090,8 +2090,50 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
             }
             /* if endstr contains characters, temperature has not been a pure number string */
             else if (*endstr != '\0') {
-                fprintf(stderr, "Warning: Could not set temperature to %s\n   Set to default 27 C instead.\n", temperature);
-                temperature_value = 27;
+                /* Enhancement-800 (hunt 2026-10-08 D5): `.temp 0 27 50` -- a
+                 * LIST, which SPICE2, HSPICE and LTspice run once per value --
+                 * was "Could not set temperature to 0 27 50" and ran at 27 C,
+                 * a temperature the deck may not even list. ngspice runs a
+                 * circuit at one temperature: take the first, and say how to
+                 * run them all. */
+                int nt = 1;
+                bool all_num = TRUE;
+                char *q = endstr;
+                while (*q && all_num) {
+                    char *e2;
+                    if (*q == ',')
+                        q = skip_ws(q + 1);
+                    (void) strtod(q, &e2);
+                    if (e2 == q)
+                        all_num = FALSE;
+                    else {
+                        nt++;
+                        q = skip_ws(e2);
+                    }
+                }
+                if (all_num && endstr != tstart) {
+                    /* the list as foreach takes it: commas to spaces, one each */
+                    char *list = TMALLOC(char, strlen(tstart) + 1), *w = list;
+                    for (q = tstart; *q; q++) {
+                        char c = (*q == ',' || isspace_c(*q)) ? ' ' : *q;
+                        if (c != ' ' || (w > list && w[-1] != ' '))
+                            *w++ = c;
+                    }
+                    while (w > list && w[-1] == ' ')
+                        w--;
+                    *w = '\0';
+                    fprintf(stderr,
+                            "Warning: .temp lists %d temperatures (%s); ngspice runs a "
+                            "circuit at one temperature, so this run uses the first, "
+                            "%g C.\n   To run at each: a .control block with "
+                            "`foreach t %s`, `set temp = $t`, `run`, `end` -- or "
+                            "`.dc temp` for a dc sweep.\n",
+                            nt, list, temperature_value, list);
+                    tfree(list);
+                } else {
+                    fprintf(stderr, "Warning: Could not set temperature to %s\n   Set to default 27 C instead.\n", temperature);
+                    temperature_value = 27;
+                }
             }
             /* Enhancement-756: remembered as the deck's temperature, so an
              * `unset temp` after a user's `set temp` can restore it. */

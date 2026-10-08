@@ -23,6 +23,7 @@ instance's l and w.
 Checks:
   [1] an explicit `save` of two opvars before a dc: exactly one warning per
       item, the device's line absent; the per-point recording unchanged
+      (Enhancement-797: no warning at all now -- the deck is correct)
   [2] `.option saveused` inferring the same: no warning at all
   [3] a plain `print` of an opvar before any analysis still gets the device's line
   [4] the unknown type, card after the instance: the message names the card,
@@ -82,9 +83,11 @@ print("Enhancement-600: the saved-opvar warnings, and a missing model's reason\n
 
 # ------------------------------------------------------------- [1] ---
 out = run("v1 a 0 1\nn1 a 0 tm\n.model tm tm", f"save {N1}[rt] {N1}[tk] all\ndc temp 27 127 50\nprint {N1}[rt]", "t1")
-check("[1] an explicit save before the dc: one warning per item, the device's own line absent",
-      out.count(SAVE) == 1 and out.count("'tk' has no value yet") == 1 and DEV not in out
-      and out.count("operating-point variable") == 2, out[-400:])
+# Enhancement-797 (hunt 2026-10-08 D2): none at all now -- the save is correct,
+# the vector is recorded per point, and a built-in's `.save @r1[i]` never warned
+check("[1] an explicit save before the dc: no warning (E-797), the device's own line absent",
+      "has no value yet" not in out and DEV not in out
+      and "operating-point variable" not in out, out[-400:])
 rows = re.findall(r"(?m)^\d\s+\S+\s+(\S+)\s*$", out)
 check("[1] ...and the per-point recording is unchanged (1000, 1500, 2000)",
       [float(x) for x in rows[:3]] == [1000.0, 1500.0, 2000.0], f"{rows}")

@@ -345,6 +345,8 @@ extern struct variable *(*if_getparam)(CKTcircuit *ckt, char **name, char *param
 extern struct variable *nutif_getparam(CKTcircuit *ckt, char **name, char *param, int ind, int do_model);
 extern struct variable *spif_getparam(CKTcircuit *ckt, char **name, char *param, int ind, int do_model);
 extern struct variable *spif_getparam_special(CKTcircuit *ckt, char **name, char *param, int ind, int do_model);
+extern int if_print_string_params(CKTcircuit *ckt, const char *word, FILE *fp);  /* Enhancement-798 */
+extern bool if_deck_run_pending(void);  /* Enhancement-802 */
 extern void if_setndnames(char *line);
 extern void if_setparam_model(CKTcircuit *ckt, char **name, char *val );
 extern void if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_model);

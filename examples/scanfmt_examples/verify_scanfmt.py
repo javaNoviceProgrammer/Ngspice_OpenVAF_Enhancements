@@ -242,8 +242,10 @@ if OK:
     check("an operating-point variable is not called a missing parameter",
           "device has no parameter" not in out,
           [l.strip() for l in out.splitlines() if "save" in l.lower()][:1])
-    check("  ... it is described as what it is",
-          "operating-point variable" in out)
+    # Enhancement-797 (hunt 2026-10-08 D2): and nothing is said at all -- the
+    # save is correct, and the vector is recorded per point once the op runs
+    check("  ... and no warning is printed for it (E-797)",
+          "has no value yet" not in out and "operating-point variable" not in out)
     rc, out = run(DECK, f"pre_osdi {os.path.basename(OK)}\nsave @n1[nosuch]\nop", "sv2")
     check("a name the device really lacks still says so",
           "device has no parameter" in out)

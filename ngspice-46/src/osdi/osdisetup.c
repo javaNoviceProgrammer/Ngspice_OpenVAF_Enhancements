@@ -61,6 +61,8 @@ static int osdimc_corner_priority;   /* Enhancement-663 (hunt F7), see osdimc_en
 static void osdi_oob_corner_note(const OsdiDescriptor *descr, void *inst, void *model,
                                  uint32_t id, double v, const char *owner,
                                  char *buf, size_t n);
+static void osdi_oob_member_note(const OsdiDescriptor *descr, uint32_t id, double v,
+                                 const char *owner, char *buf, size_t n);
 
 /* Enhancement-558: `; range <text>, <p> = <v>...` for an out-of-bounds message
  * -- the declared range as the source spells it (an object without the
@@ -187,6 +189,10 @@ static int handle_init_info(OsdiInitInfo info, const OsdiDescriptor *descr,
         osdi_oob_corner_note(descr, inst, model, id, v,
                              handle && handle->name ? (char *)handle->name : descr->name,
                              note, sizeof note);
+        if (!note[0])                         /* Enhancement-799 */
+          osdi_oob_member_note(descr, id, v,
+                               handle && handle->name ? (char *)handle->name : descr->name,
+                               note, sizeof note);
         if (note[0])
           printf("%s\n", note);
       } else if (scalar_int && src) {
@@ -3654,7 +3660,7 @@ static void osdi_oob_corner_note(const OsdiDescriptor *descr, void *inst, void *
   cp = osdimc_corner_lookup(entry, id, NULL);
   e = osdimc_find(own, id);
   if (!cp || !e || e->nominal == v)
-    return;                   /* not this corner's doing */
+    return;                   /* not this corner's doing (osdi_oob_member_note) */
   osdimc_corner_describe(cp, how, sizeof how);
   snprintf(buf, n, "  corner %s moved %s of '%s' there from its nominal %g (%s)",
            osdimc_corner, pname, owner, e->nominal, how);
@@ -3683,6 +3689,51 @@ static void osdi_oob_corner_note(const OsdiDescriptor *descr, void *inst, void *
     else
       snprintf(buf + len, n - len, "; no member of the family accepts %g", v);
   }
+}
+
+/* Enhancement-799 (hunt 2026-10-08 D4): the same member line when no corner
+ * moved the value -- `altermod rsm l=20` (an instance parameter's default) or
+ * `alter n1 l=20` after the netlist bound n1 to member 'rs' (l in [1:10))
+ * failed the next run with the E-558 line alone, though member 'rs__2' takes
+ * 20: a member is chosen when the netlist is read, from the values written
+ * there, and is not chosen again (a `reset` reloads the netlist's own value). */
+static void osdi_oob_member_note(const OsdiDescriptor *descr, uint32_t id, double v,
+                                 const char *owner, char *buf, size_t n) {
+  const OsdiRegistryEntry *entry = NULL;
+  int type = -1, head, nacc = 0;
+  const char *pname = descr->param_opvar[id].name[0];
+  size_t len;
+  buf[0] = '\0';
+  for (int t = 0; t < DEVmaxnum && !entry; t++) {
+    if (!osdi_devtype_is_osdi(t) || !ft_sim->devices[t])
+      continue;
+    const OsdiRegistryEntry *r = (const OsdiRegistryEntry *)ft_sim->devices[t]->registry_entry;
+    if (r && r->descriptor == descr) {
+      entry = r;
+      type = t;
+    }
+  }
+  if (!entry || (head = osdi_paramset_family_of(type)) < 0)
+    return;
+  snprintf(buf, n, "  '%s' was bound to member '%s' of the paramset family '%s' when the "
+           "netlist was read (LRM 6.4.2), and a member is not chosen again after that",
+           owner, descr->name, entry->paramset_family);
+  len = strlen(buf);
+  for (int t = 0; t < DEVmaxnum && len < n; t++) {
+    if (t == type || !osdi_devtype_is_osdi(t) || osdi_paramset_family_of(t) != head)
+      continue;
+    if (osdi_member_accepts(t, pname, v) == 1) {
+      snprintf(buf + len, n - len, "%s '%s'", nacc ? "," : "; member", ft_sim->devices[t]->name);
+      len = strlen(buf);
+      nacc++;
+    }
+  }
+  if (nacc)
+    snprintf(buf + len, n - len, " accept%s %g: write %s=%g in the netlist (the instance "
+             "line, or the card) and load it again to bind there",
+             nacc == 1 ? "s" : "", v, pname, v);
+  else
+    snprintf(buf + len, n - len, "; no member of the family accepts %g", v);
 }
 
 /* Enhancement-662 (hunt F3): the nominal's spellings -- `.option corner=tt`,
