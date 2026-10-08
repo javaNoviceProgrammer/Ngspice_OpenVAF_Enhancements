@@ -14,7 +14,12 @@ is E-795 (14ab4f3b). Two pieces of the existing tree carry most of the weight:
   [E-322](../../enhancements_doc/Enhancement-322.md).
 
 The correlation half builds on the unimplemented
-[correlated-statistics proposal of 2026-09-06](2026-09-06_correlated-statistics-for-osdimc.md).*
+[correlated-statistics proposal of 2026-09-06](2026-09-06_correlated-statistics-for-osdimc.md).
+
+Revised 2026-10-08: [cards inside a subcircuit](#cards-inside-a-subcircuit-the-wrapper-idiom).
+Measured on the E-795 binaries, the usual wrapper (a `.subckt` holding the `.model` of a
+Verilog-A device) turns a model parameter's process statistics into mismatch. That section
+proposes the fix, as phase 0, and settles decision 1.*
 
 ## The question
 
@@ -78,6 +83,9 @@ The statistics are read from the compiled object when ngspice loads it:
   have different sigmas.
 - The engine covers OSDI devices only.
 - Its draws cannot be correlated; that is the 2026-09-06 proposal.
+- A card defined inside a subcircuit is copied once per instance, and each copy draws on its
+  own, so the usual wrapper of a Verilog-A device gets mismatch where its model parameters
+  declare process statistics ([below](#cards-inside-a-subcircuit-the-wrapper-idiom)).
 
 **Statistics in the netlist** (base ngspice, [E-151](../../enhancements_doc/Enhancement-151.md),
 [E-346](../../enhancements_doc/Enhancement-346.md)). `agauss`, `gauss`, `aunif`, `unif` and
@@ -130,7 +138,7 @@ Only the statistics subset is read. A whole Spectre PDK file (`simulator lang=sp
 | written | means | process | mismatch |
 |---|---|---|---|
 | `name` | a `.param` | one draw per trial for the whole circuit | one draw per subcircuit instance that reads it (Spectre's mismatch) — phase 3 |
-| `@card[p]`, `@card*[p]` | parameter `p` of a model card (wildcards as `altermod` takes them) | a **model** parameter: one draw per card per trial, as E-530 | an **instance** parameter of that card's devices: one draw per device, as E-530's `type="instance"`. A *model* parameter here is the open question below |
+| `@card[p]`, `@card*[p]` | parameter `p` of a model card (wildcards as `altermod` takes them) | a **model** parameter: one draw per card per trial, as E-530; for a card defined inside a subcircuit, one draw per *definition*, shared by its copies (phase 0) | an **instance** parameter of that card's devices: one draw per device, as E-530's `type="instance"`. A **model** parameter of a card defined inside a subcircuit: one draw per copy, that is per subcircuit instance (phase 0). A model parameter of a top-level card shared by several devices: refused |
 | `@inst[p]` | parameter `p` of one instance | one draw per trial for that instance | the same (one instance is one owner) |
 
 The `@…[…]` spellings are the ones `alter`, `altermod` and `print` already read.
@@ -196,6 +204,79 @@ Spectre's `variations=`, draws only one scope. `all` is the default. E-538's sco
 `savemc` and `writemc` record a varied parameter as they record one declared in the source.
 Its column gets the netlist's name for it.
 
+### Cards inside a subcircuit (the wrapper idiom)
+
+A Verilog-A device is commonly wrapped in a subcircuit that holds its `.model` card and
+passes the subcircuit's parameters into it:
+
+```spice
+.subckt nfet d g s b w=1u l=100n
+.model nmod psp103 type=1 {...}   ; card parameters may read w, l
+n1 d g s b nmod w={w} l={l}
+.ends
+```
+
+**What expansion does** (measured 2026-10-08 on the E-795 binaries, built-in and OSDI models
+alike):
+- A `.model` defined inside a `.subckt` is copied **once per instance** and renamed with the
+  instance path: `x1:nmod`, `x2:nmod`, `xp.x1:nmod` for a nested one.
+- Its `{…}` expressions are evaluated with that instance's parameters, and the devices inside
+  point at their own copy.
+- There is no de-duplication: two instances with identical parameters still get two cards.
+  Memory and model setup grow with the instance count.
+- An `agauss` in such a card draws once per copy. That is the existing ngspice mismatch idiom.
+
+**What osdimc then does.** E-530 keys a model parameter's draw on the card's name. The copies
+have different names and the engine does not know they come from one `.model` line, so
+**each copy draws on its own**. The wrapper's process statistics become mismatch. One module,
+`(* std_rel=0.1 *) g`, `.option osdimc mcseed=7`, two trials:
+
+| card | trial 1 | trial 2 |
+|---|---|---|
+| top-level `gcard`, used by two wrapper instances | 1.027m (both) | 0.867m (both) |
+| inside the wrapper, copy `xc:gin` | 1.074m | 0.982m |
+| inside the wrapper, copy `xd:gin` | 1.138m | 0.956m |
+
+**What works today.** Put the `.model` at top level (or in an included file outside the
+subcircuit), and let the wrapper pass only per-device values as instance parameters
+(`n1 a b gcard w={w}`). The card's model parameters then draw once per trial for every
+wrapper, and `(* type="instance" *)` statistics still draw per device. In the run above, a
+2 % `kw` drew 0.997 and 1.022 on the two devices while `g` was shared. This needs the
+module to expose its per-device knobs as instance parameters. It does not help a wrapper
+that sets *model* parameters per instance (`.model gin gw g={gg}`).
+
+**The change (phase 0): key the process draw on the card's definition.**
+- Expansion records which `.model` line each copy came from: the subcircuit definition and
+  the model name. The name suffix after `:` is not enough, because two subcircuits can each
+  define a card called `gin`. A small table from `subckt.c` (copy, definition) is exported to
+  the engine. The innermost `.subckt` holding the line is the definition, at any nesting
+  depth.
+- A model parameter's draw is keyed on (seed, trial, **definition**, parameter id) instead of
+  (…, **copy**, …). Every copy of one definition gets the same standard-normal deviate and
+  applies it around its **own** nominal. Copies whose nominals differ through subcircuit
+  parameters (`g={gg}`) still move together, which is what process means.
+- A top-level card is its own definition, so its key, and every deck without a card inside a
+  subcircuit, draws **bit-for-bit what it draws now**.
+- Instance parameters are unchanged: one draw per device.
+- `wcd` and `highsigma` count **one dimension per definition**, not per copy. That is the
+  right count, and it is the 2026-09-06 proposal's model-scoped factor shared by the copies.
+  `savemc` keeps one column per copy, whose values now move together.
+- An option keeps the old per-copy draws for a deck that wants them, e.g.
+  `.option osdimc_copies=instance` (the default being `definition`; the name is open).
+- Phase 0 changes behaviour for decks with `(* std *)` statistics on cards inside
+  subcircuits. No suite depends on it today: the only one combining `osdimc` and a
+  `.subckt` (`dcxsweep`) uses a built-in resistor without statistics.
+
+**What it means for the block.** With phase 0, a `mismatch { vary @gin[g] }` on a card
+defined inside a subcircuit is well defined: it asks for one draw per copy, that is per
+subcircuit instance, which is Spectre's mismatch. A `process { vary @gin[g] }` is one draw
+per definition. Only a **model** parameter of a **top-level card shared by several devices**
+cannot take mismatch, since all those devices read one card. That is refused, with the hint
+to move the card into a subcircuit or to vary an instance parameter.
+
+Phase 0 is independent of the block. It corrects the meaning of the `(* std *)` statistics
+that exist today, so it can land first.
+
 ### `.param` targets
 
 **Process scope** (phase 2). A drawn value is pushed through the E-320/E-321 fast path: it
@@ -254,7 +335,8 @@ the same.
   - `std` negative;
   - an option the block does not take;
   - a target named twice in one scope;
-  - a model parameter in `mismatch { }` (until the open question below is settled).
+  - a model parameter in `mismatch { }` on a top-level card shared by several devices, with
+    the hint to move the card into a subcircuit or to vary an instance parameter.
 - Warnings: `std` = 0, and `percent=yes` on a nominal of 0 (the E-620 rules).
 - E-555 applies unchanged: a `$param_given`-tested parameter the deck never gave is not
   drawn, said once.
@@ -265,14 +347,16 @@ the same.
 
 | phase | scope | where | size |
 |---|---|---|---|
+| 0 | the process draw of a card defined inside a subcircuit keyed on its definition, shared by its copies; one `wcd`/`highsigma` dimension per definition; the option for per-copy draws | `frontend/subckt.c` (record copy → definition), `osdi/osdisetup.c` (the draw key in `osdimc_apply_type`, the walk enumeration, the weight) | one enhancement, independent of the block |
 | 1 | the block, its parser and diagnostics; OSDI model and instance parameters by card and by instance; the per-card overlay; precedence; `-variations` | `frontend/inpcom.c` (cut the block out), a new `frontend/statistics.c` (parse, resolve, the table), `osdi/osdisetup.c` (`osdimc_card_stats` and the table's readers), `frontend/com_sweep.c` (`-variations`), `frontend/mcsave.c` (column names) | one enhancement; the compiler is not touched |
 | 2 | `.param` targets, process scope, through the fast path | `frontend/statistics.c`, the E-320 fast-path engine | one enhancement |
 | 3 | `.param` targets, mismatch scope (per-instance renaming at expansion) | `frontend/inpcom.c`, `frontend/subckt.c`, the fast path | one enhancement, the largest |
 | 4 | built-in device parameters | the capture, draw and restore via `IFparam` | one enhancement |
 | — | `correlate` (both forms) | with the 2026-09-06 correlation proposal: compiler side tables for the source spelling, the netlist block for this one, one sampler | one or two enhancements |
 
-Phase 1 alone answers the question for compiled models, which is where this tree's users
-live. Each later phase is independent of the next.
+Phase 0 fixes today's `(* std *)` statistics for the wrapper idiom whether or not the block
+is built. Phase 1 alone answers the question for compiled models, which is where this tree's
+users live. Each later phase is independent of the next.
 
 ## Verification to pin (a new suite)
 
@@ -296,18 +380,31 @@ live. Each later phase is independent of the next.
 - **Refusals.** Each diagnostic above, with its deck line.
 - **Phase 3.** Two instances of a subcircuit reading a mismatch `.param` get different
   values, and a top-level reader keeps the shared one.
+- **Phase 0.**
+  - The copies of a card defined inside a subcircuit share each trial's deviate: equal
+    values for equal nominals, the same relative shift for nominals set by subcircuit
+    parameters.
+  - Nested copies (`xp.x1:gm`) share with their definition.
+  - Two subcircuits each defining a card of the same name draw independently.
+  - A top-level card and every deck without such a card draw byte-identical values before
+    and after.
+  - `wcd` counts one dimension per definition, and a `highsigma` failure probability agrees
+    with plain Monte Carlo.
+  - The per-copy option restores the old draws.
+  - With the block, `mismatch { vary @card[p] }` on such a card draws per copy, and on a
+    shared top-level card it is refused.
 
 ## Decisions for you
 
-1. **Mismatch on a model parameter.** All devices on a card share its model parameters.
-   Two options:
-   - **refuse** it, and point to an instance parameter (most compiled models have
-     `(* type="instance" *)` deltas, and CMC models expose per-device mismatch that way);
-   - **split the card** per device, with a private copy of the model per instance, so each
-     draws its own. That costs memory and setup time per device, and is what Spectre
-     effectively does for a card inside a subcircuit.
+1. **Mismatch on a model parameter**, settled by the measurement above: ngspice already
+   splits a card per instance when it is defined inside a subcircuit. So the question
+   becomes phase 0's default for those copies:
+   - **definition** (suggested): copies share the process draw; per-copy draws only where a
+     `mismatch { }` asks, or under the option;
+   - **instance**: today's behaviour, every copy draws on its own.
 
-   Suggested: refuse in phase 1, and revisit if a model needs it.
+   A model parameter of a top-level card shared by several devices is refused in
+   `mismatch { }` either way.
 2. **Syntax.** Spectre's braces inside `.statistics` (copy-paste from a PDK), or an
    ngspice-style card form (`.vary @nch[tox] process gauss 0.1n`)? Suggested: the Spectre
    body, with no second spelling.
@@ -317,5 +414,5 @@ live. Each later phase is independent of the next.
    `.option osdimc` and inside the loop commands. The alternative is a block that turns
    `osdimc` on by itself. Suggested: as `(* std *)`, so a deck with a `.statistics` block
    still runs its nominal unless asked.
-5. **Order.** Phase 1, then 2. Phase 3 (Spectre's real mismatch on `.param`s) when a PDK
+5. **Order.** Phase 0, then 1, then 2. Phase 3 (Spectre's real mismatch on `.param`s) when a PDK
    needs it. Correlation with the 2026-09-06 proposal, either before phase 2 or after it.
