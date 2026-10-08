@@ -108,6 +108,27 @@ def num(out, name):
         return None
 
 
+def load_per_iter(dev, tag, osdi, runs=3):
+    """The transient load time per Newton iteration of `dev` in a pulsed RC
+    (~20 000 iterations), the BEST of `runs` runs: the run least disturbed by
+    whatever else the machine is doing. One run each was noise on a shared CI
+    runner -- in one linux-arm run the compiled load read 0.53 us on one solver
+    pass and 1.33 us on the next while the built-in read 0.215 and 0.216, and a
+    linux-intel sweep once read 7.10 us/iter for a load the next pass read at
+    0.65. Shared by [6] and [7]; each compares against a built-in resistor timed
+    the same way, so the bound holds on a slow or loaded machine."""
+    best, n = None, 0
+    for _ in range(runs):
+        sim = run(f"V1 in 0 pulse(0 1 1n 0.1n 0.1n 50n 100n)\n{dev}\nC1 out 0 1p",
+                  "tran 0.1n 1u\nrusage all", tag, osdi)
+        m_l = re.search(r"Transient load time = ([\d.eE+-]+)", sim)
+        m_i = re.search(r"Transient iterations = (\d+)", sim)
+        if m_l and m_i and int(m_i.group(1)) > 0:
+            t, n = float(m_l.group(1)) / int(m_i.group(1)), int(m_i.group(1))
+            best = t if best is None else min(best, t)
+    return best, n
+
+
 def close(a, b, tol):
     return a is not None and abs(a - b) <= tol
 
@@ -283,17 +304,17 @@ if rc == 0:
         os.rmdir(newdir)
     except OSError:
         pass
-    # the cost: one compiled instance, ~4000 Newton iterations; the load time per
-    # iteration was ~12 us (a getcwd per iteration), it is ~1-2.5 us now; 6 us
-    # leaves room for a loaded machine and still fails the old behaviour
-    sim = run("V1 in 0 pulse(0 1 1n 0.1n 0.1n 50n 100n)\nN1 in out m1\nC1 out 0 1p\n.model m1 cwdprobe",
-              "tran 0.1n 200n\nrusage all", "cwdt", osdi)
-    m_l = re.search(r"Transient load time = ([\d.eE+-]+)", sim)
-    m_i = re.search(r"Transient iterations = (\d+)", sim)
-    per_iter = float(m_l.group(1)) / int(m_i.group(1)) if (m_l and m_i and int(m_i.group(1)) > 0) else None
-    check("[speed] the compiled load costs under 6 us per Newton iteration for one instance (was ~12 us, a getcwd each)",
-          per_iter is not None and per_iter < 6e-6,
-          f"{per_iter * 1e6:.2f} us/iter over {m_i.group(1) if m_i else '?'} iterations")
+    # the cost: the load time per Newton iteration was ~12 us on macOS (a getcwd
+    # per iteration) against ~0.08 us for a built-in resistor in the same
+    # circuit, ~150x; it is ~1.5x now. The ratio, best of three runs each,
+    # replaces an absolute 6 us cap that one shared CI runner exceeded with
+    # 7.10 us on a single short run (the same check read 0.65 us on the next
+    # pass). 10x still fails the old behaviour by an order of magnitude.
+    c_it, c_n = load_per_iter("N1 in out m1\n.model m1 cwdprobe", "cwdt", osdi)
+    b_it, b_n = load_per_iter("R1 in out 1k", "cwdb", osdi)
+    check("[speed] one compiled instance's load per Newton iteration is under 10x a built-in resistor's, best of three runs each (was ~150x on macOS: ~12 us, a getcwd each, against ~0.08 us)",
+          c_it is not None and b_it is not None and b_it > 0 and c_it < 10.0 * b_it,
+          f"compiled {c_it * 1e6:.3f} us/iter over {c_n}, built-in {b_it * 1e6:.3f} us/iter over {b_n}" if (c_it and b_it) else "no timing")
 
 # ---- [7] Enhancement-760: the load path's bookkeeping is hoisted -------------
 # After E-758 one compiled instance still cost ~0.6 us of load per Newton
@@ -333,24 +354,8 @@ if rc == 0:
     # compiled instance over ~20 000 Newton iterations cost 8x the built-in
     # load per iteration before this enhancement (0.6 us against 0.08) and
     # ~1.5-2.5x after; the ratio holds on a loaded machine, where both grow
-    def load_per_iter(dev, tag, runs=3):
-        """The load time per Newton iteration, the BEST of `runs` runs: the
-        run least disturbed by whatever else the machine is doing. One run
-        each was noise on a shared CI runner -- in one linux-arm run the
-        compiled load read 0.53 us on one solver pass and 1.33 us on the
-        next while the built-in read 0.215 and 0.216."""
-        best, n = None, 0
-        for _ in range(runs):
-            sim = run(f"V1 in 0 pulse(0 1 1n 0.1n 0.1n 50n 100n)\n{dev}\nC1 out 0 1p",
-                      "tran 0.1n 1u\nrusage all", tag, osdi)
-            m_l = re.search(r"Transient load time = ([\d.eE+-]+)", sim)
-            m_i = re.search(r"Transient iterations = (\d+)", sim)
-            if m_l and m_i and int(m_i.group(1)) > 0:
-                t, n = float(m_l.group(1)) / int(m_i.group(1)), int(m_i.group(1))
-                best = t if best is None else min(best, t)
-        return best, n
-    c_it, c_n = load_per_iter("N1 in out m1\n.model m1 optprobe", "optt")
-    b_it, b_n = load_per_iter("R1 in out 1k", "optb")
+    c_it, c_n = load_per_iter("N1 in out m1\n.model m1 optprobe", "optt", osdi)
+    b_it, b_n = load_per_iter("R1 in out 1k", "optb", osdi)
     # The ratio only: an absolute cap held on one machine (1.5 us/iter on the
     # Linux CI runner, against a built-in resistor's 0.57 there); the E-759
     # binary measured 5x here.

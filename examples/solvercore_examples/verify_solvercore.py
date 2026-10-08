@@ -263,17 +263,34 @@ def main():
 
     # a 150 x 150 mesh (22 502 unknowns): the old Sparse reordered it in 6.4 s here
     # (quadratic: 16.5 s at 200 x 200, 213 s at 300 x 300), the new one in 0.9 s; KLU 0.07 s.
-    # The bound leaves room for a slow machine and a loaded sweep and still fails the old code.
     out = ngspice(mesh_deck("* 150 x 150 resistor mesh", 150, [], "op\nprint v(n75_75) v(n0_0)\nrusage all"))
     v = scalars(out)
-    m = re.search(r"Matrix reorder time\s*=\s*([0-9.eE+-]+)", out)
-    reorder = float(m.group(1)) if m else None
     check("150 x 150 mesh: v(n75_75) = 0.5662284 under both solvers",
           near(v.get("v(n75_75)"), 0.5662284, 1e-6), f"{v.get('v(n75_75)')}")
     check("150 x 150 mesh: v(n0_0) = 0.9998659",
           near(v.get("v(n0_0)"), 0.9998659, 1e-6), f"{v.get('v(n0_0)')}")
-    check("150 x 150 mesh: the reorder time is under 4 s (was 6.4 s under Sparse; 0.9 s now)",
-          reorder is not None and reorder < 4.0, f"reorder {reorder} s")
+
+    # The time, against KLU's on the same mesh in the same pass, the best of two
+    # runs each: Sparse over KLU was ~90 before E-735 (6.4 s against 0.07 s) and
+    # is ~12 now (0.8 s against 0.07). An absolute 4 s cap failed once on a slow
+    # shared macos-intel runner (4.45 s, a whole sweep there taking 1703 s); the
+    # ratio carries the machine's speed on both sides. The solver card at the end
+    # of the deck wins over the harness's injected one (the last `.option` is
+    # the one ngspice keeps), so both solvers are timed whichever pass this is.
+    def reorder_time(solver, runs=2):
+        best = None
+        for _ in range(runs):
+            o = ngspice(mesh_deck("* 150 x 150 resistor mesh", 150, [f".option {solver}"],
+                                  "op\nrusage all"))
+            m = re.search(r"Matrix reorder time\s*=\s*([0-9.eE+-]+)", o)
+            if m:
+                t = float(m.group(1))
+                best = t if best is None else min(best, t)
+        return best
+    t_sp, t_klu = reorder_time("sparse"), reorder_time("klu")
+    check("150 x 150 mesh: Sparse's reorder time is under 40x KLU's on the same mesh, best of two runs each (was ~90x: 6.4 s against 0.07 s; ~12x now)",
+          t_sp is not None and t_klu is not None and t_klu > 0 and t_sp < 40.0 * t_klu,
+          f"sparse {t_sp} s, klu {t_klu} s" + (f", ratio {t_sp / t_klu:.1f}" if (t_sp and t_klu) else ""))
 
     # the complex ordering: a 30 x 30 RC mesh at 10 kHz
     out = ngspice(mesh_deck("* 30 x 30 RC mesh", 30, [], "ac lin 1 10k 10k\nprint vm(n15_15) vp(n15_15)", cap="1n"))

@@ -74,3 +74,10 @@ less. A directory change made by anything other than `cd` — there is no such t
 ngspice today — would not be seen until the next `cd`.
 
 **Update ([E-760](Enhancement-760.md)).** The rest of the fixed per-iteration cost (O1 of the same hunt) is hoisted: the repeated-message summary's ring walk, the three option lookups by name, the version string parse and the runtime's file-slot walk. One compiled instance's load is 0.11 µs per iteration now, 1.3× the built-in resistor; the `prof` deck's transient runs in 1.32 s against 2.12 s at E-759 and 14.4 s at E-757.
+
+**Update (2026-10-08, test only).** The `lrmkernel` speed check is now a ratio: one
+compiled `cwdprobe` instance's load per Newton iteration under 10× a built-in resistor's in
+the same circuit, the best of three 20 000-iteration runs each. The E-757 binary measured
+~150× (12.6 µs against 0.06–0.08 µs); today it is ~1.5×. The absolute 6 µs cap failed once
+on a shared linux-intel runner, 7.10 µs on a single 4 066-iteration run that read 0.65 µs on
+the next pass.
