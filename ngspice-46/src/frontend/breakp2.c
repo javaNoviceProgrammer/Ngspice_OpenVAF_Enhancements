@@ -49,7 +49,10 @@ static int save_auto_mark = 0;
 
 void ft_save_mark_auto(int onoff)
 {
-    save_auto_mark = onoff ? 1 : 0;
+    /* Enhancement-808: the mark is SAVE_AUTO_INFERRED (saveused) or
+     * SAVE_AUTO_SAVECURRENTS; any other true value reads as inferred */
+    save_auto_mark = onoff == SAVE_AUTO_SAVECURRENTS ? SAVE_AUTO_SAVECURRENTS
+                   : onoff ? SAVE_AUTO_INFERRED : 0;
 }
 
 

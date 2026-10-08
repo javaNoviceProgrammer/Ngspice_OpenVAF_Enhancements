@@ -21,11 +21,18 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 
 struct ccom;
 
+/* Enhancement-808: the origin marks of an automatic save (save_info.autosaved,
+ * dbcomm.db_auto) */
+#define SAVE_AUTO_INFERRED      1   /* `.option saveused` (Enhancement-496) */
+#define SAVE_AUTO_SAVECURRENTS  2   /* `.options savecurrents` */
+
 struct save_info {
     char    *name;
     IFuid   analysis;
     int     used;
-    int     autosaved;  /* Enhancement-496: inferred by `.option saveused` */
+    int     autosaved;  /* Enhancement-496: inferred by `.option saveused`
+                           (SAVE_AUTO_INFERRED); Enhancement-808: or added by
+                           `.options savecurrents` (SAVE_AUTO_SAVECURRENTS) */
 };
 
 

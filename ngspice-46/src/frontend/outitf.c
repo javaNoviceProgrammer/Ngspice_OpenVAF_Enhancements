@@ -33,6 +33,7 @@ Modified: 2000 AlansFixes, 2013/2015 patch by Krzysztof Blaszkowski
 #include "ngspice/acdefs.h"          /* Enhancement: ACAN for the sweep progress bar */
 #include "ngspice/trcvdefs.h"        /* Enhancement: TRCV (DC sweep) for the progress bar */
 #include "breakp2.h"
+#include "ngspice/dstring.h"     /* Enhancement-806 */
 #include "runcoms.h"
 #include "com_sweep.h"      /* Enhancement-666: autocorner_corner_now */
 #include "plotting/graf.h"
@@ -685,6 +686,23 @@ save_every_name(runDesc *run, char *refName, char **dataNames, int numNames,
 }
 
 
+/* Enhancement-808: the analyses whose plot is over frequency (or holds
+ * poles, zeros or sensitivities) -- where a terminal current of the bias point
+ * is not what a vector of that plot means */
+static bool
+e808_freq_domain(const char *an_name)
+{
+    static const char *const fd[] = {"ac", "noise", "sp", "disto", "hb", "pz", "sens"};
+    size_t k;
+    if (!an_name)
+        return FALSE;
+    for (k = 0; k < sizeof fd / sizeof fd[0]; k++)
+        if (cieq(an_name, fd[k]))
+            return TRUE;
+    return FALSE;
+}
+
+
 static int
 beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analName, char *refName, int refType, int numNames, char **dataNames, int dataType, bool windowed, runDesc **runp)
 {
@@ -703,6 +721,7 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
     bool all_inferred = TRUE;       /* Enhancement-726: every applicable save is saveused's */
     char *an_name;
     int initmem;
+    int e808_left_out = 0;          /* Enhancement-808 */
 
     /*to resume a run, Reassign the file pointer and return
       (requires *runp to be NULL if this is not needed)*/
@@ -753,7 +772,7 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                     continue;
                 }
                 any_applicable = TRUE;      /* Enhancement-603 */
-                if (!saves[i].autosaved)
+                if (saves[i].autosaved != SAVE_AUTO_INFERRED)
                     all_inferred = FALSE;   /* Enhancement-726 */
 
                 /*  Check for ".save all" and new synonym ".save allv"  */
@@ -917,6 +936,20 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
             if (savesused[i])
                 continue;
 
+            /* Enhancement-808 (hunt 2026-10-08 D14, D15): a current
+             * `.options savecurrents` added is an op/dc/tran quantity. In an
+             * ac or sp plot a built-in device answers nothing (each vector
+             * stayed 0 long, and `print` of it failed) and an OSDI device its
+             * bias current; in a noise plot every one is the bias current,
+             * repeated per frequency. Left out, said once per analysis. */
+            if (saves[i].autosaved == SAVE_AUTO_SAVECURRENTS &&
+                e808_freq_domain(an_name)) {
+                savesused[i] = TRUE;
+                saves[i].used = 1;
+                e808_left_out++;
+                continue;
+            }
+
             if (!parseSpecial(saves[i].name, namebuf, parambuf, depbuf)) {
                 /* Enhancement-603: a plain name that simply is not in this
                  * plot is reported below ("nothing of that name is in this
@@ -1058,11 +1091,11 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                      * that named the device reports it itself ("no such
                      * device or model name"), and the scan now derives names
                      * the author never wrote (a corner copy's base). */
-                    if (err == E_NODEV && !saves[i].autosaved)
+                    if (err == E_NODEV && saves[i].autosaved != SAVE_AUTO_INFERRED)
                         fprintf(cp_err,
                                 "Warning: save '%s': no such device, so this "
                                 "vector will stay empty.\n", saves[i].name);
-                    else if (err == E_BADPARM && !saves[i].autosaved)
+                    else if (err == E_BADPARM && saves[i].autosaved != SAVE_AUTO_INFERRED)
                         fprintf(cp_err,
                                 "Warning: save '%s': device has no parameter "
                                 "'%s', so this vector will stay empty.\n",
@@ -1078,6 +1111,22 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
             }
 
             addSpecialDesc(run, saves[i].name, namebuf, parambuf, depind, initmem);
+        }
+
+        /* Enhancement-808: said once per analysis -- the integrated-noise
+         * plot (no scale) follows the spectral one and stays quiet */
+        if (e808_left_out && refName) {
+            fprintf(cp_out,
+                    "Note: .options savecurrents saves device currents in op, dc "
+                    "and tran analyses; this %s analysis leaves its %d out (they "
+                    "would hold %s).%s\n",
+                    an_name ? an_name : "", e808_left_out,
+                    an_name && cieq(an_name, "noise")
+                        ? "the bias currents, repeated at every frequency"
+                        : "nothing, or the bias currents",
+                    an_name && (cieq(an_name, "ac") || cieq(an_name, "sp"))
+                        ? " For a small-signal current, use `.probe i(<device>)`."
+                        : "");
         }
 
         /* Enhancement-493: a saved name that matched nothing was dropped in
@@ -1193,7 +1242,7 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                      * guessed wrong is not something the author wrote, so telling
                      * them a vector is missing names a plot keyword as a signal.
                      * A name the deck really did write still reports, unchanged. */
-                    if (!matched && !saves[i].autosaved) {
+                    if (!matched && saves[i].autosaved != SAVE_AUTO_INFERRED) {
                         if (multi)
                             now_unmatched = wl_cons(copy(saves[i].name),
                                                     now_unmatched);
@@ -1760,6 +1809,55 @@ fileInit(runDesc *run)
     printf("No. of Data Columns : %d  \n", run->numData);
 }
 
+/* Enhancement-810 (hunt 2026-10-08 D17): the type of a saved `@dev[param]`
+ * vector of an OSDI device, from the `units` the Verilog-A declares -- the
+ * name heuristics below typed `@n1[pw]` (desc "power", units "W") as voltage,
+ * and an opvar was current only when its name happened to start with i.
+ * Returns -1 when the name is not a parameter or opvar of an OSDI instance
+ * (a terminal current, `temp`, a built-in device), so the heuristics apply. */
+static int
+e810_osdi_units_type(const char *name)
+{
+    char dev[BSIZE_SP], *param, *e;
+    const char *units, *leaf;
+    GENinstance *inst;
+    static const struct { const char *u; int t; } map[] = {
+        {"A", SV_CURRENT}, {"V", SV_VOLTAGE}, {"W", SV_POWER},
+        {"Ohm", SV_IMPEDANCE}, {"ohm", SV_IMPEDANCE}, {"Ohms", SV_IMPEDANCE},
+        {"ohms", SV_IMPEDANCE}, {"\xce\xa9", SV_IMPEDANCE},
+        {"S", SV_ADMITTANCE}, {"mho", SV_ADMITTANCE}, {"Mho", SV_ADMITTANCE},
+        {"A/V", SV_ADMITTANCE}, {"F", SV_CAPACITANCE}, {"C", SV_CHARGE},
+        {"s", SV_TIME}, {"Hz", SV_FREQUENCY}, {"dB", SV_DB}, {"rad", SV_PHASE},
+        {"V/sqrt(Hz)", SV_VOLTAGE_DENSITY}, {"A/sqrt(Hz)", SV_CURRENT_DENSITY},
+    };
+    size_t k;
+
+    if (!name || name[0] != '@' || !ft_curckt || !ft_curckt->ci_ckt || !ft_sim ||
+        !ft_sim->findInstance || strlen(name) >= sizeof dev)
+        return -1;
+    strcpy(dev, name + 1);
+    param = ft_accessor_param_start(dev);
+    if (!param || !(e = strrchr(param, ']')) || e[1])
+        return -1;
+    *param++ = '\0';
+    *e = '\0';
+    inst = ft_sim->findInstance(ft_curckt->ci_ckt, dev);
+    if (!inst && (leaf = strrchr(dev, '.')) != NULL && leaf[1] &&
+        tolower_c(leaf[1]) != 'x') {
+        /* Enhancement-410's short form, `x1.n1` for `n.x1.n1` */
+        char full[BSIZE_SP];
+        if (snprintf(full, sizeof full, "%c.%s", leaf[1], dev) < (int) sizeof full)
+            inst = ft_sim->findInstance(ft_curckt->ci_ckt, full);
+    }
+    if (!inst || (units = OSDIparamUnits(inst, param)) == NULL)
+        return -1;
+    for (k = 0; k < sizeof map / sizeof map[0]; k++)
+        if (strcmp(units, map[k].u) == 0)
+            return map[k].t;
+    return SV_NOTYPE;               /* no units, or units ngspice has no type for */
+}
+
+
 /* Trying to guess the type of a vector, using either their special names
    or special parameter names for @ vectors. FIXME This guessing may fail
    due to the many options, especially for the @ vectors. pltypename
@@ -1810,6 +1908,9 @@ guess_type(const char *name, char* pltypename)
         type = SV_NOTYPE;
     else if (pltypename && ciprefix("sp", pltypename) && ciprefix("Cy_", name))
         type = SV_CURRENT;
+    /* Enhancement-810: an OSDI device's parameter or opvar, by its units */
+    else if (*name == '@' && (type = e810_osdi_units_type(name)) >= 0)
+        ;
     /* current source ISRC parameters for current */
     else if (substring("@i", name) && (substring("[c]", name) || substring("[dc]", name) || substring("[current]", name)))
             type = SV_CURRENT;
@@ -2258,6 +2359,27 @@ name_eq(char *n1, char *n2)
         if (!eq && (alt = cp_hier_devname(n2)) != NULL) {
             eq = cieq(n1, alt);
             tfree(alt);
+        }
+        /* Enhancement-806 (hunt 2026-10-08 D12): a Verilog-A child's internal
+         * node written hierarchically, `n1#c1.mid` (or `x1.n1#c1.mid`), for
+         * the flattened `n1#c1__mid` the simulator calls it */
+        if (!eq) {
+            const char *h = strchr(n1, '#');
+            if (h && strchr(h, '.')) {
+                DS_CREATE(ds, 64);
+                const char *q;
+                for (q = n1; *q; q++)
+                    if (q > h && *q == '.')
+                        ds_cat_str(&ds, "__");
+                    else
+                        ds_cat_char(&ds, *q);
+                eq = cieq(ds_get_buf(&ds), n2);
+                if (!eq && (alt = cp_hier_devname(ds_get_buf(&ds))) != NULL) {
+                    eq = cieq(alt, n2);
+                    tfree(alt);
+                }
+                ds_free(&ds);
+            }
         }
         return eq;
     }

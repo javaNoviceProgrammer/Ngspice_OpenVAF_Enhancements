@@ -1961,6 +1961,9 @@ inp_spsource(FILE *fp, bool comfile, char *filename, bool intfile)
             }
             /* If user wants all currents saved (.options savecurrents), add .save 
             to wl_first with all terminal currents available on selected devices */
+            /* Enhancement-808: as `.savecur` lines, so that the saves they make
+               carry their origin (ft_dotsaves) and beginPlot can leave them out
+               of a frequency-domain plot, where they mean nothing */
             wl_first = inp_savecurrents(deck, options, wl_first, controls);
 #ifdef REM_UNUSED
             /* Circuit is flat, all numbers expanded.
@@ -3683,31 +3686,31 @@ inp_savecurrents(struct card *deck, struct card *options, wordlist *wl, wordlist
         case 'm':
             devname = gettok(&devline);
             if (strstr(options->line, "savecurrents_bsim3"))
-                newline = tprintf(".save @%s[id] @%s[ibd] @%s[ibs]",
+                newline = tprintf(".savecur @%s[id] @%s[ibd] @%s[ibs]",
                               devname, devname, devname);
             else if (strstr(options->line, "savecurrents_bsim4"))
-                newline = tprintf(".save @%s[id] @%s[ibd] @%s[ibs] @%s[isub] @%s[igidl] @%s[igisl] @%s[igs] @%s[igb] @%s[igd] @%s[igcs] @%s[igcd]",
+                newline = tprintf(".savecur @%s[id] @%s[ibd] @%s[ibs] @%s[isub] @%s[igidl] @%s[igisl] @%s[igs] @%s[igb] @%s[igd] @%s[igcs] @%s[igcd]",
                               devname, devname, devname, devname, devname, devname, devname, devname, devname, devname, devname);
             else if (strstr(options->line, "savecurrents_mos1"))
-                newline = tprintf(".save @%s[id] @%s[is] @%s[ig] @%s[ib] @%s[ibd] @%s[ibs]",
+                newline = tprintf(".savecur @%s[id] @%s[is] @%s[ig] @%s[ib] @%s[ibd] @%s[ibs]",
                               devname, devname, devname, devname, devname, devname);
             else
-                newline = tprintf(".save @%s[id] @%s[is] @%s[ig] @%s[ib]",
+                newline = tprintf(".savecur @%s[id] @%s[is] @%s[ig] @%s[ib]",
                               devname, devname, devname, devname);
             break;
         case 'j':
             devname = gettok(&devline);
-            newline = tprintf(".save @%s[id] @%s[is] @%s[ig] @%s[igd]",
+            newline = tprintf(".savecur @%s[id] @%s[is] @%s[ig] @%s[igd]",
                               devname, devname, devname, devname);
             break;
         case 'q':
             devname = gettok(&devline);
-            newline = tprintf(".save @%s[ic] @%s[ie] @%s[ib] @%s[is]",
+            newline = tprintf(".savecur @%s[ic] @%s[ie] @%s[ib] @%s[is]",
                               devname, devname, devname, devname);
             break;
         case 'd':
             devname = gettok(&devline);
-            newline = tprintf(".save @%s[id]", devname);
+            newline = tprintf(".savecur @%s[id]", devname);
             break;
         case 'r':
         case 'c':
@@ -3718,11 +3721,11 @@ inp_savecurrents(struct card *deck, struct card *options, wordlist *wl, wordlist
         case 'w':
         case 's':
             devname = gettok(&devline);
-            newline = tprintf(".save @%s[i]", devname);
+            newline = tprintf(".savecur @%s[i]", devname);
             break;
         case 'i':
             devname = gettok(&devline);
-            newline = tprintf(".save @%s[current]", devname);
+            newline = tprintf(".savecur @%s[current]", devname);
             break;
         case 'n':
             /* Enhancement-394: OSDI (compiled Verilog-A) devices were absent
@@ -3736,7 +3739,7 @@ inp_savecurrents(struct card *deck, struct card *options, wordlist *wl, wordlist
                two terminals are read per terminal by name, e.g.
                `.save @n1[i_d]`. */
             devname = gettok(&devline);
-            newline = tprintf(".save @%s[i]", devname);
+            newline = tprintf(".savecur @%s[i]", devname);
             break;
         default:
             continue;

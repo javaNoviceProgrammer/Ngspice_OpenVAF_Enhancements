@@ -788,6 +788,84 @@ vec_remove(const char *name)
  * it checks for pre-defined vectors.
  */
 
+/* Enhancement-806 (hunt 2026-10-08 D12): Enhancement-410's short form of a
+ * name that holds a flattened instance, `<c>.<x..>.<local>` with c the first
+ * letter of the local name -- `onoise_n.x1.n1_thermal` is `onoise_x1.n1_thermal`
+ * written the way `print`, `alter` and `show` already accept the instance.
+ * Writes it to `out` and returns TRUE when `name` has one. */
+static bool
+e806_short_form(const char *name, char *out, size_t n)
+{
+    const char *p;
+    for (p = name; *p; p++) {
+        const char *q;
+        if (!isalpha_c(*p) || p[1] != '.' || tolower_c(p[2]) != 'x' ||
+            (p > name && (isalnum_c(p[-1]) || p[-1] == '.' || p[-1] == '#')))
+            continue;
+        q = p + 2;
+        /* one or more subcircuit segments `x...`, each ended by '.' */
+        while (tolower_c(*q) == 'x') {
+            const char *e = q;
+            while (*e && *e != '.' && !strchr("#[]() ,", *e))
+                e++;
+            if (*e != '.')
+                break;
+            q = e + 1;
+        }
+        if (q > p + 2 && tolower_c(*q) == tolower_c(*p) && q[-1] == '.') {
+            size_t pre = (size_t) (p - name);
+            if (strlen(name) - 2 >= n)
+                return FALSE;
+            memcpy(out, name, pre);
+            strcpy(out + pre, p + 2);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/* Enhancement-806: the two other spellings of a name, tried when the name
+ * itself is not in the plot -- a Verilog-A child's internal node written
+ * hierarchically (`n1#c1.mid` for the flattened `n1#c1__mid`), and a vector
+ * whose name holds a flattened instance asked for by its short form */
+static struct dvec *
+e806_alias(const char *word, struct plot *plot)
+{
+    const char *h = strchr(word, '#');
+    struct dvec *d;
+    char sf[BSIZE_SP];
+
+    if (h && strchr(h, '.')) {
+        DS_CREATE(ds, 64);
+        const char *q;
+        for (q = word; *q; q++)
+            if (q > h && *q == '.')
+                ds_cat_str(&ds, "__");
+            else
+                ds_cat_char(&ds, *q);
+        d = vec_fromplot(ds_get_buf(&ds), plot);
+        ds_free(&ds);
+        if (d)
+            return d;
+    }
+    if (!plot || strlen(word) >= sizeof sf || !strchr(word, '.'))
+        return NULL;
+    {
+        /* only a name with a subcircuit segment can be a short form; this
+         * keeps the scan off the failed lookups of constants and the like */
+        const char *q;
+        bool seg = FALSE;
+        for (q = word; *q && !seg; q++)
+            seg = tolower_c(*q) == 'x' && (q == word || !isalnum_c(q[-1]));
+        if (!seg)
+            return NULL;
+    }
+    for (d = plot->pl_dvecs; d; d = d->v_next)
+        if (d->v_name && e806_short_form(d->v_name, sf, sizeof sf) && cieq(sf, word))
+            return d;
+    return NULL;
+}
+
 struct dvec *vec_fromplot(char *word, struct plot *plot) {
     struct dvec *d = findvec(word, plot);
     if (d != (struct dvec *) NULL) {
@@ -823,6 +901,9 @@ struct dvec *vec_fromplot(char *word, struct plot *plot) {
             } /* end of case of x(node) */
         } /* end of case of x( */
     } /* end of case of non-empty string and not leading '(' */
+
+    if (!d)
+        d = e806_alias(word, plot);         /* Enhancement-806 */
 
     return d;
 } /* end of function vec_fromplot */

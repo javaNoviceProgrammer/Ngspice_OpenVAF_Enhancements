@@ -66,8 +66,16 @@ ft_dotsaves(void)
     if (!ft_curckt) /* Shouldn't happen. */
         return;
 
+    wordlist *wlcur = NULL;
+
     for (iline = ft_curckt->ci_commands; iline; iline = iline->wl_next)
-        if (ciprefix(".save", iline->wl_word)) {
+        if (ciprefix(".savecur", iline->wl_word)) {
+            /* Enhancement-808: what `.options savecurrents` added -- saved
+             * after the deck's own `.save` lines (so a name both give keeps
+             * the deck's, unmarked) and marked as savecurrents' */
+            s = nexttok(iline->wl_word);
+            wlcur = wl_append(wlcur, gettoks(s));
+        } else if (ciprefix(".save", iline->wl_word)) {
             s = iline->wl_word;
             /* skip .save */
             s = nexttok(s);
@@ -76,6 +84,12 @@ ft_dotsaves(void)
 
     com_save(wl);
     wl_free(wl);
+    if (wlcur) {
+        ft_save_mark_auto(SAVE_AUTO_SAVECURRENTS);
+        com_save(wlcur);
+        ft_save_mark_auto(0);
+        wl_free(wlcur);
+    }
 }
 
 
@@ -1210,6 +1224,7 @@ ft_cktcoms(bool terse)
                             "fourier analysis");
             }
         } else if (!eq(command->wl_word, ".save") &&
+                   !eq(command->wl_word, ".savecur") &&        /* Enhancement-808 */
                    !eq(command->wl_word, ".op") &&
                    !ciprefix(".meas", command->wl_word) &&
                    !eq(command->wl_word, ".tf")) {

@@ -72,6 +72,32 @@ CKTpendNodPm(CKTcircuit *ckt, const char *name, int parm, double value)
     ckt->CKTpendingNodeParms = p;
 }
 
+/* Enhancement-806 (hunt 2026-10-08 D12): the node a Verilog-A child
+ * instance builds is flattened as `n1#c1__mid` (a grandchild's as
+ * `n1#g1__k1__mid`); the hierarchical spelling `n1#c1.mid` names the same
+ * node. Returns the flattened spelling (to be freed), or NULL when `name` has
+ * no '.' after its '#'. */
+static char *
+e806_flat_internal(const char *name)
+{
+    const char *h = strchr(name, '#'), *q;
+    char *out, *w;
+    if (!h || !strchr(h, '.'))
+        return NULL;
+    out = TMALLOC(char, 2 * strlen(name) + 1);
+    w = out;
+    for (q = name; *q; q++) {
+        if (q > h && *q == '.') {
+            *w++ = '_';
+            *w++ = '_';
+        } else {
+            *w++ = *q;
+        }
+    }
+    *w = '\0';
+    return out;
+}
+
 void
 CKTapplyPendingNodPm(CKTcircuit *ckt)
 {
@@ -82,6 +108,15 @@ CKTapplyPendingNodPm(CKTcircuit *ckt)
         for (n = ckt->CKTnodes; n; n = n->next)
             if (n->name && eq(n->name, p->name))
                 break;
+        if (!n) {
+            char *flat = e806_flat_internal(p->name);   /* Enhancement-806 */
+            if (flat) {
+                for (n = ckt->CKTnodes; n; n = n->next)
+                    if (n->name && eq(n->name, flat))
+                        break;
+                tfree(flat);
+            }
+        }
         if (n) {
             IFvalue v;
             v.rValue = p->value;

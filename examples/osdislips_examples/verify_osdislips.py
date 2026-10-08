@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enhancement-796..804: the smaller slips D1..D10 of the ngspice + OSDI hunt of
+"""Enhancement-796..810: the smaller slips D1..D17 of the ngspice + OSDI hunt of
 2026-10-08 (docs/bug_hunts/2026-10-08_ngspice-osdi-hierarchy-sweeps-events-and-
 outputs.md), each pinned end-to-end through ngspice (and openvaf-r for the
 models).
@@ -35,6 +35,21 @@ models).
  [10] E-804 (D10): a parameter set twice on a .model card names the winner,
       the last -- and an instance-parameter default repeated on a card now
       keeps its last value too (the first used to win).
+ [11] E-805 (D11): too many nodes on an OSDI line names the model's terminals
+      and the nodes left over.
+ [12] E-806 (D12): a Verilog-A child's internal node answers to `n1#c1.mid`
+      (flattened `n1#c1__mid`) in print, .save, .meas, .ic and .nodeset; a
+      vector holding a subcircuit instance answers to E-410's short form
+      (`onoise_x1.n1_thermal`).
+ [13] E-807 (D13): `altermod nch g=7m` reaches every bin nch.1, nch.2 (it was
+      "no such device or model name nch").
+ [14] E-808 (D14, D15): the currents `.options savecurrents` adds are left out
+      of ac, sp and noise plots (0 long for a built-in, the bias for an OSDI
+      device or in noise), with a note; op, dc and tran keep them.
+ [15] E-809 (D16): an interval measurement whose TO is past the end of the
+      data says the window was cut.
+ [16] E-810 (D17): a saved OSDI parameter or opvar is typed by its declared
+      units (power, impedance, ...; notype for none), not by its name.
 """
 import os
 import re
@@ -120,6 +135,77 @@ analog begin
 end
 endmodule
 """,
+    # [11] a two-terminal model
+    "gr": """module gr(a, b);
+inout a, b; electrical a, b;
+parameter real g = 1e-3;
+analog I(a,b) <+ g*V(a,b);
+endmodule
+""",
+    # [12] a Verilog-A hierarchy, and a noisy resistor
+    "par": """module child(a, b);
+inout a, b; electrical a, b; electrical mid;
+analog begin I(a,mid) <+ V(a,mid)/1k; I(mid,b) <+ V(mid,b)/1k + ddt(1n*V(mid,b)); end
+endmodule
+module gc(a, b);
+inout a, b; electrical a, b;
+child k1(a, b);
+endmodule
+module par(p, n);
+inout p, n; electrical p, n;
+child c1(p, n);
+gc g1(p, n);
+endmodule
+""",
+    "nr": """module nr(a, b);
+inout a, b; electrical a, b;
+parameter real r = 1k;
+analog begin
+  I(a,b) <+ V(a,b)/r;
+  I(a,b) <+ white_noise(4*1.380649e-23*$temperature/r, "thermal");
+end
+endmodule
+""",
+    # [13] binned cards
+    "bm": """module bm(a, b);
+inout a, b; electrical a, b;
+parameter real g = 1e-3;
+parameter real lmin = 0; parameter real lmax = 1;
+parameter real wmin = 0; parameter real wmax = 1;
+(* type="instance" *) parameter real l = 1e-6;
+(* type="instance" *) parameter real w = 1e-6;
+analog I(a,b) <+ g*V(a,b);
+endmodule
+""",
+    # [15] a model that ends the run at V > 1.5
+    "fin": """module fin(a, b);
+inout a, b; electrical a, b;
+analog begin
+  I(a,b) <+ V(a,b)/1k;
+  if (V(a,b) > 1.5) $finish;
+end
+endmodule
+""",
+    # [16] opvars with units
+    "uv": """module uv(a, b);
+inout a, b; electrical a, b;
+parameter real r = 1k;
+(* units="A" *) real iop;
+(* units="W" *) real pw;
+(* units="Ohm" *) real rr;
+(* units="F" *) real cc;
+(* units="S" *) real gg;
+(* units="V" *) real vv;
+(* desc="no units" *) real nounit;
+(* desc="named like a current" *) real ifoo;
+(* units="furlong" *) real odd;
+analog begin
+  iop = V(a,b)/r; pw = iop*V(a,b); rr = r; cc = 1p; gg = 1/r; vv = V(a,b);
+  nounit = 3; ifoo = 2; odd = 1;
+  I(a,b) <+ iop;
+end
+endmodule
+""",
     # [10] a model and an instance parameter
     "dp": """module dp(a, b);
 inout a, b; electrical a, b;
@@ -169,7 +255,7 @@ def val(out, name):
     return float(m.group(1)) if m else None
 
 
-print("Enhancement-796..804: the smaller slips D1-D10 of the 2026-10-08 ngspice + OSDI hunt\n")
+print("Enhancement-796..810: the smaller slips D1-D17 of the 2026-10-08 ngspice + OSDI hunt\n")
 
 # ------------------------------------------------------------- [1] ---
 print("[1] E-796: an integer parameter written by altermod/alter")
@@ -417,6 +503,131 @@ out = run(["dp"], "v1 1 0 1\nn1 1 0 dpm k=2 k=3\n.model dpm dp", "op\nprint i(v1
 check("[10] the instance line: unchanged ('the last value is used', 3)",
       "parameter 'k' is set more than once on this line; the last value is used." in out
       and val(out, "i(v1)") == -3e-3, out[-300:])
+
+# ------------------------------------------------------------- [11] ---
+print("[11] E-805: too many nodes on an OSDI instance line")
+out = run(["gr"], "v1 1 0 1\nr9 2 0 1k\nn1 1 2 3 grm\n.model grm gr", "op", "n11")
+check("[11] one extra: the terminals and the node left over",
+      "too many nodes: n1 connects 3, but model grm (module gr) has 2 terminals (a, b); "
+      "'3' is left over" in out, out[-400:])
+out = run(["gr"], "v1 1 0 1\nn1 1 0 3 4 grm\n.model grm gr", "op", "n12")
+check("[11] two extra: both named", "connects 4" in out and "'3 4' are left over" in out,
+      out[-400:])
+out = run(["gr"], "v1 1 0 1\nn1 1 0 grm\n.model grm gr", "op\nprint i(v1)", "n13")
+check("[11] the right count still runs", val(out, "i(v1)") == -1e-3, out[-300:])
+
+# ------------------------------------------------------------- [12] ---
+print("[12] E-806: a Verilog-A child's internal node, and the short form of a subcircuit instance")
+B12 = "v1 1 0 2\nn1 1 0 parm\n.model parm par"
+out = run(["par"], B12, "op\nprint v(n1#c1__mid) v(n1#c1.mid) v(n1#g1.k1.mid)", "h1")
+check("[12] print: n1#c1.mid and n1#g1.k1.mid name n1#c1__mid and n1#g1__k1__mid",
+      val(out, "v(n1#c1.mid)") == 1.0 and val(out, "v(n1#g1.k1.mid)") == 1.0
+      and "checkvalid" not in out, out[-400:])
+out = run(["par"], "v1 1 0 pwl(0 0 1u 2)\nn1 1 0 parm\n.model parm par\n"
+          ".save v(n1#c1.mid) v(n1#g1.k1.mid) v(1)\n.meas tran vm max v(n1#g1.k1.mid)",
+          "tran 10n 1u\nprint vm", "h2")
+check("[12] .save and .meas take the hierarchical spelling",
+      "nothing of that name" not in out and val(out, "vm") is not None
+      and abs(val(out, "vm") - 0.5677) < 1e-3, out[-400:])
+out = run(["par"], B12 + "\n.ic v(n1#c1.mid)=0.5", "tran 1n 10n uic\nprint v(n1#c1__mid)[0]", "h3")
+check("[12] .ic v(n1#c1.mid) is applied", abs((val(out, "v(n1#c1__mid)[0]") or 0) - 0.5) < 1e-3
+      and "non-existent" not in out, out[-400:])
+out = run(["par"], B12 + "\n.nodeset v(n1#c1.mid)=0.7 v(n1#nosuch.mid)=1", "op", "h4")
+check("[12] .nodeset takes it too, and a name that is no node is still refused",
+      "non-existent node - n1#nosuch.mid" in out and "n1#c1.mid" not in out, out[-400:])
+out = run(["nr"], "v1 1 0 dc 0 ac 1\nr1 1 2 1k\nx1 2 0 sub\n.subckt sub a b\nn1 a b nrm\n"
+          ".model nrm nr r=1k\n.ends",
+          "noise v(2) v1 lin 1 1k 1k 1\nsetplot noise1\nprint onoise_n.x1.n1_thermal "
+          "onoise_x1.n1_thermal\nprint onoise_x1.nosuch_thermal", "h5")
+a, b = val(out, "onoise_n.x1.n1_thermal"), val(out, "onoise_x1.n1_thermal")
+check("[12] onoise_x1.n1_thermal is onoise_n.x1.n1_thermal", a is not None and a == b,
+      f"{a} {b}")
+check("[12] ...and a short form that names nothing is still not available",
+      "vector onoise_x1.nosuch_thermal is not available" in out, out[-300:])
+
+# ------------------------------------------------------------- [13] ---
+print("[13] E-807: altermod on a binned model's name")
+B13 = ("v1 1 0 1\nv2 2 0 1\nn1 1 0 nch l=0.5u w=1u\nn2 2 0 nch l=5u w=1u\n"
+       ".model nch.1 bm g=1m lmin=0 lmax=1u wmin=0 wmax=10u\n"
+       ".model nch.2 bm g=3m lmin=1u lmax=10u wmin=0 wmax=10u")
+out = run(["bm"], B13, "op\naltermod nch g=7m\nop\nprint i(v1) i(v2)", "b1")
+check("[13] altermod nch g=7m: both bins, and a note naming them in bin order",
+      "Note: altermod: 'nch' is a binned model; g was given to its 2 bins (nch.1, nch.2)."
+      in out and val(out, "i(v1)") == -7e-3 and val(out, "i(v2)") == -7e-3, out[-400:])
+out = run(["bm"], B13, "op\naltermod @nch[g]=7m\nop\nprint i(v2)", "b2")
+check("[13] the @nch[g] spelling too", val(out, "i(v2)") == -7e-3, out[-300:])
+out = run(["bm"], B13, "op\naltermod nch nosuch=1\naltermod nchx g=1m", "b3")
+check("[13] a parameter no bin has: each refusal, then 'no bin took'",
+      "no bin took nosuch" in out and "was given" not in out, out[-400:])
+check("[13] a name with no bins is still 'no such device or model name'",
+      "no such device or model name nchx" in out, out[-400:])
+out = ngrun("* bsim4 bins\nvd d 0 1\nvg g 0 1\nm1 d g 0 0 nch l=0.5u w=1u\nm2 d g 0 0 nch l=5u w=1u\n"
+            ".model nch.1 nmos level=54 vth0=0.5 lmin=0 lmax=1u wmin=0 wmax=10u\n"
+            ".model nch.2 nmos level=54 vth0=0.5 lmin=1u lmax=10u wmin=0 wmax=10u\n"
+            ".control\nop\nprint @m2[id]\naltermod nch vth0=0.3\nop\nprint @m2[id]\n"
+            ".endc\n.end\n", "b4")
+ids = [float(x) for x in re.findall(r"^@m2\[id\] = (\S+)", out, re.M)]
+check("[13] built-in BSIM4 bins the same way (the current rises as vth0 falls)",
+      "given to its 2 bins (nch.1, nch.2)" in out and len(ids) == 2 and ids[1] > ids[0], f"{ids}")
+
+# ------------------------------------------------------------- [14] ---
+print("[14] E-808: savecurrents outside op, dc and tran")
+B14 = "v1 1 0 dc 0.6 ac 1\nr1 1 2 1k\nc1 2 0 1n\nd1 2 0 dm\n.model dm d is=1e-14\nn1 1 0 grm\n.model grm gr\n.option savecurrents"
+out = run(["gr"], B14, "ac lin 2 1k 1meg\ndisplay", "c14a")
+check("[14] ac: no savecurrents vector (each was 0 long; the OSDI device's three held its bias)",
+      "@c1[i]" not in out and "@d1[id]" not in out and "@n1[i]" not in out, out[-600:])
+check("[14] ...and one note, with the .probe hint",
+      len(re.findall(r"Note: \.options savecurrents saves device currents in op, dc and tran "
+                     r"analyses; this AC analysis leaves its 6 out", out)) == 1
+      and "`.probe i(<device>)`" in out, out[-600:])
+out = run(["gr"], B14, "noise v(2) v1 lin 2 1k 2k 1\nsetplot noise1\ndisplay\nsetplot noise2\ndisplay",
+          "c14b")
+check("[14] noise: none in either noise plot, said once",
+      "@c1[i]" not in out and "@n1[i]" not in out
+      and out.count("this NOISE analysis leaves its 6 out (they would hold the bias currents, "
+                    "repeated at every frequency)") == 1, out[-600:])
+out = run(["gr"], B14, "op\nprint @r1[i] @n1[i]\ndc v1 0 0.6 0.3\ndisplay", "c14c")
+check("[14] op and dc keep them", val(out, "@r1[i]") is not None and "@d1[id]" in out
+      and "leaves its" not in out, out[-600:])
+out = run(["gr"], B14.replace(".option savecurrents", ".save @r1[i] v(1)"), "ac lin 1 1k 1k\ndisplay", "c14d")
+check("[14] an explicit .save of a current in ac is the user's, kept as before",
+      "@r1[i]" in out and "leaves its" not in out, out[-400:])
+
+out = ngrun("* probe\nv1 1 0 dc 0 ac 1\nr1 1 2 1k\nc1 2 0 1n\n.probe i(r1) i(c1)\n.control\n"
+            "ac lin 2 1k 1meg\nlet pd1 = vecmax(mag(i(r1) + i(v1)))\nlet pd2 = vecmax(mag(i(r1) - i(c1)))\n"
+            "let pd3 = vecmin(mag(i(c1)))\nprint pd1\nprint pd2\nprint pd3\n.endc\n.end\n", "c14e")
+pd = [float(x) for x in re.findall(r"pd\d = (\S+)", out)]
+check("[14] the hinted .probe i(<device>) records the ac current: i(r1) = -i(v1) = i(c1), non-zero",
+      len(pd) == 3 and pd[0] < 1e-12 and pd[1] < 1e-12 and pd[2] > 1e-6, f"{pd}")
+
+# ------------------------------------------------------------- [15] ---
+print("[15] E-809: an interval measurement whose window the data did not reach")
+F15 = ("v1 1 0 pwl(0 0 1u 3)\nn1 1 0 fm\n.model fm fin\n"
+       ".meas tran vavg avg v(1) from=0 to=1u\n.meas tran vrms rms v(1) from=0 to=1u\n"
+       ".meas tran vint integ v(1) from=0 to=1u\n.meas tran vmx max v(1) from=0 to=1u\n"
+       ".meas tran vpp pp v(1) from=0 to=1u\n.meas tran vok avg v(1) from=0 to=0.4u\n"
+       ".meas tran vnoto avg v(1)")
+out = run(["fin"], F15, "tran 10n 1u", "w15")
+for m, f in (("vavg", "avg"), ("vrms", "rms"), ("vint", "integ"), ("vmx", "max"), ("vpp", "pp")):
+    check(f"[15] {f}: said that the data end at 5.028e-07, before TO=1e-06",
+          f"Warning: measure {m}: the data end at 5.028e-07, before TO=1e-06; the {f} covers "
+          "the window up to 5.028e-07 only." in out, out[-900:])
+check("[15] pp's echo is the window used (it printed to= 1e-06)",
+      re.search(r"^vpp\s+=\s+\S+ from=\s+0\.00000e\+00 to=\s+5\.02800e-07", out, re.M) is not None,
+      out[-500:])
+check("[15] a window inside the data, and one without TO, say nothing",
+      "measure vok" not in out and "measure vnoto" not in out, out[-500:])
+
+# ------------------------------------------------------------- [16] ---
+print("[16] E-810: a saved OSDI opvar is typed by its units")
+out = run(["uv"], "v1 1 0 pwl(0 0 1u 2)\nn1 1 0 uvm\n.model uvm uv\n"
+          ".save all @n1[iop] @n1[pw] @n1[rr] @n1[cc] @n1[gg] @n1[vv] @n1[nounit] @n1[ifoo] "
+          "@n1[odd] @n1[i_a]", "tran 10n 1u\ndisplay", "u16")
+types = dict(re.findall(r"^\s+@n1\[(\w+)\]\s+:\s+([\w-]+),", out, re.M))
+for vec, want in (("pw", "power"), ("rr", "impedance"), ("cc", "capacitance"), ("gg", "admittance"),
+                  ("iop", "current"), ("vv", "voltage"), ("nounit", "notype"), ("ifoo", "notype"),
+                  ("odd", "notype"), ("i_a", "current")):
+    check(f"[16] @n1[{vec}] is {want}", types.get(vec) == want, f"{types.get(vec)}")
 
 print(f"\n    {passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

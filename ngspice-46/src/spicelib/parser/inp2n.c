@@ -922,7 +922,37 @@ void INP2N(CKTcircuit *ckt, INPtables *tab, struct card *current) {
 
   numnodes = i - 1;
   if (numnodes > *dev->terms) {
-    LITERR("too many nodes connected to instance");
+    /* Enhancement-805 (hunt 2026-10-08 D11): name the model's terminals and
+     * the nodes left over -- "too many nodes connected to instance" named
+     * neither, while too few nodes, or a stray value, are explained. */
+    DS_CREATE(terms, 128);
+    DS_CREATE(extra, 64);
+    char *scan = current->line, *tok, *msg;
+    int k;
+    for (k = 0; k < *dev->terms; k++) {
+      if (k)
+        ds_cat_str(&terms, ", ");
+      ds_cat_str(&terms, dev->termNames[k]);
+    }
+    tok = gettok(&scan);                          /* the instance name */
+    tfree(tok);
+    for (k = 0; k < numnodes && (tok = gettok(&scan)) != NULL; k++) {
+      if (k >= *dev->terms) {
+        if (k > *dev->terms)
+          ds_cat_char(&extra, ' ');
+        ds_cat_str(&extra, tok);
+      }
+      tfree(tok);
+    }
+    msg = tprintf("too many nodes: %s connects %d, but model %s (module %s) has "
+                  "%d terminal%s (%s); '%s' %s left over",
+                  name, numnodes, thismodel->INPmodName, dev->name, *dev->terms,
+                  *dev->terms == 1 ? "" : "s", ds_get_buf(&terms), ds_get_buf(&extra),
+                  numnodes - *dev->terms == 1 ? "is" : "are");
+    LITERR(msg);
+    tfree(msg);
+    ds_free(&terms);
+    ds_free(&extra);
     return;
   }
 

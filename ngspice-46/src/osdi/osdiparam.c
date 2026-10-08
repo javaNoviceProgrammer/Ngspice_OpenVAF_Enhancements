@@ -507,6 +507,31 @@ extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
  *
  * Returns 0 for anything that is not an OSDI instance, so the caller needs no
  * device-type test of its own. */
+/* Enhancement-810 (hunt 2026-10-08 D17): the declared `units` of parameter or
+ * operating-point variable `param` of an OSDI instance -- "" when it declares
+ * none -- or NULL when the instance is not an OSDI one or `param` is not one
+ * of its parameters or opvars (a terminal current, `dt`, `temp`: names the
+ * loader adds). The output layer types a saved vector by it. */
+const char *OSDIparamUnits(GENinstance *instPtr, const char *param) {
+  OsdiRegistryEntry *entry;
+  const OsdiDescriptor *descr;
+
+  if (!instPtr || !instPtr->GENmodPtr || !param)
+    return NULL;
+  if (!osdi_devtype_is_osdi(instPtr->GENmodPtr->GENmodType))
+    return NULL;
+  entry = osdi_reg_entry_inst(instPtr);
+  if (!entry || !(descr = entry->descriptor))
+    return NULL;
+  for (uint32_t k = 0; k < descr->num_params + descr->num_opvars; k++) {
+    const OsdiParamOpvar *po = &descr->param_opvar[k];
+    for (uint32_t a = 0; a <= po->num_alias; a++)
+      if (po->name[a] && cieq(po->name[a], (char *) param))
+        return po->units ? po->units : "";
+  }
+  return NULL;
+}
+
 int OSDIcollapseChanged(GENinstance *instPtr) {
   OsdiRegistryEntry *entry;
   OsdiExtraInstData *xtra;

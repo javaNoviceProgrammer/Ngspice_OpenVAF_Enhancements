@@ -1406,6 +1406,48 @@ measure_minMaxAvg(
 }
 
 
+/* Enhancement-809 (hunt 2026-10-08 D16): an interval measurement whose TO lies
+ * past the end of the data -- a `tran` a model's $finish ended at 0.503 us,
+ * measured `from=0 to=1u` -- covers only the data there is. Enhancement-485
+ * already reports the window actually used ("to= 5.028e-07"), but nothing said
+ * it was not the window asked for. Say so, beside the result. */
+static double
+e809_window_cut(MEASUREPTR meas, double to, const char *mName, const char *mFunction)
+{
+    struct dvec *d, *sc;
+    double first, last, end;
+
+    if (!meas->m_to_given || !meas->m_vec || !meas->m_analysis)
+        return to;
+    if ((d = vec_get(meas->m_vec)) == NULL)
+        return to;
+    if (cieq(meas->m_analysis, "ac") || cieq(meas->m_analysis, "sp"))
+        sc = vec_get("frequency");
+    else if (cieq(meas->m_analysis, "dc"))
+        sc = e467_dc_scale(d);
+    else
+        sc = vec_get("time");
+    if (!sc || sc->v_length < 1)
+        return to;
+    if (isreal(sc)) {
+        first = sc->v_realdata[0];
+        last = sc->v_realdata[sc->v_length - 1];
+    } else {
+        first = sc->v_compdata[0].cx_real;
+        last = sc->v_compdata[sc->v_length - 1].cx_real;
+    }
+    end = first > last ? first : last;
+    if (to > end && !AlmostEqualUlps(to, end, 100) && to - end > 1e-9 * fabs(to)) {
+        fprintf(cp_err,
+                "Warning: measure %s: the data end at %g, before TO=%g; the %s "
+                "covers the window up to %g only.\n",
+                mName, end, to, mFunction, end);
+        return end;
+    }
+    return to;
+}
+
+
 /* -----------------------------------------------------------------
  * Function: gain margin / phase margin from an AC loop-gain response.
  *   phase_margin: PM = 180 + phase, evaluated at the (first) gain
@@ -2356,6 +2398,7 @@ get_measure2(
     int wl_cnt;
     char *p;
     int ret_val = MEASUREMENT_FAILURE;
+    double e809_to = 0.0;          /* Enhancement-809: TO as requested */
     FILE *mout = cp_out;
 
     *result = 0.0e0;        /* default result */
@@ -2695,6 +2738,7 @@ err_ret3:
         }
 
         // measure
+        e809_to = meas->m_to;                              /* Enhancement-809 */
         measure_rms_integral(meas, mFunctionType);
 
         if (isnan(meas->m_measured)) {
@@ -2702,6 +2746,8 @@ err_ret3:
             measure_errMessage(mName, mFunction, "TRIG", errbuf, autocheck); // ??
             goto err_ret4;
         }
+        if (!autocheck)
+            e809_window_cut(meas, e809_to, mName, mFunction);       /* Enhancement-809 */
 
         if (meas->m_at == 1e99)
             meas->m_at = 0.0e0;
@@ -2741,12 +2787,15 @@ err_ret4:
         }
 
         // measure
+        e809_to = meas->m_to;                              /* Enhancement-809 */
         measure_minMaxAvg(meas, mFunctionType);
         if (isnan(meas->m_measured)) {
             snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
             measure_errMessage(mName, mFunction, "TRIG", errbuf, autocheck); // ??
             goto err_ret5;
         }
+        if (!autocheck)
+            e809_window_cut(meas, e809_to, mName, mFunction);       /* Enhancement-809 */
 
         if (meas->m_at == 1e99)
             meas->m_at = meas->m_from;
@@ -2830,6 +2879,7 @@ err_ret_margin:
         }
 
         // measure
+        e809_to = measTrig->m_to;                          /* Enhancement-809 */
         if ((mFunctionType == AT_MIN) || (mFunctionType == AT_MIN_AT))
             measure_minMaxAvg(measTrig, AT_MIN);
         else
@@ -2840,6 +2890,8 @@ err_ret_margin:
             measure_errMessage(mName, mFunction, "TRIG", errbuf, autocheck); // ??
             goto err_ret6;
         }
+        if (!autocheck)
+            e809_window_cut(measTrig, e809_to, mName, mFunction);   /* Enhancement-809 */
 
         if ((mFunctionType == AT_MIN) || (mFunctionType == AT_MAX)) {
             // print results
@@ -2887,6 +2939,7 @@ err_ret6:
         }
 
         // measure min
+        e809_to = measTrig->m_to;                          /* Enhancement-809 */
         measure_minMaxAvg(measTrig, AT_MIN);
         if (isnan(measTrig->m_measured)) {
             snprintf(errbuf, MEAS_ERRBUF_SIZE, "out of interval\n");
@@ -2903,6 +2956,9 @@ err_ret6:
             goto err_ret7;
         }
         maxValue = measTrig->m_measured;
+        if (!autocheck)                                    /* Enhancement-809: and the */
+            measTrig->m_to = e809_window_cut(measTrig, e809_to,   /* echo ends there */
+                                             mName, mFunction);
 
         // print results
         if (out_line)

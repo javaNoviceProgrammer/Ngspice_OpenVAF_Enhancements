@@ -1,6 +1,6 @@
-# osdislips_examples — Enhancements 796 to 804
+# osdislips_examples — Enhancements 796 to 810
 
-The smaller slips D1 to D10 of the
+The smaller slips D1 to D17 of the
 [ngspice + OSDI hunt of 2026-10-08](../../docs/bug_hunts/2026-10-08_ngspice-osdi-hierarchy-sweeps-events-and-outputs.md).
 Each is pinned end-to-end through ngspice, with openvaf-r compiling the models:
 
@@ -29,6 +29,21 @@ Each is pinned end-to-end through ngspice, with openvaf-r compiling the models:
 - **[10] [E-804](../../enhancements_doc/Enhancement-804.md) (D10).** A parameter set twice on a
   `.model` card: the message says the last value is used, and it is, for instance-parameter
   defaults too.
+- **[11] [E-805](../../enhancements_doc/Enhancement-805.md) (D11).** Too many nodes on an OSDI line
+  names the model's terminals and the nodes left over.
+- **[12] [E-806](../../enhancements_doc/Enhancement-806.md) (D12).** A Verilog-A child's internal
+  node answers to `n1#c1.mid` as well as the flattened `n1#c1__mid`. This holds for `print`,
+  `.save`, `.meas`, `.ic` and `.nodeset`. A vector holding a subcircuit instance answers to its
+  short form, `onoise_x1.n1_thermal`.
+- **[13] [E-807](../../enhancements_doc/Enhancement-807.md) (D13).** `altermod nch g=7m` reaches
+  every bin `nch.1`, `nch.2`.
+- **[14] [E-808](../../enhancements_doc/Enhancement-808.md) (D14, D15).** The currents
+  `.options savecurrents` adds stay out of ac, sp and noise plots, with a note pointing to
+  `.probe i(<device>)`.
+- **[15] [E-809](../../enhancements_doc/Enhancement-809.md) (D16).** An interval measurement
+  whose TO lies past the end of the data says the window was cut.
+- **[16] [E-810](../../enhancements_doc/Enhancement-810.md) (D17).** A saved OSDI opvar is typed
+  by its declared units.
 
-Run: `python3 verify_osdislips.py` (56 checks per solver, both solvers; 35 fail on the E-795
+Run: `python3 verify_osdislips.py` (93 checks per solver, both solvers; 60 fail on the E-795
 binaries, none of them in [6]).

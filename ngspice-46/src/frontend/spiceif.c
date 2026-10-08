@@ -55,6 +55,7 @@ CDHW*/
 #include "ngspice/iferrmsg.h"
 #include "ngspice/ifsim.h"
 #include "ngspice/hash.h"
+#include "ngspice/dstring.h"   /* Enhancement-807 */
 #include "ngspice/devdefs.h"
 
 #include "circuits.h"
@@ -1920,6 +1921,75 @@ has_element_parms(IFdevice *device, const char *param, int do_model)
     return parmlookup(device, &dummy, buf, do_model, 1) != NULL;
 }
 
+/* Enhancement-807 (hunt 2026-10-08 D13): `altermod nch g=7m` when the cards
+ * are the bins `nch.1`, `nch.2` -- there is no model `nch`, and the command
+ * answered "no such device or model name nch" with no word about the bins, and
+ * no spelling reached them all at once. The value goes to every bin, each
+ * through the ordinary path (its own messages, its own refusal), and a note
+ * names them. Returns 0 when `name` has no bins. */
+static int
+e807_altermod_bins(CKTcircuit *ckt, const char *name, char *param, struct dvec *val)
+{
+    size_t len = strlen(name);
+    char **bins = NULL;
+    int nbins = 0, ntook = 0, t, k;
+    GENmodel *m;
+    DS_CREATE(list, 64);
+
+    if (!ckt || !len || !param)
+        return 0;
+    for (t = 0; t < DEVmaxnum; t++)
+        for (m = ckt->CKThead[t]; m; m = m->GENnextModel) {
+            const char *mn = m->GENmodName, *q;
+            if (!mn || strlen(mn) <= len + 1 || !ciprefix((char *) name, (char *) mn) ||
+                mn[len] != '.')
+                continue;
+            for (q = mn + len + 1; *q && isdigit_c(*q); q++)
+                ;
+            if (*q || q == mn + len + 1)
+                continue;                       /* not `<name>.<digits>` */
+            bins = TREALLOC(char *, bins, nbins + 1);
+            bins[nbins++] = (char *) mn;
+        }
+    if (!nbins) {
+        ds_free(&list);
+        return 0;
+    }
+    for (k = 1; k < nbins; k++) {           /* in bin order */
+        char *b = bins[k];
+        int j = k - 1;
+        while (j >= 0 && atoi(bins[j] + len + 1) > atoi(b + len + 1)) {
+            bins[j + 1] = bins[j];
+            j--;
+        }
+        bins[j + 1] = b;
+    }
+    for (k = 0; k < nbins; k++) {
+        char *bn = bins[k];
+        int before = ft_set_writes;
+        if (k)
+            ds_cat_str(&list, ", ");
+        ds_cat_str(&list, bn);
+        if_setparam(ckt, &bn, param, val, 1);
+        if (ft_set_writes != before)
+            ntook++;
+    }
+    if (ntook == nbins)
+        fprintf(cp_out, "Note: altermod: '%s' is a binned model; %s was given to "
+                "its %d bin%s (%s).\n", name, param, nbins, nbins == 1 ? "" : "s",
+                ds_get_buf(&list));
+    else if (ntook)
+        fprintf(cp_out, "Note: altermod: '%s' is a binned model; %s was given to "
+                "%d of its %d bins (%s).\n", name, param, ntook, nbins,
+                ds_get_buf(&list));
+    else
+        fprintf(cp_out, "Note: altermod: '%s' is a binned model (%s); no bin "
+                "took %s.\n", name, ds_get_buf(&list), param);
+    tfree(bins);
+    ds_free(&list);
+    return 1;
+}
+
 void
 if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_model)
 {
@@ -1933,6 +2003,8 @@ if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_
     INPretrieve(name, ft_curckt->ci_symtab);
     typecode = finddev(ckt, *name, &dev, &mod);
     if (typecode == -1) {
+        if (do_model && e807_altermod_bins(ckt, *name, param, val))
+            return;                                /* Enhancement-807 */
         fprintf(cp_err, "Error: no such device or model name %s\n", *name);
         return;
     }

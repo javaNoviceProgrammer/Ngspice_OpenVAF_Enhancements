@@ -60,7 +60,7 @@ Nothing was fixed; this is the list.
 | [F22](#f22) | **memory**: with any OSDI internal node, `OSDIload` copies `CKTmaxEqNum + 1` doubles out of `CKTrhsOld` at every bias point, past the end of its allocation (a heap over-read; a fault under Guard Malloc) | high |
 | [F23](#f23) | the LRM's `multiplicity="multiply"`/`"divide"` attribute on operating-point variables is ignored: with `m=4` the reports are per device | medium |
 | [F24](#f24) | `alter n1 dtemp=-400` (or `temp=-300`) says the below-absolute-zero value "is ignored", but the OSDI model receives the negative absolute temperature | medium |
-| [D](#d) | seventeen smaller slips *(D1–D5 and D7–D10 fixed in [E-796](../../enhancements_doc/Enhancement-796.md)…[E-804](../../enhancements_doc/Enhancement-804.md); D6 kept as designed)* | low |
+| [D](#d) | seventeen smaller slips *(D1–D5 and D7–D17 fixed in [E-796](../../enhancements_doc/Enhancement-796.md)…[E-810](../../enhancements_doc/Enhancement-810.md); D6 kept as designed)* | low |
 
 <a id="f1"></a>
 ## F1 — `alterparam` on a `.subckt`-line parameter overrides the instances' own values
@@ -401,6 +401,10 @@ these vectors, defines them from the device's own KCL stamp: the resistive resid
 charge derivative in a transient. A small-signal analysis was not considered. Its value is the
 phasor `(G + jωC)·v`.
 
+*Update ([E-808](../../enhancements_doc/Enhancement-808.md)): `.options savecurrents` no longer puts these vectors into an `ac` or `sp`
+plot. An explicit `.save @n1[i_a]` still records the bias current there, and a true small-signal
+terminal current is still open.*
+
 <a id="f20"></a>
 ## F20 — `print` of a long name overruns a heap buffer (a crash)
 
@@ -494,6 +498,14 @@ that crosses into an unmapped page would kill the run. The rhs vectors' own leng
 (line 2155) use `CKTmaxEqNum + 1`. The same module in a `tran 1n 10n uic`, which computes no bias point, runs
 clean under Guard Malloc, consistent with the bias-point capture being the only site.
 
+*Wider than first written (found while verifying the D slips):*
+- *An OSDI module without internal nodes faults at the same site (`OSDIload+440`, `memmove`)
+  under Guard Malloc. It does so beside built-in R, C and D, or in a subcircuit: the
+  osdislips [14] decks and [12]'s noise deck.*
+- *The E-795 binaries fault on the same decks.*
+- *So the count exceeds the allocation whenever `CKTmaxEqNum` runs past the matrix size, not
+  only through OSDI internal nodes.*
+
 <a id="f23"></a>
 ## F23 — the `multiplicity` attribute on operating-point variables is ignored
 
@@ -574,23 +586,28 @@ properly.
   value, which is why E-395 named neither)*
 - **D11** Too many nodes on an OSDI instance line: "too many nodes connected to instance",
   naming neither the model's terminal count nor its terminals. Too few, or a stray value, get
-  good messages.
+  good messages. *(fixed in [E-805](../../enhancements_doc/Enhancement-805.md))*
 - **D12** A Verilog-A child's internal node is reachable only as the mangled `n1#c1__mid`; the
   hierarchical `n1#c1.mid` is refused by `.ic` and `print`. A noise contribution of a device in
-  a subcircuit is `onoise_n.x1.n1_thermal` only (no `x1.n1` alias).
+  a subcircuit is `onoise_n.x1.n1_thermal` only (no `x1.n1` alias). *(fixed in [E-806](../../enhancements_doc/Enhancement-806.md))*
 - **D13** Binned cards `nch.1`/`nch.2`: `altermod nch g=7m` is "no such device or model name
   nch", with no word about the bins, and no wildcard reaches them (`nch*`, `nch.*`,
-  `@nch*[g]`; E-436's `@*:name[…]` covers subcircuit copies only).
+  `@nch*[g]`; E-436's `@*:name[…]` covers subcircuit copies only). *(fixed in [E-807](../../enhancements_doc/Enhancement-807.md):
+  `altermod nch` reaches every bin)*
 - **D14** `.option savecurrents` in `ac` leaves built-in devices' current vectors 0 long
-  (`@r9[i]`, `@c1[i]`), so `print` of them fails (base ngspice; compare F19).
+  (`@r9[i]`, `@c1[i]`), so `print` of them fails (base ngspice; compare F19). *(fixed in
+  [E-808](../../enhancements_doc/Enhancement-808.md), with D15: savecurrents' vectors stay out of ac, sp and noise plots, and a note points
+  to `.probe i(<device>)`)*
 - **D15** `.option savecurrents` in a `noise` analysis puts `@n1[i_a]` and a built-in `@rs[i]`
   into the `noise1` plot as real per-frequency "currents" (bias values; base ngspice).
+  *(fixed in [E-808](../../enhancements_doc/Enhancement-808.md); `noise2` carried them too)*
 - **D16** After a model's `$finish` ends a `tran` at 0.503 µs,
   `.meas tran vavg avg v(1) from=0 to=1u` averages over [0, 0.503 µs] and reports
   `to= 5.028e-07`, with no word that the requested window was cut. (A `when` measure past the
-  end fails with "out of interval", which is fine.)
+  end fails with "out of interval", which is fine.) *(fixed in [E-809](../../enhancements_doc/Enhancement-809.md))*
 - **D17** A saved OSDI opvar is typed *voltage* in the plot unless its unit is amperes: `units="A"`
   gives *current*, while `units="W"`, `units="Ohm"` and no `units` all give `voltage, real, 108 long`.
+  *(fixed in [E-810](../../enhancements_doc/Enhancement-810.md); `units="A"` gave current only because the opvar's name began with `i`)*
 
 ## Verified clean
 
