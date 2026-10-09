@@ -666,6 +666,7 @@ struct card *insert_new_line(
 
     x->nextcard = card ? card->nextcard : NULL;
     x->error = NULL;
+    x->xgiven = NULL;                   /* Enhancement-817 */
     x->actualLine = NULL;
     x->line = line;
     x->linenum = linenum;
@@ -6253,6 +6254,25 @@ static void inp_fix_inst_calls_for_numparam(
                                     inst_param_names[i], subckt_name,
                                     inst_line);
                         }
+                    }
+
+                    /* Enhancement-817: which parameters the instance gave
+                     * itself -- the positional rewrite below loses it, and
+                     * `alterparam <subckt> p=v` needs it to change only the
+                     * instances that took the default */
+                    {
+                        DS_CREATE(given, 64);
+                        ds_cat_str(&given, " ");
+                        for (i = 0; i < num_inst_params; i++) {
+                            char *lc = copy(inst_param_names[i]);
+                            strtolower(lc);
+                            ds_cat_str(&given, lc);
+                            ds_cat_str(&given, " ");
+                            tfree(lc);
+                        }
+                        tfree(c->xgiven);
+                        c->xgiven = copy(ds_get_buf(&given));
+                        ds_free(&given);
                     }
 
                     c->line = inp_fix_inst_line(inst_line, num_subckt_params,

@@ -44,6 +44,7 @@ Author: 1985 Wayne A. Christopher
 
 #include "numparam/numpaif.h"
 #include "ngspice/stringskip.h"
+#include "ngspice/dstring.h"   /* Enhancement-817 */
 #include "ngspice/randnumb.h"
 #include "ngspice/compatmode.h"
 
@@ -664,6 +665,7 @@ line_free_x(struct card *deck, bool recurse)
         tfree(deck->line);
         tfree(deck->error);
         tfree(deck->nupa_error);        /* Enhancement-604 */
+        tfree(deck->xgiven);            /* Enhancement-817 */
         tfree(deck);
         if (!recurse)
             return;
@@ -2889,6 +2891,46 @@ com_alterparam(wordlist *wl)
                     }
                     tfree(pname_eq);
                     if (found) {
+                        /* Enhancement-817 (hunt 2026-10-08 F1): the `params:`
+                         * list holds the `.subckt` line's own parameters as
+                         * well as the inner `.param`s inpcom moved there, and
+                         * every X line carries a value for each -- the
+                         * instance's own, or a copy of the default. All of
+                         * them were replaced, so `alterparam cell rr=100`
+                         * overrode `xb ... rr=500` along with the instances
+                         * that took the default. An instance that gave the
+                         * parameter itself (card->xgiven) now keeps it; the
+                         * default on the `.subckt` line moves too, so the
+                         * deck says what it does. An inner `.param` is never
+                         * given on a call, so it changes everywhere, as
+                         * before. */
+                        char *needle = tprintf(" %s ", pname);
+                        int nkept = 0;
+                        DS_CREATE(kept, 64);
+                        strtolower(needle);
+                        {
+                            char *pstart = strstr(dd->line, "params:");
+                            if (pstart) {
+                                char *rest = skip_non_ws(pstart);
+                                char *head = copy_substring(dd->line, rest);
+                                DS_CREATE(nl, 128);
+                                int k = 0;
+                                ds_cat_str(&nl, head);
+                                while (*(rest = skip_ws(rest))) {
+                                    char *tok = gettok(&rest);
+                                    ds_cat_str(&nl, " ");
+                                    if (k++ == notok)
+                                        ds_cat_printf(&nl, "%s=%s", pname, pval);
+                                    else
+                                        ds_cat_str(&nl, tok);
+                                    tfree(tok);
+                                }
+                                tfree(dd->line);
+                                dd->line = copy(ds_get_buf(&nl));
+                                ds_free(&nl);
+                                tfree(head);
+                            }
+                        }
                         /* find x line with same subcircuit name */
                         struct card *xx;
                         char *bsubb = tprintf(" %s ", subcktname);
@@ -2896,6 +2938,14 @@ com_alterparam(wordlist *wl)
                             char *xline = xx->line;
                             if (*xline == 'x') {
                                 xline = strstr(xline, bsubb);
+                                if (xline && xx->xgiven && strstr(xx->xgiven, needle)) {
+                                    if (nkept < 5)
+                                        ds_cat_printf(&kept, "%s%.*s", nkept ? ", " : "",
+                                                      (int) (skip_non_ws(xx->line) - xx->line),
+                                                      xx->line);
+                                    nkept++;
+                                    continue;
+                                }
                                 if (xline) {
                                     xline = nexttok(xline); /* skip subcktname */
                                     int ii;
@@ -2913,6 +2963,20 @@ com_alterparam(wordlist *wl)
                             }
                         }
                         tfree(bsubb);
+                        if (nkept) {
+                            char more[48] = "";
+                            if (nkept > 5)
+                                (void) snprintf(more, sizeof more, " and %d more", nkept - 5);
+                            fprintf(cp_err,
+                                    "Note: alterparam %s %s=%s sets the default of .subckt "
+                                    "%s; %s%s give%s %s on the instance line and keep%s it.\n",
+                                    subcktname, pname, pval, subcktname,
+                                    ds_get_buf(&kept), more,
+                                    nkept == 1 ? "s" : "", pname,
+                                    nkept == 1 ? "s" : "");
+                        }
+                        ds_free(&kept);
+                        tfree(needle);
                     }
                 }
                 else {

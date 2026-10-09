@@ -58,6 +58,20 @@ inp_analysis_node(void *ckt, char **token, INPtables *tab, CKTnode **node)
     inp_node_hint = NULL;
     if (INPtermSearch(c, token, tab, node) == E_EXISTS)
         return OK;                        /* the ordinary case: a real node */
+    /* Enhancement-819 (hunt 2026-10-08 F3): an internal node named by the
+     * short spelling of its device (`x1.n1#mid` for `n.x1.n1#mid`, the
+     * Enhancement-410 form) is taken by the name the circuit gives it */
+    if (c) {
+        char *canon = INPinternalNodeCanon(c, *token);
+        if (canon && strcmp(canon, *token) != 0) {
+            tfree(*token);
+            *token = canon;
+            if (INPtermSearch(c, token, tab, node) == E_EXISTS)
+                return OK;
+        } else {
+            tfree(canon);
+        }
+    }
     if (INPanalysisCardFromCommand || (c && c->CKTisSetup)) {
         /* Enhancement-690 (hunt F8 of 2026-09-21): a device's INTERNAL node
          * -- `n1#mid` for a Verilog-A `electrical mid`, `q1#base` for a BJT

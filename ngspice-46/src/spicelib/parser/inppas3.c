@@ -20,18 +20,43 @@ Modified: AlansFixes
  * is no instance's stays the refusal it was; a suffix the device does not
  * build is reported at setup. Enhancement-690: inp2dot.c asks the same
  * question of an analysis command typed before the first setup. */
+/* Enhancement-819 (hunt 2026-10-08 F3): the same name with its instance part
+ * as the circuit spells it, to be freed -- or NULL when that part names no
+ * instance. A device inside a subcircuit is flattened to `<type>.<path>`
+ * (`n1` in `x1` is `n.x1.n1`), and Enhancement-410 lets `print`, `alter` and
+ * `show` write it `x1.n1`; `.ic v(x1.n1#mid)` and `.nodeset` asked for an
+ * instance named `x1.n1`, found none, and dropped the entry as "on
+ * non-existent node". The exact name is tried first, so every name that
+ * resolved resolves as it did. */
+char *
+INPinternalNodeCanon(CKTcircuit *ckt, const char *nodename)
+{
+    const char *sharp = strchr(nodename, '#');
+    const char *local;
+    char *inst, *canon = NULL;
+
+    if (!sharp || sharp == nodename || !sharp[1])
+        return NULL;
+    inst = copy_substring(nodename, sharp);
+    if (CKTfndDev(ckt, inst)) {
+        canon = copy(nodename);
+    } else if ((local = strrchr(inst, '.')) != NULL && local[1] &&
+               tolower_c(local[1]) != 'x') {
+        char *alt = tprintf("%c.%s", local[1], inst);
+        if (CKTfndDev(ckt, alt))
+            canon = tprintf("%s%s", alt, sharp);
+        tfree(alt);
+    }
+    tfree(inst);
+    return canon;
+}
+
 int
 INPinternalNodeName(CKTcircuit *ckt, const char *nodename)
 {
-    const char *sharp = strchr(nodename, '#');
-    char *inst;
-    int found;
-
-    if (!sharp || sharp == nodename || !sharp[1])
-        return 0;
-    inst = copy_substring(nodename, sharp);
-    found = CKTfndDev(ckt, inst) != NULL;
-    tfree(inst);
+    char *canon = INPinternalNodeCanon(ckt, nodename);
+    int found = canon != NULL;
+    tfree(canon);
     return found;
 }
 
@@ -133,9 +158,8 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                     /* If node is not found, issue a warning, ignore the defective token */
                     deferred = NULL;
                     found = INPtermSearch(ckt, &nodename, tab, &node1) == E_EXISTS;
-                    if (!found && INPinternalNodeName(ckt, nodename)) {
-                        deferred = nodename;    /* Enhancement-608: placed at setup */
-                        node1 = NULL;
+                    if (!found && (deferred = INPinternalNodeCanon(ckt, nodename)) != NULL) {
+                        node1 = NULL;           /* Enhancement-608: placed at setup */
                     } else if (!found) {
                         const char *nf, *nr, *sfx;
                         /* Enhancement-592: a bit of a node autoadapt split */
@@ -167,12 +191,14 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                                 "Warning: .nodeset: no value given after the node; "
                                 "this entry is ignored.\n   Please check line "
                                 "%s\n\n", current->line);
+                        tfree(deferred);        /* Enhancement-819 */
                         FREE(name);
                         continue;
                     }
-                    if (deferred)
+                    if (deferred) {
                         CKTpendNodPm(ckt, deferred, which, ptemp.rValue);
-                    else
+                        tfree(deferred);        /* Enhancement-819: a copy */
+                    } else
                         IFC(setNodeParm, (ckt, node1, which, &ptemp, NULL));
                     FREE(name);
                     continue;
@@ -213,9 +239,8 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                     /* If node is not found, issue a warning, ignore the defective token */
                     deferred = NULL;
                     found = INPtermSearch(ckt, &nodename, tab, &node1) == E_EXISTS;
-                    if (!found && INPinternalNodeName(ckt, nodename)) {
-                        deferred = nodename;    /* Enhancement-608: placed at setup */
-                        node1 = NULL;
+                    if (!found && (deferred = INPinternalNodeCanon(ckt, nodename)) != NULL) {
+                        node1 = NULL;           /* Enhancement-608: placed at setup */
                     } else if (!found) {
                         const char *nf, *nr, *sfx;
                         /* Enhancement-592: a bit of a node autoadapt split */
@@ -249,12 +274,14 @@ INPpas3(CKTcircuit *ckt, struct card *data, INPtables *tab, TSKtask *task,
                                 "Warning: .ic: no value given after the node; "
                                 "this entry is ignored.\n   Please check line "
                                 "%s\n\n", current->line);
+                        tfree(deferred);        /* Enhancement-819 */
                         FREE(name);
                         continue;
                     }
-                    if (deferred)
+                    if (deferred) {
                         CKTpendNodPm(ckt, deferred, which, ptemp.rValue);
-                    else
+                        tfree(deferred);        /* Enhancement-819: a copy */
+                    } else
                         IFC(setNodeParm, (ckt, node1, which, &ptemp, NULL));
                     FREE(name);
                     continue;

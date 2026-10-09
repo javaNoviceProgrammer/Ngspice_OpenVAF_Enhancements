@@ -2255,6 +2255,35 @@ if_hasmodel_named(CKTcircuit *ckt, const char *leaf)
 }
 
 
+/* Enhancement-818 (hunt 2026-10-08 F2): is there a model named exactly
+ * `name` -- a top-level card, not a `<path>:name` copy? When `first_copy` is
+ * given it receives the first flattened copy carrying that leaf name, or NULL. */
+int
+if_hasmodel_toplevel(CKTcircuit *ckt, const char *name, const char **first_copy)
+{
+    int typecode, top = 0;
+    if (first_copy)
+        *first_copy = NULL;
+    if (!name || !*name || !ckt)
+        return 0;
+    for (typecode = 0; typecode < ft_sim->numDevices; typecode++) {
+        GENmodel *mod;
+        if (!ft_sim->devices[typecode] || !ckt->CKThead[typecode])
+            continue;
+        for (mod = ckt->CKThead[typecode]; mod; mod = mod->GENnextModel) {
+            const char *nm = mod->GENmodName;
+            if (!nm)
+                continue;
+            if (eq(nm, name))
+                top = 1;
+            else if (first_copy && !*first_copy && eq(model_leaf(nm), name))
+                *first_copy = nm;
+        }
+    }
+    return top;
+}
+
+
 int
 if_setparam_wildcard(CKTcircuit *ckt, char *param, struct dvec *val)
 {

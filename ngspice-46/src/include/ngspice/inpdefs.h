@@ -87,6 +87,12 @@ struct card {
      * line is refused with the reason numparam had -- rather than the
      * process ending. */
     char *nupa_error;
+    /* Enhancement-817: on an X line whose parameters inpcom made positional
+     * (inp_fix_inst_calls_for_numparam), the names the instance itself gave,
+     * lower case, each between spaces (" rr m "); NULL on any other card.
+     * After that rewrite an instance's own value and a copied default read
+     * alike, and `alterparam <subckt> p=v` must leave the first alone. */
+    char *xgiven;
     struct card *nextcard;
     struct card *actualLine;
     struct nscope *level;
@@ -200,6 +206,7 @@ extern int INPanalysisCardFromCommand;
 /* Enhancement-429: a node an analysis card invented and nothing else uses. */
 int CKTnodePhantom(CKTnode *node);
 int INPinternalNodeName(CKTcircuit *ckt, const char *nodename);  /* Enhancement-690 */
+char *INPinternalNodeCanon(CKTcircuit *ckt, const char *nodename); /* Enhancement-819 */
 /* Enhancement-492: a node named only in a device's CONTROL position is a typo.
    Noted during pass 2, reported in pass 3 -- only then is "did anything
    connect to this?" answerable. */

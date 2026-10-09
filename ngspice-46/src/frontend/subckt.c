@@ -880,6 +880,8 @@ struct card * inp_deckcopy(struct card *deck) {
             d->error = copy(deck->error);
         if (deck->nupa_error)
             d->nupa_error = copy(deck->nupa_error);   /* Enhancement-604 */
+        if (deck->xgiven)
+            d->xgiven = copy(deck->xgiven);           /* Enhancement-817 */
         d->actualLine = inp_deckcopy(deck->actualLine);
         deck = deck->nextcard;
     }
@@ -932,6 +934,8 @@ struct card *inp_deckcopy_oc(struct card * deck)
         }
         if (deck->nupa_error)
             d->nupa_error = copy(deck->nupa_error);   /* Enhancement-604 */
+        if (deck->xgiven)
+            d->xgiven = copy(deck->xgiven);           /* Enhancement-817 */
         d->actualLine = NULL;
         deck = deck->nextcard;
         while (deck && *(deck->line) == '*') { /* skip comments */
@@ -993,6 +997,8 @@ struct card* inp_deckcopy_ln(struct card* deck)
         }
         if (deck->nupa_error)
             d->nupa_error = copy(deck->nupa_error);   /* Enhancement-604 */
+        if (deck->xgiven)
+            d->xgiven = copy(deck->xgiven);           /* Enhancement-817 */
         d->actualLine = NULL;
         deck = deck->nextcard;
     } /* end of loop over cards in the source deck */

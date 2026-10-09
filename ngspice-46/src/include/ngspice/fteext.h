@@ -359,6 +359,7 @@ extern GENinstance *if_find_instance_hier(CKTcircuit *ckt, const char *name); /*
 extern GENmodel *if_find_model_hier(CKTcircuit *ckt, const char *name);
 extern int if_setparam_wildcard_model_named(CKTcircuit *ckt, const char *leaf, char *param, struct dvec *val); /* Enhancement-436 */
 extern int if_hasmodel_named(CKTcircuit *ckt, const char *leaf);
+extern int if_hasmodel_toplevel(CKTcircuit *ckt, const char *name, const char **first_copy); /* E-818 */
 extern char *cp_hier_devname(const char *word); /* Enhancement-428 */
 extern int if_saveparam_wildcard(CKTcircuit *ckt, char *param, int do_model,
                                  double **valsOut, int *nOut);            /* Enhancement-409 */

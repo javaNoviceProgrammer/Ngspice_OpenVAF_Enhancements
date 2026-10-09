@@ -1552,17 +1552,39 @@ alter_set(char *dev, char *param, struct dvec *dv, int do_model)
          * what mismatch work needs, and broadening it would silently change
          * every deck that relies on it), but it is easy to write while meaning
          * "the model", so say when copies were left untouched. */
-        int others = 0;
-        if (do_model && dev && !strchr(dev, ':') && !strchr(dev, '*'))
+        /* Enhancement-818 (hunt 2026-10-08 F2): the note counted every model
+         * carrying the leaf name and took one of them for the top-level card.
+         * With the card only inside a subcircuit (copies x1:gm, x2:gm, x3:gm)
+         * `altermod gm g=7m` failed -- "no such device or model name gm" --
+         * and the note went on to say "3 models are named 'gm' (the top-level
+         * card and 2 flattened subcircuit copies); only the top-level one was
+         * changed": there was no such card and nothing changed. Whether a
+         * top-level card exists is now asked, not assumed. */
+        int others = 0, top = 0;
+        const char *copy1 = NULL;
+        if (do_model && dev && !strchr(dev, ':') && !strchr(dev, '*')) {
             others = if_hasmodel_named(ft_curckt->ci_ckt, dev);
+            top = if_hasmodel_toplevel(ft_curckt->ci_ckt, dev, &copy1);
+        }
 
         if_setparam(ft_curckt->ci_ckt, &dev, param, dv, do_model);
 
-        if (others > 1)
+        if (top && others > 1)
             fprintf(cp_err, "Note: %d models are named '%s' (the top-level card "
                     "and %d flattened subcircuit cop%s); only the top-level one "
                     "was changed -- use '@*:%s[...]' for all of them.\n",
                     others, dev, others - 1, others == 2 ? "y" : "ies", dev);
+        else if (!top && others == 1 && copy1)
+            fprintf(cp_err, "Note: no top-level card is named '%s'; the only "
+                    "model of that name is the flattened subcircuit copy '%s', "
+                    "which was not changed -- name it '%s'.\n",
+                    dev, copy1, copy1);
+        else if (!top && others > 1 && copy1)
+            fprintf(cp_err, "Note: no top-level card is named '%s'; the %d "
+                    "models of that name are flattened subcircuit copies "
+                    "('%s', ...), and none was changed -- use '@*:%s[...]' for "
+                    "all of them, or a copy's own name for one.\n",
+                    dev, others, copy1, dev);
     }
 }
 

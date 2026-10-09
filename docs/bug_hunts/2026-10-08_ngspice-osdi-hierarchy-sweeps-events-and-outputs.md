@@ -36,9 +36,9 @@ Nothing was fixed; this is the list.
 
 | | Finding | Severity |
 |---|---|---|
-| [F1](#f1) | `alterparam sub p=v` on a parameter of the `.subckt` line overrides the value every instance gave on its own line | medium |
-| [F2](#f2) | `altermod gm …` with only subcircuit copies of `gm` prints a note claiming a top-level card exists and was changed | low |
-| [F3](#f3) | `.ic`, `.nodeset` and `.save @…` refuse the `x1.n1` spelling of a device or internal node inside a subcircuit that `print`, `alter`, `show` and `.save v(…)` accept | low |
+| [F1](#f1) | *(fixed in [E-817](../../enhancements_doc/Enhancement-817.md): an instance's own value is kept, the default moves)* `alterparam sub p=v` on a parameter of the `.subckt` line overrides the value every instance gave on its own line | medium |
+| [F2](#f2) | *(fixed in [E-818](../../enhancements_doc/Enhancement-818.md))* `altermod gm …` with only subcircuit copies of `gm` prints a note claiming a top-level card exists and was changed | low |
+| [F3](#f3) | *(fixed in [E-819](../../enhancements_doc/Enhancement-819.md); an analysis command typed first refused it too)* `.ic`, `.nodeset` and `.save @…` refuse the `x1.n1` spelling of a device or internal node inside a subcircuit that `print`, `alter`, `show` and `.save v(…)` accept | low |
 | [F4](#f4) | a `.dc` sweep of temperature or of an OSDI parameter re-fires `@(initial_step)` and resets hidden state at every point, and `@(final_step)` sees the restored value, not the last point | medium |
 | [F5](#f5) | a `.dc` sweep aborted by `$fatal` leaves the swept source or parameter at the failing value for every later analysis | medium |
 | [F6](#f6) | in a parameter sweep the `OSDI(fatal)` message names the previous sweep point, and in the following op it still says "at sweep value 0" | low |
@@ -65,6 +65,12 @@ Nothing was fixed; this is the list.
 <a id="f1"></a>
 ## F1 — `alterparam` on a `.subckt`-line parameter overrides the instances' own values
 
+*Fixed in [E-817](../../enhancements_doc/Enhancement-817.md). inpcom rewrites each call to
+carry a value for every parameter -- its own or a copy of the default -- so `alterparam`
+could not tell them apart. The rewrite now records on the X card what the instance gave
+itself; `alterparam` keeps those values, moves the `.subckt` default, and names who kept
+theirs. 4 mA → 13 mA.*
+
 ```spice
 .subckt cell a b rr=1k
 r1 a b {rr}
@@ -88,6 +94,9 @@ subcircuit, `alterparam cell inner=500`) works: 2 mA to 4 mA.
 <a id="f2"></a>
 ## F2 — `altermod`'s copies note assumes a top-level card
 
+*Fixed in [E-818](../../enhancements_doc/Enhancement-818.md): whether a top-level card exists
+is asked, not assumed. Without one, the note says so, says nothing changed, and names a copy.*
+
 With a card `gm` only inside a subcircuit (copies `x1:gm`, `x2:gm`, `x3:gm`) and no top-level
 `gm`, `altermod gm g=7m` prints:
 
@@ -104,6 +113,11 @@ note counts every model whose leaf name matches and takes one of them for the to
 
 <a id="f3"></a>
 ## F3 — the `x1.n1` alias is refused by `.ic`, `.nodeset` and `.save @…`
+
+*Fixed in [E-819](../../enhancements_doc/Enhancement-819.md): an internal node's name is taken
+as the circuit spells it (`x1.n1#mid` → `n.x1.n1#mid`), for `.ic`, `.nodeset` and an analysis
+command typed before the first setup -- `tf v(x1.n1#mid) v1` as the first command aborted too
+-- and `.save @x1.n1[p]` keeps E-410's reconstruction whenever it finds the device.*
 
 An OSDI device `n1` inside `x1` is `n.x1.n1`, its internal node `n.x1.n1#mid`. The shorter
 `x1.n1` spelling is accepted unevenly:

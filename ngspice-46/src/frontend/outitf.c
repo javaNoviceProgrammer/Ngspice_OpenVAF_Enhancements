@@ -1032,25 +1032,33 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                     err = INPaName(parambuf, &tmpval, circuitPtr, &tdev,
                                    namebuf, &tfast, ft_sim, &tdtype, NULL);
 
-                    if (err != OK) {
+                    if (err == E_NODEV) {
                         /* Enhancement-410's reconstruction: an instance inside a
                          * subcircuit is flattened to `<type>.<path>`, the type
                          * letter being the first character of the LOCAL name.
                          * Retry there before giving up. */
+                        /* Enhancement-819 (hunt 2026-10-08 F3): and take it
+                         * whenever it FINDS the device. Only a full OK was
+                         * taken, but an operating-point variable answers
+                         * "no value yet" at save time (E-476), so
+                         * `.save @x1.n1[pw]` kept the unresolvable spelling and
+                         * was reported as "no such device" while
+                         * `.save @n.x1.n1[pw]` recorded the vector. */
                         const char *local = strrchr(namebuf, '.');
                         char hbuf[BSIZE_SP];
 
                         if (local && local[1] && tolower_c(local[1]) != 'x' &&
                             snprintf(hbuf, sizeof hbuf, "%c.%s", local[1],
                                      namebuf) < (int) sizeof hbuf) {
+                            int herr;
                             tfast = NULL;
                             tdev = -1;
-                            if (INPaName(parambuf, &tmpval, circuitPtr, &tdev,
-                                         hbuf, &tfast, ft_sim, &tdtype,
-                                         NULL) == OK) {
+                            herr = INPaName(parambuf, &tmpval, circuitPtr, &tdev,
+                                            hbuf, &tfast, ft_sim, &tdtype, NULL);
+                            if (herr != E_NODEV) {
                                 strncpy(namebuf, hbuf, BSIZE_SP - 1);
                                 namebuf[BSIZE_SP - 1] = '\0';
-                                err = OK;
+                                err = herr;
                             }
                         }
                     }
