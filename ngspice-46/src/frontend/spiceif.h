@@ -10,6 +10,8 @@ CKTcircuit * if_inpdeck(struct card *deck, INPtables **tab);
 int if_run(CKTcircuit *t, char *what, wordlist *args, INPtables *tab);
 /* Enhancement-632 (hunt F20): the circuit is stale after `osdi -f` -- said, TRUE */
 bool if_refuse_stale(const char *what);
+/* Enhancement-815: user parameter writes refused so far (doset_user) */
+extern int if_user_write_refusals;
 int if_option(CKTcircuit *ckt, char *name, enum cp_types type, void *value);
 /* Enhancement-756: set option variables across `reset` and `unset` */
 int if_is_task_option(const char *name);

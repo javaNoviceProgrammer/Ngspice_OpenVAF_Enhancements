@@ -410,5 +410,6 @@ extern int osdi_select_paramset_overload(int type, const char *card,
                                          const char *modname, char **why);
 extern int osdi_member_accepts(int type, const char *pname, double v); /* E-668 (hunt F10) */
 extern const char *OSDIparamUnits(GENinstance *inst, const char *param); /* E-810 */
+extern int OSDItempParamKind(GENinstance *inst, int id);       /* E-815 */
 extern const char *osdi_shadowed_module_for(const char *devname,
                                             const char **lib);

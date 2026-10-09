@@ -150,7 +150,8 @@ impl<'a, 'c> LoweringCtx<'a, 'c> {
                 | PlaceKind::TransitionRise(_)
                 | PlaceKind::TransitionFall(_)
                 | PlaceKind::SlewPosRate(_)
-                | PlaceKind::SlewNegRate(_) => F_ZERO,
+                | PlaceKind::SlewNegRate(_)
+                | PlaceKind::OpVarReport(_) => F_ZERO,
                 PlaceKind::EventState(i) => self.use_param(ParamKind::EventState(i)),
             };
             let entry = self.func.func.layout.entry_block().unwrap();

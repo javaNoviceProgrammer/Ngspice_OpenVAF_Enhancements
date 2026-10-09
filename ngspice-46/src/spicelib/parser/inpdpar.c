@@ -23,6 +23,9 @@ Author: 1985 Thomas L. Quarles
 #include "ngspice/fteext.h"
 #include "inpxx.h"
 #include "ngspice/devdefs.h"   /* Enhancement-755: DEV_OSDI */
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-815: OSDItempParamKind */
+#endif
 
 static IFparm *
 find_instance_parameter(char *name, IFdevice *device)
@@ -121,6 +124,62 @@ e426_check_multiplier(IFdevice *device, GENinstance *fast, IFparm *p,
        the built-ins keep the silence. */
 }
 
+/* Enhancement-815 (hunt 2026-10-08 F24): which instance-temperature knob
+ * parameter `id` of `device` is -- 1 for the absolute `temp` (Celsius), 2 for
+ * the offset `dtemp`, 0 for neither. Judged by id, over every keyword the
+ * device gives that id, so each spelling of one knob gets one answer: the
+ * keyword test this guard used let `dt=-400` -- an OSDI instance's other
+ * spelling of `dtemp` (Enhancement-397) -- through to the model at -99.85 K.
+ * `alter` (frontend/spiceif.c) and a `.dc @dev[...]` sweep
+ * (spicelib/analysis/dctrcurv.c) judge with the same rule. */
+int
+INPtempParamKind(IFdevice *device, GENinstance *inst, int id)
+{
+    int k, kind = 0;
+
+#ifdef OSDI
+    kind = OSDItempParamKind(inst, id);
+    if (kind)
+        return kind;
+#else
+    NG_IGNORE(inst);
+#endif
+    if (!device || !device->instanceParms || !device->numInstanceParms)
+        return 0;
+    for (k = 0; k < *device->numInstanceParms; k++) {
+        IFparm *q = device->instanceParms + k;
+        if (q->id != id || !q->keyword || (q->dataType & IF_VARTYPES) != IF_REAL)
+            continue;
+        if (cieq(q->keyword, "temp"))
+            return 1;
+        if (cieq(q->keyword, "dtemp"))
+            kind = 2;
+    }
+    return kind;
+}
+
+/* Enhancement-815: would writing `v` to parameter `id` put the device at or
+ * below absolute zero, with the circuit at its present ambient? The knob's
+ * kind (1 `temp`, 2 `dtemp`) when it would, else 0; `*at_c`, when given, is
+ * set to the device temperature in Celsius the value gives. `ckt->CKTtemp` is
+ * the ambient in force when the value is written -- for a card, as it is
+ * parsed (a `.option temp` card ahead of the devices, the ordinary layout,
+ * has already been applied). */
+int
+INPtempBelowZero(CKTcircuit *ckt, IFdevice *device, GENinstance *inst, int id,
+                 double v, double *at_c)
+{
+    int kind = INPtempParamKind(device, inst, id);
+    double at;
+
+    if (!kind)
+        return 0;
+    at = (kind == 1) ? v : (ckt ? ckt->CKTtemp - CONSTCtoK : 27.0) + v;
+    if (at_c)
+        *at_c = at;
+    return (at + CONSTCtoK <= 0.0) ? kind : 0;
+}
+
 /* Enhancement-467: instance-level value guards, the siblings of the option-level
  * ones in spicelib/analysis/cktsopt.c.
  *
@@ -144,7 +203,8 @@ e467_bad_instance_value(CKTcircuit *ckt, IFdevice *device, GENinstance *fast,
                         IFparm *p, IFvalue *val)
 {
     const char *who;
-    double v;
+    double v, at;
+    int kind;
 
     if (!p || !p->keyword || !val)
         return 0;
@@ -155,31 +215,23 @@ e467_bad_instance_value(CKTcircuit *ckt, IFdevice *device, GENinstance *fast,
     who = (fast && fast->GENname) ? fast->GENname
                                   : (device ? device->name : "device");
 
-    if (cieq(p->keyword, "temp")) {
-        if (v + CONSTCtoK <= 0.0) {
-            fprintf(stderr,
-                    "\nWarning: %s: temp = %g C is at or below absolute zero "
-                    "(-273.15 C); ignored, the circuit temperature is used "
-                    "instead.\n\n", who, v);
-            return 1;
-        }
-        return 0;
+    /* Enhancement-815: the knob by id, named by the keyword the deck wrote */
+    kind = INPtempBelowZero(ckt, device, fast, p->id, v, &at);
+    if (kind == 1) {
+        fprintf(stderr,
+                "\nWarning: %s: %s = %g C is at or below absolute zero "
+                "(-273.15 C); ignored, the circuit temperature is used "
+                "instead.\n\n", who, p->keyword, v);
+        return 1;
     }
-
-    if (cieq(p->keyword, "dtemp")) {
-        /* dtemp is a DELTA, so it is unphysical only together with an ambient.
-         * `ckt->CKTtemp` is the ambient in force as this card is parsed; a
-         * `.option temp` card ahead of the devices (the ordinary layout) has
-         * already been applied. */
-        double amb = ckt ? ckt->CKTtemp - CONSTCtoK : 27.0;
-        if (amb + v + CONSTCtoK <= 0.0) {
-            fprintf(stderr,
-                    "\nWarning: %s: dtemp = %g C puts the device at %g C, at "
-                    "or below absolute zero (-273.15 C); ignored.\n\n",
-                    who, v, amb + v);
-            return 1;
-        }
-        return 0;
+    if (kind == 2) {
+        /* dtemp is a DELTA, so it is unphysical only together with an
+         * ambient */
+        fprintf(stderr,
+                "\nWarning: %s: %s = %g C puts the device at %g C, at "
+                "or below absolute zero (-273.15 C); ignored.\n\n",
+                who, p->keyword, v, at);
+        return 1;
     }
 
     return 0;

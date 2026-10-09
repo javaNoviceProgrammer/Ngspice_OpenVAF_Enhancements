@@ -1,6 +1,6 @@
 use std::hash::BuildHasherDefault;
 
-use ahash::AHashSet;
+use ahash::{AHashMap, AHashSet};
 use hir::diagnostics::{BaseDB, ConsoleSink, Diagnostic, FileId, Label, LabelStyle, Report};
 use hir::lints::{builtin::instance_dependent_parameter, Lint, LintSrc};
 use hir::{
@@ -86,6 +86,8 @@ impl ModuleInfo {
         // and the `$`-named variables that are not exported
         let mut alias_decls: Vec<(SmolStr, hir::AliasParameter, Parameter)> = Vec::new();
         let mut dollar_opvars: Vec<(Variable, String)> = Vec::new();
+        // Enhancement-814: `<prefix>$mfactor` hidden variables by prefix
+        let mut mfactor_vars: AHashMap<String, Variable> = AHashMap::new();
         let mut declarations = module.rec_declarations(db);
         let mut add_diagnostic = |attr: ast::Attr, diag: &dyn Diagnostic| {
             if resolved_attrs.insert(attr.syntax().text_range()) {
@@ -112,10 +114,29 @@ impl ModuleInfo {
                         }
                     }
 
+                    // Enhancement-814 (hunt 2026-10-08 F23): the elaborator's
+                    // per-instance effective multiplicity, `<prefix>$mfactor`
+                    // (hir/src/elaborate.rs), for the child's output variables
+                    if let Some(prefix) = name.strip_suffix("$mfactor") {
+                        if !prefix.is_empty() && !prefix.contains('$') {
+                            mfactor_vars.insert(prefix.to_string(), var);
+                            continue;
+                        }
+                    }
+                    let multiplicity_attr = var.get_attr(db, &ast, "multiplicity");
+
                     // check for units or description
                     let units = var.get_attr(db, &ast, "units");
                     let desc = var.get_attr(db, &ast, "desc");
                     if units.is_none() && desc.is_none() && !all_vars_opvars {
+                        if let Some(attr) = multiplicity_attr {
+                            if parse_multiplicity(&attr).is_some_and(|m| m != Multiplicity::None) {
+                                add_diagnostic(
+                                    attr.clone(),
+                                    &MultiplicityIgnored { attr, why: MultiplicityWhy::NotOutput },
+                                );
+                            }
+                        }
                         continue;
                     }
 
@@ -129,6 +150,14 @@ impl ModuleInfo {
                     // two named blocks declaring `(*desc*) real t` both
                     // exported a colliding instance parameter `t`.
                     if declarations.in_block() {
+                        if let Some(attr) = multiplicity_attr {
+                            if parse_multiplicity(&attr).is_some_and(|m| m != Multiplicity::None) {
+                                add_diagnostic(
+                                    attr.clone(),
+                                    &MultiplicityIgnored { attr, why: MultiplicityWhy::Block },
+                                );
+                            }
+                        }
                         continue;
                     }
                     // Book audit (paramsets), LRM 6.4.3: a module output variable a
@@ -163,7 +192,37 @@ impl ModuleInfo {
                             lit
                         })
                         .unwrap_or_default();
-                    op_vars.insert(var, OpVar { unit: units, description: desc });
+                    // Enhancement-814 (hunt 2026-10-08 F23): LRM 3.2.1 -- how the
+                    // value is scaled by $mfactor "in any report of operating-point
+                    // values". It was read nowhere, so `m=4` reported per-device
+                    // currents, conductances and capacitances for every model that
+                    // declares it -- twenty corpus families (BSIM-CMG/BULK/IMG, PSP,
+                    // MEXTRAM, HICUM, HiSIM, ...), mostly through OPM/OPD macros.
+                    let multiplicity = match multiplicity_attr {
+                        None => Multiplicity::None,
+                        Some(attr) => match parse_multiplicity(&attr) {
+                            None => {
+                                add_diagnostic(
+                                    attr.clone(),
+                                    &MultiplicityIgnored { attr, why: MultiplicityWhy::Value },
+                                );
+                                Multiplicity::None
+                            }
+                            Some(Multiplicity::None) => Multiplicity::None,
+                            Some(m) if var.ty(db) == Type::Real => m,
+                            Some(_) => {
+                                add_diagnostic(
+                                    attr.clone(),
+                                    &MultiplicityIgnored { attr, why: MultiplicityWhy::Type },
+                                );
+                                Multiplicity::None
+                            }
+                        },
+                    };
+                    op_vars.insert(
+                        var,
+                        OpVar { unit: units, description: desc, multiplicity, mfactor_var: None },
+                    );
                 }
 
                 ScopeDef::Parameter(param) => {
@@ -709,6 +768,24 @@ impl ModuleInfo {
             );
         }
         check_exported_names(db, cu, module, &params, &alias_decls, &op_vars, sink);
+
+        // Enhancement-814: an output variable of an inlined child scales by the
+        // child's own effective multiplicity -- the longest `<prefix>__` of its
+        // flattened name with a `<prefix>__$mfactor` beside it; the module's
+        // `$mfactor` otherwise
+        if !mfactor_vars.is_empty() {
+            for (var, info) in op_vars.iter_mut() {
+                if info.multiplicity == Multiplicity::None {
+                    continue;
+                }
+                let name = var.name(db).to_string();
+                info.mfactor_var = name
+                    .match_indices("__")
+                    .map(|(i, _)| &name[..i + 2])
+                    .filter_map(|prefix| mfactor_vars.get(prefix).copied())
+                    .last();
+            }
+        }
 
         // Enhancement-555: which parameters the module tests with $param_given
         let tested = module_given_tests(db, module);
@@ -1918,6 +1995,85 @@ pub struct ParamStat {
 pub struct OpVar {
     pub unit: String,
     pub description: String,
+    /// Enhancement-814: LRM 3.2.1's `multiplicity` attribute
+    pub multiplicity: Multiplicity,
+    /// Enhancement-814: for an inlined child's output variable, the hidden
+    /// variable holding that child's effective `$mfactor`; `None` scales by
+    /// the module's own
+    pub mfactor_var: Option<Variable>,
+}
+
+/// Enhancement-814 (hunt 2026-10-08 F23): LRM 3.2.1 -- an output variable's
+/// value is multiplied by `$mfactor`, divided by it, or left alone "in any
+/// report of operating-point values". The compiled model stores the reported
+/// value, so every simulator's report honours it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Multiplicity {
+    #[default]
+    None,
+    Multiply,
+    Divide,
+}
+
+/// the `multiplicity` attribute's value, or `None` when it is not one of the
+/// three the LRM names
+fn parse_multiplicity(attr: &ast::Attr) -> Option<Multiplicity> {
+    match attr.val()?.as_str_literal()?.as_str() {
+        "multiply" => Some(Multiplicity::Multiply),
+        "divide" => Some(Multiplicity::Divide),
+        "none" => Some(Multiplicity::None),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MultiplicityWhy {
+    Value,
+    Type,
+    NotOutput,
+    Block,
+}
+
+/// Enhancement-814: a `multiplicity` attribute that cannot take effect
+struct MultiplicityIgnored {
+    attr: ast::Attr,
+    why: MultiplicityWhy,
+}
+
+impl Diagnostic for MultiplicityIgnored {
+    fn build_report(&self, root_file: FileId, db: &dyn BaseDB) -> Report {
+        let FileSpan { range, file } = db
+            .parse(root_file)
+            .to_file_span(self.attr.syntax().text_range(), &db.sourcemap(root_file));
+        let (message, label) = match self.why {
+            MultiplicityWhy::Value => (
+                "'multiplicity' attribute is ignored: its value must be \"multiply\", \"divide\" \
+                 or \"none\" (LRM 3.2.1)",
+                "not one of the three values; the report is not scaled",
+            ),
+            MultiplicityWhy::Type => (
+                "'multiplicity' attribute is ignored: only a real scalar output variable can be \
+                 scaled by $mfactor",
+                "this variable is not a real scalar; its report is not scaled",
+            ),
+            MultiplicityWhy::NotOutput => (
+                "'multiplicity' attribute is ignored: this variable has no 'units' or 'desc' \
+                 attribute, so it is not an output variable and is never reported (LRM 3.2.1)",
+                "add a 'desc' or 'units' attribute to report it",
+            ),
+            MultiplicityWhy::Block => (
+                "'multiplicity' attribute is ignored: a variable declared in a named block is \
+                 not an output variable (LRM 3.2.1)",
+                "only module-level variables are reported",
+            ),
+        };
+        Report::warning().with_message(message.to_owned()).with_labels(vec![Label {
+            style: LabelStyle::Primary,
+            file_id: file,
+            range: range.into(),
+            message: label.to_owned(),
+        }])
+    }
 }
 
 

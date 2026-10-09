@@ -288,7 +288,14 @@ impl<'ll> OsdiInstanceData<'ll> {
         let mut eval_outputs = TiMap::default();
         let mut opvars = IndexMap::with_hasher(BuildHasherDefault::<FxHasher>::default());
         opvars.extend(module.info.op_vars.keys().map(|var| {
-            let val = module.intern.outputs[&PlaceKind::Var(*var)].unwrap_unchecked();
+            // Enhancement-814: a `multiplicity` attribute's scaled report, when
+            // the variable has one
+            let val = module
+                .intern
+                .outputs
+                .get(&PlaceKind::OpVarReport(*var))
+                .and_then(|val| val.expand())
+                .unwrap_or_else(|| module.intern.outputs[&PlaceKind::Var(*var)].unwrap_unchecked());
             let ty = lltype(&var.ty(db), cx);
             let pos = EvalOutput::new(module, val, &mut eval_outputs, true, ty);
             (*var, pos)

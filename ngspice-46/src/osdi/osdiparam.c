@@ -532,6 +532,34 @@ const char *OSDIparamUnits(GENinstance *instPtr, const char *param) {
   return NULL;
 }
 
+/* Enhancement-815 (hunt 2026-10-08 F24): is parameter `id` of OSDI instance
+ * `instPtr` one of the loader's temperature knobs? 2 for the offset -- the id
+ * Enhancement-397 answers to as `dt` and `dtemp`, or the model's own `dtemp`
+ * it routes there -- 1 for the loader's absolute `temp` (Celsius, E-394), 0
+ * for anything else or an instance that is not an OSDI one. By id rather than
+ * by keyword: the instance-line guard tested the word `dtemp`, so `dt=-400`
+ * on the same knob reached the model at -99.85 K. A model's own parameter
+ * named `temperature` keeps its own meaning and is not judged here. */
+int OSDItempParamKind(GENinstance *instPtr, int id) {
+  OsdiRegistryEntry *entry;
+  const OsdiDescriptor *descr;
+
+  if (!instPtr || !instPtr->GENmodPtr || id < 0)
+    return 0;
+  if (!osdi_devtype_is_osdi(instPtr->GENmodPtr->GENmodType))
+    return 0;
+  entry = osdi_reg_entry_inst(instPtr);
+  if (!entry || !(descr = entry->descriptor))
+    return 0;
+  if (entry->dt != UINT32_MAX && (uint32_t)id == entry->dt)
+    return 2;
+  if (entry->temp != UINT32_MAX &&
+      entry->temp >= descr->num_params + descr->num_opvars &&
+      (uint32_t)id == entry->temp)
+    return 1;
+  return 0;
+}
+
 int OSDIcollapseChanged(GENinstance *instPtr) {
   OsdiRegistryEntry *entry;
   OsdiExtraInstData *xtra;

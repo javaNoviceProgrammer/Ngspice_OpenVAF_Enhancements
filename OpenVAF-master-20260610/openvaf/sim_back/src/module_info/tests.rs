@@ -174,6 +174,8 @@ fn opvars() {
                 OpVar {
                     unit: "m",
                     description: "hmm",
+                    multiplicity: None,
+                    mfactor_var: None,
                 },
             ),
             (
@@ -181,6 +183,8 @@ fn opvars() {
                 OpVar {
                     unit: "m",
                     description: "hmm",
+                    multiplicity: None,
+                    mfactor_var: None,
                 },
             ),
             (
@@ -188,6 +192,8 @@ fn opvars() {
                 OpVar {
                     unit: "m",
                     description: "",
+                    multiplicity: None,
+                    mfactor_var: None,
                 },
             ),
             (
@@ -195,6 +201,8 @@ fn opvars() {
                 OpVar {
                     unit: "",
                     description: "hmm",
+                    multiplicity: None,
+                    mfactor_var: None,
                 },
             ),
         ]

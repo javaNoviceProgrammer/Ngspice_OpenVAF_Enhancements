@@ -1590,6 +1590,12 @@ if_setparam_model(CKTcircuit *ckt, char **name, char *val)
  * F1: a user write to a statistical parameter recenters its Monte-Carlo
  * nominal (`.option osdimc`); machine writes must not, so the hook lives in
  * exactly this wrapper rather than in the device setter. */
+/* Enhancement-815: user writes doset_user() refused (a non-finite value, an
+ * integer out of range, an instance temperature at or below absolute zero).
+ * The `sweep` command reads it around its per-point `alter` to tell a point
+ * whose knob was not set from one that was. */
+int if_user_write_refusals = 0;
+
 static int
 doset_user(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod,
            IFparm *opt, struct dvec *val)
@@ -1606,8 +1612,41 @@ doset_user(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod,
                         "Error: value %g for parameter '%s' is not a finite "
                         "number; not applied.\n",
                         val->v_realdata[i], opt->keyword);
-                return E_PARMVAL;
+                if_user_write_refusals++;
+            return E_PARMVAL;
             }
+        }
+    }
+
+    /* Enhancement-815 (hunt 2026-10-08 F24): the instance line refuses a
+     * `temp`/`dtemp` that puts the device at or below absolute zero
+     * (Enhancement-467); `alter` stored it. An OSDI device's setup then said
+     * "the offset is ignored" while OSDItemp handed the model the negative
+     * absolute temperature -- `alter n1 temp=-300` reversed a resistor
+     * model's current -- and a built-in took the value without a word.
+     * Judged here by the line's rule (by parameter id, so `dt`, `dtemp` and
+     * `@n1[dtemp]` alike), and the instance keeps the value it had. */
+    if (dev && (opt->dataType & IF_VARTYPES) == IF_REAL &&
+        val && val->v_realdata) {
+        double v = val->v_realdata[0], at = 0.0;
+        int kind = INPtempBelowZero(ckt, ft_sim->devices[typecode], dev,
+                                    opt->id, v, &at);
+        if (kind == 1) {
+            fprintf(cp_err,
+                    "Warning: %s: %s = %g C is at or below absolute zero "
+                    "(-273.15 C); not applied, the instance keeps the value "
+                    "it had.\n", dev->GENname, opt->keyword, v);
+            if_user_write_refusals++;
+            return E_PARMVAL;
+        }
+        if (kind == 2) {
+            fprintf(cp_err,
+                    "Warning: %s: %s = %g C puts the device at %g C, at or "
+                    "below absolute zero (-273.15 C); not applied, the "
+                    "instance keeps the value it had.\n",
+                    dev->GENname, opt->keyword, v, at);
+            if_user_write_refusals++;
+            return E_PARMVAL;
         }
     }
 
@@ -1629,7 +1668,8 @@ doset_user(CKTcircuit *ckt, int typecode, GENinstance *dev, GENmodel *mod,
                 fprintf(cp_err,
                         "Error: value %g for integer parameter '%s' does not "
                         "fit an integer; not applied.\n", v, opt->keyword);
-                return E_PARMVAL;
+                if_user_write_refusals++;
+            return E_PARMVAL;
             }
             if (r != v)
                 fprintf(cp_err,

@@ -4,7 +4,9 @@ use hir_lower::{CurrentKind, HirInterner, ImplicitEquation, ParamKind};
 use lasso::Rodeo;
 use mir::Function;
 use mir_opt::{simplify_cfg, sparse_conditional_constant_propagation};
-pub use module_info::{collect_modules, ModuleInfo, CornerKind, ParamCorner, ParamStat};
+pub use module_info::{
+    collect_modules, CornerKind, ModuleInfo, Multiplicity, OpVar, ParamCorner, ParamStat,
+};
 use stdx::impl_debug_display;
 
 use crate::context::{Context, OptimiziationStage};
@@ -208,6 +210,24 @@ impl<'a> CompiledModule<'a> {
             DaeSystem::new(&mut cx, topology, sink, &mut terminal_shorts);
         if std::env::var("PHASE_PROF").is_ok() {
             eprintln!("PHASE dae+tensors {:?}  insts={}", _t0.elapsed(), cx.func.dfg.num_insts());
+        }
+
+        // Enhancement-814 (hunt 2026-10-08 F23): the scaled reports of output
+        // variables with a `multiplicity` attribute. Before Enhancement-44's
+        // composition below, so a paramset's `.$mfactor` reaches them too.
+        let reports: Vec<_> = module
+            .op_vars
+            .iter()
+            .filter_map(|(var, info)| match info.multiplicity {
+                Multiplicity::None => None,
+                Multiplicity::Multiply => Some((*var, true, info.mfactor_var)),
+                Multiplicity::Divide => Some((*var, false, info.mfactor_var)),
+            })
+            .collect();
+        let reported = cx.intern.insert_opvar_multiplicity(&mut cx.func, &reports);
+        cx.output_values.ensure(cx.func.dfg.num_values() + 1);
+        for val in reported {
+            cx.output_values.insert(val);
         }
 
         // Enhancement-44: compose paramset hierarchical system parameter overrides

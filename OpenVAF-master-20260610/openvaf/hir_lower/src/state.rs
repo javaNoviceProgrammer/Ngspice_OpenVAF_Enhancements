@@ -1,11 +1,12 @@
-use hir::{CompilationDB, ParamSysFun, Parameter};
+use hir::{CompilationDB, ParamSysFun, Parameter, Variable};
 use lasso::Rodeo;
 use mir::builder::InstBuilder;
-use mir::{Function, F_ZERO};
+use mir::cursor::{Cursor, FuncCursor};
+use mir::{Function, Value, F_ZERO};
 use mir_build::{FunctionBuilder, FunctionBuilderContext};
 
 use crate::ctx::LoweringCtx;
-use crate::{HirInterner, ParamKind};
+use crate::{HirInterner, ParamKind, PlaceKind};
 
 impl HirInterner {
     /// Enhancement-7: previously this unconditionally replaced every use of
@@ -85,6 +86,70 @@ impl HirInterner {
 }
 
 impl HirInterner {
+    /// Enhancement-814 (hunt 2026-10-08 F23): the REPORTED value of every output
+    /// variable with an LRM 3.2.1 `multiplicity` attribute -- the variable times
+    /// (`"multiply"`) or over (`"divide"`) the effective multiplicity -- added as a
+    /// `PlaceKind::OpVarReport` output, which the operating-point slot stores in
+    /// place of the variable's own value.
+    ///
+    /// The variable itself is untouched: the model's own reads of it, a hidden
+    /// state it carries between evaluations and a parent's hierarchical reference
+    /// all keep the per-device value; only the report is scaled. The factor is
+    /// the module's `$mfactor` -- so this must run BEFORE
+    /// `insert_paramset_sys_fun_overrides`, which then composes a paramset's
+    /// `.$mfactor` into it like every other read -- or, for an inlined child's
+    /// variable, the final value of the elaborator's `<prefix>$mfactor`, which
+    /// already holds that child's `#(.$mfactor(...))` composed with the module's.
+    ///
+    /// `reports` holds (variable, multiply, child's multiplicity variable). The
+    /// new values are returned for the caller to keep live.
+    pub fn insert_opvar_multiplicity(
+        &mut self,
+        func: &mut Function,
+        reports: &[(Variable, bool, Option<Variable>)],
+    ) -> Vec<Value> {
+        let mut added = Vec::new();
+        if reports.is_empty() {
+            return added;
+        }
+        // At the very end -- the function's last block, where the body jumps
+        // when it is done -- the variables' final values are computed by then
+        // (`FunctionBuilder::edit` builds in a fresh ENTRY block, which suits
+        // composing parameters, not reading results).
+        let Some(end) = func.layout.last_block() else { return added };
+        let before = func
+            .layout
+            .last_inst(end)
+            .filter(|&inst| func.dfg.insts[inst].is_terminator());
+        let output = |intern: &HirInterner, var| {
+            intern.outputs.get(&PlaceKind::Var(var)).and_then(|val| val.expand())
+        };
+        for &(var, multiply, mfactor_var) in reports {
+            let Some(val) = output(self, var) else { continue };
+            let m = match mfactor_var.and_then(|mv| output(self, mv)) {
+                Some(m) => m,
+                None => {
+                    let len = self.params.len();
+                    *self
+                        .params
+                        .raw
+                        .entry(ParamKind::ParamSysFun(ParamSysFun::mfactor))
+                        .or_insert_with(|| func.dfg.make_param(len.into()))
+                }
+            };
+            let mut cursor = match before {
+                Some(inst) => FuncCursor::new(func).at_inst(inst),
+                None => FuncCursor::new(func).at_bottom(end),
+            };
+            let scaled =
+                if multiply { cursor.ins().fmul(val, m) } else { cursor.ins().fdiv(val, m) };
+            let scaled = cursor.ins().optbarrier(scaled);
+            self.outputs.insert(PlaceKind::OpVarReport(var), scaled.into());
+            added.push(scaled);
+        }
+        added
+    }
+
     /// Enhancement-44: composes a paramset's hierarchical system parameter
     /// overrides (`.$mfactor = 8;`) with the instance-level values.
     ///

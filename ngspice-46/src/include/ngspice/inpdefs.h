@@ -165,6 +165,12 @@ void INPclearUnknownModelTypes(void);
 int INPlastValueError(void);
 int INPlastRangeError(void);   /* Enhancement-509 */
 int INPlastRoundWarn(void);    /* non-integral value rounded into an integer parameter */
+/* Enhancement-815: the instance-temperature knob a parameter is (1 temp, 2
+   dtemp, 0 neither), and whether a value written to it puts the device at or
+   below absolute zero at the present ambient */
+int INPtempParamKind(IFdevice *device, GENinstance *inst, int id);
+int INPtempBelowZero(CKTcircuit *ckt, IFdevice *device, GENinstance *inst, int id,
+                     double v, double *at_c);
 int INPgndInsert(CKTcircuit *, char **, INPtables *, CKTnode **);
 int INPinsertNofree(char **token, INPtables *tab);
 int INPinsert(char **, INPtables *);

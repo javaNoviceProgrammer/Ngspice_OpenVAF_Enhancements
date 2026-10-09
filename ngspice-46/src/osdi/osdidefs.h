@@ -174,6 +174,10 @@ typedef struct OsdiExtraInstData {
   double temp;
   bool temp_given;
   bool dt_given;
+  /* Enhancement-815: the composed instance temperature was at or below
+   * absolute zero and has been reported; cleared once it is physical again,
+   * so a sweep says it once rather than at every point. */
+  bool temp_refused;
   /* Enhancement-476: has this instance ever been evaluated without raising
    * $fatal? Operating-point variables are OUTPUTS -- they exist only once the
    * model has run. The instance block is calloc'd, so this reads false for a

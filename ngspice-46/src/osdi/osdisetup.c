@@ -990,6 +990,50 @@ static int osdimc_seed(void)
     }
     return 1;
 }
+
+/* Enhancement-815 (hunt 2026-10-08 F24): the instance temperature, in Kelvin,
+ * that setup_instance hands the model -- one composition for OSDIsetup,
+ * OSDItemp and the osdimc re-derivation, which each had their own.
+ *
+ * Enhancement-426 refused a composed temperature at or below absolute zero,
+ * but only in OSDIsetup. OSDItemp, which runs for every analysis after the
+ * first and at every point of a sweep, composed it again unguarded: after
+ * `alter n1 dtemp=-400`, setup said "the offset is ignored" and the model was
+ * evaluated at -99.85 K all the same. The line, `alter` and a `.dc` sweep of
+ * the knob now refuse such a value outright (spicelib/parser/inpdpar.c); what
+ * reaches here is a valid offset that the ambient has since made unphysical
+ * (`dtemp=-290`, then `set temp=-10`). The device runs at the circuit
+ * temperature, as the message says, and it says so once while that holds,
+ * not at every sweep point. */
+static double osdi_instance_temp(CKTcircuit *ckt, GENinstance *gen_inst,
+                                 OsdiExtraInstData *x) {
+  double temp = x->temp_given ? x->temp
+                              : ckt->CKTtemp + (x->dt_given ? x->dt : 0.0);
+
+  if (temp > 0.0) {
+    x->temp_refused = false;
+    return temp;
+  }
+  if (!x->temp_refused) {
+    if (x->temp_given)
+      fprintf(stderr,
+              "Warning: %s: temp = %g C is at or below absolute zero "
+              "(-273.15 C); the device runs at the circuit temperature, %g C, "
+              "instead.\n",
+              gen_inst->GENname, x->temp - CONSTCtoK,
+              ckt->CKTtemp - CONSTCtoK);
+    else
+      fprintf(stderr,
+              "Warning: %s: dtemp = %g C with the circuit at %g C puts the "
+              "device at %g C, at or below absolute zero (-273.15 C); it runs "
+              "at the circuit temperature instead.\n",
+              gen_inst->GENname, x->dt, ckt->CKTtemp - CONSTCtoK,
+              temp - CONSTCtoK);
+    x->temp_refused = true;
+  }
+  return ckt->CKTtemp;
+}
+
 int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
               int *states) {
   OsdiInitInfo init_info;
@@ -1098,7 +1142,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
       void *inst = osdi_instance_data(entry, gen_inst);
 
       /* special handling for temperature parameters */
-      double temp = ckt->CKTtemp;
+      double temp;
       OsdiExtraInstData *extra_inst_data =
           osdi_extra_instance_data(entry, gen_inst);
       /* Enhancement-394: `temp` OVERRIDES, it does not stack with `dtemp`.
@@ -1108,7 +1152,6 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
        * `temp=75 dtemp=10` mean 85, which is neither device's meaning.
        * (`extra_inst_data->temp` is now Kelvin -- converted in osdiparam.c.) */
       if (extra_inst_data->temp_given) {
-        temp = extra_inst_data->temp;
         if (extra_inst_data->dt_given &&
             !(ckt->CKTcurJob && ckt->CKTcurJob->JOBtype == 9)) {
           /* same message and the same sensitivity-analysis silence as
@@ -1124,8 +1167,6 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
          * remove. Clear it so what is reported is what is used. */
         extra_inst_data->dt = 0.0;
         extra_inst_data->dt_given = false;
-      } else if (extra_inst_data->dt_given) {
-        temp += extra_inst_data->dt;
       }
 
       /* Enhancement-426: the composed instance temperature had no lower bound.
@@ -1135,14 +1176,9 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
        * guarded at the CKTsetOpt funnel, but dtemp is composed per device and
        * never passes through it. Refuse the offset and keep the ambient rather
        * than clamping: there is no defensible temperature to invent, and the
-       * device is still simulable at the circuit temperature. */
-      if (temp <= 0.0) {
-        printf("%s: instance temperature %g K is at or below absolute zero"
-               " (temp=%g C, dtemp=%g); the offset is ignored\n",
-               gen_inst->GENname, temp, ckt->CKTtemp - CONSTCtoK,
-               extra_inst_data->dt);
-        temp = ckt->CKTtemp;
-      }
+       * device is still simulable at the circuit temperature. Enhancement-815:
+       * in the composition every route shares, OSDItemp included. */
+      temp = osdi_instance_temp(ckt, gen_inst, extra_inst_data);
 
       if (!osdi_initial_step_held)            /* Enhancement-789 */
         extra_inst_data->has_evaluated = false;
@@ -1807,7 +1843,7 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
       void *inst = osdi_instance_data(entry, gen_inst);
 
       // special handleing for temperature parameters
-      double temp = ckt->CKTtemp;
+      double temp;
       OsdiExtraInstData *extra_inst_data =
           osdi_extra_instance_data(entry, gen_inst);
 
@@ -1839,7 +1875,6 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
        * `temp=75 dtemp=10` mean 85, which is neither device's meaning.
        * (`extra_inst_data->temp` is now Kelvin -- converted in osdiparam.c.) */
       if (extra_inst_data->temp_given) {
-        temp = extra_inst_data->temp;
         if (extra_inst_data->dt_given &&
             !(ckt->CKTcurJob && ckt->CKTcurJob->JOBtype == 9)) {
           /* same message and the same sensitivity-analysis silence as
@@ -1855,9 +1890,10 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
          * remove. Clear it so what is reported is what is used. */
         extra_inst_data->dt = 0.0;
         extra_inst_data->dt_given = false;
-      } else if (extra_inst_data->dt_given) {
-        temp += extra_inst_data->dt;
       }
+      /* Enhancement-815 (hunt 2026-10-08 F24): composed and guarded as in
+       * OSDIsetup -- this ran unguarded at every analysis after the first */
+      temp = osdi_instance_temp(ckt, gen_inst, extra_inst_data);
       if (!osdi_initial_step_held)            /* Enhancement-789 */
         extra_inst_data->has_evaluated = false;
 
@@ -4643,13 +4679,11 @@ static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry
              gen_inst = gen_inst->GENnextInstance) {
           void *inst = osdi_instance_data(entry, gen_inst);
           OsdiExtraInstData *extra = osdi_extra_instance_data(entry, gen_inst);
-          double temp = extra->temp_given ? extra->temp : ckt->CKTtemp + extra->dt;
+          double temp = osdi_instance_temp(ckt, gen_inst, extra); /* E-815 */
           int *terminals = (int *)(gen_inst + 1);
           uint32_t connected = descr->num_terminals;
           bool *collapsed = (bool *)(((char *)inst) + descr->collapsed_offset);
           const bool *snap = osdi_collapse_snapshot(entry, gen_inst);
-          if (temp <= 0.0)
-            temp = ckt->CKTtemp;
           for (uint32_t i = 0; i < descr->num_terminals; i++)
             if (terminals[i] == -1) { connected = i; break; }
           handle = (OsdiNgspiceHandle){.kind = 2, .name = gen_inst->GENname};

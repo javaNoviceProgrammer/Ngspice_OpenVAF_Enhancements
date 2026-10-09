@@ -58,8 +58,8 @@ Nothing was fixed; this is the list.
 | [F20](#f20) | *(fixed in [E-811](../../enhancements_doc/Enhancement-811.md): the line is sized to the name)* **crash**: `print` of a vector whose name is 512 characters or longer overruns a 512-byte heap buffer in `com_print` (intermittent SIGTRAP; deterministic under Guard Malloc) | high |
 | [F21](#f21) | *(fixed in [E-812](../../enhancements_doc/Enhancement-812.md): `pvec` builds its line in a growing string)* **crash**: `display` (and `load`, which lists what it reads) of a vector whose name is about 470 characters or longer overflows a 512-byte stack buffer in `pvec` — a deterministic abort | high |
 | [F22](#f22) | *(fixed in [E-813](../../enhancements_doc/Enhancement-813.md): the capture copies `SMPmatSize + 1`, the vector's length)* **memory**: with any OSDI internal node, `OSDIload` copies `CKTmaxEqNum + 1` doubles out of `CKTrhsOld` at every bias point, past the end of its allocation (a heap over-read; a fault under Guard Malloc) | high |
-| [F23](#f23) | the LRM's `multiplicity="multiply"`/`"divide"` attribute on operating-point variables is ignored: with `m=4` the reports are per device | medium |
-| [F24](#f24) | `alter n1 dtemp=-400` (or `temp=-300`) says the below-absolute-zero value "is ignored", but the OSDI model receives the negative absolute temperature | medium |
+| [F23](#f23) | *(fixed in [E-814](../../enhancements_doc/Enhancement-814.md): the compiled model stores the scaled report)* the LRM's `multiplicity="multiply"`/`"divide"` attribute on operating-point variables is ignored: with `m=4` the reports are per device | medium |
+| [F24](#f24) | *(fixed in [E-815](../../enhancements_doc/Enhancement-815.md): refused on every route, guarded in `OSDItemp` too)* `alter n1 dtemp=-400` (or `temp=-300`) says the below-absolute-zero value "is ignored", but the OSDI model receives the negative absolute temperature | medium |
 | [D](#d) | seventeen smaller slips *(D1–D5 and D7–D17 fixed in [E-796](../../enhancements_doc/Enhancement-796.md)…[E-810](../../enhancements_doc/Enhancement-810.md); D6 kept as designed)* | low |
 
 <a id="f1"></a>
@@ -521,6 +521,12 @@ clean under Guard Malloc, consistent with the bias-point capture being the only 
 <a id="f23"></a>
 ## F23 — the `multiplicity` attribute on operating-point variables is ignored
 
+*Fixed in [E-814](../../enhancements_doc/Enhancement-814.md): the compiled model stores the
+report, scaled by the effective multiplicity (a subcircuit's `m`, a paramset's `.$mfactor` and a
+Verilog-A child's `#(.$mfactor(...))` included), and leaves the variable the model reads alone.
+Wider than written: twenty corpus families declare their operating point with the attribute,
+on about 1,400 variables; "about 90" counted the attribute's text, mostly macro definitions.*
+
 LRM 3.2.1: an output variable's `multiplicity` attribute says how its value is scaled "in any
 report of operating-point values": multiplied by `$mfactor` (`"multiply"`), divided by it
 (`"divide"`), or not at all (`"none"`, the default).
@@ -539,6 +545,19 @@ macros, HICUM L0, HiSIM-SOTB and EKV. Their operating-point reports for a device
 
 <a id="f24"></a>
 ## F24 — a below-absolute-zero instance temperature set by `alter` reaches the model
+
+*Fixed in [E-815](../../enhancements_doc/Enhancement-815.md). `OSDIsetup` guarded the composed
+temperature and `OSDItemp`, run for every later analysis and sweep point, did not. Wider than
+written:*
+- *`dt=-400` on the line (the knob's other spelling) was not refused;*
+- *a built-in device took the values through `alter` and `.dc`;*
+- *a later ambient change (`dtemp=-290`, then `set temp=-10`) reached the model too.*
+- *the `sweep` command over the same range solved its first point at -99.85 K. Once
+  `alter` refused the value, that point would have been solved at the previous value and
+  recorded under -400, so it is now recorded as NaN.*
+
+*The current at -99.85 K was +0.33 mA, not -0.33 mA. The line, `alter` and `.dc` now refuse
+such a value by one rule, and one guarded composition serves every OSDI route.*
 
 A module printing `$temperature`, with a resistance of `r*(1 + 0.01*($temperature - 300.15))`:
 

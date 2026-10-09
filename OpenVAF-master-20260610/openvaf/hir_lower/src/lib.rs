@@ -249,6 +249,12 @@ pub enum PlaceKind {
     /// Enhancement-8: stores the new value of `cross`/`above`/`timer` edge-detection
     /// state slot `i` (the read side is `ParamKind::EventState(i)`) at the end of `eval()`.
     EventState(u32),
+    /// Enhancement-814: the REPORTED value of an output variable with an LRM 3.2.1
+    /// `multiplicity` attribute -- the variable times or over the effective
+    /// `$mfactor` -- which the operating-point slot stores in place of
+    /// `Var(var)`. Never a place: inserted into the outputs once the DAE is built
+    /// (`HirInterner::insert_opvar_multiplicity`).
+    OpVarReport(Variable),
 }
 
 impl PlaceKind {
@@ -268,7 +274,8 @@ impl PlaceKind {
             | PlaceKind::TransitionFall(_)
             | PlaceKind::SlewPosRate(_)
             | PlaceKind::SlewNegRate(_)
-            | PlaceKind::EventState(_) => Type::Real,
+            | PlaceKind::EventState(_)
+            | PlaceKind::OpVarReport(_) => Type::Real,
             PlaceKind::ParamMin(param) | PlaceKind::ParamMax(param) | PlaceKind::Param(param) => {
                 param.ty(db)
             }

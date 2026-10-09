@@ -15,6 +15,7 @@ Modified: 1999 Paolo Nenzi
 #include "ngspice/sperror.h"
 #include "ngspice/fteext.h"
 #include "ngspice/cpextern.h"   /* Enhancement-673: cp_err */
+#include "ngspice/inpdefs.h"    /* Enhancement-815: INPtempBelowZero */
 #include "ngspice/compatmode.h"
 #include "ngspice/devdefs.h"
 #ifdef OSDI
@@ -1275,6 +1276,41 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                         job->TRCVvStop[i], job->TRCVvStep[i]);
                     DCTunwindLevels(ckt, job, i - 1, vcode, icode, rcode);   /* E-536 (hunt bug 10) */
                     return(E_PARMVAL);
+                }
+                /* Enhancement-815 (hunt 2026-10-08 F24): an instance's own
+                 * temperature knob, swept, is held to the rule `.dc temp`
+                 * follows (Enhancement-426) and the instance line and `alter`
+                 * apply to one value: `dc @n1[dtemp] -400 0 200` ran its
+                 * first point with the model at -99.85 K and no word. The
+                 * value is linear in the knob, so the first and the last
+                 * point swept decide -- the last, not `stop`, which a
+                 * start/stop/step sweep need not reach (the `sweep` command's
+                 * handover passes a stop half a step past it). A dec/oct
+                 * sweep is positive throughout and ends at `stop`. */
+                if (pdtype == IF_REAL) {
+                    double at0 = 0.0, at1 = 0.0;
+                    double first = job->TRCVvStart[i], last = job->TRCVvStop[i];
+                    IFdevice *pdev = &DEVices[ptype]->DEVpublic;
+                    int k0, k1;
+                    if (job->TRCVscale[i] == DCT_SCALE_LEGACY &&
+                        job->TRCVvStep[i] != 0.0) {
+                        double n = floor((last - first) / job->TRCVvStep[i]
+                                         + 1e-9);
+                        if (n >= 0.0)
+                            last = first + n * job->TRCVvStep[i];
+                    }
+                    k0 = INPtempBelowZero(ckt, pdev, pinst, pid, first, &at0);
+                    k1 = INPtempBelowZero(ckt, pdev, pinst, pid, last, &at1);
+                    if (k0 || k1) {
+                        SPfrontEnd->IFerrorf(ERR_WARNING,
+                            "DC sweep %d: %s from %g to %g puts %s at %g C .. "
+                            "%g C, reaching at or below absolute zero "
+                            "(-273.15 C)\n",
+                            i + 1, job->TRCVvName[i], first, last,
+                            pinst->GENname, at0, at1);
+                        DCTunwindLevels(ckt, job, i - 1, vcode, icode, rcode);
+                        return(E_PARMVAL);
+                    }
                 }
                 if (DCTsetInstParam(ckt, job, i, job->TRCVvStart[i], 1) != OK) {
                     DCTunwindLevels(ckt, job, i - 1, vcode, icode, rcode);   /* E-536 (hunt bug 10) */

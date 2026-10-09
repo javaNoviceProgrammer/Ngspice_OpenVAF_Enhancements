@@ -6942,6 +6942,21 @@ impl ElabCtx<'_> {
             }
         }
 
+        // Enhancement-814 (hunt 2026-10-08 F23): a child output variable with a
+        // `multiplicity` attribute is reported scaled by the CHILD's effective
+        // multiplicity -- its `#(.$mfactor(...))`, composed with every enclosing
+        // instance's and the module's own -- which exists nowhere after
+        // flattening except inside the holes of the child's `$mfactor` reads.
+        // Kept in a hidden `<prefix>$mfactor` the compiler finds by the prefix
+        // (sim_back/src/module_info.rs); only emitted when the child could use it.
+        if let Some((_, m)) = sys_binding.iter().find(|(s, _)| *s == ParamSysFun::mfactor) {
+            if self.module_ast(target.ast_id).syntax().text().to_string().contains("multiplicity")
+            {
+                extra_decls.push(format!("real {prefix}$mfactor;"));
+                extra_decls.push(format!("analog {prefix}$mfactor = $mfactor*({m});"));
+            }
+        }
+
         let body =
             self.render_items(target_id, &scope, param_binding, &port_names, prefix, sys_binding);
 

@@ -3112,6 +3112,8 @@ void com_sweep(wordlist *wl)
     int     prevFailed = 0;                          /* Enhancement-471 */
     int     nptfail = 0;             /* Enhancement-438: points that never solved */
     int     ptfailed = 0;            /* Enhancement-445: ...and whether THIS one did */
+    int     nptrefused = 0;          /* Enhancement-815: points whose knob was refused */
+    int     ptrefused = 0, refused0 = 0;
     char   *deck_fp_names[SW_MAXKNOB];   /* Enhancement-320: swept .param names   */
     int     ndeck_fp = 0, fast_fp = 0;   /* .param fast-sweep arm state           */
     /* Enhancement-350: nominal value of each swept `.param`, captured before the
@@ -3566,8 +3568,16 @@ void com_sweep(wordlist *wl)
                 ft_optimizing = TRUE;                /* reset clears it */
             }
         }
+        refused0 = if_user_write_refusals;           /* Enhancement-815 */
         for (j = 0; j < nknob; j++)                  /* in-place after any reset */
             if (kkind[j] != SW_DECK) sw_set_inplace(kkind[j], kname[j], curval[j]);
+        /* Enhancement-815: a knob value `alter` refused (an instance
+           temperature at or below absolute zero, a non-finite value, an
+           integer out of range) left the knob where it was, so the point
+           would be solved at the PREVIOUS value and recorded under this one --
+           a plausible row with the wrong abscissa. It is a point with no
+           result, recorded as NaN like one that did not converge (E-445). */
+        ptrefused = (if_user_write_refusals != refused0);
         for (j = 0; j < nknob; j++) prevval[j] = curval[j];
         havePrev = 1;
         if (p == 0 && ft_curckt && ft_curckt->ci_ckt) {   /* Enhancement-471 */
@@ -3585,7 +3595,9 @@ void com_sweep(wordlist *wl)
             else
                 sw_request_reuse();                  /* Enhancement-471 */
         }
-        sw_run_cmd(analysis);
+        sw_run_cmd(analysis);       /* E-815: run even when refused -- the
+                                       plot it leaves keeps the outputs the
+                                       first point selects well defined */
         /* Enhancement-471: say what actually happened, so the decision is
            observable rather than inferred from a stopwatch. A rebuilt point is
            one where an OSDI device re-decided its node collapse and the matrix
@@ -3608,8 +3620,10 @@ void com_sweep(wordlist *wl)
          * would silently misalign every output against the sweep scale). */
         /* Enhancement-445: remember it per point, so the reads below can be
            marked rather than silently kept. */
-        ptfailed = sw_run_failed();
-        if (ptfailed)
+        ptfailed = ptrefused || sw_run_failed();
+        if (ptrefused)
+            nptrefused++;
+        else if (ptfailed)
             nptfail++;
         prevFailed = ptfailed;                       /* Enhancement-471 */
 
@@ -3767,6 +3781,11 @@ emit_summary:                 /* Enhancement-533: the dc handover joins here */
                         "those points are recorded as NaN, not as results "
                         "(Enhancement-445).\n",
                 nptfail, npt, nptfail == 1 ? "" : "s");
+    if (nptrefused)                                  /* Enhancement-815 */
+        fprintf(cp_out, "sweep: WARNING -- %d of %d point%s could not be set "
+                        "(the value was refused, see above); those points "
+                        "are recorded as NaN, not as results.\n",
+                nptrefused, npt, nptrefused == 1 ? "" : "s");
 
     /* --- Enhancement-189/190: -overlay plot of every run's full waveform, one
      * vector per (output, cartesian point) resampled onto a common grid. The

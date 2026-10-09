@@ -85,12 +85,18 @@ impl<'a> Context<'a> {
                 .collect()
         };
 
+        // Enhancement-814: an inlined child's effective `$mfactor` variable is
+        // kept as an output for the output variables its multiplicity scales
+        let mfactor_vars: HashSet<Variable> =
+            module.op_vars.values().filter_map(|info| info.mfactor_var).collect();
         let (mut func, mut intern) = MirBuilder::new(
             db,
             module.module,
             &|kind| match kind {
                 PlaceKind::Var(var) => {
-                    module.op_vars.contains_key(&var) || needs_hidden_state.contains(&var)
+                    module.op_vars.contains_key(&var)
+                        || needs_hidden_state.contains(&var)
+                        || mfactor_vars.contains(&var)
                 }
                 _ => base_keep(module, &kind),
             },
@@ -203,6 +209,7 @@ impl<'a> Context<'a> {
                             | PlaceKind::SlewPosRate(_)
                             | PlaceKind::SlewNegRate(_)
                             | PlaceKind::EventState(_)
+                            | PlaceKind::OpVarReport(_)
                     )
                 {
                     self.output_values.insert(val.unwrap_unchecked());
