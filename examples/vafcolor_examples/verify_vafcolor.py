@@ -18,14 +18,12 @@ unset, which is how this was found.
      still turn them off -- the terminal case keeps termcolor's own policy
 """
 import os
-import pty
-import select
 import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))          # the examples/ dir (holds _setup.py)
-from _setup import VAF as OPENVAF
+from _setup import VAF as OPENVAF, run_on_pty
 
 HDR = '`include "disciplines.vams"\n'
 GOOD = HDR + "module g(p, n);\n  inout p, n; electrical p, n;\n  analog I(p,n) <+ V(p,n) / 1000.0;\nendmodule\n"
@@ -50,29 +48,17 @@ def piped(args, **env):
 
 
 def on_pty(args, **env):
-    """Run the compiler with stdout AND stderr on a pseudo-terminal; return its output."""
+    """Run the compiler with stdout AND stderr on a pseudo-terminal; return its output.
+
+    `_setup.run_on_pty` keeps the terminal open until the compiler has exited and
+    reads everything it wrote: this helper closed its side straight after the start,
+    and on the macos-apple-silicon CI leg a compile that fails at once then read as
+    nothing (2026-10-09)."""
     e = dict(os.environ, RAYON_NUM_THREADS="1")
     e.pop("NO_COLOR", None)
     e.update(env)
-    master, slave = pty.openpty()
-    proc = subprocess.Popen([OPENVAF] + args, cwd=HERE, stdin=slave, stdout=slave,
-                            stderr=slave, env=e, close_fds=True)
-    os.close(slave)
-    out = b""
-    while True:
-        r, _, _ = select.select([master], [], [], 60)
-        if not r:
-            break
-        try:
-            chunk = os.read(master, 65536)
-        except OSError:
-            break
-        if not chunk:
-            break
-        out += chunk
-    proc.wait(timeout=60)
-    os.close(master)
-    return proc.returncode, out.decode("utf-8", "replace")
+    rc, out = run_on_pty([OPENVAF] + args, cwd=HERE, env=e, timeout=120)
+    return rc, out.decode("utf-8", "replace")
 
 
 def main():
@@ -106,9 +92,10 @@ def main():
     print("[2] on a pseudo-terminal the colours are kept, and the usual switches still work")
     rc, out = on_pty([bad, "-o", "_bad.osdi"], **term)
     check("TERM=xterm-256color on a pty: the diagnostic IS coloured", rc != 0 and ESC in out,
-          "" if ESC in out else "no escape code")
+          "" if ESC in out else f"no escape code; rc={rc}, read {out[:160]!r}")
     rc, out = on_pty([good, "-o", "_good.osdi"], **term)
-    check("...and so is `Finished`", rc == 0 and ESC in out, "")
+    check("...and so is `Finished`", rc == 0 and ESC in out,
+          "" if ESC in out else f"no escape code; rc={rc}, read {out[:160]!r}")
     rc, out = on_pty([bad, "-o", "_bad.osdi"], TERM="xterm-256color", NO_COLOR="1")
     check("NO_COLOR=1 on a pty: plain", rc != 0 and ESC not in out, "")
     rc, out = on_pty([bad, "-o", "_bad.osdi"], TERM="dumb")

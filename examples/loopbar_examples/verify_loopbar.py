@@ -44,7 +44,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from _setup import NG as NGSPICE  # noqa: E402
+from _setup import NG as NGSPICE, run_on_pty  # noqa: E402
 
 checks = passed = 0
 AT = "@"   # spelled apart so the mention checker does not read a GitHub handle
@@ -233,30 +233,15 @@ check("[16] the swept numbers are identical with the bar on and off",
 print("\n[17-18] auto: on a terminal, off when redirected")
 # ---------------------------------------------------------------------------
 def run_pty(ctl, tag):
-    import pty, select
     deck = f"loopbar\n{DIV}.control\noption noacct\n{ctl}\n{SW}\n.endc\n.end\n"
     p = os.path.join(HERE, f"_lb_{tag}.cir")
     with open(p, "w") as f:
         f.write(deck)
-    m, s = pty.openpty()
-    pr = subprocess.Popen([NGSPICE, "-b", os.path.basename(p)], cwd=HERE,
-                          stdout=s, stderr=subprocess.DEVNULL,
-                          stdin=subprocess.DEVNULL)
-    os.close(s)
-    out = b""
-    while True:
-        r, _, _ = select.select([m], [], [], 60)
-        if not r:
-            break
-        try:
-            c = os.read(m, 65536)
-        except OSError:
-            break
-        if not c:
-            break
-        out += c
-    pr.wait()
-    os.close(m)
+    # the terminal stays open until ngspice has exited and is read to the end
+    # (_setup.run_on_pty): closing this side at the start could lose the last
+    # output of a run that exits at once
+    _, out = run_on_pty([NGSPICE, "-b", os.path.basename(p)], cwd=HERE,
+                        stdin_on_pty=False, stderr_on_pty=False)
     try:
         os.remove(p)
     except OSError:

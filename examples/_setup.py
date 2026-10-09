@@ -765,3 +765,59 @@ def check_both_solvers(script=None):
     print(f"\n=== BOTH-SOLVER RESULT [{stem}]: {summary} "
           f"=> {'OK' if ok else 'FAILURE'} ===", flush=True)
     sys.exit(0 if ok else 1)
+
+
+# ---------------------------------------------------------------------------
+# a child on a pseudo-terminal, read to the end
+# ---------------------------------------------------------------------------
+def run_on_pty(argv, cwd=None, env=None, stdin_on_pty=True, stderr_on_pty=True,
+               timeout=300):
+    """Run `argv` with its stdout -- and, by default, stdin and stderr -- on a
+    pseudo-terminal, and return `(returncode, bytes it wrote)`.
+
+    The parent keeps its own descriptor of the terminal's child side open until
+    the child has exited and everything it wrote has been read. The suites that
+    had their own helper closed it straight after starting the child, which
+    left the child holding the last one; once that closed at exit, output not
+    yet read could be gone. A compile that fails at once read as nothing on the
+    macos-apple-silicon CI leg (vafcolor, 2026-10-09). With a child-side
+    descriptor still open the parent never sees end of file, so the loop ends
+    on the process instead and then drains what is left. POSIX only (`pty`).
+    """
+    import pty
+    import select
+    import time
+
+    master, slave = pty.openpty()
+    proc = _subprocess.Popen(
+        argv, cwd=cwd, env=env, close_fds=True,
+        stdin=slave if stdin_on_pty else _subprocess.DEVNULL,
+        stdout=slave,
+        stderr=slave if stderr_on_pty else _subprocess.DEVNULL)
+    out = bytearray()
+
+    def drain(wait):
+        while True:
+            ready, _, _ = select.select([master], [], [], wait)
+            if not ready:
+                return
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                return
+            if not chunk:
+                return
+            out.extend(chunk)
+
+    deadline = time.monotonic() + timeout
+    try:
+        while proc.poll() is None and time.monotonic() < deadline:
+            drain(0.05)
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=60)
+        drain(0.2)
+    finally:
+        os.close(slave)
+        os.close(master)
+    return proc.returncode, bytes(out)
