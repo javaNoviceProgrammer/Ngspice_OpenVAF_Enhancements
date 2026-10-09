@@ -16,6 +16,10 @@ works and the name is write-only.
 
 Now `exported_name_collision` (L035) and `dollar_in_exported_name` (L036)
 report both at compile time, naming which declaration wins and why.
+
+Enhancement-816: the hidden `$paramset$<name>` localparam a paramset's
+`.$mfactor = ...`-family binding becomes (E-44) is the compiler's name, not the
+author's, and is fixed -- L036 no longer reports it ([14b]).
 """
 import os
 import re
@@ -53,6 +57,17 @@ def run(tag, ctl, mcard=""):
     path = os.path.join(WORK, f"{tag}.cir")
     with open(path, "w") as f:
         f.write(f"* exportname {tag}\nv1 1 0 1\n.model m m {mcard}\nna1 1 0 m\n.control\nset noinit\npre_osdi {tag}.osdi\nop\n{ctl}\nquit\n.endc\n.end\n")
+    p = subprocess.run([NGSPICE, "-b", os.path.basename(path)], capture_output=True, text=True,
+                       timeout=180, cwd=WORK, stdin=subprocess.DEVNULL, errors="replace")
+    return p.stdout + p.stderr
+
+
+def run_cards(tag, cards, ctl):
+    """a deck of the caller's own cards, sources vc (node 1) and vn (node 2) at 1 V"""
+    path = os.path.join(WORK, f"{tag}.cir")
+    with open(path, "w") as f:
+        f.write(f"* exportname {tag}\n.control\npre_osdi {tag}.osdi\n.endc\nvc 1 0 1\nvn 2 0 1\n"
+                f"{cards}\n.control\n{ctl}\n.endc\n.end\n")
     p = subprocess.run([NGSPICE, "-b", os.path.basename(path)], capture_output=True, text=True,
                        timeout=180, cwd=WORK, stdin=subprocess.DEVNULL, errors="replace")
     return p.stdout + p.stderr
@@ -122,6 +137,17 @@ ok, out = compile_src(MOD('(* type="instance" *) parameter real c$d = 1; paramet
 check("[13] an instance parameter 'c$d' and an alias 'x$y': two L036", ok and out.count(L036) == 2 and "instance parameter 'c$d'" in out and "alias 'x$y'" in out, first_warn(out))
 ok, out = compile_src(MOD('parameter real r = 1;\n' + D + 'real x;\nanalog begin x = r; I(p,n) <+ V(p,n)/r; end') + "paramset ps m;\nparameter real rr = 2;\n(* desc=\"b\" *) real x;\n.r = rr;\nendparamset\n", "d4")
 check("[14] the `x$ps` twin a paramset's redeclared variable creates (LRM 6.4.3) is not the author's `$`: no word", ok and L036 not in out, first_warn(out))
+# Enhancement-816: a paramset's `.$mfactor = ...`-family binding becomes the hidden
+# localparam `$paramset$<name>` (E-44) -- model-level for a constant, instance-level
+# when it reads the paramset's own instance parameter. Each drew an L036.
+ok, out = compile_src(MOD('parameter real r = 1k;\nanalog I(p,n) <+ V(p,n)/r;')
+                      + "paramset pc m;\n.$mfactor = 8;\n.$xposition = 2.0;\nendparamset\n"
+                      + "paramset pn m;\nparameter integer nf = 5 from [1:100];\n.$mfactor = nf;\nendparamset\n", "d5")
+o = run_cards("d5", "nc 1 0 pcm m=3\n.model pcm pc\nnn 2 0 pnm\n.model pnm pn nf=4", "op\nprint i(vc) i(vn)") if ok else ""
+check("[14b] a paramset's `.$mfactor = 8`, `.$xposition = 2.0` and `.$mfactor = nf` are the compiler's hidden "
+      "`$paramset$...` localparams, not the author's `$`: no word, and the bindings still act (24 mA, 4 mA)",
+      ok and L036 not in out and val(o, "i(vc)") == -2.4e-2 and val(o, "i(vn)") == -4e-3,
+      first_warn(out) if L036 in out else f"{val(o, 'i(vc)')} {val(o, 'i(vn)')}")
 
 # ---------------------------------------------------------------- not collisions
 ok, out = compile_src(MOD(f"parameter real g = 2; {D}real G;\nanalog begin G = 3; I(p,n) <+ g*V(p,n); end"), "n1")

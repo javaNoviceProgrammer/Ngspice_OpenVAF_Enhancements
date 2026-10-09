@@ -2,7 +2,7 @@
 
 **Scope:** F24 of the
 [ngspice + OSDI hunt of 2026-10-08](../docs/bug_hunts/2026-10-08_ngspice-osdi-hierarchy-sweeps-events-and-outputs.md),
-with three more routes found while fixing it. ngspice:
+with four more routes found while fixing it. ngspice:
 - `spicelib/parser/inpdpar.c`: `INPtempParamKind` and `INPtempBelowZero` judge an instance
   temperature knob by parameter id. Enhancement-467's line guard uses them.
 - `frontend/spiceif.c`: `doset_user` refuses an `alter` that the line refuses, and counts its

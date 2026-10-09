@@ -807,6 +807,17 @@ fn is_paramset_twin_name(db: &CompilationDB, cu: CompilationUnit, name: &str) ->
     cu.modules(db).iter().any(|m| m.name(db) == suffix)
 }
 
+/// Enhancement-816: is `name` the hidden localparam `$paramset$<name>` that
+/// Enhancement-44 creates for a paramset's `.$mfactor = ...`-family binding
+/// (hir_def/src/item_tree/lower.rs)? The compiler named it, not the author: it
+/// is fixed (PARA_FLAG_FIXED, so nothing sets it) and nothing needs to read it
+/// back, so L036's "write-only from ngspice" does not apply. Every paramset
+/// binding (`.$mfactor = 8`, `.$xposition = 2`, `.$mfactor = nf`) drew one,
+/// about a name the author never wrote.
+fn is_paramset_sysfun_name(name: &str) -> bool {
+    name.strip_prefix("$paramset").and_then(ParamSysFun::from_sysfun_text).is_some()
+}
+
 /// Enhancement-652 (hunt F8): the names a module exports, judged the way
 /// ngspice will look them up.
 ///
@@ -964,7 +975,10 @@ fn check_exported_names(
             .chars()
             .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '[' | ']' | '.')));
         if let Some(bad) = bad {
-            if bad == '$' && is_paramset_twin_name(db, cu, &decl.name) {
+            if bad == '$'
+                && (is_paramset_twin_name(db, cu, &decl.name)
+                    || is_paramset_sysfun_name(&decl.name))
+            {
                 continue;
             }
             sink.add_diagnostic(
