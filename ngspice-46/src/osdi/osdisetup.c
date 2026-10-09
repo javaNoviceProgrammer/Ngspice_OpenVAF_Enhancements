@@ -46,6 +46,26 @@ void OSDIholdInitialStep(bool hold)
   osdi_initial_step_held = hold;
 }
 
+/* Enhancement-820 (hunt 2026-10-08 F4/F6): see osdiitf.h. A `.dc temp` or
+ * `.dc @n1[p]` point re-runs the temperature pass, which cleared the mark
+ * below at every point: right for @(initial_step), which a model such as
+ * BSIM4 uses for its temperature and parameter preprocessing (LRM 5.2.1:
+ * re-executed when a parameter it reads changes in a sweep), but every
+ * variable was initialised with it -- a counter read 1 at each point, where
+ * a source sweep carried it, and LRM 4.6.2 carries variables from one dc
+ * point to the next. */
+static int osdi_dc_sweep = OSDI_DC_SWEEP_OFF;
+
+void OSDIdcSweep(int phase)
+{
+  osdi_dc_sweep = phase;
+}
+
+int osdi_dc_sweep_phase(void)
+{
+  return osdi_dc_sweep;
+}
+
 /*
  * Handles any errors raised by the setup_instance and setup_model functions
  */
@@ -1118,6 +1138,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
     }
   }
 
+  osdi_display_note_circuit(ckt); /* Enhancement-822: the setup label */
   osdi_display_setup_phase();   /* Enhancement-535: init-resident displays
                                  * print during (re-)setup; Enhancement-660:
                                  * this pass's are held and superseded by
@@ -1180,8 +1201,11 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
        * in the composition every route shares, OSDItemp included. */
       temp = osdi_instance_temp(ckt, gen_inst, extra_inst_data);
 
-      if (!osdi_initial_step_held)            /* Enhancement-789 */
+      if (!osdi_initial_step_held) {          /* Enhancement-789 */
         extra_inst_data->has_evaluated = false;
+        extra_inst_data->sweep_continues =  /* Enhancement-820 */
+            (osdi_dc_sweep == OSDI_DC_SWEEP_LATER);
+      }
 
       /* find number of connected ports to allow evaluation of $port_connected
        * and to handle node collapsing correctly later
@@ -1823,6 +1847,7 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
    * display (the $monitor cross-point history deliberately survives -- see
    * osdi_display_setup_phase, which is the per-ANALYSIS reset). */
   osdi_display_reenter_setup();
+  osdi_display_note_circuit(ckt); /* Enhancement-822: the setup label */
 
   for (gen_model = inModel; gen_model != NULL;
        gen_model = gen_model->GENnextModel) {
@@ -1894,8 +1919,11 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
       /* Enhancement-815 (hunt 2026-10-08 F24): composed and guarded as in
        * OSDIsetup -- this ran unguarded at every analysis after the first */
       temp = osdi_instance_temp(ckt, gen_inst, extra_inst_data);
-      if (!osdi_initial_step_held)            /* Enhancement-789 */
+      if (!osdi_initial_step_held) {          /* Enhancement-789 */
         extra_inst_data->has_evaluated = false;
+        extra_inst_data->sweep_continues =  /* Enhancement-820 */
+            (osdi_dc_sweep == OSDI_DC_SWEEP_LATER);
+      }
 
       handle = (OsdiNgspiceHandle){.kind = 2, .name = gen_inst->GENname};
       /* find number of connected ports to allow evaluation of $port_connected

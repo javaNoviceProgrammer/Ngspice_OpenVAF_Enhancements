@@ -319,6 +319,21 @@ dct_over_slack(TRCV *job, int i)
 static int dct_topology_refusal = 0;
 
 
+/* Enhancement-822 (hunt 2026-10-08 F6): publish the point about to be applied
+ * in CKTtime BEFORE it is applied. A temperature or an OSDI parameter runs the
+ * device's setup and temperature pass, and what that pass reports is labelled
+ * "(at sweep value ...)" from CKTtime -- which still held the PREVIOUS point,
+ * so `dc @fpm[g] 1m 4m 1m` said "g too big 0.003 (at sweep value 0.002)".
+ * Level 0's own value when level 0 moves; an outer level moves first and the
+ * inner ones then go back to their start, so the point is level 0's start.
+ * Only the stepping calls publish (`check` set); a restore does not. */
+static void
+DCTpointAhead(CKTcircuit *ckt, TRCV *job, int i, double val)
+{
+    ckt->CKTtime = (i == 0) ? val : job->TRCVvStart[0];
+}
+
+
 static int
 DCTsetInstParam(CKTcircuit *ckt, TRCV *job, int i, double val, int check)
 {
@@ -327,6 +342,8 @@ DCTsetInstParam(CKTcircuit *ckt, TRCV *job, int i, double val, int check)
     int err;
 
     dct_topology_refusal = 0;
+    if (check)
+        DCTpointAhead(ckt, job, i, val);      /* Enhancement-822 */
 
     /* Enhancement-427: an INTEGER parameter needs iValue, not rValue -- writing
      * the wrong union member would hand the device the bit pattern of a double.
@@ -576,6 +593,8 @@ DCTsetXParam(CKTcircuit *ckt, TRCV *job, int i, double val, int check)
     int k, err;
 
     dct_topology_refusal = 0;
+    if (check)
+        DCTpointAhead(ckt, job, i, val);      /* Enhancement-822 */
     for (k = 0; k < job->TRCVxN[i]; k++) {
         DCTxtarget *t = &job->TRCVxTarg[i][k];
         IFvalue v;
@@ -890,6 +909,8 @@ DCTapplyLevel(CKTcircuit *ckt, TRCV *job, int i, double val, int check,
 {
     int err = OK;
 
+    if (check)
+        DCTpointAhead(ckt, job, i, val);      /* Enhancement-822 */
     if (job->TRCVvType[i] == vcode) {
         ((VSRCinstance *) (job->TRCVvElt[i]))->VSRCdcValue = val;
     } else if (job->TRCVvType[i] == icode) {
@@ -984,8 +1005,59 @@ DCTsweepTime(CKTcircuit *ckt, TRCV *job, int vcode, int icode, int rcode)
         ckt->CKTtime = ckt->CKTtemp - CONSTCtoK;
 }
 
-int
-DCtrCurv(CKTcircuit *ckt, int restart)
+/* Put every swept knob back to its pre-sweep value: the end of a sweep, a
+ * $finish, a refused point (Enhancement-427) and, since Enhancement-821, every
+ * abort -- a Verilog-A $fatal (immediate or judged on the accepted point), a
+ * point that did not converge. Those returned with the swept source or
+ * parameter at the failing value, and every later analysis ran on it until
+ * `reset`: `dc v1 0 3 1` stopped by a $fatal at 2 V left `@v1[dc]` = 2 and the
+ * next `op` raised the same $fatal. An aborted run cannot be resumed (only
+ * E_PAUSE can, and keeps its values). */
+static void
+DCTrestoreSwept(CKTcircuit *ckt, TRCV *job, int vcode, int icode, int rcode)
+{
+    int i;
+
+    for (i = 0; i <= job->TRCVnestLevel; i++)
+        if (job->TRCVvType[i] == vcode) {   /* voltage source */
+            ((VSRCinstance*)(job->TRCVvElt[i]))->VSRCdcValue = job->TRCVvSave[i];
+            ((VSRCinstance*)(job->TRCVvElt[i]))->VSRCdcGiven = (job->TRCVgSave[i] != 0);
+        } else  if (job->TRCVvType[i] == icode) { /*current source */
+            ((ISRCinstance*)(job->TRCVvElt[i]))->ISRCdcValue = job->TRCVvSave[i];
+            ((ISRCinstance*)(job->TRCVvElt[i]))->ISRCdcGiven = (job->TRCVgSave[i] != 0);
+        } else  if (job->TRCVvType[i] == rcode) { /* Resistance */
+            ((RESinstance*)(job->TRCVvElt[i]))->RESresist = job->TRCVvSave[i];
+            ((RESinstance*)(job->TRCVvElt[i]))->RESresGiven = (job->TRCVgSave[i] != 0);
+            RESupdate_conduct((RESinstance *)(job->TRCVvElt[i]), TRUE);
+            DEVices[rcode]->DEVload(job->TRCVvElt[i]->GENmodPtr, ckt);
+        } else if (job->TRCVvType[i] == TEMP_CODE) {
+            ckt->CKTtemp = job->TRCVvSave[i];
+            inp_evaluate_temper(ft_curckt);
+            CKTtemp(ckt);
+        } else if (job->TRCVvType[i] == PARAM_CODE) {
+            /* value restored; the parameter stays marked "given" (the
+               generic DEVparam interface has no way to clear that --
+               Enhancement-555: an OSDI device has one, used below).
+               Enhancement-427: deliberately NOT checked -- the sweep is over,
+               its results are already published, and failing here would turn a
+               completed analysis into an error. The value being put back was
+               accepted once, so a refusal would itself be the anomaly. */
+            (void) DCTsetInstParam(ckt, job, i, job->TRCVvSave[i], 0);
+#ifdef OSDI
+            if (job->TRCVgSave[i] == 0)     /* Enhancement-555 */
+                (void) OSDIparamGiven(job->TRCVvElt[i], NULL,
+                                      job->TRCVvParmId[i], 2);
+#endif
+        } else if (job->TRCVvType[i] == XPARAM_CODE) {
+            /* Enhancement-534: every target's own nominal back, unchecked */
+            DCTrestoreXParam(ckt, job, i);
+        }
+
+}
+
+
+static int
+DCtrCurvRun(CKTcircuit *ckt, int restart)
 {
     TRCV *job = (TRCV *) ckt->CKTcurJob;
 
@@ -1034,8 +1106,18 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                                            NULL, 0,
                                            666, NULL, 666,
                                            &plot);
+#ifdef OSDI
+        OSDIdcSweep(OSDI_DC_SWEEP_LATER);       /* Enhancement-820 */
+#endif
         goto resume;
     }
+
+#ifdef OSDI
+    /* Enhancement-820: the first point is the analysis's start -- its initial
+       step initialises the variables; later points carry them */
+    OSDIdcSweep(OSDI_DC_SWEEP_FIRST);
+#endif
+    ckt->CKTtime = job->TRCVvStart[0];          /* Enhancement-822 */
 
     /* Enhancement-362: a .dc sweep advances by TRCVvStep and compares against
      * TRCVvStop -- there is no precomputed point count, so a step that is tiny
@@ -1539,8 +1621,10 @@ DCtrCurv(CKTcircuit *ckt, int restart)
 #endif
 
     error = CKTnames(ckt, &numNames, &nameList);
-    if (error)
-        return(error);
+    if (error) {
+        dctrc = error;
+        goto dct_abort;                         /* Enhancement-821 */
+    }
 
     if (job->TRCVvType[0] == vcode)
         SPfrontEnd->IFnewUid (ckt, &varUid, NULL, "v-sweep", UID_OTHER, NULL);
@@ -1563,8 +1647,10 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                                        &plot);
     tfree(nameList);
 
-    if (error)
-        return(error);
+    if (error) {
+        dctrc = error;
+        goto dct_abort;                         /* Enhancement-821 */
+    }
 
     /* initialize CKTsoaCheck `warn' counters */
     if (ckt->CKTsoaCheck)
@@ -1676,6 +1762,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                     job->TRCVvStart[i];
             } else if (job->TRCVvType[i] == TEMP_CODE) {
                 ckt->CKTtemp = job->TRCVvStart[i] + CONSTCtoK;
+                DCTpointAhead(ckt, job, i, job->TRCVvStart[i]);  /* E-822 */
                 inp_evaluate_temper(ft_curckt);
                 CKTtemp(ckt);
             } else if (job->TRCVvType[i] == rcode) {
@@ -1684,16 +1771,20 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                 RESupdate_conduct((RESinstance *)(job->TRCVvElt[i]), FALSE);
                 DEVices[rcode]->DEVload(job->TRCVvElt[i]->GENmodPtr, ckt);
             } else if (job->TRCVvType[i] == PARAM_CODE) {
-                if (DCTsetInstParam(ckt, job, i, job->TRCVvStart[i], 1) != OK)
-                    return dct_topology_refusal
+                if (DCTsetInstParam(ckt, job, i, job->TRCVvStart[i], 1) != OK) {
+                    dctrc = dct_topology_refusal
                         ? E_PARMVAL       /* Enhancement-495 already said why */
                         : DCTrejected(job, i, job->TRCVvStart[i]);
+                    goto dct_abort;                 /* Enhancement-821 */
+                }
             } else if (job->TRCVvType[i] == XPARAM_CODE) {
                 /* Enhancement-534 */
-                if (DCTsetXParam(ckt, job, i, job->TRCVvStart[i], 1) != OK)
-                    return dct_topology_refusal
+                if (DCTsetXParam(ckt, job, i, job->TRCVvStart[i], 1) != OK) {
+                    dctrc = dct_topology_refusal
                         ? E_PARMVAL
                         : DCTrejected(job, i, job->TRCVvStart[i]);
+                    goto dct_abort;                 /* Enhancement-821 */
+                }
             }
 
         /* Rotate state vectors. */
@@ -1715,8 +1806,10 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                                   (ckt->CKTmode & MODEUIC) | MODEDCTRANCURVE | MODEINITJCT,
                                   (ckt->CKTmode & MODEUIC) | MODEDCTRANCURVE | MODEINITFLOAT,
                                   ckt->CKTdcMaxIter);
-                if (converged != 0)
-                    return(converged);
+                if (converged != 0) {
+                    dctrc = converged;
+                    goto dct_abort;                 /* Enhancement-821 */
+                }
             }
             else {
                 /* Enhancement-258: the .dc sweep solves each point with a direct
@@ -1743,15 +1836,18 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                             "       This is not a convergence failure -- see the"
                             " OSDI(fatal) message above for the cause.\n",
                             ckt->CKTtime);
-                    return(converged);
+                    dctrc = converged;
+                    goto dct_abort;                 /* Enhancement-821 */
                 }
                 if (converged != 0) {
                     converged = CKTop(ckt,
                         (ckt->CKTmode & MODEUIC) | MODEDCTRANCURVE | MODEINITJCT,
                         (ckt->CKTmode & MODEUIC) | MODEDCTRANCURVE | MODEINITFLOAT,
                         ckt->CKTdcMaxIter);
-                    if (converged != 0)
-                        return(converged);
+                    if (converged != 0) {
+                        dctrc = converged;
+                        goto dct_abort;             /* Enhancement-821 */
+                    }
                 }
             }
 #ifdef XSPICE
@@ -1785,8 +1881,10 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                                   MIF_TRUE);
                 EVTdump(ckt, IPC_ANAL_DCOP, g_mif_info.circuit.evt_step);
                 EVTop_save(ckt, MIF_FALSE, g_mif_info.circuit.evt_step);
-                if (converged != 0)
-                    return(converged);
+                if (converged != 0) {
+                    dctrc = converged;
+                    goto dct_abort;                 /* Enhancement-821 */
+                }
             }
             /* else, call NIiter first with mode = MODEINITPRED */
             /* to attempt quick analog solution.  Then call all hybrids and call */
@@ -1802,8 +1900,10 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                                       MIF_FALSE);
                     EVTdump(ckt, IPC_ANAL_DCTRCURVE, g_mif_info.circuit.evt_step);
                     EVTop_save(ckt, MIF_FALSE, g_mif_info.circuit.evt_step);
-                    if (converged != 0)
-                        return(converged);
+                    if (converged != 0) {
+                        dctrc = converged;
+                        goto dct_abort;             /* Enhancement-821 */
+                    }
                 }
             }
         }
@@ -1850,8 +1950,10 @@ DCtrCurv(CKTcircuit *ckt, int restart)
             save = ckt->CKTmode;
             ckt->CKTsenInfo->SENmode = DCSEN;
             error = CKTsenDCtran(ckt);
-            if (error)
-                return(error);
+            if (error) {
+                dctrc = error;
+                goto dct_abort;                     /* Enhancement-821 */
+            }
 
             ckt->CKTmode = save;
             ckt->CKTsenInfo->SENmode = senmode;
@@ -1861,13 +1963,14 @@ DCtrCurv(CKTcircuit *ckt, int restart)
 #ifdef OSDI
         /* Enhancement-703 (hunt F2 of 2026-09-21): a fatal judged on the
          * accepted solution -- this sweep point's. Before the point is output,
-         * as E-673's $fatal path above; the swept sources keep their values as
-         * they do there. */
+         * as E-673's $fatal path above. Enhancement-821: both put the swept
+         * values back on the way out. */
         {
             char where[64];
             snprintf(where, sizeof where, "sweep value %g", ckt->CKTtime);
             if (OSDIdeferredFatal(ckt, where)) {
-                return (E_PANIC);
+                dctrc = E_PANIC;
+                goto dct_abort;
             }
         }
 #endif
@@ -1908,6 +2011,9 @@ DCtrCurv(CKTcircuit *ckt, int restart)
 
         if (firstTime) {
             firstTime = 0;
+#ifdef OSDI
+            OSDIdcSweep(OSDI_DC_SWEEP_LATER);   /* Enhancement-820 */
+#endif
             if (ckt->CKTstate1 && ckt->CKTstate0) {
                 memcpy(ckt->CKTstate1, ckt->CKTstate0,
                        (size_t) ckt->CKTnumStates * sizeof(double));
@@ -2001,6 +2107,7 @@ DCtrCurv(CKTcircuit *ckt, int restart)
                 continue; // Skip model evaluation
             }
 
+            DCTpointAhead(ckt, job, i, ckt->CKTtemp - CONSTCtoK);  /* E-822 */
             inp_evaluate_temper(ft_curckt);
             CKTtemp(ckt);
         }
@@ -2035,45 +2142,23 @@ DCtrCurv(CKTcircuit *ckt, int restart)
  * restore path is the whole point of jumping here: returning where the
  * rejection happens would leave the instance holding the refused value. */
 osdi_finish:
-    for (i = 0; i <= job->TRCVnestLevel; i++)
-        if (job->TRCVvType[i] == vcode) {   /* voltage source */
-            ((VSRCinstance*)(job->TRCVvElt[i]))->VSRCdcValue = job->TRCVvSave[i];
-            ((VSRCinstance*)(job->TRCVvElt[i]))->VSRCdcGiven = (job->TRCVgSave[i] != 0);
-        } else  if (job->TRCVvType[i] == icode) { /*current source */
-            ((ISRCinstance*)(job->TRCVvElt[i]))->ISRCdcValue = job->TRCVvSave[i];
-            ((ISRCinstance*)(job->TRCVvElt[i]))->ISRCdcGiven = (job->TRCVgSave[i] != 0);
-        } else  if (job->TRCVvType[i] == rcode) { /* Resistance */
-            ((RESinstance*)(job->TRCVvElt[i]))->RESresist = job->TRCVvSave[i];
-            ((RESinstance*)(job->TRCVvElt[i]))->RESresGiven = (job->TRCVgSave[i] != 0);
-            RESupdate_conduct((RESinstance *)(job->TRCVvElt[i]), TRUE);
-            DEVices[rcode]->DEVload(job->TRCVvElt[i]->GENmodPtr, ckt);
-        } else if (job->TRCVvType[i] == TEMP_CODE) {
-            ckt->CKTtemp = job->TRCVvSave[i];
-            inp_evaluate_temper(ft_curckt);
-            CKTtemp(ckt);
-        } else if (job->TRCVvType[i] == PARAM_CODE) {
-            /* value restored; the parameter stays marked "given" (the
-               generic DEVparam interface has no way to clear that --
-               Enhancement-555: an OSDI device has one, used below).
-               Enhancement-427: deliberately NOT checked -- the sweep is over,
-               its results are already published, and failing here would turn a
-               completed analysis into an error. The value being put back was
-               accepted once, so a refusal would itself be the anomaly. */
-            (void) DCTsetInstParam(ckt, job, i, job->TRCVvSave[i], 0);
-#ifdef OSDI
-            if (job->TRCVgSave[i] == 0)     /* Enhancement-555 */
-                (void) OSDIparamGiven(job->TRCVvElt[i], NULL,
-                                      job->TRCVvParmId[i], 2);
-#endif
-        } else if (job->TRCVvType[i] == XPARAM_CODE) {
-            /* Enhancement-534: every target's own nominal back, unchecked */
-            DCTrestoreXParam(ckt, job, i);
-        }
-
 #ifdef OSDI
     /* Enhancement-53: fire `@(final_step)` blocks at the last sweep point
-       (results are not loaded into the matrix). */
-    OSDIfinalStep(ckt);
+       (results are not loaded into the matrix). Enhancement-820 (hunt
+       2026-10-08 F4): BEFORE the restore -- it ran after it, so a `.dc temp`
+       or `.dc @n1[p]` sweep's final step saw the restored temperature or
+       parameter, not the last point's (LRM Table 5-1: the last point, dN). A
+       refused point (E-427) leaves the instance holding the refused value, so
+       an abandoned sweep keeps firing it after the restore, as before. */
+    if (dctrc == OK)
+        OSDIfinalStep(ckt);
+    OSDIdcSweep(OSDI_DC_SWEEP_OFF);
+#endif
+    DCTrestoreSwept(ckt, job, vcode, icode, rcode);
+
+#ifdef OSDI
+    if (dctrc != OK)
+        OSDIfinalStep(ckt);
 #endif
     SPfrontEnd->OUTendPlot (plot);
 
@@ -2088,4 +2173,26 @@ osdi_finish:
             dct_rejected_val);
 
     return(dctrc);
+
+    /* Enhancement-821 (hunt 2026-10-08 F5): an abort -- no @(final_step), no
+       end of plot, as before -- puts the swept values back */
+dct_abort:
+#ifdef OSDI
+    OSDIdcSweep(OSDI_DC_SWEEP_OFF);
+#endif
+    DCTrestoreSwept(ckt, job, vcode, icode, rcode);
+    return(dctrc);
+}
+
+
+int
+DCtrCurv(CKTcircuit *ckt, int restart)
+{
+    int rc = DCtrCurvRun(ckt, restart);
+#ifdef OSDI
+    /* Enhancement-820: whatever way the sweep ended or paused, no later
+       setup pass belongs to it (a resume sets the phase again) */
+    OSDIdcSweep(OSDI_DC_SWEEP_OFF);
+#endif
+    return rc;
 }

@@ -209,6 +209,18 @@ extern int OSDIfinalStep(CKTcircuit *ckt);
  * frequency. Defined in src/osdi/osdisetup.c. */
 extern void OSDIholdInitialStep(bool hold);
 
+/* Enhancement-820 (hunt 2026-10-08 F4/F6): where a .dc sweep stands, set by
+ * DCtrCurv. OSDI_DC_SWEEP_LATER: the first point has been solved, so a point
+ * that re-runs the temperature pass (a temperature, an OSDI parameter)
+ * re-fires @(initial_step) with EVAL_FLAG_SWEEP_CONTINUES and the variables
+ * keep the previous point's values (LRM 4.6.2). Either running phase labels
+ * a message raised in a setup pass "(at sweep value ...)" with CKTtime, which
+ * the sweep publishes before it applies a point. Defined in osdisetup.c. */
+#define OSDI_DC_SWEEP_OFF   0
+#define OSDI_DC_SWEEP_FIRST 1
+#define OSDI_DC_SWEEP_LATER 2
+extern void OSDIdcSweep(int phase);
+
 /* Deferred display/file output (LRM 9.4.6/9.5.9): flush the just-converged
  * point's buffered output. Called per accepted/converged solution point by the
  * analyses that solve a SEQUENCE of points without CKTaccept (.dc sweeps);

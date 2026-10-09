@@ -20,6 +20,12 @@ impl HirInterner {
     /// `ParamKind::IsInitialStep` is true, and the genuine cross-evaluation
     /// read is used otherwise -- see `openvaf/osdi/src/inst_data.rs`'s
     /// `hidden_state`/`read_hidden_state`/`store_hidden_state`.
+    ///
+    /// Enhancement-820 (hunt 2026-10-08 F4): on `ParamKind::IsAnalysisStart`,
+    /// not `IsInitialStep`. A `.dc temp` or `.dc @n1[p]` sweep re-fires the
+    /// initial step at every point, and every variable read its initializer
+    /// there: a counter read 1 at each point, where a source sweep carried it.
+    /// LRM 4.6.2 carries variables from one dc point to the next.
     pub fn insert_var_init(
         &mut self,
         db: &CompilationDB,
@@ -36,7 +42,7 @@ impl HirInterner {
                 }
 
                 let init_val = ctx.lower_expr_body(var.init(db).borrow(), 0);
-                let is_initial = ctx.use_param(ParamKind::IsInitialStep);
+                let is_initial = ctx.use_param(ParamKind::IsAnalysisStart);
 
                 // Snapshot the pre-existing uses of `*param` BEFORE building the
                 // select below, since the select's own "else" branch also

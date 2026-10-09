@@ -42,6 +42,15 @@ const EVAL_FLAG_IS_INITIAL_STEP: u32 = 1 << 20;
 /// (its results are not loaded into the matrix/RHS), gating `@(final_step)`.
 const EVAL_FLAG_IS_FINAL_STEP: u32 = 1 << 21;
 
+/// Enhancement-820 (hunt 2026-10-08 F4): set by the simulator beside
+/// `EVAL_FLAG_IS_INITIAL_STEP` when a dc sweep re-fires the initial step at a
+/// later point (ngspice: a `.dc temp` or `.dc @n1[p]` point re-runs the
+/// temperature pass). The initial step's blocks run; the variables keep the
+/// previous point's values (`ParamKind::IsAnalysisStart` is false), LRM 4.6.2.
+/// A simulator that never sets it initialises them at every initial step, as
+/// before.
+const EVAL_FLAG_SWEEP_CONTINUES: u32 = 1 << 22;
+
 /*
 // Inline callback example
 struct AbortCallback;
@@ -275,6 +284,27 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                         ParamKind::IsFinalStep => {
                             let flags_val = flags.read(builder.llbuilder);
                             is_flag_set(cx, EVAL_FLAG_IS_FINAL_STEP, flags_val, builder.llbuilder)
+                        }
+                        ParamKind::IsAnalysisStart => {
+                            let flags_val = flags.read(builder.llbuilder);
+                            let initial = is_flag_set(
+                                cx,
+                                EVAL_FLAG_IS_INITIAL_STEP,
+                                flags_val,
+                                builder.llbuilder,
+                            );
+                            let fresh = is_flag_unset(
+                                cx,
+                                EVAL_FLAG_SWEEP_CONTINUES,
+                                flags_val,
+                                builder.llbuilder,
+                            );
+                            &*LLVMBuildAnd(
+                                builder.llbuilder,
+                                NonNull::from(initial).as_ptr(),
+                                NonNull::from(fresh).as_ptr(),
+                                UNNAMED,
+                            )
                         }
                         ParamKind::EnableIntegration => {
                             let flags = flags.read(builder.llbuilder);

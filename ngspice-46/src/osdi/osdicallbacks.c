@@ -1,6 +1,7 @@
 #include "ngspice/devdefs.h"
 #include "ngspice/memory.h"
 #include "osdidefs.h"
+#include "ngspice/osdiitf.h"   /* Enhancement-822: OSDI_DC_SWEEP_OFF */
 
 #include <string.h>
 
@@ -251,6 +252,11 @@ with_context:
  * and setup paths below. Only the LRM 9.7.3 severity context reads it. */
 static const CKTcircuit *osdi_log_ckt;
 
+/* Deferral engages with the first Newton iteration (OSDIload). Display calls
+ * made before that -- instance setup evaluating init-resident statements --
+ * print through immediately, as they always did. */
+static bool display_managed;
+
 void osdi_display_note_circuit(const CKTcircuit *ckt) { osdi_log_ckt = ckt; }
 
 /* ROUND-3 AUDIT / LRM 9.7.3: "these tasks shall also report the simulation run
@@ -275,6 +281,19 @@ static void osdi_severity_when(char *buf, size_t n, uint32_t lvl) {
     snprintf(buf, n, " (during initialization)");
     return;
   }
+  /* Enhancement-822 (hunt 2026-10-08 F6): a setup or temperature pass --
+   * the code the compiler hoists, run before any Newton iteration (deferral
+   * is not engaged) -- belongs to no solve, and CKTmode/CKTtime still held
+   * the LAST analysis's: an op after a .dc sweep said "(at sweep value 0)",
+   * an altermod after a tran "(at t = 2e-09)". Inside a running sweep it is
+   * the point being applied, which the sweep publishes in CKTtime first. */
+  if (!display_managed) {
+    if (ckt != NULL && osdi_dc_sweep_phase() != OSDI_DC_SWEEP_OFF)
+      snprintf(buf, n, " (at sweep value %g)", ckt->CKTtime);
+    else
+      snprintf(buf, n, " (during setup)");
+    return;
+  }
   if (ckt == NULL) {
     return;
   }
@@ -289,10 +308,6 @@ static void osdi_severity_when(char *buf, size_t n, uint32_t lvl) {
 
 static OsdiPendingMsg *pending;
 static int pending_len, pending_cap;
-/* Deferral engages with the first Newton iteration (OSDIload). Display calls
- * made before that -- instance setup evaluating init-resident statements --
- * print through immediately, as they always did. */
-static bool display_managed;
 
 /* Enhancement-660 (hunt F16): the SETUP pass's messages are held and
  * superseded by the temperature pass. ngspice runs every OSDI model's
@@ -307,8 +322,8 @@ static bool display_managed;
  * and dropped when the temperature pass re-enters (its copies, evaluated on
  * the values the analysis runs with, are the ones that print); released to
  * the output if the setup failed (the reason must show), or at the first
- * Newton iteration if no temperature pass came. $fatal and LOG_FLAG_IMMEDIATE
- * messages are never held. */
+ * Newton iteration if no temperature pass came. LOG_FLAG_IMMEDIATE messages
+ * are never held; $fatal is since Enhancement-822. */
 static OsdiPendingMsg *held;
 static int held_len, held_cap;
 static bool setup_pass;
@@ -711,8 +726,10 @@ void osdi_log(void *handle_, char *msg, uint32_t lvl) {
      * unless the compiler tagged it immediate (event-gated, or an `analog
      * initial` block, which fires on the initial-step iteration). */
     /* Enhancement-660 (hunt F16): the setup pass's copy, superseded by the
-     * temperature pass's (see osdi_setup_hold) */
-    if (setup_pass && level != LOG_LVL_FATAL && !(lvl & LOG_FLAG_IMMEDIATE)) {
+     * temperature pass's (see osdi_setup_hold). Enhancement-822: $fatal too --
+     * hoisted setup code raises it in both passes, and it printed twice; the
+     * abort itself comes from the evaluation's return flag, not from here. */
+    if (setup_pass && !(lvl & LOG_FLAG_IMMEDIATE)) {
       osdi_setup_hold(text, head_len, sev, to_err);
       return;
     }

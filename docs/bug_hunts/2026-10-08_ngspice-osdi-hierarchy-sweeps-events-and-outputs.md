@@ -39,9 +39,9 @@ Nothing was fixed; this is the list.
 | [F1](#f1) | *(fixed in [E-817](../../enhancements_doc/Enhancement-817.md): an instance's own value is kept, the default moves)* `alterparam sub p=v` on a parameter of the `.subckt` line overrides the value every instance gave on its own line | medium |
 | [F2](#f2) | *(fixed in [E-818](../../enhancements_doc/Enhancement-818.md))* `altermod gm …` with only subcircuit copies of `gm` prints a note claiming a top-level card exists and was changed | low |
 | [F3](#f3) | *(fixed in [E-819](../../enhancements_doc/Enhancement-819.md); an analysis command typed first refused it too)* `.ic`, `.nodeset` and `.save @…` refuse the `x1.n1` spelling of a device or internal node inside a subcircuit that `print`, `alter`, `show` and `.save v(…)` accept | low |
-| [F4](#f4) | a `.dc` sweep of temperature or of an OSDI parameter re-fires `@(initial_step)` and resets hidden state at every point, and `@(final_step)` sees the restored value, not the last point | medium |
-| [F5](#f5) | a `.dc` sweep aborted by `$fatal` leaves the swept source or parameter at the failing value for every later analysis | medium |
-| [F6](#f6) | in a parameter sweep the `OSDI(fatal)` message names the previous sweep point, and in the following op it still says "at sweep value 0" | low |
+| [F4](#f4) | *(fixed in [E-820](../../enhancements_doc/Enhancement-820.md): the variables carry, the final step at the last point; the initial step still re-fires per point, LRM 5.2.1)* a `.dc` sweep of temperature or of an OSDI parameter re-fires `@(initial_step)` and resets hidden state at every point, and `@(final_step)` sees the restored value, not the last point | medium |
+| [F5](#f5) | *(fixed in [E-821](../../enhancements_doc/Enhancement-821.md): every abort restores)* a `.dc` sweep aborted by `$fatal` leaves the swept source or parameter at the failing value for every later analysis | medium |
+| [F6](#f6) | *(fixed in [E-822](../../enhancements_doc/Enhancement-822.md); a temperature sweep lagged too, and a setup `$fatal` printed twice)* in a parameter sweep the `OSDI(fatal)` message names the previous sweep point, and in the following op it still says "at sweep value 0" | low |
 | [F7](#f7) | `pre_osdi` and `pre_osdi -va` inside an included library resolve relative paths against the top deck's directory, not the library's | medium |
 | [F8](#f8) | a `.model` inside a `.subckt` costs O(N²) in the instance count: 32 000 wrappers take 19 s with a built-in card, 2.9 s with an OSDI card, 0.19 s with the card at top level | medium (speed) |
 | [F9](#f9) | a `$fatal` raised during a `sens` perturbation is printed and ignored, and `$stop` and `$finish` are ignored without a word; `sens` completes and prints every sensitivity | medium |
@@ -136,6 +136,13 @@ way. Related: a Verilog-A child's internal node is exposed only as `n1#c1__mid`.
 <a id="f4"></a>
 ## F4 — temperature and OSDI-parameter sweeps re-run the initial step at every point
 
+*Fixed in [E-820](../../enhancements_doc/Enhancement-820.md). The re-fire stays: BSIM4 does
+its whole temperature and parameter preprocessing in `@(initial_step)`, and LRM 5.2.1
+re-executes initialisation when a sweep changes a parameter it reads. The variables now carry
+from point to point (LRM 4.6.2): a later point's initial step carries a new flag, and the
+compiled model initialises its variables only without it. The final step fires before the
+restore. Counter 11, 12, 13; final step at 373.15 K.*
+
 A module counting its `@(initial_step)` firings into an integer and printing in
 `@(final_step)`:
 
@@ -164,6 +171,10 @@ hidden-state reset and the `final_step` value are not.
 <a id="f5"></a>
 ## F5 — a sweep aborted by `$fatal` leaves the swept value behind
 
+*Fixed in [E-821](../../enhancements_doc/Enhancement-821.md): every abort of the sweep
+restores what it swept, as its end does. A non-converged point takes the same exit. `$stop`
+still keeps its value for `resume`.*
+
 ```spice
 v1 1 0 0
 n1 1 0 fm          ; $fatal when V > 1.5
@@ -180,6 +191,12 @@ not be provoked for comparison.
 
 <a id="f6"></a>
 ## F6 — the `OSDI(fatal)` location lags in a parameter sweep
+
+*Fixed in [E-822](../../enhancements_doc/Enhancement-822.md). The message comes from the
+device's setup code, run by the temperature pass that applies the point, before the point
+reached `CKTtime`. The op after it read the dc's leftover mode. The sweep now publishes the
+point before applying it, and a setup-pass message outside a sweep says "(during setup)". A
+temperature sweep lagged the same way, and a setup `$fatal` printed twice; both are fixed.*
 
 In the F5 parameter sweep:
 

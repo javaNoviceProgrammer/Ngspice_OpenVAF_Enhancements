@@ -1490,6 +1490,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                     | ParamKind::EnableIntegration
                     | ParamKind::EnableLim
                     | ParamKind::IsInitialStep
+                    | ParamKind::IsAnalysisStart
                     | ParamKind::IsFinalStep
                     | ParamKind::PrevState(_)
                     | ParamKind::NewState(_)
@@ -1595,6 +1596,7 @@ impl<'ll> OsdiCompilationUnit<'_, '_, 'll> {
                     | ParamKind::Abstime
                     | ParamKind::EnableLim
                     | ParamKind::IsInitialStep
+                    | ParamKind::IsAnalysisStart
                     | ParamKind::IsFinalStep
                     | ParamKind::PrevState(_)
                     | ParamKind::NewState(_)

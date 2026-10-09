@@ -152,6 +152,7 @@ fn param_json_name(db: &CompilationDB, kind: hir_lower::ParamKind) -> (&'static 
         Some(ParamKind::EnableIntegration) => ("sim_state", "enable_integration".to_owned()),
         Some(ParamKind::EnableLim) => ("sim_state", "enable_lim".to_owned()),
         Some(ParamKind::IsInitialStep) => ("sim_state", "is_initial_step".to_owned()),
+        Some(ParamKind::IsAnalysisStart) => ("sim_state", "is_analysis_start".to_owned()),
         Some(ParamKind::IsFinalStep) => ("sim_state", "is_final_step".to_owned()),
         None => unreachable!(),
     }

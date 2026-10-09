@@ -1911,7 +1911,10 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
           OsdiSimInfo task_info = sim_info;
           if (!extra_inst_data->has_evaluated) {
             task_info.flags |= EVAL_FLAG_IS_INITIAL_STEP;
+            if (extra_inst_data->sweep_continues)     /* Enhancement-820 */
+              task_info.flags |= EVAL_FLAG_SWEEP_CONTINUES;
             extra_inst_data->has_evaluated = true;
+            extra_inst_data->sweep_continues = false;
           }
           eval(descr, gen_inst, inst, extra_inst_data, model, &task_info);
         }
@@ -1981,9 +1984,12 @@ extern int OSDIload(GENmodel *inModel, CKTcircuit *ckt) {
       osdi_lim_apply(ckt, entry, inst, model, extra_inst_data, &lim_patch);
       if (!extra_inst_data->has_evaluated) {
         sim_info.flags |= EVAL_FLAG_IS_INITIAL_STEP;
+        if (extra_inst_data->sweep_continues)         /* Enhancement-820 */
+          sim_info.flags |= EVAL_FLAG_SWEEP_CONTINUES;
         eval(descr, gen_inst, inst, extra_inst_data, model, &sim_info);
-        sim_info.flags &= ~EVAL_FLAG_IS_INITIAL_STEP;
+        sim_info.flags &= ~(EVAL_FLAG_IS_INITIAL_STEP | EVAL_FLAG_SWEEP_CONTINUES);
         extra_inst_data->has_evaluated = true;
+        extra_inst_data->sweep_continues = false;
       } else {
         eval(descr, gen_inst, inst, extra_inst_data, model, &sim_info);
       }

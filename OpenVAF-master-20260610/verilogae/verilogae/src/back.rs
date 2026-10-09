@@ -471,7 +471,9 @@ impl CodegenCtx<'_, '_> {
                     // is running, so neither step flag is ever set. This follows the
                     // `EnableIntegration`/`EnableLim` precedent directly above --
                     // simulator-mode flags are all false here.
-                    ParamKind::IsInitialStep | ParamKind::IsFinalStep => {
+                    ParamKind::IsInitialStep
+                    | ParamKind::IsAnalysisStart
+                    | ParamKind::IsFinalStep => {
                         codegen.builder.cx.const_bool(false)
                     }
                 };
@@ -828,7 +830,9 @@ impl CodegenCtx<'_, '_> {
                     // is running, so neither step flag is ever set. This follows the
                     // `EnableIntegration`/`EnableLim` precedent directly above --
                     // simulator-mode flags are all false here.
-                    ParamKind::IsInitialStep | ParamKind::IsFinalStep => {
+                    ParamKind::IsInitialStep
+                    | ParamKind::IsAnalysisStart
+                    | ParamKind::IsFinalStep => {
                         builder.cx.const_bool(false)
                     }
                 };

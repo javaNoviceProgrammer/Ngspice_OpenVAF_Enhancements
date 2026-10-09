@@ -267,6 +267,12 @@ typedef struct OsdiExtraInstData {
    * analysis" semantics -- see openvaf/osdi/src/eval.rs. */
   bool has_evaluated;
 
+  /* Enhancement-820 (hunt 2026-10-08 F4): the mark above was cleared by a dc
+   * sweep's later point, so the next evaluation also carries
+   * EVAL_FLAG_SWEEP_CONTINUES: the initial step's blocks run and the
+   * variables keep their values (LRM 4.6.2). */
+  bool sweep_continues;
+
   /* Enhancement-55: eval-return flags accumulated over ALL Newton iterations
    * of the CURRENT timepoint attempt (reset when a new attempt starts, i.e.
    * on MODEINITJCT/MODEINITPRED/MODEINITTRAN). `eval_flags` above only holds
@@ -393,6 +399,12 @@ static inline uint32_t osdi_wire_slots(const OsdiRegistryEntry *entry) {
  * matrix/RHS. Gates Verilog-A `@(final_step)` blocks. */
 #define EVAL_FLAG_IS_FINAL_STEP (1u << 21)
 
+/* Enhancement-820 (hunt 2026-10-08 F4): beside EVAL_FLAG_IS_INITIAL_STEP when
+ * a dc sweep re-fires the initial step at a later point (OsdiExtraInstData
+ * sweep_continues). A model compiled by openvaf-r from E-820 on keeps its
+ * variables there; an older one ignores the bit and initialises them. */
+#define EVAL_FLAG_SWEEP_CONTINUES (1u << 22)
+
 typedef struct OsdiModelData {
   GENmodel gen;
   max_align_t data;
@@ -499,6 +511,7 @@ void osdi_display_iter_begin(void);
  * a severity task can report the simulation time (or, in a .dc, the swept
  * value) that LRM 9.7.3 requires alongside its message. */
 void osdi_display_note_circuit(const CKTcircuit *ckt);
+int osdi_dc_sweep_phase(void);        /* Enhancement-820: OSDIdcSweep's phase */
 void osdi_display_setup_phase(void);  /* Enhancement-535: per-ANALYSIS reset */
 void osdi_display_reenter_setup(void); /* per-setup reset, monitor history kept */
 void osdi_display_setup_failed(void);  /* Enhancement-660: release the held setup-pass output */

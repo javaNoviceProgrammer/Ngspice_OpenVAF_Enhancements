@@ -126,6 +126,13 @@ pub enum ParamKind {
     /// `@(initial_step)`). A one-shot, monotonic approximation of the LRM's
     /// "fires once per analysis" semantics -- see `Stmt::EventControl` lowering.
     IsInitialStep,
+    /// Enhancement-820 (hunt 2026-10-08 F4): `IsInitialStep` at the start of an
+    /// analysis, false where a dc sweep re-fires the initial step at a later point
+    /// (a temperature or parameter it changed, LRM 5.2.1; ngspice sets
+    /// `EVAL_FLAG_SWEEP_CONTINUES`). Variables are initialised on this one: LRM
+    /// 4.6.2 carries them from one dc point to the next and re-initialises them
+    /// at the start of each new analysis. See `state::insert_var_init`.
+    IsAnalysisStart,
     /// Enhancement-53: true only on the dedicated post-analysis `eval()` call the
     /// simulator issues once an analysis has completed (gates `@(final_step)`);
     /// that call's results are not loaded into the matrix/RHS. See
@@ -170,6 +177,7 @@ impl ParamKind {
                 | ParamKind::NewState(_)
                 | ParamKind::EnableLim
                 | ParamKind::IsInitialStep
+                | ParamKind::IsAnalysisStart
                 | ParamKind::IsFinalStep
                 | ParamKind::EventState(_)
         )
