@@ -44,8 +44,9 @@ asked the hash. `INPlookMod` and XSPICE's `MIFgetMod` still walked the list.
 ## The checks
 
 `libsens_examples` [2]. Each time is the fastest of three runs.
-- 32 000 wrappers with a built-in card inside: under twice the time with the card at top
-  level (0.23 s against 0.13 s; was 60×).
+- 32 000 wrappers with a built-in card inside: under four times the time with the card at
+  top level (0.23 s against 0.13 s; was 60×). The copies cost about 1.6× of their own, a model
+  and its setup per instance; a loaded CI runner measured 2.2×.
 - The same with an OSDI card (0.24 s against 0.15 s; was 18×).
 - 16 000 wrappers with an XSPICE card (0.24 s against 0.18 s under KLU; was 11×). This check
   is skipped, and says so, where no `analog.cm` sits beside the binary.
