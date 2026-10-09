@@ -221,6 +221,14 @@ extern void OSDIholdInitialStep(bool hold);
 #define OSDI_DC_SWEEP_LATER 2
 extern void OSDIdcSweep(int phase);
 
+/* Enhancement-825 (hunt 2026-10-08 F9): sensitivity analysis names the
+ * parameter it is perturbing ("n1:g to 0.001000001"; NULL when none), so a
+ * Verilog-A message raised then says so instead of "(at the operating
+ * point)", and counts the $fatal messages the devices report: a perturbation
+ * that raised one aborts the analysis. Defined in osdicallbacks.c. */
+extern void OSDIsensPerturbing(const char *what);
+extern int OSDIfatalsReported(void);
+
 /* Deferred display/file output (LRM 9.4.6/9.5.9): flush the just-converged
  * point's buffered output. Called per accepted/converged solution point by the
  * analyses that solve a SEQUENCE of points without CKTaccept (.dc sweeps);

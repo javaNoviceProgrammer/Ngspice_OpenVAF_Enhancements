@@ -42,9 +42,9 @@ Nothing was fixed; this is the list.
 | [F4](#f4) | *(fixed in [E-820](../../enhancements_doc/Enhancement-820.md): the variables carry, the final step at the last point; the initial step still re-fires per point, LRM 5.2.1)* a `.dc` sweep of temperature or of an OSDI parameter re-fires `@(initial_step)` and resets hidden state at every point, and `@(final_step)` sees the restored value, not the last point | medium |
 | [F5](#f5) | *(fixed in [E-821](../../enhancements_doc/Enhancement-821.md): every abort restores)* a `.dc` sweep aborted by `$fatal` leaves the swept source or parameter at the failing value for every later analysis | medium |
 | [F6](#f6) | *(fixed in [E-822](../../enhancements_doc/Enhancement-822.md); a temperature sweep lagged too, and a setup `$fatal` printed twice)* in a parameter sweep the `OSDI(fatal)` message names the previous sweep point, and in the following op it still says "at sweep value 0" | low |
-| [F7](#f7) | `pre_osdi` and `pre_osdi -va` inside an included library resolve relative paths against the top deck's directory, not the library's | medium |
-| [F8](#f8) | a `.model` inside a `.subckt` costs O(N²) in the instance count: 32 000 wrappers take 19 s with a built-in card, 2.9 s with an OSDI card, 0.19 s with the card at top level | medium (speed) |
-| [F9](#f9) | a `$fatal` raised during a `sens` perturbation is printed and ignored, and `$stop` and `$finish` are ignored without a word; `sens` completes and prints every sensitivity | medium |
+| [F7](#f7) | *(fixed in [E-823](../../enhancements_doc/Enhancement-823.md): a name found beside the included file is used)* `pre_osdi` and `pre_osdi -va` inside an included library resolve relative paths against the top deck's directory, not the library's | medium |
+| [F8](#f8) | *(fixed in [E-824](../../enhancements_doc/Enhancement-824.md): the lookup uses the model hash; 0.23 s at 32 000)* a `.model` inside a `.subckt` costs O(N²) in the instance count: 32 000 wrappers take 19 s with a built-in card, 2.9 s with an OSDI card, 0.19 s with the card at top level | medium (speed) |
+| [F9](#f9) | *(fixed in [E-825](../../enhancements_doc/Enhancement-825.md): `$fatal` aborts and names the perturbation, `$finish`/`$stop` end with a note)* a `$fatal` raised during a `sens` perturbation is printed and ignored, and `$stop` and `$finish` are ignored without a word; `sens` completes and prints every sensitivity | medium |
 | [F10](#f10) | `alter n1 l=5u` moves a binned instance out of its bin in silence: it stays on `nch.1` with `nch.2`'s size | medium |
 | [F11](#f11) | `pre_osdi -va` of a source with a compile error advises on how to *find* the compiler | low |
 | [F12](#f12) | `pss` and `hb` never fire `@(final_step)` | medium |
@@ -214,6 +214,11 @@ source sweep tags both lines correctly.
 <a id="f7"></a>
 ## F7 — `pre_osdi` in an included library resolves against the top deck
 
+*Fixed in [E-823](../../enhancements_doc/Enhancement-823.md): while the reader reads an included
+file, a relative name in a `pre_osdi` or `osdi` line that names a file beside that file is
+rewritten to it -- relative to the deck when beneath it, so `-va` keeps its object name, else
+absolute. A `.lib` section and a nested include work the same way.*
+
 ```spice
 * sub/inc.lib, beside sub/gres.osdi and sub/gres.va
 .control
@@ -233,6 +238,10 @@ works), and nested `.include`s resolve against the including file. A model libra
 <a id="f8"></a>
 ## F8 — a `.model` inside a `.subckt` is quadratic in the instance count
 
+*Fixed in [E-824](../../enhancements_doc/Enhancement-824.md): `INPlookMod` (and XSPICE's
+`MIFgetMod`) use the hash table `INPmakeMod` already kept beside the list. 32 000 wrappers with
+a built-in card inside: 0.23 s (7.9 s on the E-822 binaries), linear to 1.1 s at 128 000.*
+
 Subcircuit expansion copies a card defined inside a subcircuit once per instance
 (`x1:gm`, `x2:gm`, … — no de-duplication, even for identical parameters). Then `INPpas2`
 looks each instance's model up with `INPlookMod`, a linear `strcmp` scan of the model list
@@ -250,6 +259,11 @@ shape.
 
 <a id="f9"></a>
 ## F9 — `$fatal` during a `sens` perturbation is ignored
+
+*Fixed in [E-825](../../enhancements_doc/Enhancement-825.md): the perturbation loop read none of
+what the perturbed setup and load returned. Now a `$fatal` aborts with an error naming the
+perturbation, `$finish` and `$stop` end the analysis with a note, and the device's line says
+"(while sens perturbed n1:g to 0.001000001)".*
 
 A model with `if (g > lim) $fatal(...)`, nominal `g` = `lim`, so the first upward
 perturbation trips it:

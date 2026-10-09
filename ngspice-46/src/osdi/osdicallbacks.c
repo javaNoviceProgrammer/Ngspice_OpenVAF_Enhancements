@@ -226,7 +226,7 @@ static void osdi_emit(const char *text, int head_len, bool to_err,
   n = strlen(out);
 with_context:
   if (sev != 0) {
-    char when[64];
+    char when[256];       /* Enhancement-825: a sens label names a parameter */
     osdi_severity_when(when, sizeof(when), sev);
     if (when[0] != '\0') {
       /* before the message's own newline, so the head and the message text
@@ -251,6 +251,18 @@ with_context:
 /* The circuit whose evaluation is producing log output, published by the load
  * and setup paths below. Only the LRM 9.7.3 severity context reads it. */
 static const CKTcircuit *osdi_log_ckt;
+
+/* Enhancement-825: see osdiitf.h */
+static char *osdi_sens_what;
+static int osdi_fatals;
+
+void OSDIsensPerturbing(const char *what)
+{
+  tfree(osdi_sens_what);
+  osdi_sens_what = what ? copy(what) : NULL;
+}
+
+int OSDIfatalsReported(void) { return osdi_fatals; }
 
 /* Deferral engages with the first Newton iteration (OSDIload). Display calls
  * made before that -- instance setup evaluating init-resident statements --
@@ -279,6 +291,11 @@ static void osdi_severity_when(char *buf, size_t n, uint32_t lvl) {
   buf[0] = '\0';
   if (lvl & LOG_FLAG_INIT) {
     snprintf(buf, n, " (during initialization)");
+    return;
+  }
+  /* Enhancement-825: a sens perturbation, in its setup pass or its load */
+  if (osdi_sens_what) {
+    snprintf(buf, n, " (while sens perturbed %s)", osdi_sens_what);
     return;
   }
   /* Enhancement-822 (hunt 2026-10-08 F6): a setup or temperature pass --
@@ -703,6 +720,7 @@ void osdi_log(void *handle_, char *msg, uint32_t lvl) {
     prefix = "OSDI(fatal) ";
     to_err = true;
     severity = true;
+    osdi_fatals++;                 /* Enhancement-825 */
     /* Enhancement-703: a fatal judged on the accepted solution waits for it
      * (LOG_FLAG_DEFER); $fatal itself never does, whatever its other bits. */
     defers = (lvl & LOG_FLAG_DEFER) != 0;

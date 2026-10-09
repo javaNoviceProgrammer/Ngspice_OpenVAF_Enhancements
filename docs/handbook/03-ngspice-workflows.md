@@ -35,6 +35,11 @@ n1 in out mymod          ; instance (ports in declaration order)
   the in-repo ABI diverged, and the old acceptance path misread them
   (wrong metadata in DC, a transient segfault). See `README_OSDI.md` for
   the layer's deliberate bounds.
+- A relative name in a `pre_osdi` or `osdi` line resolves beside the file the line is written
+  in: the deck's directory for the deck, the library's for an included file or a `.lib`
+  section, as a nested `.include` does, since
+  [E-823](../../enhancements_doc/Enhancement-823.md). A `-va` object still goes to `osdi/`
+  beside the top deck.
 - Multiple instances of one model card get independent state and
   independent per-instance values of position/multiplicity parameters.
 - **A netlist number is the double its text names** (E-643). A card value

@@ -49,6 +49,7 @@ NON-STANDARD FEATURES
 
 #include <stdio.h>
 #include "ngspice/inpdefs.h"
+#include "ngspice/hash.h"
 #include "ngspice/devdefs.h"
 #include "ngspice/ifsim.h"
 #include "ngspice/cpstd.h"
@@ -64,6 +65,7 @@ NON-STANDARD FEATURES
 /*  This is the table of all models known to the program.  
     It is now defined in inpmkmod.c.      */
 extern INPmodel *modtab;
+extern NGHASHPTR modtabhash;   /* Enhancement-824 */
 
 /*
 MIFgetMod
@@ -123,8 +125,15 @@ char *MIFgetMod(
     }
     --------------------------*/
 
-    /* loop through modtable looking for this model (*name) */
-    for (modtmp = modtab; modtmp != NULL; modtmp = modtmp->INPnextModel) {
+    /* loop through modtable looking for this model (*name).
+     * Enhancement-824: start at the model the hash names (INPgetMod does the
+     * same); the names are unique, so nothing before it can match */
+    {
+        INPmodel *hit = modtabhash
+            ? (INPmodel *) nghash_find(modtabhash, name) : NULL;
+        modtmp = hit ? hit : modtab;
+    }
+    for (; modtmp != NULL; modtmp = modtmp->INPnextModel) {
 
 #ifdef TRACE
       /* SDB debug statement */

@@ -260,8 +260,16 @@ int sens_sens(CKTcircuit* ckt, int restart)
     int	num_vars, branch_eq = 0;
     runDesc* sen_data = NULL;
     IFuid *vec_names, *output_names, freq_name;
-    int bypass;
+    int bypass = -1;            /* Enhancement-825: -1 until it is switched off */
     int type;
+#ifdef OSDI
+    /* Enhancement-825 (hunt 2026-10-08 F9): what a perturbation's Verilog-A
+     * task asked for -- 0 nothing, 1 $fatal, 2 $finish, 3 $stop -- the
+     * parameter and value it was raised at, and the requests and the $fatal
+     * count before the perturbations, so a new one is told apart */
+    int va_act = 0, va_req0 = 0, va_fatal0 = 0;
+    char va_what[512];
+#endif
     double* saved_rhs = NULL,
           * saved_irhs = NULL;
     SMPmatrix* saved_matrix = NULL;
@@ -480,7 +488,10 @@ int sens_sens(CKTcircuit* ckt, int restart)
         err:
 #ifdef OSDI
             OSDIholdInitialStep(false);   /* Enhancement-789 */
+            OSDIsensPerturbing(NULL);     /* Enhancement-825 */
 #endif
+            if (bypass >= 0)              /* Enhancement-825: it stayed off */
+                ckt->CKTbypass = bypass;
             FREE(sens_base_op);      /* Enhancement-683 */
             /* Enhancement-440: the error paths leave through here too, and a
              * half-finished perturbation loop is exactly when the models are
@@ -569,6 +580,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
      * frequencies re-run below must not fire it again. Released on both
      * exits. */
     OSDIholdInitialStep(true);
+    va_req0 = OSDIpendingRequests(ckt);       /* Enhancement-825 */
 #endif
 
     for (i = 0; i < nfreqs; i++) {
@@ -844,9 +856,23 @@ int sens_sens(CKTcircuit* ckt, int restart)
                 inst_size = inst_need;
             }
 
+#ifdef OSDI
+            /* Enhancement-825: a Verilog-A task raised from here on, in the
+             * perturbed setup pass or the perturbed load, is this
+             * perturbation's: label it so, and count what it reports */
+            snprintf(va_what, sizeof va_what, "%s:%s to %.10g",
+                     sg->instance->GENname, sg->ptable[sg->param].keyword,
+                     nvalue.rValue);
+            OSDIsensPerturbing(va_what);
+            va_fatal0 = OSDIfatalsReported();
+#endif
             sens_setp(sg, ckt, &nvalue);
-            if (error && error != E_BADPARM)
+            if (error && error != E_BADPARM) {
+#ifdef OSDI
+                OSDIsensPerturbing(NULL);
+#endif
                 goto err;
+            }
 
             SMPconstMult(delta_Y, -1.0);
 
@@ -882,6 +908,11 @@ int sens_sens(CKTcircuit* ckt, int restart)
              * above), so the mapping cannot be rebuilt. Report the parameter as
              * insensitive and say so, rather than print the roundoff. */
             if (OSDIcollapseChanged(sg->instance)) {
+#ifdef OSDI
+                OSDIsensPerturbing(NULL);       /* Enhancement-825 */
+                if (OSDIfatalsReported() != va_fatal0)
+                    va_act = 1;
+#endif
                 fprintf(stderr,
                         "Warning: sens: %s:%s changes the model's node collapse "
                         "when perturbed, so its sensitivity cannot be computed "
@@ -904,6 +935,10 @@ int sens_sens(CKTcircuit* ckt, int restart)
                 }
                 (void)sens_temp(sg, ckt);
                 (void)OSDIcollapseChanged(sg->instance);
+#ifdef OSDI
+                if (va_act)
+                    break;                      /* Enhancement-825 */
+#endif
 
                 if (is_dc) {
                     output_values[n] = 0.0;
@@ -926,7 +961,27 @@ int sens_sens(CKTcircuit* ckt, int restart)
             }
 #endif
 
+#ifdef OSDI
+            {
+                /* Enhancement-825: the perturbed load returned E_PANIC on a
+                 * $fatal, and that was dropped with the return value; a
+                 * $finish or $stop it raised was never looked at. A setup
+                 * pass's $fatal (code that reads only parameters) reaches no
+                 * flag in an AC load, so the reports are counted too. */
+                int load_rc = sens_load(sg, ckt, is_dc);
+                int req = OSDIpendingRequests(ckt) & ~va_req0;
+                OSDIsensPerturbing(NULL);
+                if ((load_rc == E_PANIC && CKTvaFatalRaised) ||
+                    OSDIfatalsReported() != va_fatal0 || (req & OSDI_REQ_FATAL))
+                    va_act = 1;
+                else if (req & OSDI_REQ_FINISH)
+                    va_act = 2;
+                else if (req & OSDI_REQ_STOP)
+                    va_act = 3;
+            }
+#else
             sens_load(sg, ckt, is_dc);
+#endif
 
 #ifdef ASDEBUG
             DEBUG(2) {
@@ -952,6 +1007,10 @@ int sens_sens(CKTcircuit* ckt, int restart)
                 inst_size = 0;
             }
             (void)sens_temp(sg, ckt); /* XXX is this necessary? */
+#ifdef OSDI
+            if (va_act)
+                break;          /* Enhancement-825: the parameter is back */
+#endif
 
             /* Back to business . . . */
 
@@ -1117,6 +1176,36 @@ int sens_sens(CKTcircuit* ckt, int restart)
         release_context(ckt->CKTrhs, saved_rhs);
         release_context(ckt->CKTirhs, saved_irhs);
         release_context(ckt->CKTmatrix, saved_matrix);
+
+#ifdef OSDI
+        /* Enhancement-825 (hunt 2026-10-08 F9): op, dc, tran, ac and noise
+         * abort on a Verilog-A $fatal, and act on $finish and $stop and say
+         * so; sens printed the $fatal and went on to report every
+         * sensitivity, and dropped the other two in silence. The parameter is
+         * back and the models are restored on either way out. */
+        if (va_act == 1) {
+            CKTvaFatalRaised = 1;
+            fprintf(cp_err,
+                    "\nError: a Verilog-A device raised $fatal while sens "
+                    "perturbed %s; aborting.\n"
+                    "       The perturbation is sens's own small step from the "
+                    "netlist's value -- see the OSDI(fatal) message above for "
+                    "the cause.\n", va_what);
+            error = E_PANIC;
+            goto err;
+        }
+        if (va_act) {
+            fprintf(stdout,
+                    "\nNote: %s requested by a Verilog-A device while sens "
+                    "perturbed %s; sens ends there%s, without the sensitivities "
+                    "of %s.\n",
+                    va_act == 2 ? "$finish" : "$stop", va_what,
+                    va_act == 3 ? " (it cannot pause inside its perturbations)"
+                                : "",
+                    is_dc ? "the operating point" : "this frequency");
+            break;              /* the normal end: models back, final step */
+        }
+#endif
 
         if (is_dc)
             nvalue.v.vec.rVec = output_values;

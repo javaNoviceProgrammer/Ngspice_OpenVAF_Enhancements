@@ -233,6 +233,8 @@ static void inp_check_syntax(struct card *deck);
 static char *inp_spawn_brace(char *s);
 
 static char *inp_pathresolve_at(const char *name, const char *dir);
+static char *inp_osdi_paths_at(const char *line, const char *dir, bool pre);  /* Enhancement-823 */
+static char *inp_top_dir = NULL;    /* Enhancement-823: the deck's own directory */
 
 struct nscope *inp_add_levels(struct card *deck);
 static struct card_assoc *find_subckt(struct nscope *scope, const char *name);
@@ -1278,6 +1280,8 @@ struct card *inp_readall(FILE *fp, const char *dir_name, const char* file_name,
        This is the next major step:
        Reading the netlist line by line, handle .include and .lib,
        line continuation and upper/lower casing */
+    tfree(inp_top_dir);                 /* Enhancement-823 */
+    inp_top_dir = dir_name ? copy(dir_name) : NULL;
     rv = inp_read(fp, 0, dir_name, file_name, comfile, intfile);
     cc = rv.cc;
 
@@ -2219,6 +2223,20 @@ static struct inp_read_t inp_read(FILE* fp, int call_depth, const char* dir_name
                         }
                     }
                 }
+                /* Enhancement-823: an included file's pre_osdi/osdi names
+                 * its files beside that file */
+                if (call_depth > 0 && dir_name && dir_name[0] &&
+                    ((ciprefix("pre_osdi", buffer) && isspace_c(buffer[8])) ||
+                     (ciprefix("osdi", buffer) && isspace_c(buffer[4])))) {
+                    char *e823 = inp_osdi_paths_at(buffer, dir_name,
+                                                   ciprefix("pre_osdi", buffer));
+                    if (e823) {
+                        tfree(buffer);
+                        buffer = e823;
+                        for (s = buffer; *s && (*s != '\n'); s++)
+                            ;
+                    }
+                }
             }
 
             if (!*s) {
@@ -2332,6 +2350,104 @@ inline static bool is_absolute_pathname(const char *path)
     return path[0] == DIR_TERM;
 #endif
 } /* end of funciton is_absolute_pathname */
+
+
+/* Enhancement-823 (hunt 2026-10-08 F7): a `pre_osdi` or `osdi` line in an
+ * INCLUDED file (`.include`, `.lib`) names its files beside that file, as a
+ * nested `.include` does. The commands resolved a relative name against the
+ * top deck's directory (`inputdir`), so a library shipping `models.lib` and
+ * `models.osdi` side by side could not load its object by a relative name:
+ * `.include sub/inc.lib` holding `pre_osdi gres.osdi` gave "Error opening
+ * osdi lib", and `pre_osdi -va gres.va` "no such Verilog-A source". Each
+ * relative argument that names a regular file in `dir` becomes that file's
+ * absolute path; flags, absolute names and names not found there are left
+ * as written, so the commands' own search and messages apply to them. The
+ * object `-va` compiles still goes beside the top deck (inputdir), where it
+ * can be written. A `pre_osdi` file beneath the deck's own directory is named
+ * relative to it -- the pre-pass resolves against that directory, and E-573's
+ * object name stays `osdi/sub_m.osdi`, as `pre_osdi -va sub/m.va` written in
+ * the deck gives -- every other one by its absolute path (the plain `osdi`
+ * command runs after the pre-pass, with no deck directory to resolve
+ * against). Returns a new line, or NULL when nothing changed. */
+static char *inp_osdi_paths_at(const char *line, const char *dir, bool pre)
+{
+    DS_CREATE(ds, 200);
+    const char *p = line;
+    bool changed = FALSE;
+    char cwd[4096];
+
+    cwd[0] = '\0';
+    /* the command word itself */
+    p = skip_ws(p);
+    const char *q = skip_non_ws(p);
+    ds_cat_mem(&ds, p, (size_t) (q - p));
+    p = q;
+
+    while (*(p = skip_ws(p)) != '\0') {
+        char *tok;
+        bool quoted = (*p == '"');
+        if (quoted) {
+            q = strchr(p + 1, '"');
+            if (!q)
+                q = p + strlen(p);
+            tok = copy_substring(p + 1, q);
+            if (*q == '"')
+                q++;
+        } else {
+            q = skip_non_ws(p);
+            tok = copy_substring(p, q);
+        }
+        ds_cat_char(&ds, ' ');
+        if (*tok && tok[0] != '-' && !is_absolute_pathname(tok)) {
+            struct stat st;
+            char *cand = tprintf("%s%c%s", dir, DIR_TERM, tok);
+            if (stat(cand, &st) == 0 && S_ISREG(st.st_mode)) {
+                char *abs = cand;
+                const char *top = inp_top_dir;
+                size_t tl = top ? strlen(top) : 0;
+                char *x;
+                /* "a/./b" -> "a/b" */
+                while ((x = strstr(cand, "/./")) != NULL)
+                    memmove(x, x + 2, strlen(x + 2) + 1);
+                if (pre && top && (!top[0] || eq(top, ".")) &&
+                    !is_absolute_pathname(cand)) {
+                    abs = cand;                     /* the deck dir is the cwd */
+                } else if (pre && tl && strncmp(cand, top, tl) == 0 &&
+                           (cand[tl] == DIR_TERM || cand[tl] == '/')) {
+                    abs = copy(cand + tl + 1);      /* beneath the deck's dir */
+                } else if (!is_absolute_pathname(cand)) {
+#ifdef HAVE_GETCWD
+                    if (!cwd[0] && !getcwd(cwd, sizeof cwd))
+                        cwd[0] = '\0';
+#endif
+                    if (cwd[0])
+                        abs = tprintf("%s%c%s", cwd, DIR_TERM, cand);
+                }
+                while (abs[0] == '.' && (abs[1] == '/' || abs[1] == DIR_TERM))
+                    memmove(abs, abs + 2, strlen(abs + 2) + 1);
+                if (strchr(abs, ' '))
+                    ds_cat_printf(&ds, "\"%s\"", abs);
+                else
+                    ds_cat_str(&ds, abs);
+                if (abs != cand)
+                    tfree(abs);
+                tfree(cand);
+                tfree(tok);
+                changed = TRUE;
+                p = q;
+                continue;
+            }
+            tfree(cand);
+        }
+        ds_cat_mem(&ds, p, (size_t) (q - p));
+        tfree(tok);
+        p = q;
+    }
+
+    char *r = changed ? copy(ds_get_buf(&ds)) : NULL;
+    ds_free(&ds);
+    return r;
+}
 
 
 
