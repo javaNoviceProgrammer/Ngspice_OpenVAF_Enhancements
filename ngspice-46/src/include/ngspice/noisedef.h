@@ -41,6 +41,8 @@ typedef struct {
     double inNoise;        /* integrated input noise as of the last frequency point */
     double GainSqInv;
     double lnGainInv;
+    int lowGain;          /* Enhancement-850: frequencies whose gain was below N_MINGAIN, */
+    double lowGainFreq;   /*    and the first of them */
     double lnFreq;
     double lnLastFreq;
     double delLnFreq;
@@ -103,9 +105,12 @@ typedef struct {
 /* tolerances and limits to make numerical analysis more robust */
 
 #define N_MINLOG          1E-38       /* the smallest number we can take the log of */
-#define N_MINGAIN         1E-20       /* the smallest input-output gain we can tolerate */
+#define N_MINGAIN         1E-200      /* the smallest input-output gain squared we can tolerate */
 					   /*    (to calculate input-referred noise we divide */
-					   /*     the output noise by the gain) */
+					   /*     the output noise by the gain squared). */
+					   /*    Enhancement-850: it was 1E-20, a gain of 1e-10, */
+					   /*    which a real circuit reaches: 1 fF into 1 kOhm */
+					   /*    at 1 Hz has 6.3e-12. Below 1e-100 it is a zero. */
 #define N_INTFTHRESH   1E-10       /* the largest slope (of a log-log noise spectral */
 					   /*    density vs. freq plot) at which the noise */
 					   /*    spectum is still considered flat. (no need for */
@@ -157,5 +162,7 @@ void NevalSrc2 (double *, double *, CKTcircuit *, int, int, int, double, int, in
 void NevalSrcVec (double *noise, double *lnNoise, CKTcircuit *ckt, int n, const int *nodes, int ref, const double *amp, double psd);
 void NevalSrcInstanceTemp (double *noise, double *lnNoise, CKTcircuit *ckt, int type, int node1, int node2, double param, double param2);
 double Nintegrate (double noizDens, double lnNdens, double lnNlstDens, Ndata *data);
+double NgainSqInv(Ndata *data, double gain2);
+void NlowGainNote(const char *input, int nlow, int nfreq, double ffirst);
 
 #endif

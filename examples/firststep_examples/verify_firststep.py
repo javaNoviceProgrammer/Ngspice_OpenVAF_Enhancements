@@ -20,7 +20,7 @@ small `chgtol` the network still collapsed under KLU. It is now `vntol`.
 
   [1] a sine into a 1 ns RC from the op, reltol = 1e-7: the first sample, and the
       whole run, against the exact solution
-  [2] a 1 ns RC charged from `.ic v(1)=0` with `uic`: the first sample
+  [2] a 1 ns RC charged from `.ic v(1)=0` with `uic`: the first step's sample
   [3] the reduced L-C network at reltol 1e-6, 1e-7, and 1e-7 with chgtol 1e-20,
       and at the defaults (control): each runs to tstop
   [4] (control) an inconsistent `.ic` -- a source across a capacitor holding
@@ -107,17 +107,18 @@ check("[1] sine into a 1 ns RC, reltol 1e-7: the first sample within 1e-5 of the
       e1 < 1e-5, f"first step {t1:.3g} s, error {e1:.2e}")
 check("[1] ...and the whole run within 1e-4 of the swing", emax < 1e-4, f"max error {emax:.2e}")
 
-# [2] a uic charge
+# [2] a uic charge. Enhancement-852 gave a uic run its t = 0 point: the first
+#     step is index 1
 rc, out = run("uic", "* uic RC\ni1 0 1 1m\nr1 1 0 1k\nc1 1 0 1p\n.ic v(1)=0\n.option reltol=1e-7\n"
-              ".control\nset numdgt=17\ntran 1u 10u uic\nprint time[0] v(1)[0]\n.endc\n.end\n")
-m_t = re.search(r"^time\[0\] = (\S+)", out, re.M)
-m_v = re.search(r"^v\(1\)\[0\] = (\S+)", out, re.M)
+              ".control\nset numdgt=17\ntran 1u 10u uic\nprint time[1] v(1)[1]\n.endc\n.end\n")
+m_t = re.search(r"^time\[1\] = (\S+)", out, re.M)
+m_v = re.search(r"^v\(1\)\[1\] = (\S+)", out, re.M)
 if m_t and m_v:
     t0, v0 = float(m_t.group(1)), float(m_v.group(1))
     e0 = abs(v0 - (1 - math.exp(-t0 / TAU)))
 else:
     t0 = e0 = float("nan")
-check("[2] a 1 ns RC charged from .ic v(1)=0 under uic: the first sample within 1e-3 V of exact (0.13 V on E-844)",
+check("[2] a 1 ns RC charged from .ic v(1)=0 under uic: the first step's sample within 1e-3 V of exact (0.13 V on E-844)",
       e0 < 1e-3, f"first step {t0:.3g} s, error {e0:.2e} V")
 
 # [3] the reduced L-C network

@@ -128,8 +128,10 @@ com_meas(wordlist *wl)
                     /* Only if we have a single valued vector, replacing
                        of the rigt hand side does make sense */
                     if (d && (d->v_length == 1) && (d->v_numdims == 1)) {
-                        /* get its value */
-                        wl_index->wl_word = tprintf("%e", d->v_realdata[0]);
+                        /* get its value. Enhancement-851: all of it -- %e kept
+                           7 digits, and the difference of two nearby measured
+                           times did not survive. 17 round-trip (E-643). */
+                        wl_index->wl_word = tprintf("%.17g", d->v_realdata[0]);
                         tfree(vec_found);
                     }
                 }
@@ -147,7 +149,7 @@ com_meas(wordlist *wl)
                     if (d && (d->v_length == 1) && (d->v_numdims == 1)) {
                         int lhs_len = (int)(equal_ptr - token);
                         wl_index->wl_word =
-                            tprintf("%.*s=%e", lhs_len, token, d->v_realdata[0]);
+                            tprintf("%.*s=%.17g", lhs_len, token, d->v_realdata[0]);
                         tfree(token);
                     }
                 }
@@ -237,7 +239,10 @@ com_meas(wordlist *wl)
         return;
     }
 
-    wl_let = wl_cons(tprintf("%s = %e", outvar, result), NULL);
+    /* Enhancement-851: the result, all 17 digits. `%e` kept 7, so the
+       command's result differed from the same `.meas` card's (E-802) in the
+       eighth digit, and a later `meas` reading it lost the rest. */
+    wl_let = wl_cons(tprintf("%s = %.17g", outvar, result), NULL);
     com_let(wl_let);
     wl_free(wl_let);
     tfree(line_in);
@@ -333,7 +338,8 @@ meas_card_vector(const char *resname, double result, bool ok)
         return;
     }
     {
-        wordlist *wl = wl_cons(tprintf("%s = %.15e", resname, result), NULL);
+        /* Enhancement-851: 17 digits, which round-trip; %.15e kept 16 */
+        wordlist *wl = wl_cons(tprintf("%s = %.17g", resname, result), NULL);
         com_let(wl);
         wl_free(wl);
     }

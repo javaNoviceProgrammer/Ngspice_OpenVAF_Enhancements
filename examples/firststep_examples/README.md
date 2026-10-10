@@ -16,7 +16,8 @@ under KLU at `reltol=1e-7`. The floor is now `vntol` (E-847).
 The checks:
 - **[1]** A sine into a 1 ns RC from the op at `reltol=1e-7`: the first sample, and the whole
   run, against the exact solution.
-- **[2]** A 1 ns RC charged from `.ic v(1)=0` under `uic`: the first sample.
+- **[2]** A 1 ns RC charged from `.ic v(1)=0` under `uic`: the first step's sample, index 1
+  since [E-852](../../enhancements_doc/Enhancement-852.md) wrote the t = 0 point.
 - **[3]** The reduced L–C network at `reltol` 1e-6, 1e-7, and 1e-7 with `chgtol=1e-20`, and at
   the defaults (control): each runs to tstop.
 - **[4]** (control) An `.ic` that a source contradicts still runs.

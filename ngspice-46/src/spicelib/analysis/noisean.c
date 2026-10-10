@@ -48,6 +48,35 @@ extern int fixme_onoise_type;
 extern int fixme_inoise_type;
 
 
+/* Enhancement-850: the inverse of the gain squared from the noise input to
+ * the output, by which every device's noise is referred to the input. The
+ * gain squared was floored at 1e-20 without a word, and a real gain reaches
+ * that: 1 fF into 1 kOhm at 1 Hz is 6.3e-12, and inoise came out 16 times
+ * low. The floor now stands only for a zero, and a frequency that reaches it
+ * is counted for NlowGainNote(). */
+double
+NgainSqInv(Ndata *data, double gain2)
+{
+    if (!(gain2 >= N_MINGAIN)) {
+        if (data->lowGain++ == 0)
+            data->lowGainFreq = data->freq;
+        return 1.0 / N_MINGAIN;
+    }
+    return 1.0 / gain2;
+}
+
+void
+NlowGainNote(const char *input, int nlow, int nfreq, double ffirst)
+{
+    if (nlow > 0)
+        SPfrontEnd->IFerrorf(ERR_WARNING,
+            "noise: the gain from %s to the output is zero at %d of %d "
+            "frequencies, the first %g Hz; the input-referred noise there "
+            "divides by a floor of %g on the gain and means nothing",
+            input, nlow, nfreq, ffirst, sqrt(N_MINGAIN));
+}
+
+
 int
 NOISEan(CKTcircuit* ckt, int restart)
 {
@@ -517,8 +546,8 @@ NOISEan(CKTcircuit* ckt, int restart)
             - ckt->CKTrhsOld[negOutNode];
         imagVal = ckt->CKTirhsOld[posOutNode]
             - ckt->CKTirhsOld[negOutNode];
-        data->GainSqInv = 1.0 / MAX(((realVal * realVal)
-            + (imagVal * imagVal)), N_MINGAIN);
+        data->GainSqInv = NgainSqInv(data, (realVal * realVal)
+            + (imagVal * imagVal));
         data->lnGainInv = log(data->GainSqInv);
 
         /* set up a block of "common" data so we don't have to
@@ -580,6 +609,8 @@ NOISEan(CKTcircuit* ckt, int restart)
 
     error = CKTnoise(ckt, N_DENS, N_CLOSE, data);
     if (error) return(error);
+
+    NlowGainNote(job->input, data->lowGain, step, data->lowGainFreq);
 
     data->numPlots = 0;
     data->outNumber = 0;

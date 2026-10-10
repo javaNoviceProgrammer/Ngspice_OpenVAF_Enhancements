@@ -323,3 +323,16 @@ scripting ngspice:
   and with several crossings reported the next. Fixed in
   [E-849](../../enhancements_doc/Enhancement-849.md). A crossing between t = 0
   and the first step is still not counted (E-418).
+- **The input-referred noise** took any gain below 1e-10 as 1e-10: through
+  1 fF into 1 kOhm at 1 Hz, `inoise` was 16 times low.
+  Since [E-850](../../enhancements_doc/Enhancement-850.md) it divides by the
+  real gain, and a gain of zero is reported.
+- **The `meas` command's result** kept 7 digits, and so did a vector it
+  substituted after `at=` or `val=`. Since
+  [E-851](../../enhancements_doc/Enhancement-851.md) both keep all 17, as a
+  `.meas` card's result does.
+- **A `uic` transient** began at its first step: nothing solved t = 0. Since
+  [E-852](../../enhancements_doc/Enhancement-852.md) the t = 0 point is solved
+  and written, with each capacitor at its initial voltage. Where a source makes
+  a capacitor jump, its currents are those just after the jump, without the
+  impulse.

@@ -782,6 +782,9 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
      * Before E-193 pnoise always emitted the squared density and ignored the
      * variable, contradicting the manual and diverging from .noise. */
     int     pn_sqr = cp_getvar("sqrnoise", CP_BOOL, NULL, 0);
+    /* Enhancement-850: frequencies whose gain reached the N_MINGAIN floor */
+    int     nlow = 0, nfreq = 0;
+    double  flow = 0.0;
 
     if (outNode <= 0 || outNode > N || f0 <= 0.0 || fstart <= 0.0 ||
         fstop < fstart || np < 1)
@@ -1141,6 +1144,9 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
                 size_t oidx = (size_t)M * (size_t)N + (size_t)(outNode - 1);
                 gain2 = Xr[oidx] * Xr[oidx] + Xi[oidx] * Xi[oidx];
             }
+            nfreq++;
+            if (!(gain2 >= N_MINGAIN) && nlow++ == 0)
+                flow = freqs[fi];
             gsi = 1.0 / MAX(gain2, N_MINGAIN);
             out[0] = onoise;  out[1] = onoise * gsi;
             if (!pn_sqr) {                          /* E-193: V/sqrt(Hz) by default */
@@ -1195,6 +1201,9 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
             size_t oidx = (size_t)M * (size_t)N + (size_t)(outNode - 1);
             gain2 = Xr[oidx] * Xr[oidx] + Xi[oidx] * Xi[oidx];
         }
+        nfreq++;
+        if (!(gain2 >= N_MINGAIN) && nlow++ == 0)
+            flow = freq;
         gsi = 1.0 / MAX(gain2, N_MINGAIN);
 
         {
@@ -1216,6 +1225,7 @@ pnoise_sweep(CKTcircuit *ckt, PSSan *job)
     }
 
     SPfrontEnd->OUTendPlot(plot);
+    NlowGainNote("the ac source", nlow, nfreq, flow);
     ckt->CKTcurJob = oldJob;
     FREE(Psr); FREE(Psi); FREE(Xr); FREE(Xi);
     pac_free_harmonics(&hd);
@@ -3114,7 +3124,8 @@ QPnoiseSweep(CKTcircuit *ckt, int outNode, int stepType, int np, double fstart, 
     struct qp_harm *hd = qpss_hb_saved;
     int    N, Nh, Ntot, i, j, k, i00, pt = 0;
     NOISEAN nj; Ndata dn; JOB *oldJob;
-    double *Psr, *Psi, *Ar, *Ai, *Xr, *Xi, freq, mult, linstep;
+    double *Psr, *Psi, *Ar, *Ai, *Xr, *Xi, freq, mult, linstep, flow = 0.0;
+    int    nlow = 0;
     if (!hd) { fprintf(stderr, "qpnoise: no QPSS operating point -- run `qpss ... hb` first.\n"); return -1; }
     N = hd->N; Nh = hd->Nh; Ntot = hd->Ntot; i00 = hd->K1*(2*hd->K2+1) + hd->K2;
     if (outNode <= 0 || outNode > N) { fprintf(stderr, "qpnoise: bad output node.\n"); return -1; }
@@ -3146,11 +3157,13 @@ QPnoiseSweep(CKTcircuit *ckt, int outNode, int stepType, int np, double fstart, 
             for (i=0;i<N;i++){ Xr[(size_t)i00*(size_t)N+(size_t)i]=hd->B0r[i]; Xi[(size_t)i00*(size_t)N+(size_t)i]=hd->B0i[i]; }
             if (pss_csolve(Ntot,Ar,Ai,Xr,Xi)==0){ size_t o=(size_t)i00*(size_t)N+(size_t)(outNode-1); gain2=Xr[o]*Xr[o]+Xi[o]*Xi[o]; }
         }
+        if (!(gain2 >= N_MINGAIN) && nlow++ == 0) flow = freq;   /* Enhancement-850 */
         freqs[pt]=freq; data[(size_t)pt*2+0]=onoise; data[(size_t)pt*2+1]=onoise/MAX(gain2,N_MINGAIN);
         pt++;
         if (stepType==0){ if(np<=1) break; freq+=linstep; } else freq*=mult;
     }
     ckt->CKTcurJob=oldJob;
+    NlowGainNote("the ac source", nlow, pt, flow);
     FREE(Psr);FREE(Psi);FREE(Ar);FREE(Ai);FREE(Xr);FREE(Xi);
     return pt;
 }

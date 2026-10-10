@@ -102,6 +102,91 @@ t0_restore(CKTcircuit *ckt)
 }
 
 
+/* Enhancement-852 (second robustness campaign 2026-10-10, F8): the t = 0
+ * point of a `uic` transient. Nothing solves it: `uic` loads the circuit once
+ * and leaves CKTrhsOld holding the .ic values and zeros, so a node a source
+ * drives reads 0 V there, and dctran wrote no point at t = 0 at all. The run
+ * began at the first step, and `meas` and `fourier` with it.
+ *
+ * The point at t = 0 is the circuit with each capacitor at its initial voltage
+ * and each inductor at its initial current: the limit of the first
+ * backward-Euler step as the step goes to zero. It is solved here with a step
+ * a millionth of the first, written, and then everything the solve touched is
+ * put back -- the solution, the states, the mode, the step and the solver's
+ * state -- so the first step starts from what it always started from. A
+ * capacitor's voltage then moves by i*h/C, a millionth of what the first step
+ * moves it. Its conductance C/h is a million times the first step's, which is
+ * of the order of the circuit's own, so the factorization keeps about ten of
+ * the circuit's digits. If the solve does not converge, no point is written,
+ * as before. */
+static void
+uic_t0_point(CKTcircuit *ckt, runDesc *plot)
+{
+    int n = MAX(SMPmatSize(ckt->CKTmatrix) + 1, ckt->CKTmaxEqNum);
+    int ns = ckt->CKTnumStates, order = ckt->CKTorder, niState = ckt->CKTniState;
+    long mode = ckt->CKTmode;
+    double delta = ckt->CKTdelta, deltaOld[7];
+    double *rhs, *rhsOld, *s0 = NULL, *s1 = NULL;
+    int i, conv;
+
+    if (!ckt->CKTrhs || !ckt->CKTrhsOld || delta <= 0.0)
+        return;
+    rhs = TMALLOC(double, n);
+    rhsOld = TMALLOC(double, n);
+    memcpy(rhs, ckt->CKTrhs, (size_t) n * sizeof(double));
+    memcpy(rhsOld, ckt->CKTrhsOld, (size_t) n * sizeof(double));
+    if (ns > 0 && ckt->CKTstate0 && ckt->CKTstate1) {
+        s0 = TMALLOC(double, ns);
+        s1 = TMALLOC(double, ns);
+        memcpy(s0, ckt->CKTstate0, (size_t) ns * sizeof(double));
+        memcpy(s1, ckt->CKTstate1, (size_t) ns * sizeof(double));
+    }
+    for (i = 0; i < 7; i++)
+        deltaOld[i] = ckt->CKTdeltaOld[i];
+
+    ckt->CKTdelta = 1e-6 * delta;
+    ckt->CKTdeltaOld[0] = ckt->CKTdelta;
+    ckt->CKTorder = 1;
+    ckt->CKTmode = (mode & MODEUIC) | MODETRAN | MODEINITTRAN;
+    NIcomCof(ckt);
+    conv = NIiter(ckt, ckt->CKTtranMaxIter);
+    /* Where a source contradicts an initial condition -- a supply's node
+     * starting at 0 V under its capacitances, or a device's junctions at
+     * their IC= values -- the capacitor jumps at t = 0, and its current in
+     * that solve is the jump's impulse, C*dV/h, a million times what the first
+     * step shows. Solve once more from the point just found, its charges as
+     * the history: the voltages stay, and the currents are the finite ones at
+     * t = 0+. Where nothing jumps, the second solve changes nothing but the
+     * O(h) above. */
+    if (conv == OK && ckt->CKTnumStates == ns) {
+        if (ns > 0)
+            memcpy(ckt->CKTstate1, ckt->CKTstate0, (size_t) ns * sizeof(double));
+        ckt->CKTmode = (mode & MODEUIC) | MODETRAN | MODEINITFLOAT;
+        conv = NIiter(ckt, ckt->CKTtranMaxIter);
+    }
+    if (conv == OK && ckt->CKTnumStates == ns)
+        CKTdump(ckt, 0.0, plot);
+
+    memcpy(ckt->CKTrhs, rhs, (size_t) n * sizeof(double));
+    memcpy(ckt->CKTrhsOld, rhsOld, (size_t) n * sizeof(double));
+    if (s0 && ckt->CKTnumStates == ns) {
+        memcpy(ckt->CKTstate0, s0, (size_t) ns * sizeof(double));
+        memcpy(ckt->CKTstate1, s1, (size_t) ns * sizeof(double));
+    }
+    for (i = 0; i < 7; i++)
+        ckt->CKTdeltaOld[i] = deltaOld[i];
+    ckt->CKTdelta = delta;
+    ckt->CKTorder = order;
+    ckt->CKTmode = mode;
+    ckt->CKTniState = niState;
+    NIcomCof(ckt);
+    tfree(rhs);
+    tfree(rhsOld);
+    tfree(s0);
+    tfree(s1);
+}
+
+
 int
 DCtran(CKTcircuit *ckt,
        int restart)   /* forced restart flag */
@@ -578,6 +663,14 @@ DCtran(CKTcircuit *ckt,
         || (!(ckt->CKTmode & MODEUIC) && ckt->CKTtime >= ckt->CKTinitTime)) {
         CKTdump(ckt, ckt->CKTtime, job->TRANplot);
     }
+    /* Enhancement-852: under uic, the point at t = 0 is solved for */
+    else if ((ckt->CKTmode & MODEUIC) && firsttime && ckt->CKTtime == 0 &&
+             ckt->CKTinitTime <= 0
+#ifdef XSPICE
+             && ckt->evt->counts.num_insts == 0
+#endif
+             )
+        uic_t0_point(ckt, job->TRANplot);
 #ifdef XSPICE
     /* Update event queues/data for accepted timepoint */
     /* Note: this must be done AFTER sending results to SI so it can't

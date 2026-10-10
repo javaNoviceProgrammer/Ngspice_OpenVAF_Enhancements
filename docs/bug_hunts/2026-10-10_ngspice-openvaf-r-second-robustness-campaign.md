@@ -56,9 +56,9 @@ Nothing was fixed; this is the list.
 | [F3](#f3) | *(fixed in [E-846](../../enhancements_doc/Enhancement-846.md) and [E-847](../../enhancements_doc/Enhancement-847.md): F2's unchecked first point poisoned every later estimate; and an inductor's error floor was `abstol`, a current)* **transient failure:** a 7-element linear L–C network fails with "Timestep too small" right after the first step at `reltol` ≤ 1e-6; it runs at the defaults and at 1e-5 | medium |
 | [F4](#f4) | *(fixed in [E-848](../../enhancements_doc/Enhancement-848.md): the value at `from` is a point of its own, ahead of the sample)* **measure:** AVG, INTEG and RMS with `from=` drop the first sample inside the window. E-302's start interpolation overwrites it; the error is 3e-4 on a triangle and up to 5 % on a sampled waveform | medium |
 | [F5](#f5) | *(fixed in [E-849](../../enhancements_doc/Enhancement-849.md): the window opens at its TD, FROM or TO, and the interval to its first sample is evaluated; FROM, ac and dc had the same loss)* **measure:** WHEN and FIND..WHEN with `td=` skip the first sample interval after TD. A single crossing there makes the measurement fail | medium |
-| [F6](#f6) | **noise:** `inoise_spectrum` is wrong wherever the gain is below 1e-10. The gain squared is floored at 1e-20 with no note: 16 times low at 1 Hz through 1 fF | low |
-| [F7](#f7) | **measure:** the `meas` command's result keeps 7 significant digits, a `%e` round trip through `let`; a `.meas` card's keeps 16 (E-802). `val=<vector>` is substituted the same way | low |
-| [F8](#f8) | **uic:** a `uic` transient has no t = 0 sample, so the `.ic` state is never output | low |
+| [F6](#f6) | *(fixed in [E-850](../../enhancements_doc/Enhancement-850.md): the floor is 1e-200, which only a zero gain meets, and a frequency that meets it is reported)* **noise:** `inoise_spectrum` is wrong wherever the gain is below 1e-10. The gain squared is floored at 1e-20 with no note: 16 times low at 1 Hz through 1 fF | low |
+| [F7](#f7) | *(fixed in [E-851](../../enhancements_doc/Enhancement-851.md): the result and the substituted vectors carry 17 digits)* **measure:** the `meas` command's result keeps 7 significant digits, a `%e` round trip through `let`; a `.meas` card's keeps 16 (E-802). `val=<vector>` is substituted the same way | low |
+| [F8](#f8) | *(fixed in [E-852](../../enhancements_doc/Enhancement-852.md): the t = 0 point is solved and written, and the run after it is unchanged)* **uic:** a `uic` transient has no t = 0 sample, so the `.ic` state is never output | low |
 | [F9](#f9) | **diagnostic:** `.option method=gear maxord=6` without `dynorder` is identical to `maxord=2`, and nothing says so | low |
 | [F10](#f10) | **diagnostic:** an OSDI device that loads a non-finite value at Newton's start (`ln(V(x))` at 0 V) ends the op with "cause unrecorded" and names nothing; a B-source `ln()` converges | low |
 | [F11](#f11) | **measure, consistency:** AVG integrates by trapezoids and INTEG by Simpson's rules, so INTEG/(to−from) and AVG disagree on the same window, by 2e-3 on a sampled sine. E-302 calls them the same quantity | low |
@@ -236,6 +236,11 @@ fall=1 td=0.465`, which reported 0.614 where the samples cross at 0.477.
 <a id="f6"></a>
 ## F6 — inoise is floored where the gain is below 1e-10
 
+*Fixed in [E-850](../../enhancements_doc/Enhancement-850.md). The floor is 1e-200 on the gain
+squared, a gain of 1e-100, which only an output the input cannot reach meets. `inoise_spectrum`
+at 1 Hz is now 648. A frequency that meets the floor is reported once per analysis, naming the
+source. `pnoise` and the swept `qpnoise` share the floor and the report.*
+
 ```spice
 v1 in 0 dc 0 ac 1
 c1 in out 1f
@@ -251,6 +256,11 @@ through a small capacitor, at low frequency. `dcpss.c` uses the same floor.
 
 <a id="f7"></a>
 ## F7 — the `meas` command keeps 7 digits
+
+*Fixed in [E-851](../../enhancements_doc/Enhancement-851.md). The result, the vector substituted
+after an `=`, and a card's result are written with 17 significant digits. Both readers are
+correctly rounded since E-643, so `cmd` equals `card` bit for bit, and two crossings 1.8 fs apart
+keep their difference.*
 
 ```spice
 v1 1 0 sin(0 1 1meg)
@@ -271,6 +281,13 @@ two nearby measured times.
 
 <a id="f8"></a>
 ## F8 — a `uic` transient has no t = 0 sample
+
+*Fixed in [E-852](../../enhancements_doc/Enhancement-852.md). The point at t = 0 is solved as a
+backward-Euler step a millionth of the first: each capacitor at its initial voltage, each
+inductor at its initial current. Where a source makes a capacitor jump, that solve carries the
+jump's impulse, so a second solve from the point found gives the finite currents. Everything is
+then put back. The run after t = 0 is bit for bit what it was, in five circuits under four
+integrator and solver settings each.*
 
 The deck in F2 with `uic` starts at `time[0]` = 1 ns. Without `uic`, `time[0]` = 0 and
 `v(1)[0]` is the op. `dctran.c` dumps a point under `uic` only for `CKTtime > 0`, so the `.ic`
