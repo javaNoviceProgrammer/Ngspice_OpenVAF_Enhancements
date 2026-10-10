@@ -1,0 +1,32 @@
+// boolparam.va -- Enhancement-845: a parameter declared without a type takes the
+// type of its default, and a comparison, &&, ||, ! or $param_given is the
+// INTEGER 1 or 0. openvaf-r typed such a parameter Bool, a type a parameter
+// cannot have, and the parameter lowering panicked on it (exit 101) even when
+// the parameter was never read. Now it is an integer, element-wise for an
+// array. The comment is each output's value for n = 5.
+`include "disciplines.vams"
+
+module boolparam(p1, p2, p3, p4, p5, p6, p7, p8);
+inout p1, p2, p3, p4, p5, p6, p7, p8;
+electrical p1, p2, p3, p4, p5, p6, p7, p8;
+
+parameter integer n = 5;
+parameter pt = (n > 0) ? n : (n < 0);       // 5: the ternary of F1, untyped
+parameter pb = (n > 0);                     // 1
+parameter pc = (n > 0) && (n < 9);          // 1
+parameter pd = !n;                          // 0
+parameter pg = $param_given(n);             // 1 (n is given on the card)
+localparam pl = (n > 0);                    // 1
+parameter pa[0:1] = '{(n > 0), (n < 0)};    // {1, 0}
+
+analog begin
+  V(p1) <+ pt;                              // 5
+  V(p2) <+ pb + 0.5;                        // 1.5 (7.5 with pb=7 on the card)
+  V(p3) <+ pb/2;                            // 0: integer division, so pb is an integer
+  V(p4) <+ pc;                              // 1
+  V(p5) <+ pd;                              // 0
+  V(p6) <+ pg;                              // 1
+  V(p7) <+ pl;                              // 1
+  V(p8) <+ pa[0] + 2*pa[1];                 // 1
+end
+endmodule

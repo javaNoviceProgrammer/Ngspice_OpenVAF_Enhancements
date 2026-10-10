@@ -51,7 +51,7 @@ Nothing was fixed; this is the list.
 
 | | Finding | Severity |
 |---|---|---|
-| [F1](#f1) | **compiler, wrong value:** a ternary or `==`/`!=` with a logical operand and an integer operand turns the integer into 0 or 1. For `n` = 5, `(n > 0) ? n : (n < 0)` is 1 and `n == (n > 0)` is 1 | high |
+| [F1](#f1) | *(fixed in [E-845](../../enhancements_doc/Enhancement-845.md): the overload tie now prefers Integer, a `case` on a comparison with an integer item compares integers, and an untyped parameter with a logical default, which panicked the compiler, is an integer)* **compiler, wrong value:** a ternary or `==`/`!=` with a logical operand and an integer operand turns the integer into 0 or 1. For `n` = 5, `(n > 0) ? n : (n < 0)` is 1 and `n == (n > 0)` is 1 | high |
 | [F2](#f2) | **transient accuracy:** the first time step is accepted without a truncation check. At `reltol=1e-7` the first samples are off by 21 % to 32 % when the input moves at t = 0 or a `uic` start is far from equilibrium | medium |
 | [F3](#f3) | **transient failure:** a 7-element linear L–C network fails with "Timestep too small" right after the first step at `reltol` ≤ 1e-6; it runs at the defaults and at 1e-5 | medium |
 | [F4](#f4) | **measure:** AVG, INTEG and RMS with `from=` drop the first sample inside the window. E-302's start interpolation overwrites it; the error is 3e-4 on a triangle and up to 5 % on a sampled waveform | medium |
@@ -65,6 +65,12 @@ Nothing was fixed; this is the list.
 
 <a id="f1"></a>
 ## F1 — a ternary or an equality with a logical operand collapses the integer
+
+*Fixed in [E-845](../../enhancements_doc/Enhancement-845.md). Among overloads that tie, one that
+does not narrow an integer to Bool now wins. The dig found the same cast in `case`: `case (n > 0)
+5:` matched. A Bool case expression with an integer item is now compared as an integer. And an
+untyped parameter with such a default, `parameter pb = (n > 0);`, was typed Bool and panicked the
+compiler (exit 101), even unread; it is now an integer.*
 
 ```verilog
 `include "disciplines.vams"
@@ -98,7 +104,8 @@ were this. The 5 of Family B were too, through `(4 << 2) == (100 && 13)` and the
 charge's ternary.
 
 Noticed in passing: `Type::union`'s array branch reads `self.base_type()` twice and never
-`other`'s. That is latent, since no signature table unions arrays of different base types.
+`other`'s. It is not reachable: a 2-D literal with an integer row and a real row, `'{'{1, 2},
+'{0.5, 1.5}}`, keeps 0.5 and 1.5, because nested literals are typed element by element.
 
 <a id="f2"></a>
 ## F2 — the first time step is never checked

@@ -261,10 +261,13 @@ impl InferenceResult {
         ctx.expr_stmt_ty = match id {
             DefWithBodyId::ParamId(param) => match &db.param_data(param).ty {
                 Some(ty) => Some(ty.clone()),
-                // parameter type is inferred if omitted
+                // parameter type is inferred if omitted; Enhancement-845: a
+                // comparison or logical default makes an INTEGER parameter, so the
+                // default is cast to it (see `param_value_ty`)
                 None => ctx
                     .infere_expr(body.entry_stmts[0], db.param_exprs(param).default)
-                    .and_then(|ty| ty.to_value()),
+                    .and_then(|ty| ty.to_value())
+                    .map(|ty| crate::db::param_value_ty(&ty)),
             },
             DefWithBodyId::VarId(var) => Some(db.var_data(var).ty.clone()),
             _ => None,
@@ -425,9 +428,18 @@ impl Ctx<'_> {
                         && items.iter().any(|(_, t)| {
                             matches!(t.to_value(), Some(Type::Real))
                         });
+                    // Enhancement-845: the same for a relational or logical
+                    // discriminant, typed Bool, with an integer item -- `case (n > 0)
+                    // 5:` cast the 5 to Bool and matched, where the LRM compares the
+                    // integer 1 with 5.
+                    let int_items = matches!(discr_ty, Some(Type::Bool))
+                        && items.iter().any(|(_, t)| matches!(t.to_value(), Some(Type::Integer)));
                     let req = if real_items {
                         self.result.casts.insert(discr, Type::Real);
                         TyRequirement::Val(Type::Real)
+                    } else if int_items {
+                        self.result.casts.insert(discr, Type::Integer);
+                        TyRequirement::Val(Type::Integer)
                     } else {
                         discr_ty.map_or(TyRequirement::AnyVal, TyRequirement::Val)
                     };
@@ -2944,6 +2956,32 @@ impl Ctx<'_> {
                     });
                     if candidates.is_empty() {
                         candidates = new_candidates;
+                    }
+                }
+
+                // Enhancement-845 (second robustness campaign 2026-10-10, F1): a
+                // relational or logical result is typed Bool, and Integer and Bool
+                // are semantically equivalent, so `c ? n : (a < b)` and
+                // `n == (a < b)` kept both the Bool and the Integer signature, and
+                // neither is exact. The tie went to the first in the table: Bool for
+                // `?:` (SELECT) and for `==`/`!=` (ANY_COMPARISON), which cast the
+                // integer to 0 or 1 -- 5 became 1, and `5 == (a < b)` was true. The
+                // LRM's logical and relational operators yield the integer 1 or 0,
+                // and `Type::union` already says Bool with Integer is Integer:
+                // prefer a signature that does not narrow an integer argument to a
+                // Bool parameter. Bool to Integer loses nothing.
+                if candidates.len() > 1 {
+                    let tied = candidates.clone();
+                    candidates.retain(|candidate| {
+                        zip(&arg_types, signatures[*candidate].args.as_ref()).all(|(ty, req)| {
+                            !matches!(
+                                (ty.as_ref().and_then(|ty| ty.to_value()), req),
+                                (Some(Type::Integer), TyRequirement::Val(Type::Bool))
+                            )
+                        })
+                    });
+                    if candidates.is_empty() {
+                        candidates = tied;
                     }
                 }
 

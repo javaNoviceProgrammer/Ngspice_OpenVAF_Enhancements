@@ -128,7 +128,21 @@ fn param_ty(db: &dyn HirTyDB, param: ParamId) -> Type {
             let default_expr = db.param_exprs(param).default;
             db.inference_result(param.into()).expr_types[default_expr]
                 .to_value()
-                .unwrap_or(Type::Err)
+                .map_or(Type::Err, |ty| param_value_ty(&ty))
         }
+    }
+}
+
+/// Enhancement-845 (second robustness campaign 2026-10-10, F1): the type an
+/// untyped parameter takes from its default. A comparison, `&&`, `||`, `!` or
+/// `$param_given` is typed Bool internally, but the LRM's value is the integer 1
+/// or 0, and a parameter has no Bool type: `parameter p = (n > 0);` reached the
+/// parameter lowering as Bool and panicked there (`CmpOps::from_ty`). Such a
+/// parameter is an integer, element-wise for an array.
+pub(crate) fn param_value_ty(ty: &Type) -> Type {
+    match ty {
+        Type::Bool => Type::Integer,
+        Type::Array { ty, len } => Type::Array { ty: Box::new(param_value_ty(ty)), len: *len },
+        ty => ty.clone(),
     }
 }
