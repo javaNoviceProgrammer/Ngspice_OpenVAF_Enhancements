@@ -455,6 +455,25 @@ measure_check_len(MEASUREPTR meas, struct dvec *d, struct dvec *dScale)
     return MEASUREMENT_FAILURE;
 }
 
+/* Sample i of a measured vector, and of the scale, as com_measure_when() reads
+ * them: ac and sp take a complex vector through get_value(), and ac reads its
+ * frequency from the real part. */
+static double
+when_value(MEASUREPTR meas, struct dvec *d, int i, bool ac_check, bool sp_check)
+{
+    if ((ac_check || sp_check) && d->v_compdata)
+        return get_value(meas, d, i);
+    return d->v_realdata[i];
+}
+
+static double
+when_scale(struct dvec *dScale, int i, bool ac_check)
+{
+    if (ac_check && dScale->v_compdata)
+        return dScale->v_compdata[i].cx_real;
+    return dScale->v_realdata[i];
+}
+
 static int
 com_measure_when(
     MEASUREPTR meas     /* in : parsed measurement structure */
@@ -540,43 +559,9 @@ com_measure_when(
 
     for (i = 0; i < d->v_length; i++) {
 
-        if (ac_check) {
-            if (d->v_compdata)
-                value = get_value(meas, d, i); //d->v_compdata[i].cx_real;
-            else
-                value = d->v_realdata[i];
-            if (dScale->v_compdata)
-                scaleValue = dScale->v_compdata[i].cx_real;
-            else
-                scaleValue = dScale->v_realdata[i];
-        } else if (sp_check) {
-            if (d->v_compdata)
-                value = get_value(meas, d, i); //d->v_compdata[i].cx_real;
-            else
-                value = d->v_realdata[i];
-            scaleValue = dScale->v_realdata[i];
-        } else {
-            value = d->v_realdata[i];
-            scaleValue = dScale->v_realdata[i];
-        }
-
-        if (has_d2) {
-            if (ac_check) {
-                if (d2->v_compdata)
-                    value2 = get_value(meas, d2, i); //d->v_compdata[i].cx_real;
-                else
-                    value2 = d2->v_realdata[i];
-            } else if (sp_check) {
-                if (d2->v_compdata)
-                    value2 = get_value(meas, d2, i); //d->v_compdata[i].cx_real;
-                else
-                    value2 = d2->v_realdata[i];
-            } else {
-                value2 = d2->v_realdata[i];
-            }
-        } else {
-            value2 = NAN;
-        }
+        value = when_value(meas, d, i, ac_check, sp_check);
+        scaleValue = when_scale(dScale, i, ac_check);
+        value2 = has_d2 ? when_value(meas, d2, i, ac_check, sp_check) : NAN;
 
         /* 'dc' is special: it may start at an arbitrary scale value.
            Use m_td to store this value, as a delay TD does not make sense */
@@ -610,6 +595,49 @@ com_measure_when(
          * 0 makes the restart sample the new sample 0, exactly as at tstart. */
         if ((first > 1) && (dc_check && (meas->m_td == scaleValue)))
             first = 0;
+
+        /* Enhancement-849: a window that TD, FROM or TO opens after the first
+         * sample starts at that boundary. Only the interval from sample 0 is the
+         * operating-point interval Enhancement-418 skips; past it, this sample
+         * and the one before it are both real. The code below spends a
+         * window's first sample on remembering a value and its second on
+         * classifying the side, so a crossing between them, the only one in
+         * `when v(1)=0.55 rise=1 td=0.45u`, was lost, and with several
+         * crossings the next one was reported. Interpolate the boundary as the
+         * window's first point, classify the side there, and evaluate this
+         * sample's interval now. On sample 1, or a sample at the boundary,
+         * classify the side here. A dc sweep may descend into its window
+         * through TO. Not after the restart of a nested dc sweep: the sample
+         * before it belongs to the previous sweep. */
+        else if (first == 0 && i > 0) {
+            double b = meas->m_from;
+            double ps = when_scale(dScale, i - 1, ac_check);
+
+            if (tran_check && meas->m_td > b)
+                b = meas->m_td;
+            if (dc_check && ps > meas->m_to)
+                b = meas->m_to;
+            if (i > 1 && (b - ps) * (scaleValue - b) > 0.0 &&
+                    !AlmostEqualUlps(scaleValue, b, 100)) {
+                double t = (b - ps) / (scaleValue - ps);
+                double pv = when_value(meas, d, i - 1, ac_check, sp_check);
+
+                prevValue = pv + t * (value - pv);
+                if (has_d2) {
+                    double pv2 = when_value(meas, d2, i - 1, ac_check, sp_check);
+                    prevValue2 = pv2 + t * (value2 - pv2);
+                }
+                prevScaleValue = b;
+                crossCnt = 0;
+                if (prevValue < (has_d2 ? prevValue2 : meas->m_val))
+                    section = S_BELOW_VAL;
+                else
+                    section = S_ABOVE_VAL;
+                first = 2;
+            } else {
+                first = 1;
+            }
+        }
 
         if (first == 1) {
             if (has_d2) {
@@ -1310,10 +1338,15 @@ measure_minMaxAvg(
                    outside [i-1, i] and poison every later trapezoid. */
                 if (!dc_check && meas->m_from != 0.0e0 && i > 0 &&
                         !AlmostEqualUlps(svalue, meas->m_from, 100)) {
-                    value = measure_interpolate(dScale, d, i - 1, i, meas->m_from,
-                                                'y', meas);
-                    svalue = meas->m_from;
-                    mValueAt = svalue;
+                    /* Enhancement-848: the value at `from` opens the window, and
+                       this sample is its second point. It used to REPLACE this
+                       sample, so the trapezoid ran from `from` straight to the
+                       next sample and this one never entered the sum. */
+                    double fvalue = measure_interpolate(dScale, d, i - 1, i,
+                                                        meas->m_from, 'y', meas);
+                    mValue = 0.5 * (value + fvalue) * (svalue - meas->m_from);
+                    Tsum = svalue - meas->m_from;
+                    mValueAt = meas->m_from;
                 }
                 pvalue = value;
                 sprev = svalue;
@@ -1736,14 +1769,22 @@ measure_rms_integral(
         }
 
         if (first == 0) {
+            meas->m_measured_at = xvalue;
             if (meas->m_from != 0.0e0 && (n > 0)) {
-                // interpolate starting value.
+                /* interpolate the starting value. Enhancement-848: as a point of
+                   its own, ahead of this sample -- it used to replace it, and the
+                   sample dropped out of the integral. */
                 if (!AlmostEqualUlps(xvalue, meas->m_from, 100)) {
-                    value = measure_interpolate(xScale, d, iprev, i, meas->m_from, 'y' , meas);
-                    xvalue = meas->m_from;
+                    double fvalue = measure_interpolate(xScale, d, iprev, i,
+                                                        meas->m_from, 'y', meas);
+                    x[xy_size] = meas->m_from;
+                    if (mFunctionType == AT_RMS)
+                        y[xy_size++] = fvalue * fvalue;
+                    else
+                        y[xy_size++] = fvalue;
+                    meas->m_measured_at = meas->m_from;
                 }
             }
-            meas->m_measured_at = xvalue;
             first = 1;
         }
         x[xy_size] = xvalue;

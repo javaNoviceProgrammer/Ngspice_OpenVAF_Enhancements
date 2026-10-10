@@ -315,3 +315,11 @@ scripting ngspice:
   drives a capacitor directly at t = 0, the first step is still SPICE's, since a
   shorter one leaves trap ringing in modes no step resolves. An inductor's error
   floor is `vntol` since [E-847](../../enhancements_doc/Enhancement-847.md).
+- **A `.meas` window that opens after the first sample** lost its first point.
+  AVG, INTEG and RMS with `from=` dropped the first sample in the window: 3e-4
+  low on a triangle, up to 4.8 % on a sampled sine. Fixed in
+  [E-848](../../enhancements_doc/Enhancement-848.md). WHEN, FIND..WHEN and TRIG
+  with `td=` or `from=` lost a crossing between the window's first two samples,
+  and with several crossings reported the next. Fixed in
+  [E-849](../../enhancements_doc/Enhancement-849.md). A crossing between t = 0
+  and the first step is still not counted (E-418).

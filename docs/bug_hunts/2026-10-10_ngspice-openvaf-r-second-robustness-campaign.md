@@ -54,8 +54,8 @@ Nothing was fixed; this is the list.
 | [F1](#f1) | *(fixed in [E-845](../../enhancements_doc/Enhancement-845.md): the overload tie now prefers Integer, a `case` on a comparison with an integer item compares integers, and an untyped parameter with a logical default, which panicked the compiler, is an integer)* **compiler, wrong value:** a ternary or `==`/`!=` with a logical operand and an integer operand turns the integer into 0 or 1. For `n` = 5, `(n > 0) ? n : (n < 0)` is 1 and `n == (n > 0)` is 1 | high |
 | [F2](#f2) | *(fixed in [E-846](../../enhancements_doc/Enhancement-846.md): the first step is checked against the truncation error, with the rest before t = 0 as its history; a kink at t = 0 keeps SPICE's step)* **transient accuracy:** the first time step is accepted without a truncation check. At `reltol=1e-7` the first samples are off by 21 % to 32 % when the input moves at t = 0 or a `uic` start is far from equilibrium | medium |
 | [F3](#f3) | *(fixed in [E-846](../../enhancements_doc/Enhancement-846.md) and [E-847](../../enhancements_doc/Enhancement-847.md): F2's unchecked first point poisoned every later estimate; and an inductor's error floor was `abstol`, a current)* **transient failure:** a 7-element linear L–C network fails with "Timestep too small" right after the first step at `reltol` ≤ 1e-6; it runs at the defaults and at 1e-5 | medium |
-| [F4](#f4) | **measure:** AVG, INTEG and RMS with `from=` drop the first sample inside the window. E-302's start interpolation overwrites it; the error is 3e-4 on a triangle and up to 5 % on a sampled waveform | medium |
-| [F5](#f5) | **measure:** WHEN and FIND..WHEN with `td=` skip the first sample interval after TD. A single crossing there makes the measurement fail | medium |
+| [F4](#f4) | *(fixed in [E-848](../../enhancements_doc/Enhancement-848.md): the value at `from` is a point of its own, ahead of the sample)* **measure:** AVG, INTEG and RMS with `from=` drop the first sample inside the window. E-302's start interpolation overwrites it; the error is 3e-4 on a triangle and up to 5 % on a sampled waveform | medium |
+| [F5](#f5) | *(fixed in [E-849](../../enhancements_doc/Enhancement-849.md): the window opens at its TD, FROM or TO, and the interval to its first sample is evaluated; FROM, ac and dc had the same loss)* **measure:** WHEN and FIND..WHEN with `td=` skip the first sample interval after TD. A single crossing there makes the measurement fail | medium |
 | [F6](#f6) | **noise:** `inoise_spectrum` is wrong wherever the gain is below 1e-10. The gain squared is floored at 1e-20 with no note: 16 times low at 1 Hz through 1 fF | low |
 | [F7](#f7) | **measure:** the `meas` command's result keeps 7 significant digits, a `%e` round trip through `let`; a `.meas` card's keeps 16 (E-802). `val=<vector>` is substituted the same way | low |
 | [F8](#f8) | **uic:** a `uic` transient has no t = 0 sample, so the `.ic` state is never output | low |
@@ -183,6 +183,11 @@ isolated. Upstream ngspice-46 was not checked.
 <a id="f4"></a>
 ## F4 — AVG, INTEG and RMS with `from=` drop the first sample in the window
 
+*Fixed in [E-848](../../enhancements_doc/Enhancement-848.md). The value at `from` is now a point of
+its own, ahead of the first sample in the window: `a1` = 0.7633019 and `i1` = 4.04550e-7. On
+Family C's 300 decks every AVG and every INTEG of a piecewise-linear source matches. The INTEGs
+and RMSs that still differ all match a model of ngspice's quadrature to 1e-9, which is F11.*
+
 ```spice
 v1 1 0 pwl(0 0 1u 1 2u 0)
 r1 1 0 1k
@@ -204,6 +209,12 @@ that flagged were off by up to 4.8 %.
 
 <a id="f5"></a>
 ## F5 — WHEN with `td=` skips the first interval after TD
+
+*Fixed in [E-849](../../enhancements_doc/Enhancement-849.md). The window opens at its boundary:
+the value there is interpolated, the side classified there, and the interval to the first sample
+evaluated at once, so `w1` is 0.55 µs. The dig found the same loss with FROM, on ac sweeps, and on
+dc sweeps entering through FROM or, falling, through TO. The interval from sample 0 is still the
+one E-418 skips. Family C's two WHEN and FIND..WHEN mismatches are gone.*
 
 ```spice
 v1 1 0 pwl(0 0 1u 1)
