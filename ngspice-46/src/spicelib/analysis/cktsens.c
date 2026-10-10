@@ -202,6 +202,28 @@ static int check_filter(char *name)
  */
 
 static int	error;
+
+/* Enhancement-841 (robustness and correctness campaign 2026-10-10, F4): each
+ * perturbation re-runs a model's DEVsetup into delta_Y, which binds that
+ * model's instances' matrix pointers to delta_Y's elements. The ac path put
+ * them back with a full re-setup at every frequency but the last, and the dc
+ * path never did, so once sens freed delta_Y those devices loaded through
+ * dangling pointers and stamped nothing into the circuit's matrix: a second
+ * `.sens` in one deck (or a pss, sp or hb after it, which run without a new
+ * setup) failed its operating point with "singular matrix" on a resistor
+ * divider, and Guard Malloc faulted in RESload/VSRCload. The setup the ac path
+ * already does, once more after the last perturbation, binds every device back
+ * to the circuit's matrix. */
+static int sens_rebind(CKTcircuit* ckt)
+{
+    int e = CKTunsetup(ckt);
+    if (!e)
+        e = CKTsetup(ckt);
+    if (!e)
+        e = CKTtemp(ckt);
+    return e;
+}
+
 int sens_sens(CKTcircuit* ckt, int restart)
 {
     /*
@@ -273,6 +295,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
     double* saved_rhs = NULL,
           * saved_irhs = NULL;
     SMPmatrix* saved_matrix = NULL;
+    int rebound = 0;            /* Enhancement-841: a DEVsetup went into delta_Y */
 
 #ifdef KLU
     int size_CSC;
@@ -486,6 +509,17 @@ int sens_sens(CKTcircuit* ckt, int restart)
             FREE(vec_names);
         if (error) {
         err:
+            /* Enhancement-841: an error inside the perturbation loop left the
+             * circuit's matrix and right-hand sides swapped for sens's own and
+             * the perturbed devices bound to delta_Y -- the circuit back, then
+             * the devices bound to it */
+            release_context(ckt->CKTrhs, saved_rhs);
+            release_context(ckt->CKTirhs, saved_irhs);
+            release_context(ckt->CKTmatrix, saved_matrix);
+            if (rebound) {
+                rebound = 0;
+                (void) sens_rebind(ckt);
+            }
 #ifdef OSDI
             OSDIholdInitialStep(false);   /* Enhancement-789 */
             OSDIsensPerturbing(NULL);     /* Enhancement-825 */
@@ -726,6 +760,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
                 CKTnode* node = ckt->CKTlastNode;
                 /* XXXX insert old state base here ?? */
                 fn(delta_Y, sg->model, ckt, &ckt->CKTnumStates);
+                rebound = 1;    /* Enhancement-841 */
                 if (node != ckt->CKTlastNode) {
                     fprintf(stderr, "Internal Error: node allocation in DEVsetup() during sensitivity analysis, this will cause serious troubles !, please report this issue !\n");
                     controlled_exit(EXIT_FAILURE);
@@ -1247,6 +1282,17 @@ int sens_sens(CKTcircuit* ckt, int restart)
     FREE(delta_I_delta_Y);
     FREE(delta_iI_delta_Y);
 
+    /* Enhancement-841: the perturbed devices still point into delta_Y, just
+     * freed; bind them back to the circuit's matrix */
+    {
+        int rebind_err = OK;
+        if (rebound) {
+            rebind_err = sens_rebind(ckt);
+            rebound = 0;
+        }
+        error = rebind_err;
+    }
+
     ckt->CKTbypass = bypass;
     FREE(mod_buf);
     FREE(inst_buf);             /* Enhancement-685 */
@@ -1273,7 +1319,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
 #endif
 #endif
 
-    return OK;
+    return error;   /* Enhancement-841: OK, or the re-setup's refusal */
     /*
     #ifdef KLU
         }

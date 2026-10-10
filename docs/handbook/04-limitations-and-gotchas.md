@@ -290,3 +290,9 @@ scripting ngspice:
   previous task before refusing its card, and the circuit still pointed into it.
   Silent normally, SIGSEGV under Guard Malloc. Fixed in
   [E-840](../../enhancements_doc/Enhancement-840.md).
+- **Two `.sens` cards in one deck**, or an `.sp` after a `.sens`: the second
+  analysis ran on devices `sens` had left bound to its freed scratch matrix and
+  failed with "singular matrix" on a plain divider. Fixed in
+  [E-841](../../enhancements_doc/Enhancement-841.md). `envelope` after a device
+  refused at setup copied from a NULL vector; fixed in
+  [E-842](../../enhancements_doc/Enhancement-842.md).

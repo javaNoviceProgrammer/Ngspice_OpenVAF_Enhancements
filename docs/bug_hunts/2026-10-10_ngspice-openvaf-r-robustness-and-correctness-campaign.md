@@ -48,8 +48,8 @@ Nothing was fixed; this is the list.
 | [F1](#f1) | *(fixed in [E-836](../../enhancements_doc/Enhancement-836.md), [E-837](../../enhancements_doc/Enhancement-837.md) and [E-838](../../enhancements_doc/Enhancement-838.md); E-734 exposed it rather than caused it -- 13 of the 14 are back, VBIC 4T-et is open at its defaults)* 14 of the corpus's 92 compact models no longer reach an operating point (bsimbulk ×3, bsimcmg ×2, bsimimg, HICUM L0 ×2, HICUM L2 ×3, HiSIM-SOI ×2, VBIC 4T-et): a regression from E-734 | high |
 | [F2](#f2) | *(fixed in [E-839](../../enhancements_doc/Enhancement-839.md): the `sqrt`, `pow`, `hypot` and `atan2` guards replace only the singular point; HiSIM-HV and HiSIM-SOTB were F2 too)* openvaf-r loads a wrong Jacobian wherever a `sqrt` argument is small: E-261's regularisation `2*sqrt(x + 1e-18)` changes the derivative by `5e-19/x`, which is 8 % on HiSIM-SOI's gm | high |
 | [F3](#f3) | *(fixed in [E-840](../../enhancements_doc/Enhancement-840.md): any refused analysis command did it, and the freed job was the previous command's; `CKTdelTask` clears the pointer)* **memory:** `op`, then a refused `sens`, then `reset` reads the freed `sens` job through `CKTcurJob` in `DCtran_step_quit` | medium |
-| [F4](#f4) | a second `sens` job in one run fails its operating point on a resistor divider; under Guard Malloc the device load reads freed memory | medium |
-| [F5](#f5) | **crash:** `envelope` after a device refused at setup copies from a NULL `CKTrhsOld`; E-502's guard only asks for `CKTmatrix` | medium |
+| [F4](#f4) | *(fixed in [E-841](../../enhancements_doc/Enhancement-841.md): `sens` left the devices it perturbed bound to its freed scratch matrix; an `.sp` after a `.sens` was hit too)* a second `sens` job in one run fails its operating point on a resistor divider; under Guard Malloc the device load reads freed memory | medium |
+| [F5](#f5) | *(fixed in [E-842](../../enhancements_doc/Enhancement-842.md): the check asks for the vectors it uses and a transient that reached its end)* **crash:** `envelope` after a device refused at setup copies from a NULL `CKTrhsOld`; E-502's guard only asks for `CKTmatrix` | medium |
 | [F6](#f6) | **crash:** a deck that `source`s itself, or two that source each other, recurse until the stack overflows; `.include` stops at 50 levels | low |
 | [F7](#f7) | **compiler panic:** `parameter p p = 1;` reports its parse error, then panics on a salsa query cycle | low |
 
@@ -236,6 +236,17 @@ still hold it.
 <a id="f4"></a>
 ## F4 — a second `sens` job reads what the first freed
 
+*Fixed in [E-841](../../enhancements_doc/Enhancement-841.md). It was not F3's path, which is
+compiled out (`WANT_SENSE2`):*
+- *Each perturbation re-runs a model's `DEVsetup` into `sens`'s own matrix, `delta_Y`, binding
+  those instances' matrix pointers there.*
+- *The ac path re-set up at every frequency but the last, and the dc path never did. `sens`
+  then freed `delta_Y`, so anything after it in the same run without a new setup loaded through
+  freed memory: a second `.sens`, and an `.sp` too.*
+- *An error inside the loop also left the circuit's matrix swapped for `sens`'s own.*
+
+*A re-setup after the last perturbation, and on the error path, binds every device back.*
+
 ```spice
 v1 in 0 dc 1
 r1 in mid 1k
@@ -271,6 +282,10 @@ frees sensitivity state that the second reuses. Fuzz mutant t2184 found it, from
 
 <a id="f5"></a>
 ## F5 — `envelope` after a setup refusal copies from NULL
+
+*Fixed in [E-842](../../enhancements_doc/Enhancement-842.md). The check asks for the vectors
+`EFanalysis` uses (the solution, and the states when the circuit has any) and for a transient
+that reached `Tsettle`, so a transient that gave up part-way is refused as well.*
 
 ```spice
 v1 1 0 dc 1 sin(0 1 1meg)

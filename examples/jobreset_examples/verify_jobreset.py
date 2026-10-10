@@ -24,6 +24,21 @@ only what the deck prints is checked.
       plot is kept
   [4] `remcirc` after a refused command, and with a second circuit loaded
   [5] (control) `op`, `op`, `reset`
+
+Enhancement-841 (F4): each sens perturbation re-runs a model's DEVsetup into its
+own matrix, binding those devices' pointers there, and sens freed that matrix
+without binding them back -- a second `.sens` in one deck (or anything after a
+sens that runs without a new setup) loaded through dangling pointers: "singular
+matrix" on a resistor divider, a fault in RESload under Guard Malloc.
+  [6] two dc `.sens`, a dc and an ac one, two over an OSDI resistor, and a
+      `.sens` then an `.sp`: every one runs, with the closed-form sensitivity
+
+Enhancement-842 (F5): `envelope` checked only that a matrix existed after its
+settling transient; a device refused at setup (a lossless line with z0 = 0)
+leaves one and no solution vector, and EFanalysis copied from NULL.
+  [7] envelope after a setup refusal is refused with a message; the deck runs on.
+      Control: envelope over a divider with no charges, which has no state vector
+      (the first cut of the check asked for one and refused it).
 """
 import os
 import re
@@ -93,6 +108,79 @@ check("[4] two circuits: a refused command on the first, remcirc, the second sti
 
 rc, out = run("op\nop\nreset\nop\nprint v(a)\necho SURVIVED", "5")
 check("[5] (control) op, op, reset: v(a) = 1", survived(rc, out) and "v(a) = 1" in out, f"rc={rc}")
+
+
+def run_deck(text, tag, extra=None):
+    """Run a whole deck; return (rc, output)."""
+    for name, body in (extra or {}).items():
+        with open(os.path.join(WORK, name), "w") as f:
+            f.write(body)
+    path = os.path.join(WORK, f"{tag}.cir")
+    with open(path, "w") as f:
+        f.write(text)
+    env = dict(os.environ)
+    if GUARD:
+        env["DYLD_INSERT_LIBRARIES"] = GMALLOC
+    p = subprocess.run([NGSPICE, "-b", path], capture_output=True, text=True, timeout=300,
+                       cwd=WORK, env=env, errors="replace")
+    return p.returncode, p.stdout + p.stderr
+
+
+def sens_vals(out, name):
+    return [float(m) for m in re.findall(rf"^{re.escape(name)} = (\S+)", out, re.M)]
+
+
+# [6] Enhancement-841: d v(mid)/d r1 = -r2/(r1+r2)^2 = -1.875e-4 with r1 = 1k, r2 = 3k
+DIV = "* sens twice\nv1 in 0 dc 1 ac 1\nr1 in mid 1k\nr2 mid 0 3k\n"
+rc, out = run_deck(DIV + ".sens v(mid)\n.sens v(mid)\n.control\nrun\nsetplot\nsetplot sens1\nprint r1\n"
+                   "setplot sens2\nprint r1\necho SURVIVED\n.endc\n.end\n", "6a")
+v = sens_vals(out, "r1")
+check("[6] two dc .sens in one deck: both run, d v(mid)/d r1 = -1.875e-4 twice, no singular matrix",
+      survived(rc, out) and len(v) == 2 and all(abs(x + 1.875e-4) < 1e-9 for x in v) and "singular" not in out,
+      f"rc={rc} r1={v}")
+rc, out = run_deck(DIV + ".sens v(mid)\n.sens v(mid) ac dec 1 1 1k\n.control\nrun\nsetplot sens1\n"
+                   "let m = mag(r1[0])\nprint m\nsetplot sens2\nlet m = mag(r1[0])\nprint m\necho SURVIVED\n.endc\n.end\n", "6b")
+v = sens_vals(out, "m")
+check("[6] a dc and an ac .sens in one deck: both run, |d v(mid)/d r1| = 1.875e-4 in each (at 1 Hz in the ac one)",
+      survived(rc, out) and "singular" not in out and len(v) == 2 and all(abs(x - 1.875e-4) < 1e-9 for x in v),
+      f"rc={rc} m={v}")
+VA = '''`include "disciplines.vams"
+module vr(a, b); inout a, b; electrical a, b; parameter real r = 1k from (0:inf);
+analog I(a, b) <+ V(a, b)/r;
+endmodule
+'''
+VADIR = os.path.join(WORK, "va")
+os.makedirs(VADIR, exist_ok=True)
+with open(os.path.join(VADIR, "vr.va"), "w") as f:
+    f.write(VA)
+from _setup import VAF as OPENVAF  # noqa: E402
+cr = subprocess.run([OPENVAF, "vr.va", "-o", "vr.osdi"], cwd=VADIR, capture_output=True, text=True)
+rc, out = run_deck("* sens osdi twice\n.control\npre_osdi " + os.path.join(VADIR, "vr.osdi") + "\n.endc\n"
+                   "v1 in 0 dc 1\nn1 in mid mr\n.model mr vr r=1k\nr2 mid 0 3k\n.sens v(mid)\n.sens v(mid)\n"
+                   ".control\nrun\nsetplot sens1\nprint r2\nsetplot sens2\nprint r2\necho SURVIVED\n.endc\n.end\n", "6c")
+v = sens_vals(out, "r2")
+check("[6] two .sens over an OSDI resistor: both run, d v(mid)/d r2 = r1/(r1+r2)^2 = 6.25e-5 twice",
+      cr.returncode == 0 and survived(rc, out) and len(v) == 2 and all(abs(x - 6.25e-5) < 1e-9 for x in v),
+      f"rc={rc} r2={v}")
+rc, out = run_deck("* sens then sp\nv1 in 0 dc 1 ac 1 portnum 1 z0 50\nr1 in mid 1k\nr2 mid 0 3k\nr3 mid out 50\n"
+                   "v2 out 0 dc 0 ac 0 portnum 2 z0 50\n.sens v(mid)\n.sp lin 1 1k 1k\n.control\nrun\nsetplot\n"
+                   "echo SURVIVED\n.endc\n.end\n", "6e")
+check("[6] a .sens then an .sp, which runs after it without a new setup: both run, no singular matrix",
+      survived(rc, out) and "singular" not in out and "sens1" in out and "sp1" in out, f"rc={rc}")
+rc, out = run_deck(DIV + ".sens v(mid)\n.control\nrun\nprint r1\necho SURVIVED\n.endc\n.end\n", "6d")
+v = sens_vals(out, "r1")
+check("[6] (control) one .sens: d v(mid)/d r1 = -1.875e-4",
+      survived(rc, out) and len(v) == 1 and abs(v[0] + 1.875e-4) < 1e-9, f"rc={rc} r1={v}")
+
+# [7] Enhancement-842: envelope after a device refused at setup
+rc, out = run_deck("* envelope refused\nv1 1 0 dc 1 sin(0 1 1meg)\nr1 1 2 1k\nc1 2 0 1n\n"
+                   "t1 2 0 3 0 z0=0 td=1n\nr2 3 0 50\n.control\nenvelope 2 1meg 10u\necho SURVIVED\n.endc\n.end\n", "7a")
+check("[7] envelope after a lossless line refused at setup (z0 = 0): refused with a message, the deck runs on",
+      survived(rc, out) and "envelope: the settling transient did not run" in out, f"rc={rc}")
+rc, out = run_deck("* envelope without charges\nv1 in 0 dc 0 sin(0 1 1meg)\nr1 in out 1k\nr2 out 0 1k\n"
+                   ".control\nenvelope out 1meg 20u\nprint out_amp[1]\necho SURVIVED\n.endc\n.end\n", "7b")
+check("[7] (control) envelope over a divider with no charges, so no state vector: it runs, out_amp = 0.5",
+      survived(rc, out) and re.search(r"^out_amp\[1\] = 5\.0*e-01", out, re.M) is not None, f"rc={rc}")
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

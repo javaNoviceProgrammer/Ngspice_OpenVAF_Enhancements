@@ -173,10 +173,30 @@ com_envelope(wordlist *wl)
      * result of an internal analysis without asking whether it happened; the
      * same shape as Enhancement-438, where a failed sample kept the previous
      * plot and was counted as a pass. */
-    if (!ft_curckt || !ft_curckt->ci_ckt || !ft_curckt->ci_ckt->CKTmatrix) {
-        fprintf(cp_err, "Error: envelope: the settling transient did not run, "
-                        "so there is no state to follow (check the deck's "
-                        "operating point and time step).\n");
+    /* Enhancement-842 (robustness and correctness campaign 2026-10-10, F5):
+     * a matrix is no proof. A device refused at setup -- a lossless line with
+     * z0 = 0, the fuzz's `tran 0 0` read as a line named `tran` -- fails
+     * CKTsetup after the matrix exists and before NIreinit allocates the
+     * solution vectors, and EFanalysis then copied from a NULL CKTrhsOld: a
+     * deterministic SIGSEGV. Ask what EFanalysis uses -- the solution and
+     * the state vectors, which a circuit without charges legitimately has
+     * none of -- and whether the transient reached its end: CKTdoJob starts
+     * every job at CKTtime = 0, so a setup refusal and a transient that gave
+     * up part-way both stop short of Tsettle. */
+    if (!ft_curckt || !ft_curckt->ci_ckt || !ft_curckt->ci_ckt->CKTmatrix ||
+        !ft_curckt->ci_ckt->CKTrhsOld ||
+        (ft_curckt->ci_ckt->CKTnumStates > 0 && !ft_curckt->ci_ckt->CKTstate0) ||
+        !(ft_curckt->ci_ckt->CKTtime >= Tsettle * (1.0 - 1e-9))) {
+        if (ft_curckt && ft_curckt->ci_ckt && ft_curckt->ci_ckt->CKTrhsOld &&
+            (ft_curckt->ci_ckt->CKTnumStates == 0 || ft_curckt->ci_ckt->CKTstate0))
+            fprintf(cp_err, "Error: envelope: the settling transient stopped at "
+                            "t = %g s of %g s, so there is no settled state to "
+                            "follow (check the deck's time step).\n",
+                    ft_curckt->ci_ckt->CKTtime, Tsettle);
+        else
+            fprintf(cp_err, "Error: envelope: the settling transient did not run, "
+                            "so there is no state to follow (check the deck's "
+                            "operating point and time step).\n");
         return;
     }
     ckt = ft_curckt->ci_ckt;
