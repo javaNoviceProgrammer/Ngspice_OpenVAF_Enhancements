@@ -747,6 +747,11 @@ app_rl_readlines(void)
     while (cp_evloop(NULL) == 1) {
         ;
     }
+    /* Enhancement-843: cp_evloop(NULL) returns only at the end of the input,
+     * now that the lexer reports it (it ran away there before, until a 2 GB
+     * realloc failed); quit, as the readline loop above does on its NULL
+     * line, rather than come straight back here. */
+    cp_evloop("quit");
 #endif /* defined(HAVE_GNUREADLINE) || defined(HAVE_BSDEDITLINE) */
 } /* end of function app_rl_readlines */
 

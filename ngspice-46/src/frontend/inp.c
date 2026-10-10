@@ -3052,6 +3052,34 @@ static void inp_source_open_error(const char *name)
     fprintf(cp_err, "%s: %s\n", name, e ? strerror(e) : "cannot open");
 }
 
+/* Enhancement-843 (robustness and correctness campaign 2026-10-10, F6): `source`
+ * nesting. A deck that sources itself, or two that source each other, recursed
+ * com_source -> inp_spsource -> the control block -> com_source until the stack
+ * overflowed (SIGSEGV after about 3 900 levels on an 8 MB stack, 2 KB each). The
+ * netlist twin, `.include`, has stopped at 50 levels since Enhancement-212; a
+ * sourced file is refused past the same depth. The depth is reset when an
+ * interrupt longjmps back to the prompt past the decrements. */
+#define INP_MAX_SOURCE_DEPTH 50
+static int source_depth = 0;
+
+void
+inp_source_depth_reset(void)
+{
+    source_depth = 0;
+}
+
+/* Enhancement-843: the prompt a failed `source` drops to under `set
+ * interactive`, on a control level of its own. On the level of the block that
+ * ran `source`, every command typed there was appended to that block, whose
+ * loop ran each one a second time once the prompt ended. */
+static void
+inp_source_prompt(void)
+{
+    cp_pushcontrol();
+    (void) cp_evloop(NULL);
+    cp_popcontrol();
+}
+
 void
 com_source(wordlist *wl)
 {
@@ -3085,6 +3113,23 @@ com_source(wordlist *wl)
 
     firstfile = wl->wl_word;
 
+    if (source_depth >= INP_MAX_SOURCE_DEPTH) {
+        fprintf(cp_err, "Command 'source' failed:\n");
+        fprintf(cp_err, "Error: source nesting too deep (> %d levels), likely a deck "
+                "that sources itself:\n    %s\n", INP_MAX_SOURCE_DEPTH, firstfile);
+        fprintf(cp_err, "    Simulation interrupted due to error!\n\n");
+        cp_interactive = TRUE;
+#ifdef SHARED_MODULE
+        controlled_exit(1);
+#else
+        if (cp_getvar("interactive", CP_BOOL, NULL, 0))
+            inp_source_prompt();
+        else
+            controlled_exit(1);
+#endif
+        return;
+    }
+
     if (wl->wl_next) {
         /* There are several files -- put them into a temp file  */
         tempfile = smktemp("sp");
@@ -3097,7 +3142,7 @@ com_source(wordlist *wl)
             controlled_exit(1);
 #else
             if (cp_getvar("interactive", CP_BOOL, NULL, 0))
-                cp_evloop(NULL);
+                inp_source_prompt();
             else
                 controlled_exit(1);
 #endif
@@ -3115,7 +3160,7 @@ com_source(wordlist *wl)
                 controlled_exit(1);
 #else
                 if (cp_getvar("interactive", CP_BOOL, NULL, 0))
-                    cp_evloop(NULL);
+                    inp_source_prompt();
                 else
                     controlled_exit(1);
 #endif
@@ -3142,7 +3187,7 @@ com_source(wordlist *wl)
             controlled_exit(1);
 #else
             if (cp_getvar("interactive", CP_BOOL, NULL, 0))
-                cp_evloop(NULL);
+                inp_source_prompt();
             else
                 controlled_exit(1);
 #endif
@@ -3161,7 +3206,7 @@ com_source(wordlist *wl)
         controlled_exit(1);
 #else
         if (cp_getvar("interactive", CP_BOOL, NULL, 0))
-            cp_evloop(NULL);
+            inp_source_prompt();
         else
             controlled_exit(1);
 #endif
@@ -3169,6 +3214,7 @@ com_source(wordlist *wl)
     }
 
     /* Don't print the title if this is a spice initialisation file. */
+    source_depth++;
     if (ft_nutmeg || substring(INITSTR, owl->wl_word) || substring(ALT_INITSTR, owl->wl_word))
         inp_spsource(fp, TRUE, tempfile ? NULL : wl->wl_word, FALSE);
     else {
@@ -3186,6 +3232,8 @@ com_source(wordlist *wl)
                 controlled_exit(EXIT_FAILURE);
         }
     }
+    if (source_depth > 0)
+        source_depth--;
 
     cp_interactive = inter;
     if (tempfile)

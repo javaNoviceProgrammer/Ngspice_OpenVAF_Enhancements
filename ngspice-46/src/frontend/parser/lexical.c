@@ -301,6 +301,25 @@ nloop:
                 append(NULL);
             goto done;
 
+        /* Enhancement-843: the end of the input file. There was no case for
+           it, so EOF fell to the default and was pushed onto the word, and
+           the next read was EOF again: the lexer grew its buffer until a
+           realloc of 2 GB failed. A prompt that reads the file directly --
+           the one a failed `source` drops to under `set interactive`, and
+           the main loop of a build without readline -- did it as soon as its
+           input ended. A partial line ends as at a newline; with nothing read,
+           NULL is cp_evloop's "end of file or end of user input". (A string
+           never yields EOF, and a backquote's EOF became '\n' above.) */
+        case EOF:
+            if (buf.i)
+                newword;
+            if (!wlist) {
+                tfree(buf.s);
+                tfree(linebuf.s);
+                return NULL;
+            }
+            goto done;
+
         /* if ' read until next ' is hit, will form a new word,
            but without the ' */
         case '\'':

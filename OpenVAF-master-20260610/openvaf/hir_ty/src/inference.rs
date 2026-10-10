@@ -727,7 +727,7 @@ impl Ctx<'_> {
                 ScopeDefItem::DisciplineId(discipline) => Ty::Discipline(discipline),
                 ScopeDefItem::NodeId(node) => Ty::Node(node),
                 ScopeDefItem::VarId(var) => Ty::Var(self.db.var_data(var).ty.clone(), var),
-                ScopeDefItem::ParamId(param) => Ty::Param(self.db.param_ty(param), param),
+                ScopeDefItem::ParamId(param) => Ty::Param(self.param_ref_ty(param), param),
                 ScopeDefItem::AliasParamId(param) => match self.db.resolve_alias(param)? {
                     Alias::Cycel => return None,
                     Alias::Param(target) => {
@@ -742,7 +742,7 @@ impl Ctx<'_> {
                         self.result
                             .diagnostics
                             .push(InferenceDiagnostic::AliasRefInModule { expr, alias: param });
-                        Ty::Param(self.db.param_ty(target), target)
+                        Ty::Param(self.param_ref_ty(target), target)
                     }
                     Alias::ParamSysFun(param) => {
                         self.result.resolved_calls.insert(expr, ResolvedFun::Param(param));
@@ -3528,6 +3528,28 @@ impl Ctx<'_> {
         tree[loc.id].genvars.clone()
     }
 
+    /// Enhancement-844 (robustness and correctness campaign 2026-10-10, F7): the type of a
+    /// parameter read. An untyped parameter's type is inferred from its own body, so a read of
+    /// one inside a parameter's body that is not strictly earlier in the file -- the parameter
+    /// itself (`parameter p = p;`, `parameter p = 1 from [0:p];`) or one declared afterwards
+    /// (`parameter p = q; parameter q = p;`) -- asked for an inference that could be the one in
+    /// progress, and salsa's cycle panic crashed the compiler. Validation already reports every
+    /// such read as an error ("references itself", "defined afterwards"), so it is typed `Err`
+    /// here and the error is what the user sees. Parameters share one arena per file, so the
+    /// reads left -- to strictly earlier parameters, whose own reads are the same -- cannot
+    /// come back round.
+    fn param_ref_ty(&self, param: ParamId) -> Type {
+        if let DefWithBodyId::ParamId(def) = self.owner {
+            if self.db.param_data(param).ty.is_none() {
+                let db = self.db.upcast();
+                if param.lookup(db).id >= def.lookup(db).id {
+                    return Type::Err;
+                }
+            }
+        }
+        self.db.param_ty(param)
+    }
+
     fn find_param_array(&self, name: &Name) -> Option<BusDecl> {
         let module = self.owner_module()?;
         let loc = module.lookup(self.db.upcast());
@@ -3648,7 +3670,7 @@ impl Ctx<'_> {
         match self.resolve_path(stmt, expr, &synth_path)? {
             ScopeDefItem::NodeId(node) => Some(Ty::Node(node)),
             ScopeDefItem::VarId(var) => Some(Ty::Var(self.db.var_data(var).ty.clone(), var)),
-            ScopeDefItem::ParamId(param) => Some(Ty::Param(self.db.param_ty(param), param)),
+            ScopeDefItem::ParamId(param) => Some(Ty::Param(self.param_ref_ty(param), param)),
             _ => None,
         }
     }

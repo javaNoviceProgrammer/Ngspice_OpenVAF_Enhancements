@@ -296,3 +296,13 @@ scripting ngspice:
   [E-841](../../enhancements_doc/Enhancement-841.md). `envelope` after a device
   refused at setup copied from a NULL vector; fixed in
   [E-842](../../enhancements_doc/Enhancement-842.md).
+- **A deck that `source`s itself**, or two that source each other, recursed
+  until the stack overflowed. Since
+  [E-843](../../enhancements_doc/Enhancement-843.md) `source` stops at 50
+  levels, as `.include` does. The prompt a failed `source` drops to under
+  `set interactive` now ends at the end of its input and runs each command
+  typed there once.
+- **A parameter without a type that reads itself** (`parameter p = p;`), or a
+  later parameter that reads it back, panicked openvaf-r. Since
+  [E-844](../../enhancements_doc/Enhancement-844.md) it is reported as the
+  typed spelling always was.

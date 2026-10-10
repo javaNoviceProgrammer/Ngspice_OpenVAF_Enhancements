@@ -50,8 +50,8 @@ Nothing was fixed; this is the list.
 | [F3](#f3) | *(fixed in [E-840](../../enhancements_doc/Enhancement-840.md): any refused analysis command did it, and the freed job was the previous command's; `CKTdelTask` clears the pointer)* **memory:** `op`, then a refused `sens`, then `reset` reads the freed `sens` job through `CKTcurJob` in `DCtran_step_quit` | medium |
 | [F4](#f4) | *(fixed in [E-841](../../enhancements_doc/Enhancement-841.md): `sens` left the devices it perturbed bound to its freed scratch matrix; an `.sp` after a `.sens` was hit too)* a second `sens` job in one run fails its operating point on a resistor divider; under Guard Malloc the device load reads freed memory | medium |
 | [F5](#f5) | *(fixed in [E-842](../../enhancements_doc/Enhancement-842.md): the check asks for the vectors it uses and a transient that reached its end)* **crash:** `envelope` after a device refused at setup copies from a NULL `CKTrhsOld`; E-502's guard only asks for `CKTmatrix` | medium |
-| [F6](#f6) | **crash:** a deck that `source`s itself, or two that source each other, recurse until the stack overflows; `.include` stops at 50 levels | low |
-| [F7](#f7) | **compiler panic:** `parameter p p = 1;` reports its parse error, then panics on a salsa query cycle | low |
+| [F6](#f6) | *(fixed in [E-843](../../enhancements_doc/Enhancement-843.md): `source` stops at 50 levels, as `.include` does; the prompt a failed `source` drops to also ran away at end of input and ran each typed command twice)* **crash:** a deck that `source`s itself, or two that source each other, recurse until the stack overflows; `.include` stops at 50 levels | low |
+| [F7](#f7) | *(fixed in [E-844](../../enhancements_doc/Enhancement-844.md): no parse error is needed -- any untyped parameter whose default or range reads itself, or a later parameter that reads it back, did it)* **compiler panic:** `parameter p p = 1;` reports its parse error, then panics on a salsa query cycle | low |
 
 <a id="f1"></a>
 ## F1 — 14 corpus models no longer reach an operating point
@@ -322,6 +322,13 @@ of its own internal run. Fuzz mutant t5869 found it: the line `tran 0 0`, inject
 <a id="f6"></a>
 ## F6 — `source` recursion overflows the stack
 
+*Fixed in [E-843](../../enhancements_doc/Enhancement-843.md). `source` refuses a 51st level and
+fails as a missing file does. A `.spiceinit` that sources itself overflowed the stack too. Under
+`set interactive`, a failed `source` drops to a prompt, and that prompt had two defects of its
+own. It ran away at the end of its input: the lexer had no case for EOF and grew its buffer
+until a 2 GB realloc failed. And once it could end, each command typed there ran a second time.
+Both are fixed.*
+
 ```spice
 * s.cir
 r1 1 0 1k
@@ -341,6 +348,12 @@ a circular include`". Fuzz mutant t6027 found it, from `slew_examples/dc_sim.cir
 
 <a id="f7"></a>
 ## F7 — a parameter named as its own type panics the compiler
+
+*Fixed in [E-844](../../enhancements_doc/Enhancement-844.md). The parse error was not needed:
+`parameter p = p;`, `parameter p = 1 from [0:p];`, `parameter p = q; parameter q = p;` and the
+same through an `aliasparam` all panicked. A parameter without a type is typed by inferring its
+own body, and the body asked for that inference again. Such a read is now typed as an error,
+and the existing "references itself" or "defined afterwards" message is reported.*
 
 ```verilog
 module m(a); inout a; electrical a;

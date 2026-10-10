@@ -77,6 +77,7 @@ ft_sigintr_cleanup(void)
     mc_sss_off();
     OSDImcInterruptReset();
     outp_loop_abort();
+    inp_source_depth_reset();   /* Enhancement-843: an interrupted `source` */
 
     gr_clean();  /* Clean up plot window */
 
