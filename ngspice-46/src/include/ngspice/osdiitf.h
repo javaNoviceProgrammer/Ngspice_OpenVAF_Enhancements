@@ -274,6 +274,7 @@ extern int OSDIterminalNames(CKTcircuit *ckt, const char *name, char ***names,
  * src/osdi/osdiparam.c. */
 extern int OSDIcollapseChanged(GENinstance *instPtr);
 extern int OSDIcollapsedNode(CKTcircuit *ckt, const char *name, int *into);   /* Enhancement-688 */
+extern void OSDIsetupPass(CKTcircuit *ckt, int begin);   /* Enhancement-837 */
 extern int OSDIdeclaredInternalNode(CKTcircuit *ckt, const char *name);   /* Enhancement-690 */
 extern int OSDIuicSeed(CKTcircuit *ckt);   /* Enhancement-689: analysis("ic") initial conditions under uic */
 extern int OSDIanyCollapseChanged(CKTcircuit *ckt);   /* Enhancement-471 */

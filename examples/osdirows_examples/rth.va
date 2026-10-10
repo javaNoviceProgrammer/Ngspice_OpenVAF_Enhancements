@@ -1,0 +1,19 @@
+`include "disciplines.vams"
+// Enhancement-836/837 probe: an internal node a1 that collapses into p when
+// r1 = 0, a second internal node a2 after it, and a terminal t the model ties
+// to ground itself (the shape of a self-heating model with the heating off:
+// `Temp(t) <+ 0`). p - a1 - a2 - n is r1 + 1k + 1k.
+module rth(p, n, t);
+inout p, n, t; electrical p, n, t;
+electrical a1, a2;
+parameter real r1 = 0 from [0:inf);
+analog begin
+  if (r1 > 0)
+    I(p, a1) <+ V(p, a1)/r1;
+  else
+    V(p, a1) <+ 0;
+  I(a1, a2) <+ V(a1, a2)/1k;
+  I(a2, n) <+ V(a2, n)/1k;
+  V(t) <+ 0;
+end
+endmodule

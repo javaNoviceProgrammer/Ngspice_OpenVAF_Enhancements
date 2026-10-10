@@ -170,12 +170,17 @@ def main():
         out = ngspice(op_deck("bsim4 open gate", "vdd vdd 0 1.2\nrd vdd d 10k\nnm1 d g 0 0 nmv w=1u l=0.2u\n.model nmv bsim4va(type=1 w=1e-6 l=0.2e-6)",
                               "v(d) v(g)", "").replace(".control\n", f".control\npre_osdi {BSIM4}\n"))
         s = scalars(out)
-        # Enhancement-734: the transient op no longer solves with the gmin source
-        # stepping left on every diagonal, so the gate settles where its own
-        # capacitances put it (0.4324 / 1.0064; 0.4317 / 1.0083 with the shunt).
-        check("BSIM4 (OSDI) with an open gate: solved through optran, v(g)=0.4324, v(d)=1.0064, within 400 iterations",
-              near(s.get("v(g)"), 0.4324286, 1e-4) and near(s.get("v(d)"), 1.006363, 1e-4) and "Transient op finished" in out
-              and iters(out) is not None and iters(out) <= 400, f"v(g)={s.get('v(g)')} v(d)={s.get('v(d)')} iterations={iters(out)}")
+        # Enhancement-838: the gate's row holds entries in the model's pattern
+        # (the gate-current partials) and no value at all, so the dc-path walk
+        # passed it and every factorization failed; after Enhancement-734 the
+        # transient op settled it where the ramp left it (0.4324 / 1.0064, 400
+        # iterations). The reorder now finds the empty row and holds it with
+        # gmin, as the walk holds the built-in twin's open gate above: v(g)=0.
+        check("BSIM4 (OSDI) with an open gate: g named dead and held, v(g)=0, v(d)=1.2 as the built-in twin, "
+              "within 5 iterations (was optran's ramp-dependent 0.4324 V, 400)",
+              near(s.get("v(g)"), 0.0, 1e-9) and near(s.get("v(d)"), 1.2, 1e-5)
+              and "node 'g' is dead at this point" in out and "Transient op" not in out
+              and iters(out) is not None and iters(out) <= 5, f"v(g)={s.get('v(g)')} v(d)={s.get('v(d)')} iterations={iters(out)}")
 
     print("\n[.option rshunt] -- the global workaround, for comparison")
     out = ngspice(op_deck("bsrc reads x, rshunt", "v1 a 0 1\nr1 a b 1k\nb1 c 0 v=2*v(x)\nrc c 0 1k", "v(b) v(c) v(x)", ".option rshunt=1e12\n"))

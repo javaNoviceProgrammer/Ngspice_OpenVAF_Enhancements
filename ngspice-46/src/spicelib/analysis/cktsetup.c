@@ -432,6 +432,14 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
     ckt->CKTdcpathAlways = 0;
     ckt->CKTdcpathG = 0.0;
     mode = dcpath_mode(ckt, &g, &all);
+    /* Enhancement-838: a row found dead at a reorder follows the same option
+       -- held with the same conductance, only reported under warn and error,
+       left alone under off (and under gshunt, whose diagonal gmin is loaded
+       at every factorization anyway) */
+    FREE(ckt->CKTdeadNodes);
+    ckt->CKTdeadCount = 0;
+    ckt->CKTdeadMode = (mode == DCPATH_HOLD) ? 2 : (mode == DCPATH_OFF) ? 0 : 1;
+    ckt->CKTdeadG = g;
     if (mode == DCPATH_OFF || nunk <= 0)
         return OK;
 
@@ -593,6 +601,15 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
 void CKTdcpathStamp(CKTcircuit *ckt, int ac)
 {
     int k, atdc;
+    /* Enhancement-838: a dead row is held in every mode, as the walk's
+       always-held nodes are */
+    if (ckt->CKTdeadMode == 2)
+        for (k = 0; k < ckt->CKTdeadCount; k++) {
+            double *d = (double *) SMPfindElt(ckt->CKTmatrix, ckt->CKTdeadNodes[k],
+                                              ckt->CKTdeadNodes[k], 0);
+            if (d)
+                *d += ckt->CKTdeadG;
+        }
     if (!ckt->CKTdcpathNodes || ckt->CKTdcpathCount <= 0 || ckt->CKTdcpathG <= 0.0)
         return;
     /* Enhancement-595: the entries past CKTdcpathAlways are held only where
@@ -614,6 +631,78 @@ void CKTdcpathStamp(CKTcircuit *ckt, int ac)
         }
         *d += ckt->CKTdcpathG;
     }
+}
+
+/* Enhancement-838: the dc-path walk above reads the matrix PATTERN, so a node
+ * that the pattern connects but no value ever reaches is not on its list -- an
+ * OSDI internal node written only in a branch the parameters leave untaken
+ * (HiSIM-SOI's body nodes `db` and `sb` in its 4-terminal mode: the pattern
+ * holds the 5-terminal mode's junction and body-resistance entries, every one
+ * of them 0 here). Its row is all zero at every bias, so every factorization
+ * fails and every homotopy with it; until Enhancement-734 the diagonal gmin
+ * that source stepping leaked was what held it. Called before a reorder with
+ * no diagonal gmin in the matrix: a voltage node whose loaded row or column
+ * has no nonzero value is held from now on with the dc-path conductance,
+ * exactly as the walk would have held it, and said so. A matrix with such a
+ * line cannot be factored, so a deck that factors today is never touched.
+ * An OSDI implicit equation (CKTnode notKcl) is no Kirchhoff node and is left
+ * alone: `idt(1.0)` with no initial condition reads 0 = 1 at dc, and a hold
+ * would answer 1/gmin for it. Returns the number of nodes newly found. */
+int CKTdeadHold(CKTcircuit *ckt)
+{
+    int nunk, found = 0;
+    unsigned char *rowzero, *colzero;
+    CKTnode *nd;
+
+    if (ckt->CKTdeadMode == 0 || !ckt->CKTmatrix)
+        return 0;
+    nunk = SMPmatSize(ckt->CKTmatrix);
+    if (nunk <= 0)
+        return 0;
+    rowzero = TMALLOC(unsigned char, (size_t) nunk + 1);
+    colzero = TMALLOC(unsigned char, (size_t) nunk + 1);
+    if (SMPzeroLines(ckt->CKTmatrix, rowzero, colzero, nunk) > 0) {
+        for (nd = ckt->CKTnodes; nd; nd = nd->next) {
+            double *d;
+            int k, listed = 0;
+            if (nd->type != SP_VOLTAGE || nd->notKcl || nd->number <= 0 ||
+                nd->number > nunk)
+                continue;
+            if (!rowzero[nd->number] && !colzero[nd->number])
+                continue;
+            for (k = 0; k < ckt->CKTdeadCount && !listed; k++)
+                listed = ckt->CKTdeadNodes[k] == nd->number;
+            if (listed)
+                continue;
+            d = (double *) SMPfindElt(ckt->CKTmatrix, nd->number, nd->number, 0);
+            if (!d)
+                continue;                   /* no diagonal to hold it with */
+            if (!ckt->CKTdeadNodes)
+                ckt->CKTdeadNodes = TMALLOC(int, (size_t) nunk + 1);
+            if (ckt->CKTdeadCount < 5) {
+                const char *why = rowzero[nd->number]
+                    ? "its row is all zero: no current reaches it"
+                    : "its column is all zero: nothing depends on it";
+                if (ckt->CKTdeadMode == 2)
+                    fprintf(stderr, "Warning: node '%s' is dead at this point (%s); "
+                                    "%g S installed to hold it\n",
+                            (const char *) nd->name, why, ckt->CKTdeadG);
+                else
+                    fprintf(stderr, "Warning: node '%s' is dead at this point (%s); "
+                                    "nothing installed under this .option dcpath\n",
+                            (const char *) nd->name, why);
+            } else if (ckt->CKTdeadCount == 5) {
+                fprintf(stderr, "Warning: ... and more dead nodes\n");
+            }
+            ckt->CKTdeadNodes[ckt->CKTdeadCount++] = nd->number;
+            if (ckt->CKTdeadMode == 2)
+                *d += ckt->CKTdeadG;
+            found++;
+        }
+    }
+    FREE(rowzero);
+    FREE(colzero);
+    return found;
 }
 
 
@@ -696,13 +785,19 @@ CKTsetup(CKTcircuit *ckt)
      */
     ckt->prev_CKTlastNode = ckt->CKTlastNode;
 
+    /* Enhancement-837: the OSDI terminal shorts of one pass see each other */
+    OSDIsetupPass(ckt, 1);
     for (i=0;i<DEVmaxnum;i++) {
         if ( DEVices[i] && DEVices[i]->DEVsetup && ckt->CKThead[i] ) {
             error = DEVices[i]->DEVsetup (matrix, ckt->CKThead[i], ckt,
                     &ckt->CKTnumStates);
-            if(error) return(error);
+            if(error) {
+                OSDIsetupPass(ckt, 0);
+                return(error);
+            }
         }
     }
+    OSDIsetupPass(ckt, 0);
 
     /* Enhancement-608: the devices' internal nodes exist now; place the
      * `.ic`/`.nodeset` entries INPpas3 kept for them. */
@@ -898,6 +993,8 @@ CKTunsetup(CKTcircuit *ckt)
     ckt->CKTdcpathCount = 0;
     ckt->CKTdcpathAlways = 0;
     ckt->CKTdcpathG = 0.0;
+    FREE(ckt->CKTdeadNodes);                    /* Enhancement-838 */
+    ckt->CKTdeadCount = 0;
 
     error = OK;
     if (!ckt->CKTisSetup)

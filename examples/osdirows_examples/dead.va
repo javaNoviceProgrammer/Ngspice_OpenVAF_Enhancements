@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+// Enhancement-838 probe: the internal node x is written only when mode = 1, so
+// with mode = 0 its Jacobian entries exist (the pattern holds both branches)
+// and every one of them is 0 -- the shape of HiSIM-SOI's body nodes db and sb
+// in its 4-terminal mode.
+module dead(p, n);
+inout p, n; electrical p, n;
+electrical x;
+parameter integer mode = 0 from [0:1];
+analog begin
+  I(p, n) <+ V(p, n)/1k;
+  if (mode == 1) begin
+    I(p, x) <+ V(p, x)/1k;
+    I(x, n) <+ V(x, n)/1k;
+  end
+end
+endmodule

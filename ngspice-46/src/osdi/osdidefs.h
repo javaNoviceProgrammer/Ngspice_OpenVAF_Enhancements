@@ -312,6 +312,14 @@ typedef struct OsdiExtraInstData {
   uint32_t *int_node_ids;   /* [int_node_count], NULL before the first setup */
   uint32_t int_node_count;
 
+  /* Enhancement-837: bit k set -- this instance's terminal short k (the
+   * compiler's 0 V branch for `V(t) <+ 0`) ties a circuit node to ground that
+   * an earlier instance's short already ties there, so it is dropped as the
+   * duplicate equation it is. Decided by the setup that allocates the nodes
+   * and reused by a second DEVsetup() on the same set-up circuit (`sens`),
+   * which sees only one model and could not decide it again. */
+  uint32_t dup_short_mask;
+
   /* Enhancement-417: the node collapse is decided ONCE, in OSDIsetup, and the
    * node mapping, the matrix pointers and Enhancement-416's collapse-owner map
    * are all built from that decision. OSDItemp re-runs setup_instance -- which

@@ -144,11 +144,16 @@ def main():
               "STILL_ALIVE" in out and rc in (0, 1) and "Assertion" not in out)
         # Enhancement-734: the operating point E-571 saw succeed came from the gmin
         # source stepping left on every diagonal; with that closed, the rejected
-        # device's nodes are held by nothing, the point is refused naming one of
-        # them, and the noise is aborted cleanly -- the clean stop E-56 wrote for.
-        check("the model's rejection is printed, the operating point is refused naming the device's node, the noise aborts cleanly (E-734)",
-              "Fatal(HiSIM_SOI)" in out and "could not be simulated" in out and "ndut#" in out
-              and "noise simulation(s) aborted" in out and "Assertion" not in out)
+        # device's nodes were held by nothing and the point was refused.
+        # Enhancement-838: those nodes (the body network db and sb, which only
+        # the COBCNODE = 1 branch writes) have pattern entries and no value, so
+        # the reorder finds their empty rows and holds them with gmin, naming
+        # them; the point and the noise then complete with the device absent,
+        # as E-571 meant.
+        check("the model's rejection is printed, its dead nodes are named and held (E-838), and the noise completes with the device absent",
+              "Fatal(HiSIM_SOI)" in out and "node 'ndut#db' is dead" in out and "node 'ndut#sb' is dead" in out
+              and "could not be simulated" not in out and "noise simulation(s) aborted" not in out
+              and "Assertion" not in out)
     else:
         print("  SKIP  VA_TEST corpus not found")
 

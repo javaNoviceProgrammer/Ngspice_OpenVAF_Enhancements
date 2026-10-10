@@ -21,6 +21,19 @@ The harness is [`correctness_campaign.py`](correctness_campaign.py).
 > an operating point produced finite, current-conserving, numerically stable
 > behaviour in all three analyses.
 
+**2026-10-10: 90 / 92.** The
+[robustness and correctness campaign](../docs/bug_hunts/2026-10-10_ngspice-openvaf-r-robustness-and-correctness-campaign.md)
+found 14 models no longer converging (its F1). Enhancements 836 to 838 and the
+grounded-terminal rule below bring back 13 of them. The two that are not OK are
+honest:
+- `epfl_hemt.va` is refused at compile time by the LRM 4.4 same-net branch
+  diagnostic: the model writes `V(n,n)`.
+- `vbic_4T_et_cf.va` writes each series resistor as `I = 0` when its value is 0
+  (CMC VBIC 1.3 writes a 1 mΩ short). At its defaults every internal node
+  floats, so the device is open. It counted as OK in July only because source
+  stepping leaked a gmin onto every node, until Enhancement-734 stopped the
+  leak; its currents were exactly 0.
+
 The corpus is the public `VA-Models-main/` collection — the industry-standard
 compact models: BSIM3/4/6, BSIM-CMG/IMG/SOI/BULK, PSP 102/103/104 and PSP-HV,
 HICUM L0/L2, MEXTRAM 504/505, VBIC, EKV 2.6/3, HiSIM2/HV/SOI/SOTB, ASM-HEMT,
@@ -88,6 +101,13 @@ correct:
 - **Conditional-compilation variants.** Some files (`hisimsoi_n4`, `_n5`) compile
   to *fewer* terminals than the shared module body's last declaration suggests;
   on *"too many nodes connected"* the harness drops a terminal and retries.
+- **Terminals the model grounds itself.** With self-heating off, BSIM-BULK,
+  BSIM-CMG and BSIM-IMG write `Temp(t) <+ 0`, and HICUM writes `V(br_sht) <+ 0`.
+  That is a 0 V branch from the thermal terminal to ground, so the harness's own
+  0 V source on the same node puts two ideal sources in parallel. ngspice names
+  the source (*"voltage source 'v4' holds the same node"*, Enhancement-837). The
+  harness then connects that terminal to ground instead and leaves it out of the
+  current sum: it carries power.
 - **Singular small-signal matrix.** A device biased near-off can leave an internal
   node with no AC path, so ngspice's AC matrix is singular — a *solver*
   conditioning issue, not bad AC from the compiler. The harness retries AC-only

@@ -23,8 +23,10 @@ python3 verify_floatnode.py
 A compiled Verilog-A module has the same shape: `va_vcvs.va` (`V(out) <+ gain*V(in)`,
 compiled by the suite) only probes its `in` port, and with `in` on an untouched node
 it failed the same way; it now converges, named, on both solvers. A BSIM4 (OSDI) with
-an open gate is pinned too: it goes through the ladder to optran, both solvers agreeing
-(E-734 moved its point by 0.7 mV, the leaked gmin gone).
+an open gate is pinned too. Its gate row has entries in the model's pattern and no value,
+so after E-734 it went through the ladder to optran, which settled the gate wherever the
+ramp left it (0.4324 V). Since E-838 the reorder finds the empty row and holds it with
+gmin, as the walk holds the built-in twin's gate: `v(g)` = 0 in 5 iterations.
 
 Beside the two read-only cases it keeps E-566's empty-column cases (a current
 source's only load, a CCCS output), three ordinary shapes that must not warn (a

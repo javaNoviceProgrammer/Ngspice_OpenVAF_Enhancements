@@ -267,3 +267,21 @@ scripting ngspice:
   [E-833](../../enhancements_doc/Enhancement-833.md) the walk checks an OSDI
   module's internal nodes: such a node gets the dc-path gmin at once, as its
   built-in twin does, and a transient releases it.
+- **An OSDI internal row's name and kind** came from the wrong node of the
+  model once anything below it collapsed (`V(p, a1) <+ 0`): the midpoint of a
+  divider was the vector `n1#a1`, a branch current was a voltage node tested
+  against `vntol`, and "singular matrix: check node n1#si" named BSIM-BULK's
+  source node for what was its thermal branch. Since
+  [E-836](../../enhancements_doc/Enhancement-836.md) each row carries the name,
+  kind and nodeset of the node it stands for.
+- **A self-heating model with the heating off** ties its thermal terminal to
+  ground itself (`Temp(t) <+ 0`, a 0 V branch). A second such short on the
+  same net (two instances sharing it) is dropped since
+  [E-837](../../enhancements_doc/Enhancement-837.md), and a voltage source on
+  the net (`vt t 0 0`) is named in a warning, since two ideal sources in parallel
+  stay singular. Leave the terminal open, or connect it to `0`.
+- **A model's internal node written only in an untaken branch** (HiSIM-SOI's
+  `db` and `sb` in its 4-terminal mode) has entries in the pattern and none with
+  a value, so the dc-path walk cannot see it and no factorization survives it.
+  Since [E-838](../../enhancements_doc/Enhancement-838.md) such a row is found at
+  the reorder, held with the dc-path conductance and named.

@@ -80,6 +80,13 @@ struct CKTnode {
      * card and by nothing else, i.e. it is a typo, and the analysis would
      * otherwise report it as a perfectly good 0 V. */
     unsigned int devRef:1;      /* FLAG named by a device / made by the simulator */
+    /* Enhancement-838: an OSDI row that is not a Kirchhoff node -- the
+     * compiler's implicit equation (an idt() state, absdelay's
+     * implicit_equation_1), whose unknown has no discipline. Its own equation
+     * defines it, so an all-zero row there is that equation saying nothing at
+     * this point (idt(1.0) at dc reads 0 = 1), not a node nothing conducts
+     * to, and CKTdeadHold leaves it alone. */
+    unsigned int notKcl:1;
     /* Enhancement-608: a node the deck reader made before setup -- a .ic,
      * .nodeset, .tf or .pz card naming a device's INTERNAL node ahead of the
      * device that builds it -- and that the device then took over as that
@@ -390,6 +397,16 @@ struct CKTcircuit {
        and released in tran and ac, where a capacitor carries them. Under
        `dcpath=all` every entry is held in every mode (Spectre's rule). */
     int CKTdcpathAlways;
+    /* Enhancement-838: the voltage nodes found DEAD at a reorder -- a loaded
+       row or column with no nonzero value in it, which no factorization
+       survives (a model's internal node that only an untaken branch writes) --
+       held from then on with CKTdeadG in every load, like the list above.
+       CKTdeadMode follows `.option dcpath`: 0 off, 1 warn only, 2 hold. The
+       list belongs to one setup. */
+    int *CKTdeadNodes;
+    int CKTdeadCount;
+    int CKTdeadMode;
+    double CKTdeadG;
     /* Enhancement-603: how many more plots the running analysis will open
      * after the one it is opening now. An analysis that publishes several
      * plots in sequence (noise: the spectral densities, then the integrated
@@ -620,6 +637,7 @@ extern void CKTfreePendingNodPm(CKTcircuit *);                       /* Enhancem
 extern int CKTsetOpt(CKTcircuit *, JOB *, int , IFvalue *);
 extern int CKTsetup(CKTcircuit *);
 extern void CKTdcpathStamp(CKTcircuit *, int ac); /* Enhancement-575, 595 */
+extern int CKTdeadHold(CKTcircuit *);                /* Enhancement-838 */
 extern void CKTannounceSolver(int klu);   /* Enhancement-266: announce-on-change */
 extern int CKTunsetup(CKTcircuit *);
 extern int CKTtemp(CKTcircuit *);

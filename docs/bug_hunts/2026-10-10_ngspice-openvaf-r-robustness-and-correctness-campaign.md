@@ -45,7 +45,7 @@ Nothing was fixed; this is the list.
 
 | | Finding | Severity |
 |---|---|---|
-| [F1](#f1) | 14 of the corpus's 92 compact models no longer reach an operating point (bsimbulk ×3, bsimcmg ×2, bsimimg, HICUM L0 ×2, HICUM L2 ×3, HiSIM-SOI ×2, VBIC 4T-et): a regression from E-734 | high |
+| [F1](#f1) | *(fixed in [E-836](../../enhancements_doc/Enhancement-836.md), [E-837](../../enhancements_doc/Enhancement-837.md) and [E-838](../../enhancements_doc/Enhancement-838.md); E-734 exposed it rather than caused it -- 13 of the 14 are back, VBIC 4T-et is open at its defaults)* 14 of the corpus's 92 compact models no longer reach an operating point (bsimbulk ×3, bsimcmg ×2, bsimimg, HICUM L0 ×2, HICUM L2 ×3, HiSIM-SOI ×2, VBIC 4T-et): a regression from E-734 | high |
 | [F2](#f2) | openvaf-r loads a wrong Jacobian wherever a `sqrt` argument is small: E-261's regularisation `2*sqrt(x + 1e-18)` changes the derivative by `5e-19/x`, which is 8 % on HiSIM-SOI's gm | high |
 | [F3](#f3) | **memory:** `op`, then a refused `sens`, then `reset` reads the freed `sens` job through `CKTcurJob` in `DCtran_step_quit` | medium |
 | [F4](#f4) | a second `sens` job in one run fails its operating point on a resistor divider; under Guard Malloc the device load reads freed memory | medium |
@@ -55,6 +55,24 @@ Nothing was fixed; this is the list.
 
 <a id="f1"></a>
 ## F1 — 14 corpus models no longer reach an operating point
+
+*Fixed in [E-836](../../enhancements_doc/Enhancement-836.md),
+[E-837](../../enhancements_doc/Enhancement-837.md) and
+[E-838](../../enhancements_doc/Enhancement-838.md). The dig corrected the lead below. E-734 only
+took away the leaked gmin that had hidden three different things, and the "check node" names
+that pointed into the models' source networks were wrong themselves:*
+- *The names were wrong because OSDI internal rows were named after the wrong descriptor node
+  once anything collapsed (E-836). `n1#si` was BSIM-BULK's thermal branch.*
+- *11 models (bsimbulk, bsimcmg, bsimimg, HICUM) were a loop of voltage sources. Each ties its
+  thermal terminal to ground with self-heating off (`Temp(t) <+ 0`), and the harness held the
+  same terminal with a 0 V source. That loop is now named, a model short duplicated across
+  instances is dropped, and the harness grounds such a terminal (E-837).*
+- *HiSIM-SOI's `db` and `sb` are written only in the 5-terminal mode, so in the 4-terminal mode
+  their rows are all zero. They are now held at the reorder (E-838).*
+- *`vbic_4T_et_cf` opens every series resistor at its defaults, so its internal nodes float
+  together. It is refused honestly; in July it read exactly 0 A.*
+
+*The corpus campaign is at 90 of 92 (EPFL-HEMT's compile refusal is intended).*
 
 `VA_TEST/correctness_campaign.py` biased all 92 standalone models at a plain bias and got an
 operating point for every one on 2026-07-19 (`cdc6faf4`). Today it reports

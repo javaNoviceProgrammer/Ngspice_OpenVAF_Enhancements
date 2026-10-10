@@ -866,6 +866,11 @@ Source stepping puts the diagonal gmin back when it is done, so the transient op
 point, the transient's points and a DC sweep's later points no longer carry a gmin shunt
 on every node, and a floating node with `dcpath` off is refused instead of "held" by that
 leak ([E-734](../../enhancements_doc/Enhancement-734.md)).
+The leak had also hidden a model's thermal terminal shorted twice (two self-heating-off
+instances on one net, or the model's short beside a 0 V source) and a model's internal node
+that only an untaken branch writes; the first is dropped and the second named
+([E-837](../../enhancements_doc/Enhancement-837.md)), and the last is held at the reorder
+([E-838](../../enhancements_doc/Enhancement-838.md)).
 Sparse's ordering is no longer quadratic in the node count: the pivot search keeps its
 element lists in a layout it never has to walk through, chooses the same pivots and
 leaves the same factors, and a 300 × 300 resistor mesh under `.option sparse` runs in

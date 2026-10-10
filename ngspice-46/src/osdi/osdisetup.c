@@ -27,6 +27,7 @@
 #include "ngspice/stringutil.h"  /* E-555: cieq */
 #include <string.h>
 #include <ctype.h>               /* Enhancement-654: tolower */
+#include "../spicelib/devices/vsrc/vsrcdefs.h"  /* Enhancement-837 */
 
 /* Enhancement-789 (openvaf-r hunt F6 of 2026-10-04): setup and the
  * temperature pass mark every instance as not yet evaluated, so its next
@@ -313,6 +314,109 @@ static uint32_t drop_node(const OsdiDescriptor *descr, uint32_t *node_mapping,
   return num_nodes - 1;
 }
 
+/* Enhancement-837: which circuit nodes a model's terminal short already ties
+ * to ground in this setup pass, and which ones a voltage source holds there.
+ *
+ * Self-heating models with the heating switched off write `Temp(t) <+ 0`
+ * (BSIM-BULK, BSIM-CMG, BSIM-IMG) or `V(br_sht) <+ 0` (HICUM): the compiler
+ * makes that a real 0 V branch from the thermal terminal to ground, and
+ * Enhancement-401 drops it only when the terminal IS ground. Two instances that
+ * share their thermal node therefore stamped the same equation twice -- two
+ * ideal sources in parallel, a singular matrix -- and so did one instance whose
+ * thermal node a deck's `vt t 0 0` also holds. Until Enhancement-734 the
+ * diagonal gmin that source stepping leaked hid both. The second model short
+ * is the same equation as the first and is dropped (the first carries the
+ * node's current); a voltage source cannot be dropped -- its value is the
+ * deck's, an `alter` or a sweep moves it -- so that loop is named instead of
+ * leaving "singular matrix" to say it. Built by CKTsetup around its device
+ * loop (OSDIsetupPass); NULL outside it, where nothing is decided. */
+#define OSDI_PIN_MODEL 1u
+#define OSDI_PIN_VSRC 2u
+#define OSDI_PIN_WARNED 4u
+static unsigned char *osdi_pin = NULL;
+static int osdi_pin_n = 0;
+
+void OSDIsetupPass(CKTcircuit *ckt, int begin) {
+  FREE(osdi_pin);
+  osdi_pin_n = 0;
+  if (!begin || !ckt)
+    return;
+  osdi_pin_n = ckt->CKTmaxEqNum + 1;
+  osdi_pin = TMALLOC(unsigned char, (size_t)osdi_pin_n);
+  if (!osdi_pin) {
+    osdi_pin_n = 0;
+    return;
+  }
+  int vtype = CKTtypelook((char *)"Vsource");
+  if (vtype < 0 || !ckt->CKThead[vtype])
+    return;
+  for (GENmodel *m = ckt->CKThead[vtype]; m; m = m->GENnextModel)
+    for (GENinstance *g = m->GENinstances; g; g = g->GENnextInstance) {
+      VSRCinstance *v = (VSRCinstance *)g;
+      int n = v->VSRCnegNode == 0 ? v->VSRCposNode
+              : v->VSRCposNode == 0 ? v->VSRCnegNode : 0;
+      if (n > 0 && n < osdi_pin_n)
+        osdi_pin[n] |= OSDI_PIN_VSRC;
+    }
+}
+
+/* the name of a voltage source from node n to ground (for the message) */
+static const char *osdi_vsrc_to_gnd(CKTcircuit *ckt, int n) {
+  int vtype = CKTtypelook((char *)"Vsource");
+  if (vtype < 0)
+    return "?";
+  for (GENmodel *m = ckt->CKThead[vtype]; m; m = m->GENnextModel)
+    for (GENinstance *g = m->GENinstances; g; g = g->GENnextInstance) {
+      VSRCinstance *v = (VSRCinstance *)g;
+      if ((v->VSRCposNode == n && v->VSRCnegNode == 0) ||
+          (v->VSRCnegNode == n && v->VSRCposNode == 0))
+        return g->GENname;
+    }
+  return "?";
+}
+
+/* Decide, for a setup that allocates the instance's nodes, which of its
+ * terminal-to-ground shorts duplicate one already made; a second DEVsetup()
+ * on the same set-up circuit reuses the decision. */
+static uint32_t osdi_dup_shorts(CKTcircuit *ckt, const OsdiDescriptor *descr,
+                                GENinstance *gen_inst,
+                                OsdiExtraInstData *extra,
+                                const OsdiTermShortInfo *ts, uint32_t nts,
+                                const int *terminals,
+                                uint32_t connected_terminals) {
+  uint32_t mask = 0;
+  if (extra->int_node_ids != NULL)
+    return extra->dup_short_mask;
+  if (!osdi_pin)
+    return extra->dup_short_mask = 0;
+  for (uint32_t k = 0; k < nts && k < 32; k++) {
+    if (ts[k].node_2 != UINT32_MAX ||
+        term_short_is_redundant(&ts[k], terminals, connected_terminals))
+      continue;
+    int n = terminals[ts[k].node_1];
+    if (n <= 0 || n >= osdi_pin_n)
+      continue;
+    if (osdi_pin[n] & OSDI_PIN_MODEL) {
+      mask |= 1u << k;
+      continue;
+    }
+    osdi_pin[n] |= OSDI_PIN_MODEL;
+    if ((osdi_pin[n] & OSDI_PIN_VSRC) && !(osdi_pin[n] & OSDI_PIN_WARNED)) {
+      CKTnode *nd = CKTnum2nod(ckt, n);
+      osdi_pin[n] |= OSDI_PIN_WARNED;
+      fprintf(stderr,
+              "Warning: %s: the model ties terminal '%s' (node '%s') to ground "
+              "with a 0 V branch, %s, and voltage source '%s' holds the same "
+              "node: two ideal sources in parallel leave the matrix singular. "
+              "Leave the terminal unconnected or connect it to ground (0).\n",
+              gen_inst->GENname, descr->nodes[ts[k].node_1].name,
+              nd && nd->name ? (char *)nd->name : "?",
+              descr->nodes[ts[k].flow_node].name, osdi_vsrc_to_gnd(ckt, n));
+    }
+  }
+  return extra->dup_short_mask = mask;
+}
+
 /* Enhancement-532: rank of a group representative for the collapse-merge
  * decision. Ground can absorb anything, a connected terminal can absorb
  * internals but never another terminal (ngspice allocates terminal nodes,
@@ -330,7 +434,7 @@ static uint32_t collapse_nodes(const OsdiDescriptor *descr, void *inst,
                                uint32_t connected_terminals,
                                const OsdiTermShortInfo *term_shorts,
                                uint32_t num_term_shorts,
-                               const int *terminals,
+                               const int *terminals, uint32_t dup_mask,
                                uint32_t *syn_pairs, uint32_t *num_syn) {
   /* access data inside instance */
   uint32_t *node_mapping =
@@ -348,7 +452,8 @@ static uint32_t collapse_nodes(const OsdiDescriptor *descr, void *inst,
   /* Enhancement-401: drop the branch current of any terminal short the netlist
    * has already made, before the ordinary collapses renumber anything. */
   for (uint32_t i = 0; i < num_term_shorts; i++) {
-    if (term_short_is_redundant(&term_shorts[i], terminals, connected_terminals)) {
+    if (term_short_is_redundant(&term_shorts[i], terminals, connected_terminals) ||
+        (i < 32 && ((dup_mask >> i) & 1u))) {      /* Enhancement-837 */
       num_nodes =
           drop_node(descr, node_mapping, num_nodes, term_shorts[i].flow_node);
     }
@@ -1267,10 +1372,14 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
       /* setup the instance nodes */
 
       uint32_t num_syn = 0;
+      uint32_t dup_mask = osdi_dup_shorts(
+          ckt, descr, gen_inst, extra_inst_data,
+          (const OsdiTermShortInfo *)entry->term_short_infos,
+          entry->num_term_shorts, terminals, connected_terminals);
       uint32_t num_nodes = collapse_nodes(
           descr, inst, connected_terminals,
           (const OsdiTermShortInfo *)entry->term_short_infos,
-          entry->num_term_shorts, terminals, syn_pairs, &num_syn);
+          entry->num_term_shorts, terminals, dup_mask, syn_pairs, &num_syn);
 
       /* Enhancement-416: record which terminal each descriptor node was
        * collapsed onto, while the LOCAL mapping still says so. Further down,
@@ -1441,6 +1550,26 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
         extra_inst_data->int_node_count = 0;
       }
 
+      /* Enhancement-836: local index i is a row AFTER collapsing, which
+       * compacts the numbering -- it is descriptor node i only while nothing
+       * below it has collapsed. Reading descr->nodes[i] named every later row
+       * after the wrong net (BSIM-BULK with rs = 0: the self-heating flow row
+       * was "n1#si", the noise rows "n1#di" and "n1#di1"), made a branch
+       * current a voltage node or the reverse (so the wrong convergence
+       * tolerance applied), put a nodeset initializer on the wrong row, and
+       * sent every singular-matrix and dc-path message to a node that is not
+       * there. Each row is the group of descriptor nodes mapped to it, and
+       * collapse_nodes keeps the smallest index as the group's survivor: that
+       * is the node the row stands for. */
+      uint32_t *row_node = TMALLOC(uint32_t, num_nodes);
+      for (uint32_t i = 0; i < num_nodes; i++)
+        row_node[i] = i;
+      for (uint32_t j = descr->num_nodes; j-- > 0;) {
+        uint32_t m = node_mapping[j];
+        if (m != UINT32_MAX && m < num_nodes)
+          row_node[m] = j;
+      }
+
       /* create internal nodes as required */
       for (uint32_t i = connected_terminals; i < num_nodes; i++) {
         if (!node_used[i]) {
@@ -1452,24 +1581,31 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
           node_ids[i] = extra_inst_data->int_node_ids[i];
           continue;
         }
-        // TODO handle currents  correctly
-        if (descr->nodes[i].is_flow) {
-          error = CKTmkCur(ckt, &tmp, gen_inst->GENname, descr->nodes[i].name);
+        const OsdiNode *nd = &descr->nodes[row_node[i]];
+        if (nd->is_flow) {
+          error = CKTmkCur(ckt, &tmp, gen_inst->GENname, nd->name);
         } else {
-          error = CKTmkVolt(ckt, &tmp, gen_inst->GENname, descr->nodes[i].name);
+          error = CKTmkVolt(ckt, &tmp, gen_inst->GENname, nd->name);
         }
         if (error) {
+          FREE(row_node);
           FREE(node_used);
           return (error);
         }
         node_ids[i] = (uint32_t)tmp->number;
+        /* Enhancement-838: an unknown whose nature is no discipline's
+         * potential is an implicit equation, not a Kirchhoff node */
+        if (!nd->is_flow && descr->unknown_nature &&
+            descr->unknown_nature[row_node[i]].ref_type != NATREF_DISCIPLINE_POTENTIAL)
+          tmp->notKcl = 1;
         /* Enhancement-45: apply the net's nodeset initializer as the
          * internal node's .nodeset-equivalent initial guess */
-        if (!isnan(descr->nodes[i].nodeset) && !descr->nodes[i].is_flow) {
-          tmp->nodeset = descr->nodes[i].nodeset;
+        if (!isnan(nd->nodeset) && !nd->is_flow) {
+          tmp->nodeset = nd->nodeset;
           tmp->nsGiven = 1;
         }
       }
+      FREE(row_node);
       /* remember them for the next DEVsetup() on this same set-up circuit */
       if (!reuse_nodes) {
         extra_inst_data->int_node_ids = TMALLOC(uint32_t, num_nodes);

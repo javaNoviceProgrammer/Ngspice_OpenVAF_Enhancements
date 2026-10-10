@@ -24,8 +24,10 @@ correctness_campaign.md): the device NAME/ports come from the modules the compil
 .osdi actually exports; non-electrical (thermal, ...) nodes are excluded from the
 current sum; an optional terminal gated by a selector parameter is enabled by
 reading the model's own $fatal message; a conditional-compilation variant with
-fewer terminals drops a node; and a singular small-signal matrix at a near-off
-bias is retried AC-only with a tiny shunt.
+fewer terminals drops a node; a terminal the model itself ties to ground
+(`Temp(t) <+ 0` with self-heating off -- ngspice names the holding source) is
+connected to ground instead of to a 0 V source; and a singular small-signal
+matrix at a near-off bias is retried AC-only with a tiny shunt.
 
 Usage:  python3 VA_TEST/correctness_campaign.py [name-substring ...]
         OPENVAF_BIN / NGSPICE_BIN override the toolchain binaries.
@@ -112,8 +114,12 @@ def run_one(name, ports, disc, osdi):
     d = os.path.dirname(osdi)
     cir = os.path.join(d, "c_%s.cir" % name)
 
+    def net(i):
+        return "0" if i in grounded else "t%d" % i
+
     def build(k, mparams):
-        elec = [i for i in range(k) if disc.get(ports[i], "electrical") == "electrical"]
+        elec = [i for i in range(k) if disc.get(ports[i], "electrical") == "electrical"
+                and i not in grounded]
         if not elec:
             return None, None, None
         stim_term = elec[0]
@@ -127,10 +133,12 @@ def run_one(name, ports, disc, osdi):
         active = set(elec[:4])
         srcs = []
         for i in range(k):
+            if i in grounded:
+                continue
             b = BIAS[i % len(BIAS)] if i in active else 0.0
             stim = " ac 1 sin(%g 0.05 1e6)" % b if i == stim_term else ""
             srcs.append("V%d t%d 0 dc %g%s" % (i, i, b, stim))
-        terms = " ".join("t%d" % i for i in range(k))
+        terms = " ".join(net(i) for i in range(k))
         ksum = "+".join("i(v%d)" % i for i in elec)
         prints = " ".join("i(v%d)" % i for i in elec)
         deck = f"""* correctness {name}
@@ -166,6 +174,7 @@ print trmax trksum
     k = k0
     mparams = ""
     enabled = set()
+    grounded = set()
     out = ""
     elec = stim_term = None
     try:
@@ -183,6 +192,13 @@ print trmax trksum
                 k -= 1; continue
             if m and m.group(1) not in enabled:
                 enabled.add(m.group(1)); mparams += " %s=1" % m.group(1); continue
+            # (3) a terminal the model ties to ground itself -- self-heating off
+            # writes Temp(t) <+ 0 -- in parallel with the 0 V source that holds
+            # it: ngspice names the source (Enhancement-837); connect the
+            # terminal to ground instead. It carries power, not current.
+            g = re.search(r"voltage source 'v(\d+)' holds the same node", low)
+            if g and int(g.group(1)) not in grounded:
+                grounded.add(int(g.group(1))); continue
             break
     except subprocess.TimeoutExpired:
         r["status"] = "TIMEOUT"; return r
@@ -190,6 +206,8 @@ print trmax trksum
     r["nelec"] = len(elec)
     if enabled:
         r["params"] = " ".join(sorted(enabled))
+    if grounded:
+        r["grounded"] = " ".join(ports[i] for i in sorted(grounded))
 
     def val(label):
         m = re.search(re.escape(label) + r"\s*=\s*(\S+)", out)
@@ -223,13 +241,14 @@ print trmax trksum
         # with rshunt to confirm openvaf's AC codegen yields FINITE output
         # (rshunt would pollute the current-KCL sum, so it is not used for KCL).
         active_r = set([i for i in range(k)
-                        if disc.get(ports[i], "electrical") == "electrical"][:4])
+                        if disc.get(ports[i], "electrical") == "electrical"
+                        and i not in grounded][:4])
         srcs2 = "\n".join(
             "V%d t%d 0 dc %g%s" % (i, i, BIAS[i % len(BIAS)] if i in active_r else 0.0,
                                    " ac 1" if i == stim_term else "")
-            for i in range(k))
+            for i in range(k) if i not in grounded)
         deck2 = (f"* ac-retry {name}\n.control\npre_osdi {osdi}\n.endc\n"
-                 f"N1 {' '.join('t%d'%i for i in range(k))} mod\n{srcs2}\n"
+                 f"N1 {' '.join(net(i) for i in range(k))} mod\n{srcs2}\n"
                  f".model mod {name}{mparams}\n.options rshunt=1e12\n"
                  f".control\nop\nac dec 3 1 1e9\n"
                  f"let acm = vecmax(abs(i(v{stim_term})))\nprint acm\n.endc\n.end\n")

@@ -317,6 +317,12 @@ NIiter(CKTcircuit *ckt, int maxIter)
                 }
 #endif
 
+                /* Enhancement-838: a voltage node whose loaded row or
+                 * column holds no nonzero value makes this factorization fail
+                 * whatever the pivoting; with no diagonal gmin in the matrix,
+                 * hold it first (CKTdeadHold) */
+                if (trGmin == 0.0)
+                    (void) CKTdeadHold(ckt);
                 error = SMPreorder(ckt->CKTmatrix, ckt->CKTpivotAbsTol,
                                    ckt->CKTpivotRelTol, trGmin);
                 ckt->CKTstat->STATreorderTime +=
@@ -374,6 +380,8 @@ NIiter(CKTcircuit *ckt, int maxIter)
                         fprintf (stderr, "Warning: KLU ReFactor failed. Factoring again...\n") ;
                     ckt->CKTniState |= NISHOULDREORDER;
                     ckt->CKTmatrix->SMPkluMatrix->KLUloadDiagGmin = 0 ;
+                    if (trGmin == 0.0)
+                        (void) CKTdeadHold(ckt);   /* Enhancement-838 */
                     error = SMPreorder(ckt->CKTmatrix, ckt->CKTpivotAbsTol, ckt->CKTpivotRelTol, trGmin);
                     ckt->CKTstat->STATreorderTime += SPfrontEnd->IFseconds() - startTime;
                     if (error) {
