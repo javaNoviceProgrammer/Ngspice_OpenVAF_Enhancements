@@ -439,7 +439,7 @@ fn third_order_asin() {
             v3 = fconst 0.0
             v6 = fconst 0x1.0000000000000p0
             v11 = fconst 0x1.0000000000000p1
-            v105 = fconst 0x1.2725dd1d243acp-60
+            v107 = fconst 0x1.12e0be826d695p-29
 
         block0:
             v12 = asin v10
@@ -447,34 +447,30 @@ fn third_order_asin() {
             v102 = fsub v6, v101
             v103 = sqrt v102
             v104 = fdiv v6, v103
-            v106 = fadd v102, v105
-            v107 = sqrt v106
-            v108 = fmul v11, v107
+            v105 = fgt v102, v3
+            v106 = fmul v11, v103
+            v108 = select v105, v106, v107
             v109 = fadd v10, v10
             v110 = fsub v3, v109
             v111 = fdiv v110, v108
             v112 = fmul v104, v111
             v113 = fneg v112
             v114 = fdiv v113, v103
-            v115 = fadd v106, v105
-            v116 = sqrt v115
-            v117 = fmul v11, v116
-            v118 = fadd v110, v3
-            v119 = fdiv v118, v117
-            v120 = fmul v119, v11
-            v121 = fadd v6, v6
-            v122 = fsub v3, v121
-            v123 = fmul v111, v120
-            v124 = fsub v122, v123
-            v125 = fdiv v124, v108
+            v115 = fmul v111, v11
+            v116 = select v105, v115, v3
+            v117 = fadd v6, v6
+            v118 = fsub v3, v117
+            v119 = fmul v111, v116
+            v120 = fsub v118, v119
+            v121 = fdiv v120, v108
+            v122 = fmul v114, v111
+            v123 = fmul v121, v104
+            v124 = fadd v122, v123
+            v125 = fneg v124
             v126 = fmul v114, v111
-            v127 = fmul v125, v104
-            v128 = fadd v126, v127
-            v129 = fneg v128
-            v130 = fmul v114, v111
-            v131 = fsub v129, v130
-            v132 = fdiv v131, v103
-            v100 = optbarrier v132
+            v127 = fsub v125, v126
+            v128 = fdiv v127, v103
+            v100 = optbarrier v128
         }
     "#]];
 
@@ -502,7 +498,7 @@ fn third_order_acos() {
             v3 = fconst 0.0
             v6 = fconst 0x1.0000000000000p0
             v11 = fconst 0x1.0000000000000p1
-            v106 = fconst 0x1.2725dd1d243acp-60
+            v108 = fconst 0x1.12e0be826d695p-29
 
         block0:
             v12 = acos v10
@@ -511,9 +507,9 @@ fn third_order_acos() {
             v103 = sqrt v102
             v104 = fneg v103
             v105 = fdiv v6, v104
-            v107 = fadd v102, v106
-            v108 = sqrt v107
-            v109 = fmul v11, v108
+            v106 = fgt v102, v3
+            v107 = fmul v11, v103
+            v109 = select v106, v107, v108
             v110 = fadd v10, v10
             v111 = fsub v3, v110
             v112 = fdiv v111, v109
@@ -521,26 +517,22 @@ fn third_order_acos() {
             v114 = fmul v105, v113
             v115 = fneg v114
             v116 = fdiv v115, v104
-            v117 = fadd v107, v106
-            v118 = sqrt v117
-            v119 = fmul v11, v118
-            v120 = fadd v111, v3
-            v121 = fdiv v120, v119
-            v122 = fmul v121, v11
-            v123 = fadd v6, v6
-            v124 = fsub v3, v123
-            v125 = fmul v112, v122
-            v126 = fsub v124, v125
-            v127 = fdiv v126, v109
+            v117 = fmul v112, v11
+            v118 = select v106, v117, v3
+            v119 = fadd v6, v6
+            v120 = fsub v3, v119
+            v121 = fmul v112, v118
+            v122 = fsub v120, v121
+            v123 = fdiv v122, v109
+            v124 = fneg v123
+            v125 = fmul v116, v113
+            v126 = fmul v124, v105
+            v127 = fadd v125, v126
             v128 = fneg v127
             v129 = fmul v116, v113
-            v130 = fmul v128, v105
-            v131 = fadd v129, v130
-            v132 = fneg v131
-            v133 = fmul v116, v113
-            v134 = fsub v132, v133
-            v135 = fdiv v134, v104
-            v100 = optbarrier v135
+            v130 = fsub v128, v129
+            v131 = fdiv v130, v104
+            v100 = optbarrier v131
         }
     "#]];
 
@@ -568,7 +560,7 @@ fn third_order_acosh() {
             v3 = fconst 0.0
             v6 = fconst 0x1.0000000000000p0
             v11 = fconst 0x1.0000000000000p1
-            v105 = fconst 0x1.2725dd1d243acp-60
+            v107 = fconst 0x1.12e0be826d695p-29
 
         block0:
             v12 = acosh v10
@@ -576,34 +568,30 @@ fn third_order_acosh() {
             v102 = fsub v101, v6
             v103 = sqrt v102
             v104 = fdiv v6, v103
-            v106 = fadd v102, v105
-            v107 = sqrt v106
-            v108 = fmul v11, v107
+            v105 = fgt v102, v3
+            v106 = fmul v11, v103
+            v108 = select v105, v106, v107
             v109 = fadd v10, v10
             v110 = fsub v109, v3
             v111 = fdiv v110, v108
             v112 = fmul v104, v111
             v113 = fneg v112
             v114 = fdiv v113, v103
-            v115 = fadd v106, v105
-            v116 = sqrt v115
-            v117 = fmul v11, v116
-            v118 = fadd v110, v3
-            v119 = fdiv v118, v117
-            v120 = fmul v119, v11
-            v121 = fadd v6, v6
-            v122 = fsub v121, v3
-            v123 = fmul v111, v120
-            v124 = fsub v122, v123
-            v125 = fdiv v124, v108
+            v115 = fmul v111, v11
+            v116 = select v105, v115, v3
+            v117 = fadd v6, v6
+            v118 = fsub v117, v3
+            v119 = fmul v111, v116
+            v120 = fsub v118, v119
+            v121 = fdiv v120, v108
+            v122 = fmul v114, v111
+            v123 = fmul v121, v104
+            v124 = fadd v122, v123
+            v125 = fneg v124
             v126 = fmul v114, v111
-            v127 = fmul v125, v104
-            v128 = fadd v126, v127
-            v129 = fneg v128
-            v130 = fmul v114, v111
-            v131 = fsub v129, v130
-            v132 = fdiv v131, v103
-            v100 = optbarrier v132
+            v127 = fsub v125, v126
+            v128 = fdiv v127, v103
+            v100 = optbarrier v128
         }
     "#]];
 
@@ -721,29 +709,32 @@ fn second_order_pow() {
 
         block0:
             v12 = pow v10, v10
-            v102 = fadd v10, v101
-            v103 = ln v102
-            v104 = pow v102, v10
-            v105 = fdiv v10, v102
-            v106 = fadd v105, v103
-            v107 = fmul v106, v104
-            v108 = fadd v102, v101
-            v109 = ln v108
-            v110 = pow v108, v10
-            v111 = fdiv v10, v108
-            v112 = fadd v6, v3
-            v113 = fdiv v112, v102
-            v114 = fmul v112, v111
-            v115 = fadd v114, v109
-            v116 = fmul v115, v110
-            v117 = fmul v105, v112
-            v118 = fsub v6, v117
-            v119 = fdiv v118, v102
-            v120 = fadd v119, v113
-            v121 = fmul v120, v104
-            v122 = fmul v116, v106
-            v123 = fadd v121, v122
-            v100 = optbarrier v123
+            v102 = feq v10, v3
+            v103 = select v102, v101, v10
+            v104 = ln v103
+            v105 = pow v101, v10
+            v106 = select v102, v105, v12
+            v107 = fdiv v10, v103
+            v108 = fadd v107, v104
+            v109 = fmul v108, v106
+            v110 = feq v101, v3
+            v111 = select v110, v101, v101
+            v112 = ln v111
+            v113 = pow v101, v10
+            v114 = select v110, v113, v105
+            v115 = fdiv v10, v111
+            v116 = select v102, v3, v6
+            v117 = fdiv v116, v103
+            v118 = fmul v112, v114
+            v119 = select v102, v118, v109
+            v120 = fmul v107, v116
+            v121 = fsub v6, v120
+            v122 = fdiv v121, v103
+            v123 = fadd v122, v117
+            v124 = fmul v123, v106
+            v125 = fmul v119, v108
+            v126 = fadd v124, v125
+            v100 = optbarrier v126
         }
     "#]];
 

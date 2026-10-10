@@ -1,0 +1,23 @@
+// smallarg.va -- Enhancement-839: the derivative guards of sqrt, hypot, pow and
+// atan2 (Enhancements 261, 262 and 580) replace only the singular point. Each
+// device below takes its operator of a tiny argument, s*V with s = 1e-17, the
+// size of a square root of a squared charge or an area in SI units, and its
+// conductance at V = 1 has a closed form. The guards used to shift EVERY
+// argument by 1e-18 (or 1e-36), which moved these by 0.5 % to 10 %.
+`include "disciplines.vams"
+
+module smallarg(a, c);
+  inout a, c;
+  electrical a, c;
+  parameter integer op = 0 from [0:4];
+  parameter real s = 1e-17 from (0:inf);
+  analog begin
+    case (op)
+      0: I(a, c) <+ 1e6*sqrt(s*V(a, c));          // g = 1e6*sqrt(s)/2
+      1: I(a, c) <+ 1e15*hypot(s*V(a, c), 0.0);   // g = 1e15*s
+      2: I(a, c) <+ 1e30*pow(s*V(a, c), 2.0);     // g = 2e30*s*s
+      3: I(a, c) <+ 1e6*pow(s*V(a, c), 0.5);      // g = 1e6*sqrt(s)/2
+      4: I(a, c) <+ 1e-3*atan2(s*V(a, c), s);     // g = 1e-3/2
+    endcase
+  end
+endmodule

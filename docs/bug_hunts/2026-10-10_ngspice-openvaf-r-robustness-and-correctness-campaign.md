@@ -46,8 +46,8 @@ Nothing was fixed; this is the list.
 | | Finding | Severity |
 |---|---|---|
 | [F1](#f1) | *(fixed in [E-836](../../enhancements_doc/Enhancement-836.md), [E-837](../../enhancements_doc/Enhancement-837.md) and [E-838](../../enhancements_doc/Enhancement-838.md); E-734 exposed it rather than caused it -- 13 of the 14 are back, VBIC 4T-et is open at its defaults)* 14 of the corpus's 92 compact models no longer reach an operating point (bsimbulk ×3, bsimcmg ×2, bsimimg, HICUM L0 ×2, HICUM L2 ×3, HiSIM-SOI ×2, VBIC 4T-et): a regression from E-734 | high |
-| [F2](#f2) | openvaf-r loads a wrong Jacobian wherever a `sqrt` argument is small: E-261's regularisation `2*sqrt(x + 1e-18)` changes the derivative by `5e-19/x`, which is 8 % on HiSIM-SOI's gm | high |
-| [F3](#f3) | **memory:** `op`, then a refused `sens`, then `reset` reads the freed `sens` job through `CKTcurJob` in `DCtran_step_quit` | medium |
+| [F2](#f2) | *(fixed in [E-839](../../enhancements_doc/Enhancement-839.md): the `sqrt`, `pow`, `hypot` and `atan2` guards replace only the singular point; HiSIM-HV and HiSIM-SOTB were F2 too)* openvaf-r loads a wrong Jacobian wherever a `sqrt` argument is small: E-261's regularisation `2*sqrt(x + 1e-18)` changes the derivative by `5e-19/x`, which is 8 % on HiSIM-SOI's gm | high |
+| [F3](#f3) | *(fixed in [E-840](../../enhancements_doc/Enhancement-840.md): any refused analysis command did it, and the freed job was the previous command's; `CKTdelTask` clears the pointer)* **memory:** `op`, then a refused `sens`, then `reset` reads the freed `sens` job through `CKTcurJob` in `DCtran_step_quit` | medium |
 | [F4](#f4) | a second `sens` job in one run fails its operating point on a resistor divider; under Guard Malloc the device load reads freed memory | medium |
 | [F5](#f5) | **crash:** `envelope` after a device refused at setup copies from a NULL `CKTrhsOld`; E-502's guard only asks for `CKTmatrix` | medium |
 | [F6](#f6) | **crash:** a deck that `source`s itself, or two that source each other, recurse until the stack overflows; `.include` stops at 50 levels | low |
@@ -138,6 +138,13 @@ by value rather than by pattern, and kept through `ac`, `noise` and `pz`.
 <a id="f2"></a>
 ## F2 — openvaf-r's `sqrt` derivative is wrong for small arguments
 
+*Fixed in [E-839](../../enhancements_doc/Enhancement-839.md). Each guard now replaces only the
+singular value, with a select, so every derivative away from it is the unguarded one, bit for
+bit. The dig found the same shift in three more guards: E-262's `pow`, for every exponent
+(`pow(x, 2)` at x = 1e-17 was 10 % high), and E-580's `hypot` and `atan2`. Re-run with the
+fixed compiler, the Jacobian family's 9 HiSIM-HV and 2 HiSIM-SOTB mismatches, which this page
+had put down to finite-difference truncation, agree too: they were this finding.*
+
 Family A found one model whose loaded Jacobian disagrees with its own currents: HiSIM-SOI
 (`vacode140/hisimsoi_n4.va` and `_n5.va`, at d, g, s, b = 1, 1, 0, 0). The dc currents are
 identical with either compiler; the Jacobian is not:
@@ -184,6 +191,17 @@ one.
 
 <a id="f3"></a>
 ## F3 — a refused `sens` leaves `CKTcurJob` pointing at freed memory
+
+*Fixed in [E-840](../../enhancements_doc/Enhancement-840.md). The lead below was wrong about
+which job was freed:*
+- *`if_run` deletes the previous interactive command's task, and with it the `op` job
+  `CKTcurJob` still named, before it parses the new card.*
+- *A card refused there never re-points `CKTcurJob`: `sens v(nosuch)`, `ac dec 0 1 1`,
+  `tran 1u`, `tf v(nosuch) v1` and `noise v(nosuch) …` all do it.*
+
+*`CKTdelTask` now clears the pointer when it frees the job it names, closing a stepped
+transient's plot first, and `remcirc` deletes the tasks before it frees the circuit. F4, the
+second `sens` job, is a different path and stays open.*
 
 ```spice
 v1 a 0 1
@@ -337,7 +355,9 @@ from `vafintub_examples/intub.va`, with `parameter integer ione` mutated to
   - 63 modules agree within 1e-3 of the column scale after the noise floor, and the 14 of F1
     cannot be tested.
   - The 9 HiSIM-HV mismatches (2.1e-3 to 2.4e-3) and the 2 HiSIM-SOTB ones (1.0e-2 and
-    1.7e-2) are finite-difference truncation: they agree at h = 1e-4.
+    1.7e-2) were put down here to finite-difference truncation, since they agreed at
+    h = 1e-4. That was wrong: they are F2's guard error. The smaller step only lifted the
+    noise floor above it, and with E-839's compiler they agree at h = 1e-3.
   - bsimsoi's 124 % at 1 Hz is its floating body, whose time constant puts 1 Hz above the dc
     limit. It drops to 3.7 % at 1e-9 Hz, where the FD of a 8e-8 A device is itself noisy;
     inconclusive, not counted.

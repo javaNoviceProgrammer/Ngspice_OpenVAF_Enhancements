@@ -246,6 +246,13 @@ com_remcirc(wordlist *wl)
     if (ft_curckt->ci_ckt)
         DCtran_step_quit(ft_curckt->ci_ckt);
 
+    /* Enhancement-840: the tasks go while their circuit still stands --
+       CKTdelTask now clears the circuit's pointer to a job it frees, and
+       if_cktfree below frees the circuit */
+    ft_sim->deleteTask (ft_curckt->ci_ckt, ft_curckt->ci_defTask);
+    if (ft_curckt->ci_specTask)
+        ft_sim->deleteTask (ft_curckt->ci_ckt, ft_curckt->ci_specTask);
+
     if_cktfree(ft_curckt->ci_ckt, ft_curckt->ci_symtab);
     for (v = ft_curckt->ci_vars; v; v = next) {
         next = v->va_next;
@@ -270,10 +277,6 @@ com_remcirc(wordlist *wl)
     wl_free(ft_curckt->ci_commands);
 
     tfree(ft_curckt->FTEstats);
-
-    ft_sim->deleteTask (ft_curckt->ci_ckt, ft_curckt->ci_defTask);
-    if (ft_curckt->ci_specTask)
-        ft_sim->deleteTask (ft_curckt->ci_ckt, ft_curckt->ci_specTask);
 
     if (ft_curckt->ci_name)
         tfree(ft_curckt->ci_name);

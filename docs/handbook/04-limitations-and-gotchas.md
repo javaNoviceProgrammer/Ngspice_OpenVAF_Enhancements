@@ -285,3 +285,8 @@ scripting ngspice:
   a value, so the dc-path walk cannot see it and no factorization survives it.
   Since [E-838](../../enhancements_doc/Enhancement-838.md) such a row is found at
   the reorder, held with the dc-path conductance and named.
+- **A refused analysis command, then `reset`** (`op`, then `sens v(nosuch)` or
+  `ac dec 0 1 1`, then `reset`) read a freed job: the command had deleted the
+  previous task before refusing its card, and the circuit still pointed into it.
+  Silent normally, SIGSEGV under Guard Malloc. Fixed in
+  [E-840](../../enhancements_doc/Enhancement-840.md).

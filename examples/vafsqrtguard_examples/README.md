@@ -1,4 +1,4 @@
-# vafsqrtguard_examples — Enhancement-261
+# vafsqrtguard_examples — Enhancements 261, 262 and 839
 
 `sqrt()` derivative guard in openvaf-r's automatic differentiation.
 
@@ -30,10 +30,28 @@ The emitted `sqrt` derivative is regularized to `K/(2·sqrt(V + a))` with
   operators (`K*sqrt`, `1/(1+sqrt)`, `exp(-sqrt)`), which a block-split guard
   cannot.
 
+## Enhancement-839: only the singular point
+
+The "below the ULP" above was wrong. The shift moved the derivative by `a/(2V)` at every bias,
+which is 5 % at `V = 1e-17`. Compact models in SI units take square roots of quantities that
+small, and HiSIM-SOI's loaded gm came out 7.8 % low (F2 of the
+[2026-10-10 robustness campaign](../../docs/bug_hunts/2026-10-10_ngspice-openvaf-r-robustness-and-correctness-campaign.md)).
+E-262's `pow` and E-580's `hypot` and `atan2` guards shifted every argument the same way.
+
+[E-839](../../enhancements_doc/Enhancement-839.md) replaces the singular value alone, with a
+select: `x > 0 ? 2*sqrt(x) : 2*sqrt(a)`, and the like for the others. Every derivative away
+from zero is the unguarded one, bit for bit, and zero keeps its finite value.
+
+Section [8] uses `smallarg.va` to check `sqrt`, `hypot`, `pow(., 2)`, `pow(., 0.5)` and
+`atan2` of `s*V` with `s = 1e-17`, and `sqrt` and `pow` at `1e-30`, each against its
+closed-form conductance to 1e-12. Seven of those eight checks fail on the E-838 compiler; the
+other is the compile.
+
 ## Files
 
 - `sqrtguard_demo.va` — `sqrtdev` (`I = K*sqrt(V)`) and `sqrtcompose`
   (`I = G0/(1+sqrt(V))`).
+- `smallarg.va` — `smallarg`, each operator of a tiny argument (E-839).
 - `verify_vafsqrtguard.py` — compiles the models with the committed `openvaf-r`
   and checks, under **both** linear solvers, that: bare and strongly-scaled
   `sqrt` find their true KCL operating point (not `nan`) and match the

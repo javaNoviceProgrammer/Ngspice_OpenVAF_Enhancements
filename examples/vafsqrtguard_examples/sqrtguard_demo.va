@@ -5,10 +5,12 @@
 // conductance dI/dV = K/(2*sqrt(V)) at ngspice's default V=0 initial guess.
 // Before E-261, openvaf-r emitted that raw +inf, which NaN-poisoned the
 // Jacobian and made the DC operating point fail outright (every convergence
-// aid died). E-261 regularizes the emitted derivative to K/(2*sqrt(V + a))
-// (a = 1e-18): finite at V=0, and identical to the exact derivative for V>0
-// (the a/(2V) perturbation is below the ULP). The device now finds its true
-// operating point, exactly like ngspice's own B-source sqrt().
+// aid died). E-261 regularized the emitted derivative to K/(2*sqrt(V + a))
+// (a = 1e-18), finite at V=0 -- but that moved every derivative by a/(2V),
+// 5 % at V = 1e-17. Since Enhancement-839 the guard replaces V = 0 alone
+// (a select): K/(2*sqrt(a)) there, the exact K/(2*sqrt(V)) everywhere else.
+// The device finds its true operating point, exactly like ngspice's own
+// B-source sqrt().
 `include "disciplines.vams"
 
 // I = K*sqrt(V(p,n)). K selects bare (K=1) vs strongly-scaled (K=2,5) sqrt.

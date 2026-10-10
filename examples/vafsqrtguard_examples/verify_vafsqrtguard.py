@@ -37,6 +37,14 @@ the shared pow chain rule):
      0.25): the DC op is the true KCL root, not nan;
  [7] the guarded pow derivative K*Y*V^(Y-1) is exact for V>0.
 
+Enhancement-839 (robustness campaign 2026-10-10 F2): the guards above shifted
+EVERY argument, not the singular point alone -- the sqrt derivative moved by
+5e-19/x, 5 % at x = 1e-17 (HiSIM-SOI's loaded gm was 7.8 % low), and pow, hypot
+and atan2 the same way. They now replace only x = 0 (a select), so every other
+derivative is the unguarded one, bit for bit:
+ [8] sqrt, hypot, pow(., 2), pow(., 0.5) and atan2 of s*V, s = 1e-17 (and sqrt and
+     pow at s = 1e-30): the loaded conductance matches its closed form to 1e-12.
+
 Every SPICE deck starts with a title line (SPICE treats line 1 as the title!).
 """
 import math
@@ -252,6 +260,36 @@ for K, Y in ((1.0, 0.5), (1.0, 0.3), (2.0, 0.25)):
         worstp = max(worstp, abs(g - ga) / abs(ga))
 check("[7] pow(V,Y) derivative is EXACT for V>0 (AC G = K*Y*V^(Y-1))",
       worstp < 1e-4, f"(worst rel err = {worstp:.2e})")
+
+# [8] Enhancement-839: the guards replace only the singular point. E-261 cached
+# 2*sqrt(x + 1e-18) at EVERY x, which moves the derivative by 5e-19/x -- 5 % at
+# x = 1e-17 (HiSIM-SOI's gm came out 7.8 % low); E-262's pow(x + 1e-18, y) and
+# E-580's hypot(h, 1e-18) and x^2 + y^2 + 1e-36 did the same. Each operator of
+# s*V, s = 1e-17, against its closed-form conductance at V = 1.
+log8, ok8 = compile_va("smallarg.va")
+check("[8] compile smallarg.va", ok8, "" if ok8 else log8[-300:])
+
+def small_G(op, s):
+    deck = (f"* small arg\nV1 p 0 DC 1 AC 1\nN1 p 0 m\n.model m smallarg op={op} s={s}\n"
+            f".control\npre_osdi smallarg.osdi\nset numdgt=14\nac lin 1 1k 1k\nprint real(i(v1))\n.endc\n.end\n")
+    open(os.path.join(HERE, "_sg.cir"), "w").write(deck)
+    r = subprocess.run([NGSPICE, "-b", "_sg.cir"], capture_output=True, text=True,
+                       cwd=HERE, timeout=60)
+    m = re.search(r"real\(i\(v1\)\)\s*=\s*([-\d.eE+]+)", r.stdout)
+    return -float(m.group(1)) if m else None
+
+if ok8:
+    for op, name, s_, ga, was in ((0, "sqrt(s*V)", 1e-17, 1e6 * math.sqrt(1e-17) / 2, "4.7 % low"),
+                                  (1, "hypot(s*V, 0)", 1e-17, 1e15 * 1e-17, "0.5 % low"),
+                                  (2, "pow(s*V, 2)", 1e-17, 2e30 * 1e-34, "10 % high"),
+                                  (3, "pow(s*V, 0.5)", 1e-17, 1e6 * math.sqrt(1e-17) / 2, "4.7 % low"),
+                                  (4, "atan2(s*V, s)", 1e-17, 1e-3 / 2, "0.5 % low"),
+                                  (0, "sqrt(s*V), s = 1e-30", 1e-30, 1e6 * math.sqrt(1e-30) / 2, "a million times low"),
+                                  (2, "pow(s*V, 2), s = 1e-30", 1e-30, 2e30 * 1e-60, "1e12 times high")):
+        g = small_G(op, s_)
+        rel = abs(g - ga) / ga if g is not None else float("inf")
+        check(f"[8] {name}: the loaded conductance is exact (was {was})", rel < 1e-12,
+              f"(g = {g}, exact {ga:.12e}, rel {rel:.1e})")
 
 # cleanup generated scratch (underscore temps are gitignored; _sgp.va is not)
 for f in ("_sg.cir", "_sgp.va", "_sgp.osdi"):

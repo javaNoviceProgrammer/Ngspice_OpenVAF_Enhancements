@@ -469,20 +469,21 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             // sqrt(x) -> derivative is darg/cache. The natural cache 2*sqrt(x) makes the
             // derivative x'/(2*sqrt(x)) = +inf at the x=0 initial guess, which NaN-poisons
             // the Jacobian and fails the whole DC operating point (every convergence aid
-            // dies). Use cache = 2*sqrt(x + a) instead -- the derivative of the smoothly
-            // regularized sqrt(x+a): it is FINITE at x=0 (darg/(2*sqrt(a)), a large but
-            // bounded conductance -> small controlled Newton steps that creep out of the
-            // singularity, like ngspice's own B-source sqrt) and, because the nudge is
-            // INSIDE the root, the perturbation for x>0 is only ~a/(2x) -- with a=1e-18
-            // that is below the ULP, so every finite-x derivative (including higher-order
-            // and the sqrt(1-x^2) inside asin/acos/etc.) is unchanged. Being a plain value
-            // it composes through downstream operators (e.g. K*sqrt(x)), unlike the
-            // block-split Pow guard which only protects a bare terminal sqrt/pow.
+            // dies). Enhancement-261 cached 2*sqrt(x + a), a = 1e-18, as "below the ULP for
+            // x > 0" -- it is not: the derivative moves by a/(2x) = 5e-19/x, which is 5 % at
+            // x = 1e-17, and SI-unit compact models take square roots that small all the
+            // time (HiSIM-SOI's loaded gm came out 7.8 % low; Enhancement-839, robustness
+            // campaign 2026-10-10 F2). The guard now replaces only the singular value:
+            // cache = x > 0 ? 2*sqrt(x) : 2*sqrt(a). Every derivative at x > 0 is the
+            // unguarded one, bit for bit; x <= 0 keeps E-261's finite darg/2e-9 (a large but
+            // bounded conductance that lets Newton creep out of the singularity, like
+            // ngspice's own B-source sqrt). A select is a plain value, so it still composes
+            // through downstream operators (K*sqrt(x)), unlike the block-split Pow guard.
             Opcode::Sqrt => {
-                let a = self.func.dfg.f64const(1e-18);
-                let x_reg = self.ins().fadd(arg0, a);
-                let sqrt_reg = self.ins().sqrt(x_reg);
-                self.ins().fmul(F_TWO, sqrt_reg)
+                let pos = self.ins().fgt(arg0, F_ZERO);
+                let exact = self.ins().fmul(F_TWO, res);
+                let floor = self.func.dfg.f64const(2e-9); // 2*sqrt(1e-18)
+                self.ins().select(pos, exact, floor)
             }
             // hypot(x,y) -> (x*x' + y*y')/hypot(x,y). Enhancement-580 (bug-hunt
             // 2026-09-07 F1): the natural cache hypot(x,y) itself is 0 at the
@@ -490,14 +491,16 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             // poisons the Jacobian and fails every operating-point method for a
             // model that takes hypot of node quantities that start at zero --
             // while abs, sqrt and pow at zero were all guarded already (the sqrt
-            // regularisation above, E-261). Cache hypot(hypot(x,y), a) =
-            // sqrt(x^2+y^2+a^2) instead: FINITE at the origin (the derivative is
-            // 0 there, the value of the smooth |x|), and for any hypot above
-            // 1e-9 the perturbation a^2/(2 h^2) is below the ULP, so every
-            // derivative away from the origin is unchanged.
+            // regularisation above, E-261). E-580 cached hypot(hypot(x,y), a), whose
+            // relative error a^2/(2 h^2) is only below the ULP for h above about
+            // 1e-10; Enhancement-839 replaces the singular value alone, as for sqrt:
+            // cache = h > 0 ? h : a. Exact at every h > 0, and at the origin the
+            // numerator x*x' + y*y' is 0, so the derivative is 0 there, the value of
+            // the smooth |x|.
             Opcode::Hypot => {
+                let pos = self.ins().fgt(res, F_ZERO);
                 let a = self.func.dfg.f64const(1e-18);
-                self.ins().hypot(res, a)
+                self.ins().select(pos, res, a)
             }
             // ln(x) -> 1/x
             Opcode::Ln => arg0,
@@ -556,10 +559,13 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
                 // chain below multiplies it by (x'*y - y'*x) = 0 -- NaN whenever
                 // both arguments are run-time values that start at zero (a
                 // constant zero argument folded away before it reached here,
-                // which is why atan2(V, 0.0) never showed it). Add a^2 = 1e-36:
-                // finite at the origin, below the ULP for any radius above 1e-10.
+                // which is why atan2(V, 0.0) never showed it). E-580 added a^2 =
+                // 1e-36 at every point, an error of a^2/r^2 that reaches 1 % below
+                // r = 1e-17; Enhancement-839 puts it in place of a zero x^2+y^2
+                // alone, as for sqrt and hypot: finite at the origin, exact elsewhere.
                 let a_sq = self.func.dfg.f64const(1e-36);
-                let bot = self.ins().fadd(bot, a_sq);
+                let pos = self.ins().fgt(bot, F_ZERO);
+                let bot = self.ins().select(pos, bot, a_sq);
 
                 cache[2] = self.ins().fdiv(F_ONE, bot).into();
                 cache[1] = self.ins().fneg(arg0).into();
@@ -630,19 +636,23 @@ impl<'a, 'u> DerivativeBuilder<'a, 'u> {
             // x'*(y/x)*x^y = x'*y*x^(y-1), which for 0<y<1 is the inf*0 = NaN form at
             // the x=0 DC initial guess (y/x=+inf, x^y=0) -- the same singularity E-261
             // fixed for sqrt, and it NaN-poisons the Jacobian so pow(V,frac) never finds
-            // a DC op. Regularize the base with a tiny a: cache the derivative of the
-            // SHIFTED pow(x+a, y) (the VALUE res=x^y is unchanged). Then the base term is
-            // x'*y*(x+a)^(y-1) and the exponent term is y'*ln(x+a)*(x+a)^y -- both FINITE
-            // at x=0 (a=1e-18 is below the ULP for x>0, so derivatives are unchanged
-            // there) and plain values, so they compose through downstream operators
-            // (K*pow(V,frac)) exactly like the E-261 sqrt guard.
+            // a DC op. Enhancement-262 cached the derivative of the SHIFTED pow(x+a, y),
+            // a = 1e-18, for every x -- which moves every derivative by about a/x, not
+            // "below the ULP": pow(x, 2) at x = 1e-17 came out 10 % high (Enhancement-839,
+            // robustness campaign 2026-10-10 F2, as for sqrt). The shift now replaces the
+            // singular point alone: xr = (x == 0) ? a : x, so the base term is
+            // x'*y*xr^(y-1) and the exponent term y'*ln(xr)*xr^y -- FINITE at x=0, and the
+            // natural y/x, ln(x), x^y (bit for bit) everywhere else. Still plain values, so
+            // they compose through downstream operators (K*pow(V,frac)) like the sqrt guard.
             Opcode::Pow => {
                 let a = self.func.dfg.f64const(1e-18);
-                let x_reg = self.ins().fadd(arg0, a);          // x + a
-                let ln_x = self.ins().ln(x_reg);               // ln(x+a)
-                cache[2] = self.ins().pow(x_reg, arg1).into(); // (x+a)^y
+                let at_zero = self.ins().feq(arg0, F_ZERO);
+                let x_reg = self.ins().select(at_zero, a, arg0); // x, or a at x = 0
+                let ln_x = self.ins().ln(x_reg);                  // ln(xr)
+                let pow_a = self.ins().pow(a, arg1);
+                cache[2] = self.ins().select(at_zero, pow_a, res).into(); // xr^y
                 cache[1] = ln_x.into();
-                self.ins().fdiv(arg1, x_reg)                   // y/(x+a) -> cache[0]
+                self.ins().fdiv(arg1, x_reg)                      // y/xr -> cache[0]
             }
             _ => return cache,
         };

@@ -102,6 +102,12 @@ modules whose failure modes are numerically visible.
 
 All analog operators produce correct **Jacobian contributions** via automatic
 differentiation, so convergence behaves like a hand-written stamp.
+Where a derivative is infinite at zero — `sqrt`, `pow` with a fractional exponent, `hypot`
+and `atan2` at the origin, the usual DC initial guess — a guard keeps it finite there. Since
+[E-839](../../enhancements_doc/Enhancement-839.md) the guard replaces only that point, so every
+other derivative is the exact one. Before it the argument was shifted by 1e-18 everywhere,
+which put a small-signal error of about 1e-18/x on a function of a tiny SI quantity: 5 % on
+`sqrt` at 1e-17, 7.8 % on HiSIM-SOI's gm.
 
 | Operator | Notes | Since |
 |---|---|---|

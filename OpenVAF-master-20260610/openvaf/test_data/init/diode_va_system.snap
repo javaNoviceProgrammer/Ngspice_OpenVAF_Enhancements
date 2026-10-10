@@ -1,42 +1,42 @@
 {
-    v67: cslot0,
-    v68: cslot1,
-    v69: cslot2,
-    v70: cslot3,
-    v71: cslot4,
+    v73: cslot0,
+    v74: cslot1,
+    v75: cslot2,
+    v76: cslot3,
+    v77: cslot4,
 }
 {
     cslot0: (
         (
-            Some(ClassId(83)),
+            Some(ClassId(84)),
             0,
         ),
         Real,
     ),
     cslot1: (
         (
-            Some(ClassId(207)),
+            Some(ClassId(208)),
             0,
         ),
         Bool,
     ),
     cslot2: (
         (
-            Some(ClassId(234)),
+            Some(ClassId(235)),
             0,
         ),
         Real,
     ),
     cslot3: (
         (
-            Some(ClassId(208)),
+            Some(ClassId(209)),
             0,
         ),
         Real,
     ),
     cslot4: (
         (
-            Some(ClassId(217)),
+            Some(ClassId(218)),
             0,
         ),
         Real,
