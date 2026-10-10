@@ -74,6 +74,34 @@ do { \
 } while(0)
 
 
+/* Enhancement-846 (second robustness campaign 2026-10-10, F2/F3): the solution
+ * at t = 0, to restart a rejected first step from. The first step is integrated
+ * in MODEINITTRAN, where the devices take their history (a capacitor's charge, an
+ * inductor's flux) from CKTrhsOld; a retry started from the rejected step's
+ * solution would rebuild that history at the wrong instant. */
+static double *t0_rhs = NULL;
+static int t0_len = 0;
+
+static void
+t0_save(CKTcircuit *ckt)
+{
+    int n = SMPmatSize(ckt->CKTmatrix) + 1;
+    if (n > t0_len) {
+        t0_rhs = TREALLOC(double, t0_rhs, n);
+        t0_len = n;
+    }
+    memcpy(t0_rhs, ckt->CKTrhsOld, (size_t) n * sizeof(double));
+}
+
+static void
+t0_restore(CKTcircuit *ckt)
+{
+    int n = SMPmatSize(ckt->CKTmatrix) + 1;
+    if (t0_rhs && n <= t0_len)
+        memcpy(ckt->CKTrhsOld, t0_rhs, (size_t) n * sizeof(double));
+}
+
+
 int
 DCtran(CKTcircuit *ckt,
        int restart)   /* forced restart flag */
@@ -93,6 +121,10 @@ DCtran(CKTcircuit *ckt,
     int startIters;
     int converged;
     int firsttime;
+    int first_rej = 0;          /* Enhancement-846: first-step rejections */
+    double first_floor = 0.0;   /* Enhancement-846: the smallest first step tried */
+    double first_delta0 = 0.0;  /* Enhancement-846: the first step as SPICE sizes it */
+    double first_ratio = 0.0;   /* Enhancement-846: the last check's newdelta/delta */
     int error;
 #ifdef WANT_SENSE2
     int save, save2, size;
@@ -840,6 +872,16 @@ resume:
     }
     ckt->CKTstates[0] = temp;
 
+    /* Enhancement-846: while the first step is under way, keep the t = 0
+     * solution to restart it from */
+    if (firsttime) {
+        t0_save(ckt);
+        first_rej = 0;
+        first_delta0 = ckt->CKTdelta;
+        first_ratio = 0.0;
+        first_floor = MAX(1e-9 * ckt->CKTdelta, 10.0 * ckt->CKTdelmin);
+    }
+
 /* 600 */
     for (;;) {
 #if defined SHARED_MODULE
@@ -1026,6 +1068,7 @@ resume:
 #endif
             if(firsttime) {
                 ckt->CKTmode = (ckt->CKTmode&MODEUIC) | MODETRAN | MODEINITTRAN;
+                t0_restore(ckt);    /* Enhancement-846: retry from t = 0 */
             }
             ckt->CKTorder = 1;
 
@@ -1070,9 +1113,92 @@ resume:
                     ckt->CKTorder = save2;
                 }
 #endif
+                /* Enhancement-846 (second robustness campaign 2026-10-10, F2/F3):
+                 * the first step was accepted unchecked ("no check on first time
+                 * point"), because the truncation estimate needs a point before
+                 * t = 0. Its size is min(tstop/100, tstep)/100 whatever the
+                 * circuit's time constants and the tolerances: a sine into a 1 ns
+                 * RC took a 1 ns backward-Euler step, 32 % off at reltol = 1e-7,
+                 * and the bad point then stayed in every later estimate's divided
+                 * differences -- on a linear L-C network the step collapsed from
+                 * the second point on ("Timestep too small" at reltol <= 1e-6).
+                 * After an operating point the circuit was at rest before t = 0,
+                 * and dctran already copies that state into states 2 and 3; read
+                 * at the step's own spacing it IS the missing history, and the
+                 * check is exact for a smooth start. A kink at t = 0 (a ramp into
+                 * a capacitor), a jump (an inconsistent .ic) or a `uic` state
+                 * already moving can make the estimate scale with the step; that
+                 * is recognised below, and the first step is then taken as SPICE
+                 * sized it. The check also stops at a floor, and after ten
+                 * rejections, and accepts as before. Not for
+                 * NEWTRUNC (no predictor yet), the fixed-order mode, or the
+                 * staged TR-BDF2/SDIRK methods. Adams is included: at order 1 it
+                 * is trap's step with trap's error constant, and Enhancement-419
+                 * has `adams maxord=2` reproduce trap byte for byte. */
+                if (ckt->CKTnewtrunc == 0 && ckt->CKTordFix == 0 &&
+                        (ckt->CKTintegrateMethod == TRAPEZOIDAL ||
+                         ckt->CKTintegrateMethod == GEAR ||
+                         ckt->CKTintegrateMethod == ADAMS) &&
+                        first_rej < 10 && ckt->CKTdelta > first_floor) {
+                    double d1 = ckt->CKTdeltaOld[1];
+                    newdelta = ckt->CKTdelta;
+                    ckt->CKTdeltaOld[1] = ckt->CKTdelta;
+                    ckt->CKTforceReject = 0;
+                    error = CKTtrunc(ckt, &newdelta);
+                    ckt->CKTdeltaOld[1] = d1;
+                    ckt->CKTforceReject = 0;
+                    if (error) {
+                        UPDATE_STATS(DOING_TRAN);
+                        return(error);
+                    }
+                    if (newdelta < 0.9 * ckt->CKTdelta) {
+                        /* For a smooth start the estimate is the step's own
+                         * error, and a shorter step answers it: newdelta/delta
+                         * grows, and one retry settles. A kink at t = 0 -- a
+                         * ramp driving a capacitor, whose current jumps -- or a
+                         * jump, or a `uic` state already moving, makes it scale
+                         * WITH the step, so no step satisfies it, and shrinking
+                         * the first step for nothing is not free: under trap a
+                         * stiff mode no step resolves keeps the shorter step's
+                         * startup residue, undamped, to the end of the run. If a
+                         * shorter step did not at least double the ratio, the
+                         * estimate is measuring the kink: take the first step as
+                         * SPICE sized it, and stop checking. */
+                        double ratio = newdelta / ckt->CKTdelta;
+                        int kink = first_rej > 0 && ratio <= 2.0 * first_ratio;
+                        first_ratio = ratio;
+                        first_rej++;
+#ifndef SHARED_MODULE
+                        ckt->CKTtime = ckt->CKTtime - ckt->CKTdelta;
+                        ckt->CKTstat->STATrejected ++;
+#else
+                        redostep = 1;
+#endif
+                        /* An estimate asking for less than the floor -- a
+                         * billionth of SPICE's step -- is measuring something no
+                         * step resolves as well (at tolerances like abstol=1e-15
+                         * with chgtol=1e-20 the steps it asks for reach the
+                         * estimate's own rounding, and the run collapsed). */
+                        if (newdelta < first_floor)
+                            kink = 1;
+                        if (kink) {
+                            ckt->CKTdelta = first_delta0;
+                            first_rej = 10;     /* no further check */
+                        } else {
+                            ckt->CKTdelta = newdelta;
+                        }
+                        ckt->CKTmode = (ckt->CKTmode&MODEUIC) | MODETRAN | MODEINITTRAN;
+                        ckt->CKTorder = 1;
+                        t0_restore(ckt);
+#ifdef STEPDEBUG
+                        (void)printf("first step rejected, delta set to %g\n", ckt->CKTdelta);
+#endif
+                        goto first_retry;
+                    }
+                }
                 firsttime = 0;
 #if !defined SHARED_MODULE
-                /* no check on first time point */
+                /* the first time point is checked above (Enhancement-846) */
                 goto nextTime; /* line 373 */
 #else
                 redostep = 0;
@@ -1366,6 +1492,7 @@ resume:
 #endif
             }
         }
+    first_retry:   /* Enhancement-846: a rejected first step joins the rejection path */
         /* Set the new delta to delmin (minimum delta allowed). However:
            If the new delta has been less than the minimum delta
            for the second time, bail out with 'Timestep too small'. */

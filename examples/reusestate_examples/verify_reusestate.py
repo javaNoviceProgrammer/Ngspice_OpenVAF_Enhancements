@@ -391,9 +391,13 @@ want = oracle_max(PULSE, expr="length(v(n))")
 check("[19] the number of timepoints matches a standalone run at every point",
       got == want and len(got) == 5, f"{got} vs {want}")
 
+# The first step is the one a standalone run takes. (It used to be the same at
+# every point, and the check said so; since Enhancement-846 checked the first
+# step against the truncation error, it depends on each point's RC.)
 got, _ = sweep_max(PULSE, tag="t1", expr="time[1]")
-check("[20] the first timestep is the same at every point (it doubled before)",
-      len(set(got)) == 1 and len(got) == 5, f"{got}")
+want = oracle_max(PULSE, expr="time[1]")
+check("[20] the first timestep matches a standalone run at every point (it doubled before)",
+      got == want and len(got) == 5, f"{got} vs {want}")
 
 # a second, coarser tstep: the defect survived a spec that removed the doubling,
 # so the suite must not rest on that one symptom

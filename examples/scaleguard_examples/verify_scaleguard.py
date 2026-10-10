@@ -83,11 +83,14 @@ check("[4] fft->ifft round-trip still returns a full-length vector",
       f"vx={lv.group(1) if lv else '?'} t={lt.group(1) if lt else '?'}")
 
 # [5] a valid integ / deriv of a real vector (data == scale) still works.
-rc, out = run("let yi = integ(vx)\nlet yd = deriv(vx)\nprint length(yi) length(yd)")
+rc, out = run("let yi = integ(vx)\nlet yd = deriv(vx)\nprint length(yi) length(yd) length(vx)")
 li = re.findall(r"length\(y[id]\)\s*=\s*([-\d.eE+]+)", out)
+lx = re.findall(r"length\(vx\)\s*=\s*([-\d.eE+]+)", out)
+# as long as the data: the count itself is the transient's (66 points until
+# Enhancement-846 checked the first step)
 check("[5] valid `integ(vx)` / `deriv(vx)` (data == scale) still work",
-      nocrash(rc) and len(li) == 2 and all(float(x) == 66.0 for x in li),
-      f"{li}")
+      nocrash(rc) and len(li) == 2 and len(lx) == 1 and all(float(x) == float(lx[0]) for x in li),
+      f"{li} vs {lx}")
 
 print(f"\n{passed}/{checks} checks passed")
 if passed == checks:

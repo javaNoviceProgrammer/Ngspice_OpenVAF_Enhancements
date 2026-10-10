@@ -9,8 +9,32 @@ Author: 1985 Thomas L. Quarles
 #define ccap (qcap+1)
 
 
+/* Enhancement-847 (second robustness campaign 2026-10-10, F3): the absolute
+ * floor of the state derivative's tolerance is a parameter. For a capacitor the
+ * state is a charge and its derivative (`ccap`) a current, and `abstol` (A) is
+ * the floor; for an inductor the state is a flux and its derivative a VOLTAGE,
+ * and CKTterr used `abstol` all the same -- a 1e-12 V floor. With `chgtol` small
+ * the charge term gave no relief either, and an inductor carrying no current
+ * demanded steps no circuit could take: a 7-element linear L-C network failed
+ * "Timestep too small" at reltol = 1e-7, chgtol = 1e-16. An inductor's floor
+ * is the voltage tolerance, `vntol` (CKTterrFlux, from INDtrunc). */
+static void
+terr(int qcap, CKTcircuit *ckt, double *timeStep, double abs_ccap);
+
 void
 CKTterr(int qcap, CKTcircuit *ckt, double *timeStep)
+{
+    terr(qcap, ckt, timeStep, ckt->CKTabstol);
+}
+
+void
+CKTterrFlux(int qcap, CKTcircuit *ckt, double *timeStep)
+{
+    terr(qcap, ckt, timeStep, ckt->CKTvoltTol);
+}
+
+static void
+terr(int qcap, CKTcircuit *ckt, double *timeStep, double abs_ccap)
 { 
     double volttol;
     double chargetol;
@@ -34,7 +58,7 @@ CKTterr(int qcap, CKTcircuit *ckt, double *timeStep)
         .08333333333
     };
 
-    volttol = ckt->CKTabstol + ckt->CKTreltol * 
+    volttol = abs_ccap + ckt->CKTreltol *
             MAX( fabs(ckt->CKTstate0[ccap]), fabs(ckt->CKTstate1[ccap]));
             
     chargetol = MAX(fabs(ckt->CKTstate0[qcap]),fabs(ckt->CKTstate1[qcap]));

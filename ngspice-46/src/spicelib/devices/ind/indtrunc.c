@@ -21,7 +21,7 @@ INDtrunc(GENmodel *inModel, CKTcircuit *ckt, double *timeStep)
         for(here = INDinstances(model); here != NULL ;
                 here = INDnextInstance(here)) {
 
-            CKTterr(here->INDflux,ckt,timeStep);
+            CKTterrFlux(here->INDflux,ckt,timeStep);   /* Enhancement-847: its derivative is a voltage */
         }
     }
     return(OK);

@@ -643,6 +643,7 @@ extern int CKTunsetup(CKTcircuit *);
 extern int CKTtemp(CKTcircuit *);
 extern char *CKTtrouble(CKTcircuit *, char *);
 extern void CKTterr(int , CKTcircuit *, double *);
+extern void CKTterrFlux(int , CKTcircuit *, double *);   /* Enhancement-847: an inductor's flux */
 extern int CKTtrunc(CKTcircuit *, double *);
 extern int CKTtypelook(char *);
 extern int DCOaskQuest(CKTcircuit *, JOB *, int , IFvalue *);

@@ -322,11 +322,19 @@ print("\n-overlay: keep the timepoints the runs actually took")
 _, o = run(deck(RCT, "sweep @r1[resistance] list 1k 3k 5k -analysis tran 10u 200u"
                      " -output vn=v(n) -overlay\nsetplot sweepwave\n"
                      "print maximum(vn_1000) maximum(vn_3000) maximum(vn_5000)"), "ovl")
-want = {"maximum(vn_1000)": "4.021751128868e-01",
-        "maximum(vn_3000)": "1.712082943109e-01",
-        "maximum(vn_5000)": "1.113745283463e-01"}
+# Each curve's peak is the peak of the same run made alone. (The values were
+# pinned to 12 digits until Enhancement-846 checked the first time step, which
+# moved every transient's time grid -- and with it a sampled maximum -- by a
+# few parts per thousand; comparing against the run alone tests what [20] is
+# about, independent of the integrator's grid.)
+want = {}
+for r in ("1000", "3000", "5000"):
+    _, oa = run(deck(RCT.replace("R1 a n 1k", f"R1 a n {r}"), "tran 10u 200u\nprint maximum(v(n))"),
+                "ovl" + r)
+    want[f"maximum(vn_{r})"] = scalar(oa, "maximum(v(n))")
 got = {k: scalar(o, k) for k in want}
-check("[20] each overlay curve keeps its own peak (was 39% low)", got == want, f"{got}")
+check("[20] each overlay curve keeps its own peak, the peak of the same run alone (was 39% low)",
+      None not in got.values() and got == want, f"{got} vs {want}")
 check("[21] ...and the message says which grid was used",
       "union of their own timepoints" in o, "")
 

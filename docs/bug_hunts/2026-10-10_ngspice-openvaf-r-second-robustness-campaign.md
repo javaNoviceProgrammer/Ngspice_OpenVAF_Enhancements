@@ -52,8 +52,8 @@ Nothing was fixed; this is the list.
 | | Finding | Severity |
 |---|---|---|
 | [F1](#f1) | *(fixed in [E-845](../../enhancements_doc/Enhancement-845.md): the overload tie now prefers Integer, a `case` on a comparison with an integer item compares integers, and an untyped parameter with a logical default, which panicked the compiler, is an integer)* **compiler, wrong value:** a ternary or `==`/`!=` with a logical operand and an integer operand turns the integer into 0 or 1. For `n` = 5, `(n > 0) ? n : (n < 0)` is 1 and `n == (n > 0)` is 1 | high |
-| [F2](#f2) | **transient accuracy:** the first time step is accepted without a truncation check. At `reltol=1e-7` the first samples are off by 21 % to 32 % when the input moves at t = 0 or a `uic` start is far from equilibrium | medium |
-| [F3](#f3) | **transient failure:** a 7-element linear L–C network fails with "Timestep too small" right after the first step at `reltol` ≤ 1e-6; it runs at the defaults and at 1e-5 | medium |
+| [F2](#f2) | *(fixed in [E-846](../../enhancements_doc/Enhancement-846.md): the first step is checked against the truncation error, with the rest before t = 0 as its history; a kink at t = 0 keeps SPICE's step)* **transient accuracy:** the first time step is accepted without a truncation check. At `reltol=1e-7` the first samples are off by 21 % to 32 % when the input moves at t = 0 or a `uic` start is far from equilibrium | medium |
+| [F3](#f3) | *(fixed in [E-846](../../enhancements_doc/Enhancement-846.md) and [E-847](../../enhancements_doc/Enhancement-847.md): F2's unchecked first point poisoned every later estimate; and an inductor's error floor was `abstol`, a current)* **transient failure:** a 7-element linear L–C network fails with "Timestep too small" right after the first step at `reltol` ≤ 1e-6; it runs at the defaults and at 1e-5 | medium |
 | [F4](#f4) | **measure:** AVG, INTEG and RMS with `from=` drop the first sample inside the window. E-302's start interpolation overwrites it; the error is 3e-4 on a triangle and up to 5 % on a sampled waveform | medium |
 | [F5](#f5) | **measure:** WHEN and FIND..WHEN with `td=` skip the first sample interval after TD. A single crossing there makes the measurement fail | medium |
 | [F6](#f6) | **noise:** `inoise_spectrum` is wrong wherever the gain is below 1e-10. The gain squared is floored at 1e-20 with no note: 16 times low at 1 Hz through 1 fF | low |
@@ -110,6 +110,17 @@ Noticed in passing: `Type::union`'s array branch reads `self.base_type()` twice 
 <a id="f2"></a>
 ## F2 — the first time step is never checked
 
+*Fixed in [E-846](../../enhancements_doc/Enhancement-846.md). After an operating point the circuit
+was at rest before t = 0, which is the history the check needs. The first step is now checked
+and retried from t = 0: the sine into the 1 ns RC starts with a 1 ps step, 3e-7 V off, and the
+`uic` charge with a 1 ps step, 5e-7 V off. The dig found the cost of a shorter first step under
+trap. A stiff mode that no step resolves keeps its startup residue, undamped, to the end of the
+run. So where the estimate measures a kink at t = 0 rather than the step, the first step stays
+as SPICE sized it. A `uic` state already moving can look like such a kink, so the `uic` part is
+only partly fixed: 26 of Family D's `uic` runs keep a first-step error over the limit, against
+42 before. At `reltol=1e-7` with the default `abstol` and `chgtol`, none of Family D's runs
+collapses.*
+
 ```spice
 * from the op: a sine into a 1 ns RC
 i1 0 1 sin(0 1m 100meg)
@@ -135,6 +146,14 @@ The behaviour is SPICE3's and upstream ngspice-46's.
 
 <a id="f3"></a>
 ## F3 — a linear L–C network fails "Timestep too small" at reltol 1e-6
+
+*Fixed in [E-846](../../enhancements_doc/Enhancement-846.md) and
+[E-847](../../enhancements_doc/Enhancement-847.md). The cause was F2: a dummy breakpoint that forces
+a 10 ps first step lets the deck run. The unchecked first point stayed in every later estimate's
+divided differences. With the first step checked, the network runs at 1e-6 and 1e-7. At 1e-7 with
+`chgtol=1e-20` it still collapsed under KLU, though not under Sparse. `CKTterr`'s absolute floor for
+an inductor, whose state derivative is a voltage, was `abstol`, a current; it is now `vntol`
+(E-847). At Family D's extreme tolerances 2 of 292 runs still collapse, against 7 before.*
 
 ```spice
 r9 5 0 2285.405580218766

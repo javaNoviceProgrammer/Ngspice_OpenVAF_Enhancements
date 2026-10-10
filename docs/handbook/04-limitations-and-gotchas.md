@@ -306,3 +306,12 @@ scripting ngspice:
   later parameter that reads it back, panicked openvaf-r. Since
   [E-844](../../enhancements_doc/Enhancement-844.md) it is reported as the
   typed spelling always was.
+- **The first transient step** was accepted without a truncation check, at a
+  fixed fraction of the run: at `reltol=1e-7` a sine into a 1 ns RC was 32 %
+  off at its first point, and a linear L–C network could collapse with
+  "Timestep too small" right after it. Since
+  [E-846](../../enhancements_doc/Enhancement-846.md) it is checked when the
+  start is smooth, and a run usually begins with a shorter step. Where a ramp
+  drives a capacitor directly at t = 0, the first step is still SPICE's, since a
+  shorter one leaves trap ringing in modes no step resolves. An inductor's error
+  floor is `vntol` since [E-847](../../enhancements_doc/Enhancement-847.md).
