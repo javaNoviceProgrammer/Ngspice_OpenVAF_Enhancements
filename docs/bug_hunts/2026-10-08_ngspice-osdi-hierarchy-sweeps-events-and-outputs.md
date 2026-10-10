@@ -48,9 +48,9 @@ Nothing was fixed; this is the list.
 | [F10](#f10) | *(fixed in [E-826](../../enhancements_doc/Enhancement-826.md): re-binned, a size no bin covers refused; built-in BSIM applied that one too)* `alter n1 l=5u` moves a binned instance out of its bin in silence: it stays on `nch.1` with `nch.2`'s size | medium |
 | [F11](#f11) | *(fixed in [E-827](../../enhancements_doc/Enhancement-827.md); `pre_snp` too)* `pre_osdi -va` of a source with a compile error advises on how to *find* the compiler | low |
 | [F12](#f12) | *(fixed in [E-828](../../enhancements_doc/Enhancement-828.md): once, at the end of the period)* `pss` and `hb` never fire `@(final_step)` | medium |
-| [F13](#f13) | `$fatal` (and `$finish`) inside `@(final_step)` is printed and otherwise ignored: no abort, exit status 0 | low |
-| [F14](#f14) | E-543's BJT limiting, chosen by port names, turns a linear `c,b,e` module's op into 577 iterations and gmin stepping (3 without) | medium |
-| [F15](#f15) | `.option saveused` does not collect an `@dev[param]` named in a `.meas` card, so the measure fails | low |
+| [F13](#f13) | *(fixed in [E-829](../../enhancements_doc/Enhancement-829.md): the run fails, exit status 1; `$finish`/`$stop` noted)* `$fatal` (and `$finish`) inside `@(final_step)` is printed and otherwise ignored: no abort, exit status 0 | low |
+| [F14](#f14) | *(fixed in [E-830](../../enhancements_doc/Enhancement-830.md): a polarity parameter `type` is also required)* E-543's BJT limiting, chosen by port names, turns a linear `c,b,e` module's op into 577 iterations and gmin stepping (3 without) | medium |
+| [F15](#f15) | *(fixed in [E-831](../../enhancements_doc/Enhancement-831.md): the option stood aside, and the default set holds no `@dev[param]`)* `.option saveused` does not collect an `@dev[param]` named in a `.meas` card, so the measure fails | low |
 | [F16](#f16) | `$random` and `$arandom` with no seed return the same value in every analysis and in every instance, and ignore `setseed` | medium |
 | [F17](#f17) | an OSDI *internal* node with no DC path gets no dc-path gmin: every homotopy fails and the transient op answers 0.5 V where the built-in twin holds 0 | medium |
 | [F18](#f18) | under `osdimc` the bins of one binned model draw independently: one device type's process shift jumps at a bin boundary | medium |
@@ -342,6 +342,11 @@ tracked peak there never does under `pss` or `hb`.
 <a id="f13"></a>
 ## F13 — `$fatal` inside `@(final_step)` is a print
 
+*Fixed in [E-829](../../enhancements_doc/Enhancement-829.md): `OSDIfinalStep` discarded what its
+evaluations returned. The flags are kept, and after the analysis returns the job asks: a
+`$fatal` fails it (an error line, "simulation(s) aborted", exit status 1, the results kept), a
+`$finish` or `$stop` is noted. `hb` asks too.*
+
 `@(final_step) $fatal(0, "...")` prints `OSDI(fatal) n1: … (at the operating point)` (or
 `at t = 3e-09`, or `at sweep value 1`) and nothing more: the analysis is not marked aborted,
 the exit status is 0, and the script runs on. A `$fatal` anywhere else aborts and gives
@@ -350,6 +355,10 @@ exit status 1. A `$finish` inside `@(final_step)` is silent too. A `$fatal` in
 
 <a id="f14"></a>
 ## F14 — E-543's limiting is applied to anything with BJT port names
+
+*Fixed in [E-830](../../enhancements_doc/Enhancement-830.md): the BJT family now also needs a
+polarity parameter `type`, which every transistor model in the corpus carries; the linear
+network converges in 3 iterations. The MOSFET family, whose linear twin cost 6, is unchanged.*
 
 E-543 recognizes a MOSFET by `d,g,s[,b]` and a BJT by `c,b,e[,s]` and applies the built-ins'
 limiting to a model that calls no `$limit`. A *linear* three-terminal resistor network
@@ -367,6 +376,10 @@ circuit of such modules could fail to converge.
 
 <a id="f15"></a>
 ## F15 — `saveused` misses an `@dev[param]` in a `.meas` card
+
+*Fixed in [E-831](../../enhancements_doc/Enhancement-831.md). The references were collected
+(E-572); the option stood aside, because the control block had no output command, and the
+default save set holds no `@dev[param]`. Standing aside now saves those vectors too.*
 
 ```spice
 .option saveused

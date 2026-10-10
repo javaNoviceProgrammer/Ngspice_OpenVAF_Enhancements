@@ -214,6 +214,14 @@ extern int OSDIfinalStep(CKTcircuit *ckt);
  * harmonic Jacobian from such loads at every sample). Defined in osdiload.c. */
 extern void OSDIforgetBiasPoint(void);
 
+/* Enhancement-829 (hunt 2026-10-08 F13): what the last OSDIfinalStep raised.
+ * A $fatal there is reported and returns E_PANIC, so the job that ran the
+ * analysis ends failed (exit status 1, as a $fatal anywhere else); a $finish
+ * or $stop is noted, the analysis having already ended. Clears the record.
+ * CKTdoJob calls it after each analysis; hb, which runs outside a job, too.
+ * Defined in osdiload.c. */
+extern int OSDIfinalStepVerdict(void);
+
 /* Enhancement-789: while held, OSDI setup and the temperature pass leave each
  * instance's "evaluated" mark alone, so @(initial_step) does not fire again.
  * Held by sensitivity analysis from its base operating point to its end,

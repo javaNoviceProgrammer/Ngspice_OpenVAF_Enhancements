@@ -175,6 +175,7 @@ com_hb(wordlist *wl)
 
     {
         struct hbspectrum sp;
+        int hb_final_fatal = 0;                   /* Enhancement-829 */
         memset(&sp, 0, sizeof sp);
         err = HBanalyze(ckt, f0, K, P, maxiter, tol, verbose ? 1 : 0, &sp);
         if (err != OK) {
@@ -206,6 +207,8 @@ com_hb(wordlist *wl)
                  * solution (-0.14895 V where the steady state is -0.14515) */
                 OSDIforgetBiasPoint();
                 OSDIfinalStep(ckt);
+                if (OSDIfinalStepVerdict() != OK)        /* Enhancement-829 */
+                    hb_final_fatal = 1;
             }
 #endif
             /* Enhancement-438: tell batch mode that an analysis really ran.
@@ -215,7 +218,9 @@ com_hb(wordlist *wl)
              * good harmonic-balance run in `ngspice -b` exited 1 with
              * "Error: incomplete or empty netlist" -- every successful HB run
              * looked like a failure to any script checking the exit code. */
-            int ok = 0;
+            /* Enhancement-829: a $fatal in @(final_step) fails the run, as
+             * runcoms.c's "simulation(s) aborted" does for a job */
+            int ok = hb_final_fatal;
             cp_vset("sim_status", CP_NUM, &ok);
         }
         FREE(sp.Vr);

@@ -366,6 +366,13 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
                     ckt->CKTcurJob = job;
                     ckt->CKTsenInfo = (SENstruct*)job;
                     error = analInfo[sens_num]->an_func(ckt, reset);
+#ifdef OSDI
+                    {   /* Enhancement-829: a $fatal in @(final_step) */
+                        int fs = OSDIfinalStepVerdict();
+                        if (error == OK)
+                            error = fs;
+                    }
+#endif
                 }
             }
 
@@ -458,6 +465,14 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
                     }
 #endif
                     error = analInfo[i]->an_func(ckt, reset);
+#ifdef OSDI
+                    {   /* Enhancement-829: a $fatal in @(final_step) fails the
+                           job it ran in, as a $fatal anywhere else does */
+                        int fs = OSDIfinalStepVerdict();
+                        if (error == OK)
+                            error = fs;
+                    }
+#endif
 #ifdef KLU
                     /* F4 (2026-09-06): AC, noise, sp and disto bind every device to
                      * the COMPLEX value arrays on the way in and back to the real

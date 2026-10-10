@@ -1108,6 +1108,21 @@ static void osdi_lim_apply(CKTcircuit *ckt, const OsdiRegistryEntry *entry,
                                         : "its terminals are not a 3/4-terminal MOSFET's (d,g,s[,b]) or BJT's (c,b,e[,s])");
     return;
   }
+  /* Enhancement-830 (hunt 2026-10-08 F14): terminals named c,b,e are not
+   * enough to make a BJT. A linear three-terminal resistor network `rnet(c, b,
+   * e)` got the junction limiting -- DEVpnjlim crawling across a 100 V bias a
+   * critical voltage at a time -- and its operating point took 577 Newton
+   * iterations and dynamic gmin stepping where it needs 3. A transistor model
+   * names its polarity: the corpus BJTs (MEXTRAM's TYPE, HICUM's type) and
+   * opamp741's bjt741 all carry `type`, which the limiter reads anyway; a
+   * module without one is not limited. */
+  if (entry->lim_kind == OSDI_LIM_BJT && entry->lim_type_param == UINT32_MAX) {
+    if (osdi_lim_verbose)
+      osdi_lim_report(entry, inst, "no simulator-side limiting",
+                      "its terminals are a BJT's (c,b,e[,s]) but it has no polarity "
+                      "parameter `type`, the mark of a transistor model");
+    return;
+  }
   if (ckt->CKTmode & (MODEINITSMSIG | MODEAC))
     return;
   const OsdiDescriptor *descr = entry->descriptor;
@@ -2148,11 +2163,38 @@ int OSDIdeferredFatal(CKTcircuit *ckt, const char *where) {
  * EVAL_FLAG_IS_INITIAL_STEP. The ANALYSIS_* flags are set from CKTmode with
  * OSDIload's mapping so that phase-qualified events
  * (`@(final_step("tran"))`) match via the stdlib analysis() callback. */
+/* Enhancement-829 (hunt 2026-10-08 F13): what the last OSDIfinalStep's
+ * evaluations raised, for OSDIfinalStepVerdict(). */
+static int osdi_final_req;
+
+int OSDIfinalStepVerdict(void) {
+  int req = osdi_final_req;
+  osdi_final_req = 0;
+  if (req & OSDI_REQ_FATAL) {
+    CKTvaFatalRaised = 1;
+    fprintf(stderr,
+            "\nError: a Verilog-A device raised $fatal in @(final_step), after the "
+            "analysis had produced its results; the run stops here.\n"
+            "       See the OSDI(fatal) message above for the cause.\n");
+    fflush(stderr);
+    return E_PANIC;
+  }
+  if (req & OSDI_REQ_FINISH)
+    fprintf(stdout, "\nNote: $finish requested by a Verilog-A device in "
+                    "@(final_step); the analysis had already ended.\n");
+  else if (req & OSDI_REQ_STOP)
+    fprintf(stdout, "\nNote: $stop requested by a Verilog-A device in "
+                    "@(final_step); the analysis had already ended, so there is "
+                    "nothing to pause.\n");
+  return OK;
+}
+
 int OSDIfinalStep(CKTcircuit *ckt) {
   /* The analysis just completed: whatever the final converged iteration
    * deferred belongs to an accepted solution -- flush it before the
    * final_step evaluations produce their own (immediate-tagged) output. */
   OSDIpendingFlush(ckt);
+  osdi_final_req = 0;                     /* Enhancement-829 */
   bool is_tran = ckt->CKTmode & MODETRAN;
 
   OsdiSimInfo sim_info = {
@@ -2256,6 +2298,16 @@ int OSDIfinalStep(CKTcircuit *ckt) {
         }
 
         eval(descr, gen_inst, inst, extra_inst_data, model, &sim_info);
+        /* Enhancement-829 (hunt 2026-10-08 F13): a $fatal here was printed
+         * and nothing more -- the run went on with exit status 0 -- and a
+         * $finish or $stop was dropped in silence. Kept for the verdict. */
+        if (extra_inst_data->eval_flags &
+            (EVAL_RET_FLAG_FATAL | EVAL_RET_FLAG_FATAL_DEFERRED))
+          osdi_final_req |= OSDI_REQ_FATAL;
+        if (extra_inst_data->eval_flags & EVAL_RET_FLAG_FINISH)
+          osdi_final_req |= OSDI_REQ_FINISH;
+        if (extra_inst_data->eval_flags & EVAL_RET_FLAG_STOP)
+          osdi_final_req |= OSDI_REQ_STOP;
 
         if (op_snapshot) {
           memcpy(inst, op_snapshot, descr->instance_size);

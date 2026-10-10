@@ -748,6 +748,32 @@ void ft_saveused(wordlist *controls)
     }
 
     if (saw_all || !any_out || !saves) {
+        /* Enhancement-831 (hunt 2026-10-08 F15): standing aside saves
+         * everything -- but "everything" is ngspice's default set, which never
+         * holds an @device[param] vector. A `.meas tran p_max max @n2[pw]`
+         * beside a control block that only runs `tran` (no output command, so
+         * the option stands aside) failed with "holds 1 point(s) but the
+         * analysis produced 2018", under an option whose one promise is that
+         * the deck still works; with an output command in the block the same
+         * card worked. So the @-references the deck makes are added to the
+         * default set: `save all` and those vectors, as the error message
+         * itself advises. Plain node and branch names are in the default set
+         * already. */
+        wordlist *at = NULL, *w2;
+        for (w2 = saves; w2; w2 = w2->wl_next)
+            if (w2->wl_word && w2->wl_word[0] == '@')
+                at = wl_cons(copy(w2->wl_word), at);
+        if (at) {
+            at = wl_cons(copy("all"), wl_reverse(at));
+            ft_save_mark_auto(1);
+            com_save(at);
+            ft_save_mark_auto(0);
+            if (ft_ngdebug)
+                fprintf(stdout, "saveused: saving everything, and the %d "
+                        "@device[param] vector(s) the deck reads\n",
+                        wl_length(at) - 1);
+            wl_free(at);
+        }
         wl_free(saves);
         return;
     }

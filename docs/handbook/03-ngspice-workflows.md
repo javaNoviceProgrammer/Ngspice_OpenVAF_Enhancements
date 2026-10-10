@@ -605,7 +605,9 @@ simulator now recognizes a 3/4-terminal MOSFET (`d,g,s[,b]`) or BJT
 guess and `DEVfetlim`/`DEVlimvds`/`DEVpnjlim` limiting to it — 8 iterations
 on those chains, the same operating point to 1e-16. Models that limit
 themselves, carry a thermal terminal, or keep other live internal nodes are
-left alone. `.option noosdilim` switches it off; `set osdilim_verbose` says,
+left alone, and so, since [E-830](../../enhancements_doc/Enhancement-830.md), is a
+`c,b,e` module without a polarity parameter `type` (a linear resistor network took
+577 iterations limited). `.option noosdilim` switches it off; `set osdilim_verbose` says,
 once per model, what was decided and why
 ([`examples/osdilimit_examples/`](../../examples/osdilimit_examples/)).
 
