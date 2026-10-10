@@ -94,10 +94,10 @@ instances x internal nodes x circuit nodes, nine seconds before a photonic
 chip's sweep started. The candidate deck nodes (a '#' in the name, no device
 line naming them) are collected once per setup, an empty set in almost every
 deck, and matched to instances by name.
-  [19] 1000 instances of a 40-internal-node module (42k nodes): the op runs
-       within 1 s, and four times the instances cost less than eight times
-       the 250-instance run (it was 1.5 s and a 14x ratio); each size is
-       timed three times and the fastest run counts
+  [19] 1000 instances of a 40-internal-node module (42k nodes): four times
+       the instances cost less than eight times the 250-instance run (it was
+       a 14x ratio, 1.5 s); each size is timed three times and the fastest run
+       counts, and 5 s is a hang guard
 """
 import os
 import re
@@ -379,8 +379,11 @@ def right_value(out):
 timed_run(many_deck(250), "t19w")           # warm-up: the first load of many.osdi
 t250, outs250 = best_of(3, many_deck(250), "t19a")
 t1000, outs1000 = best_of(3, many_deck(1000), "t19b")
-check("[19] 1000 instances of a 40-internal-node module (42k nodes): the op runs within 1 s (was 1.5 s), the value right",
-      t1000 < 1.0 and all(right_value(o) for o in outs1000 + outs250),
+# The absolute bound is a hang guard only: the slowest CI runner (macOS Intel,
+# a sweep five times slower than a development machine) timed the fastest of
+# three at 1.09 s. The ratio check below is what catches the quadratic setup.
+check("[19] 1000 instances of a 40-internal-node module (42k nodes): the op runs within 5 s, the value right",
+      t1000 < 5.0 and all(right_value(o) for o in outs1000 + outs250),
       f"t(1000) = {t1000:.3f} s, t(250) = {t250:.3f} s, the fastest of 3 each")
 check("[19] ...four times the instances cost less than eight times the 250-instance run (the setup is linear; it was a 14x ratio)",
       t250 > 0 and t1000 / t250 < 8.0, f"ratio {t1000 / t250:.1f}")
