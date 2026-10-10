@@ -314,12 +314,13 @@ if_errstring(int code)
 }
 
 /* -------------------------------------------------------------------------- */
-void
+int
 if_setparam_model(CKTcircuit *ckt, char **name, char *val)
 {
     NG_IGNORE(val);
     NG_IGNORE(name);
     NG_IGNORE(ckt);
+    return 0;
 }
 
 void

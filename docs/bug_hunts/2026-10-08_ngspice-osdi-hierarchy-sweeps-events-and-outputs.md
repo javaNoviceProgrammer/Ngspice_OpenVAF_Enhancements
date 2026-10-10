@@ -45,9 +45,9 @@ Nothing was fixed; this is the list.
 | [F7](#f7) | *(fixed in [E-823](../../enhancements_doc/Enhancement-823.md): a name found beside the included file is used)* `pre_osdi` and `pre_osdi -va` inside an included library resolve relative paths against the top deck's directory, not the library's | medium |
 | [F8](#f8) | *(fixed in [E-824](../../enhancements_doc/Enhancement-824.md): the lookup uses the model hash; 0.23 s at 32 000)* a `.model` inside a `.subckt` costs O(N²) in the instance count: 32 000 wrappers take 19 s with a built-in card, 2.9 s with an OSDI card, 0.19 s with the card at top level | medium (speed) |
 | [F9](#f9) | *(fixed in [E-825](../../enhancements_doc/Enhancement-825.md): `$fatal` aborts and names the perturbation, `$finish`/`$stop` end with a note)* a `$fatal` raised during a `sens` perturbation is printed and ignored, and `$stop` and `$finish` are ignored without a word; `sens` completes and prints every sensitivity | medium |
-| [F10](#f10) | `alter n1 l=5u` moves a binned instance out of its bin in silence: it stays on `nch.1` with `nch.2`'s size | medium |
-| [F11](#f11) | `pre_osdi -va` of a source with a compile error advises on how to *find* the compiler | low |
-| [F12](#f12) | `pss` and `hb` never fire `@(final_step)` | medium |
+| [F10](#f10) | *(fixed in [E-826](../../enhancements_doc/Enhancement-826.md): re-binned, a size no bin covers refused; built-in BSIM applied that one too)* `alter n1 l=5u` moves a binned instance out of its bin in silence: it stays on `nch.1` with `nch.2`'s size | medium |
+| [F11](#f11) | *(fixed in [E-827](../../enhancements_doc/Enhancement-827.md); `pre_snp` too)* `pre_osdi -va` of a source with a compile error advises on how to *find* the compiler | low |
+| [F12](#f12) | *(fixed in [E-828](../../enhancements_doc/Enhancement-828.md): once, at the end of the period)* `pss` and `hb` never fire `@(final_step)` | medium |
 | [F13](#f13) | `$fatal` (and `$finish`) inside `@(final_step)` is printed and otherwise ignored: no abort, exit status 0 | low |
 | [F14](#f14) | E-543's BJT limiting, chosen by port names, turns a linear `c,b,e` module's op into 577 iterations and gmin stepping (3 without) | medium |
 | [F15](#f15) | `.option saveused` does not collect an `@dev[param]` named in a `.meas` card, so the measure fails | low |
@@ -283,6 +283,12 @@ and the sensitivities are printed. In op, dc and tran each of the three acts and
 <a id="f10"></a>
 ## F10 — `alter` moves a binned instance out of its bin in silence
 
+*Fixed in [E-826](../../enhancements_doc/Enhancement-826.md): ngspice's existing re-binning on
+`alter w`/`l` ran for m-devices only; it now runs for any instance on a bin, and a size no bin
+covers is refused with the bins named. The m-device path applied such a size after its
+"no model available" -- a built-in BSIM4 instance was left outside its bin -- and refuses it
+now too.*
+
 ```spice
 .model nch.1 bm g=1m lmin=0  lmax=1u  wmin=0 wmax=10u
 .model nch.2 bm g=3m lmin=1u lmax=10u wmin=0 wmax=10u
@@ -299,6 +305,11 @@ refuses the value (D). Built-in binned models were not checked.
 <a id="f11"></a>
 ## F11 — a compile error is answered with advice for a missing compiler
 
+*Fixed in [E-827](../../enhancements_doc/Enhancement-827.md): one report for `pre_osdi -va` and
+`pre_snp` tells a compiler that could not be run (no such file, not on PATH, not executable)
+from one that ran and refused the source, and only the first gets the advice. `pre_snp` also
+printed the raw wait status ("exit 32512").*
+
 ```
 error: 'nosuch' was not found in the current scope
 ...
@@ -312,6 +323,10 @@ The compiler was found and ran; the source has an error. The location advice bel
 
 <a id="f12"></a>
 ## F12 — `pss` and `hb` never fire `@(final_step)`
+
+*Fixed in [E-828](../../enhancements_doc/Enhancement-828.md): `pss` fires it at the end of the
+confirmed period, `hb` at t = T on the sum of its harmonics (after dropping a bias-point
+capture its own small-signal loads had retaken, which read the last sample instead).*
 
 The counting module of F4, in the driven RC deck of `pssdriven_examples`:
 

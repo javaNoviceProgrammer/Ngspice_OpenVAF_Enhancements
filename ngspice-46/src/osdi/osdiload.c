@@ -1413,6 +1413,9 @@ static int osdi_solution_len(const CKTcircuit *ckt) {
   return ckt->CKTmatrix ? SMPmatSize(ckt->CKTmatrix) + 1 : 0;
 }
 
+/* Enhancement-828: see osdiitf.h */
+void OSDIforgetBiasPoint(void) { osdi_op_solve_valid = false; }
+
 static void osdi_op_solve_capture(CKTcircuit *ckt) {
   int n = osdi_solution_len(ckt);
   if (ckt->CKTrhsOld == NULL || n <= 0)

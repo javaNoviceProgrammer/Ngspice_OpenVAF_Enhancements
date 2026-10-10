@@ -184,51 +184,8 @@ static int va_newest_mtime(const char *path, int depth, time_t *newest)
 }
 
 
-/* Enhancement-574: a compiler named without a directory -- the PATH fallback
- * of osdi_find_openvaf() -- is located on PATH the way system() will locate
- * it, so that its timestamp can be read for the staleness test above. Without
- * this the compiler check of Enhancement-573 was silently inert for exactly
- * the users it was written for: a `set openvaf=` or $OPENVAF names a path, a
- * bare `openvaf-r` on PATH could not be stat'ed and was not checked, and the
- * same deck cached or rebuilt depending on how the compiler had been named.
- * Returns 0 when the name is nowhere on PATH; the compile then fails and says
- * so itself. */
-static int va_resolve_on_path(const char *name, char *out, size_t outlen)
-{
-    const char *path, *p;
-#ifdef _WIN32
-    const char sep = ';';
-#else
-    const char sep = ':';
-#endif
-
-    if (strchr(name, '/') || strchr(name, '\\') || (name[0] && name[1] == ':')) {
-        (void) snprintf(out, outlen, "%s", name);
-        return 1;
-    }
-    path = getenv("PATH");
-    if (!path)
-        return 0;
-    for (p = path;;) {
-        const char *e = strchr(p, sep);
-        size_t n = e ? (size_t) (e - p) : strlen(p);
-        struct stat st;
-        if (n) {
-            (void) snprintf(out, outlen, "%.*s/%s", (int) n, p, name);
-            if (stat(out, &st) == 0)
-                return 1;
-#ifdef _WIN32
-            (void) snprintf(out, outlen, "%.*s/%s.exe", (int) n, p, name);
-            if (stat(out, &st) == 0)
-                return 1;
-#endif
-        }
-        if (!e)
-            break;
-        p = e + 1;
-    }
-    return 0;
-}
+/* Enhancement-574's PATH lookup lives in com_presnp.c (osdi_resolve_on_path)
+ * since Enhancement-827, beside the compiler lookup it serves. */
 
 
 /* Compile `va` into <netlist dir>/osdi/<stem>.osdi. Returns a malloc'd path to
@@ -300,7 +257,7 @@ static char *va_compile(const char *va, bool force)
         if (va_newest_mtime(src, 0, &tnew) && tosdi > tnew) {
             char *ovf0 = osdi_find_openvaf();
             char ovfpath[1400];
-            int newer_compiler = ovf0 && va_resolve_on_path(ovf0, ovfpath, sizeof ovfpath)
+            int newer_compiler = ovf0 && osdi_resolve_on_path(ovf0, ovfpath, sizeof ovfpath)
                                  && va_mtime(ovfpath, &tovf) && tovf >= tosdi;
             if (!newer_compiler) {
                 tfree(ovf0);
@@ -337,25 +294,11 @@ static char *va_compile(const char *va, bool force)
 #endif
     rc = system(cmd);
     tfree(cmd);
-    /* Enhancement-510: `system()` returns a WAIT STATUS, not an exit code, so
-       the compiler's 101 was reported as 25856 (101 << 8) and a 2 as 512. The
-       comment above this block quotes "exit 512" as if it were an exit code,
-       which is exactly that encoding gone unnoticed. Decode it, and name a
-       signal death as such rather than printing a status word. */
-#ifdef WIFEXITED
-    if (rc != -1 && WIFEXITED(rc))
-        rc = WEXITSTATUS(rc);
-    else if (rc != -1 && WIFSIGNALED(rc)) {
-        fprintf(cp_err, "pre_osdi: openvaf-r was killed by signal %d compiling %s.\n",
-                WTERMSIG(rc), src);
-        return NULL;
-    }
-#endif
+    /* Enhancement-510 decoded the wait status here; Enhancement-827 moved
+       that into the shared report, which also tells a compiler that could not
+       be run from one that ran and refused the source. */
     if (rc != 0) {
-        fprintf(cp_err, "pre_osdi: openvaf-r failed (exit %d) compiling %s.\n"
-                        "  Set the compiler with `set openvaf=/path/to/openvaf-r`, the OPENVAF\n"
-                        "  environment variable, or put openvaf-r in $SPICE_LIB_DIR or PATH.\n",
-                rc, src);
+        osdi_report_compile_failure("pre_osdi", rc, ovf, src);
         tfree(ovf);
         return NULL;
     }

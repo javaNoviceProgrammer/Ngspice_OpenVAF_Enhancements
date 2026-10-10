@@ -22,6 +22,9 @@ makes sure the circuit is built, and runs it.
 
 #include "circuits.h"
 #include "com_hb.h"
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-828: OSDIfinalStep */
+#endif
 
 static double hbnum(const char *w)
 {
@@ -178,6 +181,33 @@ com_hb(wordlist *wl)
             fprintf(cp_err, "hb: harmonic balance did not complete (error %d).\n", err);
         } else {
             hb_publish_spectrum(ckt, &sp, "hb", "Harmonic Balance", "hb", 0);
+#ifdef OSDI
+            /* Enhancement-828 (hunt 2026-10-08 F12): fire @(final_step) once,
+             * as every analysis does since E-683 -- hb never did. Its last
+             * point is the end of the period, t = T, where each node's voltage
+             * is the sum of its two-sided harmonics (cos(k w T) = 1, and the
+             * imaginary parts of a real signal cancel). CKTrhsOld holds
+             * whatever HBanalyze's last device evaluation left there, so the
+             * steady state is put there first. */
+            if (sp.Vr && sp.N > 0 && sp.N <= SMPmatSize(ckt->CKTmatrix)) {
+                int nn, kk;
+                for (nn = 0; nn < sp.N; nn++) {
+                    double v = 0.0;
+                    for (kk = 0; kk < 2 * sp.K + 1; kk++)
+                        v += sp.Vr[(size_t) kk * (size_t) sp.N + (size_t) nn];
+                    ckt->CKTrhsOld[nn + 1] = v;
+                }
+                ckt->CKTrhsOld[0] = 0.0;
+                ckt->CKTtime = 1.0 / f0;
+                ckt->CKTmode = (ckt->CKTmode & MODEUIC) | MODETRAN | MODEINITFLOAT;
+                /* HB assembles its harmonic Jacobian from small-signal loads at
+                 * every sample, each of which re-took E-677's bias-point
+                 * capture: without this the final step read the last sample's
+                 * solution (-0.14895 V where the steady state is -0.14515) */
+                OSDIforgetBiasPoint();
+                OSDIfinalStep(ckt);
+            }
+#endif
             /* Enhancement-438: tell batch mode that an analysis really ran.
              * main.c decides "did anything simulate?" from `sim_status`, which
              * runcoms.c publishes for the analyses that go through if_run().

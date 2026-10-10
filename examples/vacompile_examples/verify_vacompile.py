@@ -322,10 +322,13 @@ fresh()
 d = deck("bad.cir", "pre_osdi -va bad.va", body="V1 a 0 dc 1\nR1 a 0 1k\n")
 rc, o = run(d)
 check("[22] a .va that does not compile reports the compiler's own errors",
-      "openvaf-r failed" in o and "error" in o.lower(),
+      "could not compile" in o and "error" in o.lower(),
       o.strip().splitlines()[-1][:60])
-check("[23] ...and points at every way to supply the compiler",
-      "set openvaf=" in o and "OPENVAF" in o and "SPICE_LIB_DIR" in o)
+# Enhancement-827: the compiler ran, so the report points at its messages; the
+# advice on where to put the compiler is for a compiler that could not run
+# (rebinfinal [2]). It used to follow every failure, this one included.
+check("[23] ...and points at the compiler's messages, not at ways to supply the compiler",
+      "its messages above" in o and "set openvaf=" not in o)
 
 # ------------------------------------------------------------ controls ----
 print("\ncontrols -- what must not change")

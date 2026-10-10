@@ -24,6 +24,7 @@ Modified: 2000 AlansFixes
 
 #include "gens.h" /* wl_forall */
 #include "com_aging.h" /* Enhancement-544: the user alter journal */
+#include "spiceif.h"   /* Enhancement-826: if_user_write_refusals */
 
 int ft_set_writes = 0;   /* Enhancement-544: bumped by every successful doset() */
 
@@ -32,7 +33,7 @@ static wordlist *devexpand(char *name);
 static void all_show(wordlist *wl, int mode);
 static int  all_show_old(wordlist *wl, int mode, int quiet);
 static void com_alter_mod(wordlist *wl);
-static void if_set_binned_model(CKTcircuit *, char *, char *, struct dvec *);
+static int if_set_binned_model(CKTcircuit *, char *, char *, struct dvec *);
 
 
 /*
@@ -1423,17 +1424,20 @@ com_altermod(wordlist *wl)
 }
 
 
-static void
+/* Returns 1 when no bin covers the new size (Enhancement-826: the value is
+ * then not applied), else 0. */
+static int
 if_set_binned_model(CKTcircuit *ckt, char *devname, char *param, struct dvec *val)
 {
     char *width_length;
     double w = 0.0, l = 0.0;
     struct variable *v;
+    int rc;
 
     v = if_getparam(ckt, &devname, "w", 0, 0);
     if (!v) {
         fprintf(cp_err, "Error: Can't access width instance parameter.\n");
-        return;
+        return 0;
     }
     w = v->va_V.vV_real;
     free_struct_variable(v);
@@ -1441,7 +1445,7 @@ if_set_binned_model(CKTcircuit *ckt, char *devname, char *param, struct dvec *va
     v = if_getparam(ckt, &devname, "l", 0, 0);
     if (!v) {
         fprintf(cp_err, "Error: Can't access length instance parameter.\n");
-        return;
+        return 0;
     }
     l = v->va_V.vV_real;
     free_struct_variable(v);
@@ -1453,8 +1457,9 @@ if_set_binned_model(CKTcircuit *ckt, char *devname, char *param, struct dvec *va
 
     width_length = tprintf("w=%15.7e l=%15.7e", w, l);
 
-    if_setparam_model(ft_curckt->ci_ckt, &devname, width_length);
+    rc = if_setparam_model(ft_curckt->ci_ckt, &devname, width_length);
     FREE(width_length);
+    return rc;
 }
 
 
@@ -1985,8 +1990,19 @@ com_alter_common_impl(wordlist *wl, int do_model)
        name that merely starts with `m` -- it could never succeed and only
        printed "no such parameter w" and "Can't access width instance
        parameter" ahead of the real answer. */
-    if (param && !do_model && (dev[0] == 'm') && (eq(param, "w") || eq(param, "l")))
-        if_set_binned_model(ft_curckt->ci_ckt, dev, param, dv);
+    /* Enhancement-826 (hunt 2026-10-08 F10): any instance on a bin, not only
+       an m-device -- an OSDI card set bins by lmin/lmax too (E-495), and
+       `alter n1 l=5u` left the instance on nch.1 with nch.2's size in silence.
+       A size no bin covers is refused, not applied: the instance kept its old
+       bin outside its range, the BSIM path included. */
+    if (param && !do_model && (eq(param, "w") || eq(param, "l")) &&
+        (dev[0] == 'm' || if_instance_binned(ft_curckt->ci_ckt, dev))) {
+        if (if_set_binned_model(ft_curckt->ci_ckt, dev, param, dv) == 1) {
+            fprintf(cp_err, "       not applied: %s keeps the size it had.\n", dev);
+            if_user_write_refusals++;          /* Enhancement-815's count */
+            goto done;
+        }
+    }
 
     alter_journal_stage_real(dv);              /* Enhancement-544 */
     alter_set(dev, param, dv, do_model);

@@ -1484,8 +1484,34 @@ spif_getparam(CKTcircuit *ckt, char **name, char *param, int ind, int do_model)
 }
 
 
-/* 9/26/03 PJB : function to allow setting model of device */
-void
+/* Enhancement-826 (hunt 2026-10-08 F10): does instance `name` sit on a bin of
+ * a binned model (its card is `<base>.<digits>`)? */
+int
+if_instance_binned(CKTcircuit *ckt, char *name)
+{
+    GENinstance *dev = NULL;
+    GENmodel *mod = NULL;
+    const char *mn, *dot, *q;
+    char *nm = name;
+
+    INPretrieve(&nm, ft_curckt->ci_symtab);
+    if (finddev(ckt, nm, &dev, &mod) == -1 || !dev || !dev->GENmodPtr)
+        return 0;
+    mn = dev->GENmodPtr->GENmodName;
+    dot = mn ? strrchr(mn, '.') : NULL;
+    if (!dot || dot == mn || !dot[1])
+        return 0;
+    for (q = dot + 1; *q; q++)
+        if (!isdigit_c(*q))
+            return 0;
+    return 1;
+}
+
+
+/* 9/26/03 PJB : function to allow setting model of device.
+ * Enhancement-826: returns 1 when no bin covers the new size (nothing was
+ * moved, and INPgetModBin's message naming the bins is printed), else 0. */
+int
 if_setparam_model(CKTcircuit *ckt, char **name, char *val)
 {
     GENinstance *dev     = NULL;
@@ -1504,7 +1530,7 @@ if_setparam_model(CKTcircuit *ckt, char **name, char *val)
     typecode = finddev(ckt, *name, &dev, &curMod);
     if (typecode == -1) {
         fprintf(cp_err, "Error: no such device name %s\n", *name);
-        return;
+        return 0;
     }
     curMod = dev->GENmodPtr;
     modname = copy(dev->GENmodPtr->GENmodName);
@@ -1515,13 +1541,23 @@ if_setparam_model(CKTcircuit *ckt, char **name, char *val)
     */
     INPgetMod(ckt, modname, &inpmod, ft_curckt->ci_symtab);
     /* check if using model binning -- pass in line since need 'l' and 'w' */
-    if (inpmod == NULL)
-        INPgetModBin(ckt, modname, &inpmod, ft_curckt->ci_symtab, val);
-    tfree(modname);
     if (inpmod == NULL) {
-        fprintf(cp_err, "Error: no model available for %s.\n", val);
-        return;
+        /* Enhancement-826: INPgetModBin says which bins there are and what
+         * the instance asked for (Enhancement-600); that message was dropped
+         * and the caller went on to apply the size anyway */
+        char *why = INPgetModBin(ckt, modname, &inpmod, ft_curckt->ci_symtab, val);
+        if (inpmod == NULL) {
+            if (why)
+                fprintf(cp_err, "Error: %s: %s", *name, why);
+            else
+                fprintf(cp_err, "Error: no model available for %s.\n", val);
+            tfree(why);
+            tfree(modname);
+            return 1;
+        }
+        tfree(why);
     }
+    tfree(modname);
     newMod = inpmod->INPmodfast;
 
     /* see if new model name same as current model name */
@@ -1529,7 +1565,7 @@ if_setparam_model(CKTcircuit *ckt, char **name, char *val)
         printf("Notice: model has changed from %s to %s.\n", curMod->GENmodName, newMod->GENmodName);
     if (newMod->GENmodType != curMod->GENmodType) {
         fprintf(cp_err, "Error: new model %s must be same type as current model.\n", val);
-        return;
+        return 0;
     }
 
     /* fix current model linked list */
@@ -1574,6 +1610,7 @@ if_setparam_model(CKTcircuit *ckt, char **name, char *val)
             prevMod = mods;
         }
     }
+    return 0;
 }
 
 

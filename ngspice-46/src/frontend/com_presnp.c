@@ -16,8 +16,12 @@
 #include "ngspice/cpextern.h"
 
 #include "snp2va.h"
+#include "ngspice/osdiitf.h"   /* Enhancement-827 */
 
 #include <sys/stat.h>
+#ifndef _WIN32
+#include <sys/wait.h>     /* Enhancement-827: WIFEXITED */
+#endif
 
 static int file_exists(const char *p)
 {
@@ -45,6 +49,109 @@ char *osdi_find_openvaf(void)
             return copy(buf);
     }
     return copy("openvaf-r");                       /* rely on PATH */
+}
+
+/* Enhancement-574: a compiler named without a directory -- the PATH fallback
+ * of osdi_find_openvaf() -- is located on PATH the way system() will locate
+ * it, so that its timestamp can be read for the staleness test above. Without
+ * this the compiler check of Enhancement-573 was silently inert for exactly
+ * the users it was written for: a `set openvaf=` or $OPENVAF names a path, a
+ * bare `openvaf-r` on PATH could not be stat'ed and was not checked, and the
+ * same deck cached or rebuilt depending on how the compiler had been named.
+ * Returns 0 when the name is nowhere on PATH; the compile then fails and says
+ * so itself. A name with a directory is returned as it is, unchecked.
+ * Enhancement-827: moved here from com_dl.c and exported, beside
+ * osdi_find_openvaf(), for osdi_report_compile_failure() below. */
+int osdi_resolve_on_path(const char *name, char *out, size_t outlen)
+{
+    const char *path, *p;
+#ifdef _WIN32
+    const char sep = ';';
+#else
+    const char sep = ':';
+#endif
+
+    if (strchr(name, '/') || strchr(name, '\\') || (name[0] && name[1] == ':')) {
+        (void) snprintf(out, outlen, "%s", name);
+        return 1;
+    }
+    path = getenv("PATH");
+    if (!path)
+        return 0;
+    for (p = path;;) {
+        const char *e = strchr(p, sep);
+        size_t n = e ? (size_t) (e - p) : strlen(p);
+        struct stat st;
+        if (n) {
+            (void) snprintf(out, outlen, "%.*s/%s", (int) n, p, name);
+            if (stat(out, &st) == 0)
+                return 1;
+#ifdef _WIN32
+            (void) snprintf(out, outlen, "%.*s/%s.exe", (int) n, p, name);
+            if (stat(out, &st) == 0)
+                return 1;
+#endif
+        }
+        if (!e)
+            break;
+        p = e + 1;
+    }
+    return 0;
+}
+
+
+/* Enhancement-827 (hunt 2026-10-08 F11): why a compile failed. Both generators
+ * answered every failure with advice on where to put the compiler -- "Set the
+ * compiler with `set openvaf=...`, the OPENVAF environment variable, or put
+ * openvaf-r in $SPICE_LIB_DIR or PATH" -- including a compiler that was found,
+ * ran, and printed the source's error just above (exit 65). The advice belongs
+ * to a compiler that could not be run: not on PATH, no such file (the shell's
+ * 127, cmd's 9009), not executable (126). A compiler that ran gets its exit
+ * code and is pointed at its own messages; a Rust panic (101) is named as the
+ * compiler's internal error; a signal is named as such. `status` is what
+ * system() returned: a wait status where WIFEXITED exists (Enhancement-510
+ * decoded it in pre_osdi; pre_snp printed the raw word, 16640 for 65). */
+void osdi_report_compile_failure(const char *who, int status, const char *ovf,
+                                 const char *src)
+{
+    int rc = status;
+    char where[1400];
+    int found;
+    struct stat st;
+
+#ifdef WIFEXITED
+    if (status != -1 && WIFSIGNALED(status)) {
+        fprintf(cp_err, "%s: %s was killed by signal %d compiling %s.\n",
+                who, ovf, WTERMSIG(status), src);
+        return;
+    }
+    if (status != -1 && WIFEXITED(status))
+        rc = WEXITSTATUS(status);
+#endif
+    found = osdi_resolve_on_path(ovf, where, sizeof where) &&
+            stat(where, &st) == 0;
+#ifdef _WIN32
+    if (!found && osdi_resolve_on_path(ovf, where, sizeof where - 4)) {
+        strcat(where, ".exe");          /* a path named without its .exe */
+        found = stat(where, &st) == 0;
+    }
+#endif
+    if (status == -1 || !found || rc == 126 || rc == 127 || rc == 9009) {
+        bool named_path = strchr(ovf, '/') || strchr(ovf, '\\') ||
+                          (ovf[0] && ovf[1] == ':');
+        fprintf(cp_err, "%s: could not run the compiler %s%s.\n"
+                        "  Set the compiler with `set openvaf=/path/to/openvaf-r`, the OPENVAF\n"
+                        "  environment variable, or put openvaf-r in $SPICE_LIB_DIR or PATH.\n",
+                who, ovf,
+                !found ? (named_path ? " (no such file)" : " (not on PATH)")
+                       : rc == 126 ? " (not executable)" : "");
+    } else if (rc == 101) {
+        fprintf(cp_err, "%s: %s stopped on an internal error (exit 101) compiling %s;\n"
+                        "  its message is above.\n", who, ovf, src);
+    } else {
+        fprintf(cp_err, "%s: %s could not compile %s (exit %d); its messages above\n"
+                        "  say why.\n", who, ovf, src, rc);
+    }
 }
 
 /* base = basename(snp) with the extension dropped; sanitized to a Verilog id. */
@@ -196,10 +303,7 @@ void com_pre_snp(wordlist *wl)
     rc = system(cmd);
     tfree(cmd);
     if (rc != 0) {
-        fprintf(cp_err, "pre_snp: openvaf-r failed (exit %d) compiling %s.\n"
-                        "  Set the compiler with `set openvaf=/path/to/openvaf-r`, the OPENVAF\n"
-                        "  environment variable, or put openvaf-r in $SPICE_LIB_DIR or PATH.\n",
-                rc, va);
+        osdi_report_compile_failure("pre_snp", rc, ovf, va);   /* Enhancement-827 */
         tfree(ovf);
         return;
     }

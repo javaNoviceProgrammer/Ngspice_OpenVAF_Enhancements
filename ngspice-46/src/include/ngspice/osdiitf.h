@@ -174,6 +174,12 @@ extern char *inputdir;
  * omitted its codegen settings and was wrong the same way). */
 extern int osdi_va_cache;
 extern char *osdi_find_openvaf(void);
+/* Enhancement-827: the PATH lookup system() will do (Enhancement-574), and
+ * the report of a failed compile, shared by pre_osdi -va and pre_snp. Defined
+ * in com_presnp.c. */
+extern int osdi_resolve_on_path(const char *name, char *out, size_t outlen);
+extern void osdi_report_compile_failure(const char *who, int status,
+                                        const char *ovf, const char *src);
 
 /* Enhancement-55: deferred $finish/$stop requests. OSDIload latches the
  * eval-return flags per timepoint attempt; the analyses check at the
@@ -201,6 +207,12 @@ extern int OSDIdeferredFatal(CKTcircuit *ckt, const char *where);
  * converged final solution. Results are not loaded into the matrix/RHS.
  * Defined in src/osdi/osdiload.c. */
 extern int OSDIfinalStep(CKTcircuit *ckt);
+
+/* Enhancement-828: drop the bias point E-677 captured at the last
+ * MODEINITSMSIG load, so the next OSDIfinalStep evaluates at CKTrhsOld. For an
+ * analysis whose small-signal loads are not at its final point (hb builds its
+ * harmonic Jacobian from such loads at every sample). Defined in osdiload.c. */
+extern void OSDIforgetBiasPoint(void);
 
 /* Enhancement-789: while held, OSDI setup and the temperature pass leave each
  * instance's "evaluated" mark alone, so @(initial_step) does not fire again.

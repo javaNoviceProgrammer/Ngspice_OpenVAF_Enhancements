@@ -16,6 +16,9 @@
 #include "ngspice/sperror.h"
 #include "ngspice/fteext.h"
 #include "ngspice/cpextern.h"   /* Enhancement-193: cp_getvar for the `sqrnoise` flag */
+#ifdef OSDI
+#include "ngspice/osdiitf.h"   /* Enhancement-828: OSDIfinalStep */
+#endif
 #ifdef RFSPICE
 #include "vsrc/vsrcdefs.h"             /* Enhancement-132: RF port fields (z0, ki, branch) */
 #include "isrc/isrcdefs.h"             /* Enhancement-176: driven-mode source detection */
@@ -4608,6 +4611,17 @@ DCpss(CKTcircuit *ckt,
             }
             else
             {
+#ifdef OSDI
+                /* Enhancement-828 (hunt 2026-10-08 F12): fire @(final_step) once,
+                 * at the end of the steady-state period -- CKTrhsOld holds that
+                 * accepted point now, before the small-signal reports below load
+                 * the devices at the retained samples. E-683 made every analysis
+                 * end with it; pss never did (initial_step x1, final_step x0),
+                 * so a model closing a file or reporting a tracked peak there
+                 * never got to. A relaunched run at a corrected frequency fires
+                 * in its own confirmed branch; the outer one falls through. */
+                OSDIfinalStep (ckt) ;
+#endif
                 /* Enhancement-119: frequency confirmed -- retain this converged
                  * periodic operating point on the job for periodic small-signal
                  * reuse (PAC/pnoise/PXF). Ownership of the sample arrays is

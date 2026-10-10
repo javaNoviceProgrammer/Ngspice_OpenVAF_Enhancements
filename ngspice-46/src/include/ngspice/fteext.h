@@ -348,7 +348,8 @@ extern struct variable *spif_getparam_special(CKTcircuit *ckt, char **name, char
 extern int if_print_string_params(CKTcircuit *ckt, const char *word, FILE *fp);  /* Enhancement-798 */
 extern bool if_deck_run_pending(void);  /* Enhancement-802 */
 extern void if_setndnames(char *line);
-extern void if_setparam_model(CKTcircuit *ckt, char **name, char *val );
+extern int if_setparam_model(CKTcircuit *ckt, char **name, char *val );   /* E-826: 1 = no bin */
+extern int if_instance_binned(CKTcircuit *ckt, char *name);              /* Enhancement-826 */
 extern void if_setparam(CKTcircuit *ckt, char **name, char *param, struct dvec *val, int do_model);
 extern int if_setparam_string(CKTcircuit *ckt, char **name, char *param, char *strval, int do_model);  /* bug-hunt F3 */
 extern int if_setparam_wildcard(CKTcircuit *ckt, char *param, struct dvec *val);   /* Enhancement-268 */
