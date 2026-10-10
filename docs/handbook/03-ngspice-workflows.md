@@ -89,7 +89,12 @@ Two current readings of one device differ by the multiplier: the branch
 unknown of a voltage contribution, the vector `n1#flow(p,n)` (typed
 `current`, and a name that parses unquoted in `let`/`print` — E-634), is the
 current of *one* unit, while the terminal current `@n1[i_p]` (E-394) is the
-total, `m` times it; with `m=1` they agree.
+total, `m` times it; with `m=1` they agree. In an `ac` or `sp` analysis the
+terminal current is the complex small-signal current, the device's
+G + jωC rows times the solution
+([E-835](../../enhancements_doc/Enhancement-835.md); it held the DC bias),
+and `.options savecurrents` keeps it there. A built-in device answers no
+current in `ac`; `.probe i(<device>)` gives one.
 
 ## 3.3 Parameter access, `alter`, and sweeps
 
@@ -676,7 +681,11 @@ too** (E-623; it used to stratify the netlist's own `.param` draws only and
 say so): each `(* std *)` dimension's N samples land one per stratum — a
 random permutation keyed by (seed, owner, parameter), the jitter the draw's
 own hash, still a pure function with no RNG state — for the gauss, uniform,
-lognormal and truncated shapes alike. And every sampling command now
+lognormal and truncated shapes alike. **The bins of one binned model share
+their process draws** ([E-834](../../enhancements_doc/Enhancement-834.md)):
+`nch.1` and `nch.2` are keyed on `nch`, so a device type moves as one in a
+trial, under `-lhs`, in a `wcd` walk (one dimension) and in `highsigma`'s
+weight; they drew independently. And every sampling command now
 **excludes samples that did not solve
 and reports them** rather than silently reusing the previous sample's
 numbers — with `-scale` those failures cluster in the tail, so their

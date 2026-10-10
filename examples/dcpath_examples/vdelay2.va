@@ -1,7 +1,9 @@
 // Enhancement-679 (hunt F8 of 2026-09-19): two delayed conductances in series
-// inside one module, around an internal node the DC-path walk does not name
-// (it carries the instance's '#'): the matrix is singular there and the
-// transient's "Timestep too small" line names the node.
+// inside one module, around an internal node. The DC-path walk did not name it
+// (it carries the instance's '#'): the matrix was singular there and the
+// transient's "Timestep too small" line named the node. Since Enhancement-833
+// the walk checks a module's internal nodes: it is held by gmin and the run
+// stops as diverging, as the top-level chain does.
 `include "disciplines.vams"
 module vdl(p, n);
   inout p, n;

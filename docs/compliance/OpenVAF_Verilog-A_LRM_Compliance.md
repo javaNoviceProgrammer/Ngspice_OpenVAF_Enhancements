@@ -1480,7 +1480,12 @@ never written, so successive calls at one call site with one seed value
 return the identical number (an in-model sampling loop collects N copies
 of one deviate). This gives reproducible Monte Carlo and independent
 per-instance variation, at the cost of in-evaluation sequences (which
-have no convergent meaning in an analog solver anyway).
+have no convergent meaning in an analog solver anyway). The unseeded
+`$random` and `$arandom` drew with the seed 0, one number in every
+analysis and instance; since
+[E-832](../../enhancements_doc/Enhancement-832.md) their seed is the
+simulator's per-analysis value (ngspice: from `setseed`) mixed with the
+instance's name, constant through an analysis.
 
 **Domain rules are errors on every route** (kernel audit): 9.13.2's
 "mean, degree_of_freedom, and k_stage shall be greater than zero.

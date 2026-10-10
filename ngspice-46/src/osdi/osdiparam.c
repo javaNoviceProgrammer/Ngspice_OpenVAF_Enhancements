@@ -332,6 +332,86 @@ static int osdi_read_param(void *src, IFvalue *value, int id,
   return osdi_param_access(param_info, true, value, src);
 }
 
+/* Enhancement-835 (hunt 2026-10-08 F19): the SMALL-SIGNAL current into
+ * terminal t in an ac or sp analysis.
+ *
+ * In those analyses the solution holds the complex small-signal response, and
+ * the reading below -- the residual the bias point left in the instance --
+ * answered the DC bias current, real and flat at every frequency: `.save
+ * @n1[i_a]` in an ac (and `.options savecurrents`, before E-808 left it out)
+ * recorded 1 mA + 0j at 1 kHz and at 1 MHz where the true current was
+ * 0.5 mA and 0.954 + 0.145j mA. A built-in device refuses the question
+ * (E_ASKCURRENT) and records nothing.
+ *
+ * An OSDI device can answer it. The ac load stamps the Jacobian the bias
+ * point left in the instance, G + jwC, and the small-signal current into the
+ * terminal is that Jacobian's rows of the terminal's collapse group times the
+ * solution, plus what an active ac_stim() source injects at those nodes --
+ * exactly the quantity the ac load puts into the group's KCL row. The values
+ * come from write_jacobian_array_*, which read the same stored entries the
+ * loads do, m included; their index is a running count of the entries that
+ * have a resistive (or reactive) part. The answer is complex: `osdi_ask_complex`
+ * tells the output code to record it so. */
+bool osdi_ask_complex;
+
+static int osdi_ask_ac_current(CKTcircuit *ckt, OsdiRegistryEntry *entry,
+                               GENinstance *instPtr, void *inst, void *model,
+                               const uint32_t *owner, uint32_t t,
+                               IFvalue *value) {
+  const OsdiDescriptor *descr = entry->descriptor;
+  uint32_t n = descr->num_jacobian_entries, e, ri = 0, xi = 0;
+  uint32_t *node_mapping =
+      (uint32_t *)(((char *)inst) + descr->node_mapping_offset);
+  double *jr = TMALLOC(double, n ? 2 * n : 2), *jx = jr + (n ? n : 1);
+  double w = ckt->CKTomega, re = 0.0, im = 0.0;
+
+  NG_IGNORE(instPtr);
+  descr->write_jacobian_array_resist(inst, model, jr);
+  descr->write_jacobian_array_react(inst, model, jx);
+  for (e = 0; e < n; e++) {
+    const OsdiJacobianEntry *je = &descr->jacobian_entries[e];
+    double g = (je->flags & JACOBIAN_ENTRY_RESIST) ? jr[ri++] : 0.0;
+    double c = (je->flags & JACOBIAN_ENTRY_REACT) ? jx[xi++] : 0.0;
+    uint32_t u;
+    double vr, vi;
+    if (owner[je->nodes.node_1] != t + 1)
+      continue;
+    u = node_mapping[je->nodes.node_2];
+    if (u == UINT32_MAX || u == 0)
+      continue;
+    vr = ckt->CKTrhsOld[u];
+    vi = ckt->CKTirhsOld[u];
+    re += g * vr - w * c * vi;
+    im += g * vi + w * c * vr;
+  }
+  tfree(jr);
+  /* an active ac_stim() source, with the rule the ac load applies */
+  if (descr->num_ac_stim_src > 0) {
+    uint32_t k, ns = descr->num_ac_stim_src;
+    double *stim = TMALLOC(double, 2 * ns);
+    const char *running = (ckt->CKTmode & MODEACNOISE) ? "noise" : "ac";
+    descr->load_ac_stim(inst, model, stim);
+    for (k = 0; k < ns; k++) {
+      const OsdiAcStimSource *src = &descr->ac_stim_sources[k];
+      if (strcmp(src->analysis, running) != 0)
+        continue;
+      if (owner[src->nodes.node_1] == t + 1) {
+        re += stim[2 * k];
+        im += stim[2 * k + 1];
+      }
+      if (src->nodes.node_2 != UINT32_MAX && owner[src->nodes.node_2] == t + 1) {
+        re -= stim[2 * k];
+        im -= stim[2 * k + 1];
+      }
+    }
+    tfree(stim);
+  }
+  value->cValue.real = re;
+  value->cValue.imag = im;
+  osdi_ask_complex = true;
+  return (OK);
+}
+
 extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
                    IFvalue *value, IFvalue *select) {
   NG_IGNORE(select);
@@ -415,6 +495,12 @@ extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
     bool tran = ckt && (ckt->CKTmode & MODETRAN) && ckt->CKTstates[0];
     int state = instPtr->GENstate + (int)descr->num_states;
     double cur = 0.0;
+
+    if (ckt && (ckt->CKTcurrentAnalysis & DOING_AC) && ckt->CKTrhsOld &&
+        ckt->CKTirhsOld && descr->write_jacobian_array_resist &&
+        descr->write_jacobian_array_react)
+      return osdi_ask_ac_current(ckt, entry, instPtr, inst, model, owner, t,
+                                 value);
 
     for (uint32_t i = 0; i < descr->num_nodes; i++) {
       bool has_react = descr->nodes[i].react_residual_off != UINT32_MAX;

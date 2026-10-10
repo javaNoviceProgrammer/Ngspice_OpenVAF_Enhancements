@@ -301,6 +301,22 @@ pub fn general_callbacks<'ll>(
                         num_state: 0,
                     })
                 }
+                // Enhancement-832: the seed of an unseeded `$random`/`$arandom`,
+                // osdi_rng_unseeded(simparams, handle) -> int (stdlib.c): the
+                // simulator's `$osdi$seed` and the instance's name.
+                CallBackKind::RngUnseeded => {
+                    let fun = builder
+                        .cx
+                        .get_func_by_name("osdi_rng_unseeded")
+                        .expect("stdlib function osdi_rng_unseeded is missing");
+                    let fun_ty = builder.cx.ty_func(&[ptr_ty, ptr_ty], builder.cx.ty_int());
+                    CallbackFun::Prebuilt(BuiltCallbackFun {
+                        fun_ty,
+                        fun,
+                        state: vec![simparam, handle].into_boxed_slice(),
+                        num_state: 0,
+                    })
+                }
                 // `%m`: osdi_inst_name(handle, fallback) -> char*. The handle
                 // is prepended state; the model-side NULL check on the
                 // simulator's callback slot lives in stdlib.c.

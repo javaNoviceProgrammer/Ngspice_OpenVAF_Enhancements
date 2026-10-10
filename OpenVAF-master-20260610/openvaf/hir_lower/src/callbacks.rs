@@ -309,6 +309,12 @@ pub enum CallBackKind {
     /// site). It carries no per-call-site data (the salt is passed as an argument)
     /// so identical `RngFun`s share a single interned callback.
     Rng(RngFun),
+    /// Enhancement-832: the seed of an UNSEEDED `$random`/`$arandom`. Resolved
+    /// to `osdi_rng_unseeded(simparams, handle)` in `general_callbacks`: the
+    /// simulator's per-analysis `$osdi$seed` mixed with the instance's name,
+    /// so a draw differs per analysis and per instance and stays constant
+    /// through one analysis (the pure Enhancement-10 contract).
+    RngUnseeded,
 }
 
 impl CallBackKind {
@@ -518,6 +524,13 @@ impl CallBackKind {
                 // Pure: a deterministic function of its arguments with no state.
                 has_sideeffects: false,
             },
+            CallBackKind::RngUnseeded => FunctionSignature {
+                name: "rng_unseeded".to_owned(),
+                params: 0,
+                returns: 1,
+                // constant through an analysis, like `$simparam`
+                has_sideeffects: false,
+            },
         }
     }
     pub fn is_noise(&self) -> bool {
@@ -561,6 +574,11 @@ impl CallBackKind {
                 | CallBackKind::ScanBegin
                 | CallBackKind::Scan(_)
                 | CallBackKind::ScanCount
+                // Enhancement-832: the unseeded draws' seed moves with each
+                // ANALYSIS, which the instance setup does not track: hoisted
+                // there, a draw would keep the seed of the last setup, as a
+                // `$simparam` would
+                | CallBackKind::RngUnseeded
         )
     }
 

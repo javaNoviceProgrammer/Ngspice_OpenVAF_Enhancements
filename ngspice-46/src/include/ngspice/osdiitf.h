@@ -221,6 +221,13 @@ extern void OSDIforgetBiasPoint(void);
  * CKTdoJob calls it after each analysis; hb, which runs outside a job, too.
  * Defined in osdiload.c. */
 extern int OSDIfinalStepVerdict(void);
+/* Enhancement-832: a new seed for the compiled models' unseeded $random and
+   $arandom, at the start of each analysis (not a resume) */
+extern void OSDIanalysisSeed(void);
+/* Enhancement-835: set when OSDIask answered a terminal current with its
+   complex small-signal value (an ac or sp analysis); the output code clears it
+   before it asks, and records such an answer as complex. */
+extern bool osdi_ask_complex;
 
 /* Enhancement-789: while held, OSDI setup and the temperature pass leave each
  * instance's "evaluated" mark alone, so @(initial_step) does not fire again.
@@ -274,11 +281,14 @@ extern int OSDIanyCollapseChanged(CKTcircuit *ckt);   /* Enhancement-471 */
    an OSDI instance of `type` joins through a RESISTIVE Jacobian entry -- the
    DC-connectivity edges the setup's `.option dcpath` walk needs.
    Enhancement-719: `absent` (one flag per global node, or NULL) is set for the
-   node of every terminal an instance line left out; such a node joins nothing. */
+   node of every terminal an instance line left out; such a node joins nothing.
+   Enhancement-833: `internal` (likewise, or NULL) is set for every node an
+   instance created for itself -- its INTERNAL nodes, which the walk checks. */
 extern void OSDIdcpathEdges(CKTcircuit *ckt, int type,
                             void (*join)(void *, int, int), void *arg,
                             int reactive,   /* Enhancement-595: REACT entries join too */
-                            unsigned char *absent);
+                            unsigned char *absent,
+                            unsigned char *internal);
 
 /* `.option osdimc` (alias `automc`) automatic Monte-Carlo: called by if_run
  * at the start of every run-class command (not `resume`). Advances the trial

@@ -336,8 +336,10 @@ def main():
     # own past voltage over 1 kOhm: every delay multiplies it by 1/(gmin*R).
     # It ran to 5.6e62 V over 73 accepted points, exit 0, no word. A held node
     # past 1e15 V is a diverging transient; the run says so and stops. The
-    # hierarchical spelling (an internal node the walk does not name) was
-    # singular and stopped with "cause unrecorded"; it names the node now.
+    # hierarchical spelling (an internal node the walk did not name) was
+    # singular and stopped with "cause unrecorded"; E-679 named it in the
+    # "Timestep too small" line. Since Enhancement-833 the walk checks a
+    # module's internal nodes, so it is held and stops as the top level does.
     print("[10] Enhancement-679: a node held only by gmin that diverges in the transient")
     chain = ("v1 a 0 dc 0 pulse(0 1 1u 1n 1n 10u 20u)\nn1 a mid dd1\nn2 mid 0 dd2\n"
              ".model dd1 vdelay td=1u\n.model dd2 vdelay td=0.5u")
@@ -360,8 +362,10 @@ def main():
           and (v.get("length(time)") or 0) > 60, f"v25={v.get('v25')} v35={v.get('v35')} length={v.get('length(time)')}")
     hier = "v1 a 0 dc 0 pulse(0 1 1u 1n 1n 10u 20u)\nn1 a 0 hh\n.model hh vdelay2"
     out = ngspice(deck("delay chain in a child", hier, ctl="tran 0.1u 5u", prints="length(time)", pre="pre_osdi vdelay2.osdi\n"))
-    check("the same chain around a child module's internal node: singular, and the \"Timestep too small\" line names the node",
-          SING in out and 'trouble with node "n1#mid"' in out and "cause unrecorded" not in out, out[-200:].replace("\n", "|"))
+    check("the same chain around a child module's internal node: held by gmin and stopped as diverging, naming 'n1#mid', "
+          "as at the top level (E-833; it was singular, the \"Timestep too small\" line naming the node)",
+          HELD.format("n1#mid") in out and "node 'n1#mid' has reached" in out and SING not in out
+          and "cause unrecorded" not in out, out[-200:].replace("\n", "|"))
     out = ngspice(deck("delay chain gshunt", chain, ctl="tran 0.1u 5u", prints="length(time)", pre="pre_osdi vdelay.osdi\n",
                        opts=".option gshunt=1e-9\n"))
     check("with `.option gshunt` the walk stands down and the singular row is named the same way",

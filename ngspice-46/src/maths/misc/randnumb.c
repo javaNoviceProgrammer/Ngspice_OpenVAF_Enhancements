@@ -111,6 +111,14 @@ int ng_rand(void)
    rndseed set in main.c to 1, if no 'set rndseed=val' is given.
    Called from functions in cmath2.c.
 */
+/* Enhancement-832: bumped at every seeding */
+static int seed_generation;
+
+int ng_seed_generation(void)
+{
+   return seed_generation;
+}
+
 void checkseed(void)
 {
    int newseed;
@@ -120,6 +128,7 @@ void checkseed(void)
       if ((newseed > 0) && (oldseed != newseed)) {
          ng_srand((unsigned int)newseed);
          TausSeed();
+         seed_generation++;           /* Enhancement-832 */
          if (oldseed > 0) /* no printout upon start-up */
              printf("Seed value for random number generator is set to %d\n", newseed);
          oldseed = newseed;
@@ -392,6 +401,8 @@ com_sseed(wordlist *wl)
     destroy_wallace();
     initw();
 #endif
+
+    seed_generation++;                  /* Enhancement-832 */
 
     if (seedinfo)
         printf("\nSeed value for random number generator is set to %d\n", newseed);

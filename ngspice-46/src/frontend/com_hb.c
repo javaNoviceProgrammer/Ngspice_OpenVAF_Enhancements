@@ -143,6 +143,12 @@ com_hb(wordlist *wl)
         ckt->CKTkluMODE = ft_curckt->ci_defTask->TSKkluMODE;
 #endif
 
+#ifdef OSDI
+    /* Enhancement-832: the unseeded draws' seed for this analysis, before a
+       setup it may run */
+    OSDIanalysisSeed();
+#endif
+
     /* make sure the circuit is built (matrix + states allocated).
      *
      * Enhancement-365: "a matrix exists" is NOT the same as "the device

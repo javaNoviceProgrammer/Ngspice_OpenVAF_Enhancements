@@ -4432,13 +4432,18 @@ impl BodyLoweringCtx<'_, '_, '_> {
         self.ctx.call1(CallBackKind::ScanCount, &[])
     }
 
-    /// Lowers the (optional) seed argument shared by `$random`/`$arandom`: the
-    /// seedless forms have no argument and default to `0` (the per-call-site salt
-    /// added in `lower_rng` still decorrelates distinct call sites). The seeded
-    /// and const-seed forms both carry the seed as `args[0]`.
+    /// Lowers the (optional) seed argument shared by `$random`/`$arandom`. The
+    /// seeded and const-seed forms both carry the seed as `args[0]`.
+    ///
+    /// Enhancement-832 (hunt 2026-10-08 F16): the seedless forms took the seed
+    /// `0`, so a draw was a function of its call site alone -- the same number
+    /// in every analysis and in every instance, whatever `setseed` said. They
+    /// now take `osdi_rng_unseeded`'s seed: the simulator's per-analysis
+    /// `$osdi$seed` mixed with the instance's name (the per-call-site salt
+    /// added in `lower_rng` still decorrelates distinct call sites).
     fn lower_rng_seed(&mut self, args: &[ExprId]) -> Value {
         if args.is_empty() {
-            self.ctx.iconst(0)
+            self.ctx.call1(CallBackKind::RngUnseeded, &[])
         } else {
             self.lower_expr(args[0])
         }

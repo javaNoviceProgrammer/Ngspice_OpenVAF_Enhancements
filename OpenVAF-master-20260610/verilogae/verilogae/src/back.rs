@@ -157,6 +157,11 @@ pub fn stub_callbacks<'ll>(
                     );
                     CallbackFun::Prebuilt(cx.const_callback(&args, cx.const_real(0.0)))
                 }
+                // Enhancement-832: no simulator, no analysis -- the seed an
+                // unseeded draw had before
+                CallBackKind::RngUnseeded => {
+                    CallbackFun::Prebuilt(cx.const_callback(&[], cx.const_int(0)))
+                }
             };
 
             Some(res)

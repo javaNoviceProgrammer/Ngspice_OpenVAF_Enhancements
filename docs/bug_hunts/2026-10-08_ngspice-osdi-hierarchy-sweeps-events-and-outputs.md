@@ -51,10 +51,10 @@ Nothing was fixed; this is the list.
 | [F13](#f13) | *(fixed in [E-829](../../enhancements_doc/Enhancement-829.md): the run fails, exit status 1; `$finish`/`$stop` noted)* `$fatal` (and `$finish`) inside `@(final_step)` is printed and otherwise ignored: no abort, exit status 0 | low |
 | [F14](#f14) | *(fixed in [E-830](../../enhancements_doc/Enhancement-830.md): a polarity parameter `type` is also required)* E-543's BJT limiting, chosen by port names, turns a linear `c,b,e` module's op into 577 iterations and gmin stepping (3 without) | medium |
 | [F15](#f15) | *(fixed in [E-831](../../enhancements_doc/Enhancement-831.md): the option stood aside, and the default set holds no `@dev[param]`)* `.option saveused` does not collect an `@dev[param]` named in a `.meas` card, so the measure fails | low |
-| [F16](#f16) | `$random` and `$arandom` with no seed return the same value in every analysis and in every instance, and ignore `setseed` | medium |
-| [F17](#f17) | an OSDI *internal* node with no DC path gets no dc-path gmin: every homotopy fails and the transient op answers 0.5 V where the built-in twin holds 0 | medium |
-| [F18](#f18) | under `osdimc` the bins of one binned model draw independently: one device type's process shift jumps at a bin boundary | medium |
-| [F19](#f19) | `.option savecurrents` in `ac` and `sp` records an OSDI device's terminal currents as the DC bias current, flat and real at every frequency | high |
+| [F16](#f16) | *(fixed in [E-832](../../enhancements_doc/Enhancement-832.md): a per-analysis seed from `setseed`, mixed with the instance name)* `$random` and `$arandom` with no seed return the same value in every analysis and in every instance, and ignore `setseed` | medium |
+| [F17](#f17) | *(fixed in [E-833](../../enhancements_doc/Enhancement-833.md): the walk took its `#` name for a built-in's internal node)* an OSDI *internal* node with no DC path gets no dc-path gmin: every homotopy fails and the transient op answers 0.5 V where the built-in twin holds 0 | medium |
+| [F18](#f18) | *(fixed in [E-834](../../enhancements_doc/Enhancement-834.md): the draw is keyed on the base name)* under `osdimc` the bins of one binned model draw independently: one device type's process shift jumps at a bin boundary | medium |
+| [F19](#f19) | *(fixed in [E-835](../../enhancements_doc/Enhancement-835.md): the small-signal current, from the Jacobian and the ac solution)* `.option savecurrents` in `ac` and `sp` records an OSDI device's terminal currents as the DC bias current, flat and real at every frequency | high |
 | [F20](#f20) | *(fixed in [E-811](../../enhancements_doc/Enhancement-811.md): the line is sized to the name)* **crash**: `print` of a vector whose name is 512 characters or longer overruns a 512-byte heap buffer in `com_print` (intermittent SIGTRAP; deterministic under Guard Malloc) | high |
 | [F21](#f21) | *(fixed in [E-812](../../enhancements_doc/Enhancement-812.md): `pvec` builds its line in a growing string)* **crash**: `display` (and `load`, which lists what it reads) of a vector whose name is about 470 characters or longer overflows a 512-byte stack buffer in `pvec` — a deterministic abort | high |
 | [F22](#f22) | *(fixed in [E-813](../../enhancements_doc/Enhancement-813.md): the capture copies `SMPmatSize + 1`, the vector's length)* **memory**: with any OSDI internal node, `OSDIload` copies `CKTmaxEqNum + 1` doubles out of `CKTrhsOld` at every bias point, past the end of its allocation (a heap over-read; a fault under Guard Malloc) | high |
@@ -394,6 +394,10 @@ saved set, its `@dev[param]` does not.
 <a id="f16"></a>
 ## F16 — `$random` and `$arandom` without a seed: the same number every analysis and every instance
 
+*Fixed in [E-832](../../enhancements_doc/Enhancement-832.md). The seedless forms drew with the
+seed 0. They now draw with a per-analysis seed ngspice derives from `setseed`, mixed with the
+instance's name; `setseed 1` reproduces the sequence.*
+
 ```verilog
 @(initial_step) begin r1 = $random; ... end
 ```
@@ -410,6 +414,10 @@ across devices.
 
 <a id="f17"></a>
 ## F17 — a DC-floating internal node gets no dc-path gmin
+
+*Fixed in [E-833](../../enhancements_doc/Enhancement-833.md). The walk passed by every node
+named with a `#`, taking it for a built-in device's internal node; an OSDI module's internal
+nodes are named so too. They are checked now: 3 iterations and the dc-path gmin.*
 
 ```verilog
 module fl(a, b); ... electrical mid;
@@ -431,6 +439,10 @@ same messages appear.
 <a id="f18"></a>
 ## F18 — the bins of one model draw independently under `osdimc`
 
+*Fixed in [E-834](../../enhancements_doc/Enhancement-834.md). A process draw is keyed on the
+name less a bin's `.<digits>`, so the bins share one deviate in a trial, under `-lhs`, in a
+walk and in the importance weight.*
+
 `nch.1` and `nch.2`, one device type at two sizes, with `(* std_rel=0.1 *) g` and the same
 nominal, under `.option osdimc`:
 
@@ -447,6 +459,10 @@ definition) would have to treat bins of one name as one definition.
 
 <a id="f19"></a>
 ## F19 — `savecurrents` in `ac` and `sp` records the bias current for OSDI devices
+
+*Fixed in [E-835](../../enhancements_doc/Enhancement-835.md). In `ac` and `sp` the terminal
+current is the Jacobian's rows times the complex solution (plus an `ac_stim` source), recorded
+complex; `savecurrents` keeps it there.*
 
 ```spice
 v1 1 0 dc 2 ac 1
@@ -476,7 +492,9 @@ phasor `(G + jωC)·v`.
 
 *Update ([E-808](../../enhancements_doc/Enhancement-808.md)): `.options savecurrents` no longer puts these vectors into an `ac` or `sp`
 plot. An explicit `.save @n1[i_a]` still records the bias current there, and a true small-signal
-terminal current is still open.*
+terminal current is still open.* *([E-835](../../enhancements_doc/Enhancement-835.md) closes it:
+both now record the small-signal current, and `savecurrents` keeps an OSDI device's in `ac` and
+`sp` again.)*
 
 <a id="f20"></a>
 ## F20 — `print` of a long name overruns a heap buffer (a crash)

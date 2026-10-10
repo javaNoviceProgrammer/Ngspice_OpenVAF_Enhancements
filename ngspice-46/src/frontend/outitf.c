@@ -703,6 +703,32 @@ e808_freq_domain(const char *an_name)
 }
 
 
+/* Enhancement-835 (hunt 2026-10-08 F19): a current an OSDI device answers in
+ * an ac or sp analysis is its small-signal current, so the saves `.options
+ * savecurrents` adds for such a device stay in those plots. */
+static bool
+e835_osdi_current(CKTcircuit *ckt, const char *an_name, char *name)
+{
+#ifdef OSDI
+    char nb[BSIZE_SP], pb[BSIZE_SP], db[BSIZE_SP];
+    GENinstance *inst;
+    if (!an_name || !(cieq(an_name, "ac") || cieq(an_name, "sp")) ||
+        !ckt || !ft_sim || !ft_sim->findInstance || !name)
+        return FALSE;
+    if (!parseSpecial(name, nb, pb, db) || !*nb || !*pb)
+        return FALSE;
+    inst = ft_sim->findInstance(ckt, nb);
+    return inst && inst->GENmodPtr &&
+        ft_sim->devices[inst->GENmodPtr->GENmodType]->registry_entry != NULL;
+#else
+    NG_IGNORE(ckt);
+    NG_IGNORE(an_name);
+    NG_IGNORE(name);
+    return FALSE;
+#endif
+}
+
+
 static int
 beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analName, char *refName, int refType, int numNames, char **dataNames, int dataType, bool windowed, runDesc **runp)
 {
@@ -941,9 +967,12 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
              * ac or sp plot a built-in device answers nothing (each vector
              * stayed 0 long, and `print` of it failed) and an OSDI device its
              * bias current; in a noise plot every one is the bias current,
-             * repeated per frequency. Left out, said once per analysis. */
+             * repeated per frequency. Left out, said once per analysis.
+             * Enhancement-835: an OSDI device's, in ac and sp, is now its
+             * small-signal current, and stays. */
             if (saves[i].autosaved == SAVE_AUTO_SAVECURRENTS &&
-                e808_freq_domain(an_name)) {
+                e808_freq_domain(an_name) &&
+                !e835_osdi_current(circuitPtr, an_name, saves[i].name)) {
                 savesused[i] = TRUE;
                 saves[i].used = 1;
                 e808_left_out++;
@@ -1131,6 +1160,8 @@ beginPlot(JOB *analysisPtr, CKTcircuit *circuitPtr, char *cktName, char *analNam
                     an_name ? an_name : "", e808_left_out,
                     an_name && cieq(an_name, "noise")
                         ? "the bias currents, repeated at every frequency"
+                        : an_name && (cieq(an_name, "ac") || cieq(an_name, "sp"))
+                        ? "nothing: a built-in device answers no current there"  /* E-835 */
                         : "nothing, or the bias currents",
                     an_name && (cieq(an_name, "ac") || cieq(an_name, "sp"))
                         ? " For a small-signal current, use `.probe i(<device>)`."
@@ -2401,12 +2432,21 @@ getSpecial(dataDesc *desc, runDesc *run, IFvalue *val)
     struct variable *vv;
 
     selector.iValue = desc->specIndex;
+#ifdef OSDI
+    osdi_ask_complex = FALSE;          /* Enhancement-835 */
+#endif
     if (INPaName(desc->specParamName, val, run->circuit, &desc->specType,
                  desc->specName, &desc->specFast, ft_sim, &desc->type,
                  &selector) == OK) {
         /* Enhancement-32: keep IF_INTEGER too — integer instance params/opvars
            (e.g. OSDI event counters) are recorded as reals downstream */
         desc->type &= (IF_REAL | IF_COMPLEX | IF_INTEGER);   /* mask out other bits */
+#ifdef OSDI
+        /* Enhancement-835 (hunt 2026-10-08 F19): an OSDI terminal current in
+           an ac or sp analysis is the complex small-signal current */
+        if (osdi_ask_complex && run->isComplex)
+            desc->type = IF_COMPLEX;
+#endif
         return TRUE;
     }
 

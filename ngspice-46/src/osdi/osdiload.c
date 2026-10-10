@@ -32,6 +32,7 @@ int CKTvaInitErrRaised = 0;
 #include "ngspice/devdefs.h"
 #include "ngspice/smpdefs.h"   /* Enhancement-689: SMPmatSize */
 #include "ngspice/dstring.h"   /* Enhancement-689: the seeding Note */
+#include "ngspice/randnumb.h"  /* Enhancement-832: ng_seed_generation */
 
 #include <math.h>
 #include <stdint.h>
@@ -579,8 +580,11 @@ static void slew_stamp(CKTcircuit *ckt, void *inst, OsdiExtraInstData *extra,
  * points (osdiaccept.c), which the compiler's `@(cross)`/`@(above)`
  * realisation reads to tell a new point's iterates from a retry's, so an
  * event's edge is detected against the last ACCEPTED sample and the
- * crossing can be landed on by bounding the retry step. */
-#define NUM_SIM_PARAMS 18
+ * crossing can be landed on by bounding the retry step.
+ *
+ * Enhancement-832: `$osdi$seed` is a fourth -- the seed the compiler's
+ * unseeded `$random`/`$arandom` draw with (OSDIanalysisSeed below). */
+#define NUM_SIM_PARAMS 19
 char *sim_params[NUM_SIM_PARAMS + 1] = {
     "iniLim", "gmin", "gdev", "tnom",
     "simulatorVersion", "sourceScaleFactor",
@@ -588,6 +592,7 @@ char *sim_params[NUM_SIM_PARAMS + 1] = {
     "iteration", "abstime", "simulatorSubversion",
     "temp",
     "$osdi$tstep", "$osdi$delta", "$osdi$point",
+    "$osdi$seed",
     NULL};
 /* Enhancement-25: string simulator parameters returned by $simparam$str.
  * "analysis_name" mirrors the analysis() naming ("dc"/"ac"/"tran"/"noise");
@@ -801,6 +806,51 @@ static const char *osdi_analysis_name(const CKTcircuit *ckt) {
   return "dc";
 }
 
+/* Enhancement-832 (hunt 2026-10-08 F16): the seed of the unseeded draws.
+ *
+ * `$random` and `$arandom` with no seed argument drew with the seed 0, so a
+ * draw was a function of its call site alone: every analysis returned the
+ * same number (1366254664 in four `op`s around `setseed 1`, `setseed 1`,
+ * `setseed 2`), `setseed` changed nothing, and two instances of one module
+ * drew identical values -- per-device randomness written with the unseeded
+ * calls was perfectly correlated, and a `repeat N op` loop drew one value N
+ * times. The compiler now seeds such a draw from this value and the
+ * instance's name (stdlib.c, osdi_rng_unseeded).
+ *
+ * The value holds still for a whole analysis -- every Newton iteration, every
+ * point of a sweep or a transient, the analysis' own operating point -- since
+ * the draws are pure and a value that changed under the solver would destroy
+ * convergence (the Enhancement-10 contract). It moves at the start of each
+ * analysis (CKTdoJob, hb; not a `resume`), and it is a function of the
+ * generator's seed (`setseed`, `set rndseed`, 1 at startup) and of how many
+ * analyses have started since that seed was set: `setseed 1` then reproduces
+ * the sequence, and nothing is taken from the generator's own stream, so no
+ * other random quantity in a deck moves because a model draws. */
+static double osdi_rng_seed_val;
+
+void OSDIanalysisSeed(void) {
+  static int last_gen = -1, last_rnd;
+  static unsigned long epoch;
+  int rnd = 1, gen = ng_seed_generation();
+  uint64_t z;
+
+  if (!cp_getvar("rndseed", CP_NUM, &rnd, 0))
+    rnd = 1;
+  if (gen != last_gen || rnd != last_rnd) {
+    epoch = 0;
+    last_gen = gen;
+    last_rnd = rnd;
+  }
+  z = ((uint64_t)(uint32_t)rnd << 32) ^ (uint64_t)epoch ^ 0x6f73646973656564ull;
+  z += 0x9e3779b97f4a7c15ull;
+  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+  z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+  z ^= z >> 31;
+  /* an int32 value, which a double holds exactly */
+  osdi_rng_seed_val = (double)(int32_t)(uint32_t)(z >> 32);
+  epoch++;
+}
+
 /* values returned by $simparam*/
 /* Enhancement-760 (speed hunt O1 of 2026-09-28): the option variables the
  * load path reads -- `noosdilim`, `osdilim_verbose` (E-543's limiter knobs)
@@ -857,7 +907,9 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt) {
       (ckt->CKTmode & (MODETRAN | MODETRANOP)) ? ckt->CKTstep : 0.0,
       (ckt->CKTmode & MODETRAN) ? ckt->CKTdelta : 0.0,
       /* Enhancement-759: the accepted-point count */
-      OSDIpointSeq() };
+      OSDIpointSeq(),
+      /* Enhancement-832: the unseeded draws' seed */
+      osdi_rng_seed_val };
   memcpy(&sim_param_vals, &sim_param_vals_, sizeof(double) * NUM_SIM_PARAMS);
 
   /* Enhancement-25: current analysis name for $simparam$str("analysis_name"),

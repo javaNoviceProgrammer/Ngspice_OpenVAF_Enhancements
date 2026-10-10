@@ -45,7 +45,8 @@ models).
       "no such device or model name nch").
  [14] E-808 (D14, D15): the currents `.options savecurrents` adds are left out
       of ac, sp and noise plots (0 long for a built-in, the bias for an OSDI
-      device or in noise), with a note; op, dc and tran keep them.
+      device or in noise), with a note; op, dc and tran keep them. E-835: an
+      OSDI device's, in ac and sp, is its small-signal current, and is kept.
  [15] E-809 (D16): an interval measurement whose TO is past the end of the
       data says the window was cut.
  [16] E-810 (D17): a saved OSDI parameter or opvar is typed by its declared
@@ -574,11 +575,13 @@ check("[13] built-in BSIM4 bins the same way (the current rises as vth0 falls)",
 print("[14] E-808: savecurrents outside op, dc and tran")
 B14 = "v1 1 0 dc 0.6 ac 1\nr1 1 2 1k\nc1 2 0 1n\nd1 2 0 dm\n.model dm d is=1e-14\nn1 1 0 grm\n.model grm gr\n.option savecurrents"
 out = run(["gr"], B14, "ac lin 2 1k 1meg\ndisplay", "c14a")
-check("[14] ac: no savecurrents vector (each was 0 long; the OSDI device's three held its bias)",
-      "@c1[i]" not in out and "@d1[id]" not in out and "@n1[i]" not in out, out[-600:])
-check("[14] ...and one note, with the .probe hint",
+check("[14] ac: no savecurrents vector of a built-in device (each was 0 long); the OSDI "
+      "device's three are kept, its small-signal current since E-835 (they held its bias)",
+      "@c1[i]" not in out and "@d1[id]" not in out and "@n1[i]" in out, out[-600:])
+check("[14] ...and one note for the built-in three, with the .probe hint",
       len(re.findall(r"Note: \.options savecurrents saves device currents in op, dc and tran "
-                     r"analyses; this AC analysis leaves its 6 out", out)) == 1
+                     r"analyses; this AC analysis leaves its 3 out \(they would hold nothing: "
+                     r"a built-in device answers no current there\)", out)) == 1
       and "`.probe i(<device>)`" in out, out[-600:])
 out = run(["gr"], B14, "noise v(2) v1 lin 2 1k 2k 1\nsetplot noise1\ndisplay\nsetplot noise2\ndisplay",
           "c14b")

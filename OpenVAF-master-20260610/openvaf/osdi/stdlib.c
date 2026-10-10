@@ -453,6 +453,27 @@ double osdi_rng_random(int32_t seed, int32_t salt) {
   return (double)(int32_t)(uint32_t)(s >> 21);
 }
 
+// Enhancement-832 (hunt 2026-10-08 F16): the seed of an UNSEEDED `$random` or
+// `$arandom`. It was 0, so such a draw was a function of its call site alone:
+// the same number in every analysis and in every instance, and `setseed` did
+// nothing. It is now the simulator's per-analysis seed -- the private simparam
+// `$osdi$seed`, which ngspice moves at the start of each analysis and derives
+// from its generator's seed -- mixed with the instance's name (FNV-1a), so two
+// instances draw independently and a draw is reproducible from the seed. Both
+// hold still through an analysis, so the draw stays pure across Newton
+// iterations. A simulator that serves neither leaves the seed 0 and the
+// fallback name empty: the old value.
+int32_t osdi_rng_unseeded(void *params_, void *handle) {
+  double base = params_ ? simparam_opt(params_, "$osdi$seed", 0.0) : 0.0;
+  char *name = osdi_inst_name(handle, "");
+  u64 h = 0xcbf29ce484222325ULL;
+  if (base == 0.0 && (name == NULL || name[0] == '\0'))
+    return 0;
+  for (; name && *name; name++)
+    h = (h ^ (u64)(unsigned char)*name) * 0x100000001b3ULL;
+  return (int32_t)(uint32_t)(osdi_rng_state((int32_t)base, (int32_t)(uint32_t)h) >> 32);
+}
+
 // $rdist_uniform: real uniform in [start, end).
 double osdi_rng_uniform(int32_t seed, int32_t salt, double start, double end) {
   u64 s = osdi_rng_state(seed, salt);

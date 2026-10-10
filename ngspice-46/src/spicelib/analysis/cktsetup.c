@@ -424,6 +424,7 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
     int mode, i, root, rootr = 0, all, nfound = 0, nlisted = 0, nalways = 0;
     int *dconly = NULL, ndconly = 0;
     unsigned char *absent;              /* Enhancement-719 */
+    unsigned char *internal;            /* Enhancement-833 */
     int quietabs = 0;
 
     FREE(ckt->CKTdcpathNodes);
@@ -440,11 +441,13 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
         uf.parent[i] = i;
     absent = TMALLOC(unsigned char, (size_t) nunk + 1);
     memset(absent, 0, (size_t) nunk + 1);
+    internal = TMALLOC(unsigned char, (size_t) nunk + 1);
+    memset(internal, 0, (size_t) nunk + 1);
     for (i = 0; i < DEVmaxnum; i++) {
         if (!DEVices[i] || !ckt->CKThead[i])
             continue;
         if (DEVices[i]->DEVpublic.registry_entry) {
-            OSDIdcpathEdges(ckt, i, dcpath_join, &uf, 0, absent);
+            OSDIdcpathEdges(ckt, i, dcpath_join, &uf, 0, absent, internal);
             continue;
         }
 #ifdef XSPICE
@@ -471,7 +474,7 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
             if (!DEVices[i] || !ckt->CKThead[i])
                 continue;
             if (DEVices[i]->DEVpublic.registry_entry) {
-                OSDIdcpathEdges(ckt, i, dcpath_join, &ufr, 1, absent);
+                OSDIdcpathEdges(ckt, i, dcpath_join, &ufr, 1, absent, NULL);
                 continue;
             }
 #ifdef XSPICE
@@ -500,12 +503,15 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
            joined to its terminals by the device's own series elements, which
            the terminal table cannot see; it is taken as reached. One that
            touches nothing at all is still caught by the structural pass
-           below. OSDI internal nodes carry no '#' and stay in the walk. */
+           below. Enhancement-833: an OSDI module's internal nodes carry the
+           '#' as well (`n1#mid`), and stay in the walk: the module's pattern
+           says what joins them. */
         /* Enhancement-719: the node of a terminal the instance line left out
            carries the '#' too, and is the one such node the walk must not
            pass by. Under `.option silentports` its hold is installed without
            a word, and it is not counted against the message cap. */
-        if (name && strchr(name, '#') && !absent[nd->number])
+        if (name && strchr(name, '#') && !absent[nd->number] &&
+            !internal[nd->number])
             continue;
         if (absent[nd->number] && mode != DCPATH_ERROR && !quietabs)
             quietabs = dcpath_silentports() ? 1 : -1;
@@ -561,6 +567,7 @@ static int dcpath_check(CKTcircuit *ckt, SMPmatrix *matrix, int nunk,
     FREE(uf.parent);
     FREE(ufr.parent);
     FREE(absent);
+    FREE(internal);
     if (mode == DCPATH_HOLD) {
         /* the always-held nodes first, then the ones released outside DC */
         for (i = 0; i < ndconly; i++)

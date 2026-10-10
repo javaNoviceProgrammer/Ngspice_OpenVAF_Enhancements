@@ -9,6 +9,10 @@ extern void setseedinfo(void);
 extern void initw(void);
 
 extern void checkseed(void);    /* seed random or set by 'set rndseed=value'*/
+/* Enhancement-832: how many times the generator has been seeded (setseed,
+   startup, a changed rndseed); the per-analysis seed of the compiled models'
+   unseeded $random restarts its count with each */
+extern int ng_seed_generation(void);
 extern double drand(void);
 extern double gauss0(void);
 extern double gauss1(void);

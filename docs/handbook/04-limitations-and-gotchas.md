@@ -95,6 +95,9 @@ The single most useful mental model for this toolchain:
   call site). An advancing seed would return different values on every
   Newton iteration and destroy convergence. Sequences within one evaluation
   are therefore not available; per-instance/per-call-site independence is.
+  An unseeded `$random`/`$arandom` is seeded per analysis and per instance
+  since [E-832](../../enhancements_doc/Enhancement-832.md), from `setseed`, and
+  holds still within an analysis for the same reason.
 - **`.disto` works for OSDI devices, via numerical differencing**
   ([E-359](../../enhancements_doc/Enhancement-359.md)): the Volterra kernel needs 2nd- and
   3rd-order derivative tensors. Rather than have the compiler emit them — an
@@ -257,3 +260,10 @@ scripting ngspice:
   node's column as the conductance to ground it is; the potential form
   `V(out) <+ y` was always a path and still is. A controlled current with no
   dependence on the node's own voltage is still a current source, and held.
+- **A module's internal node reached only through `ddt()`** (`n1#mid` between
+  two capacitive contributions) went "singular matrix" down every homotopy,
+  277 iterations to a transient operating point, because the walk took its
+  `#` name for a built-in device's internal node. Since
+  [E-833](../../enhancements_doc/Enhancement-833.md) the walk checks an OSDI
+  module's internal nodes: such a node gets the dc-path gmin at once, as its
+  built-in twin does, and a transient releases it.

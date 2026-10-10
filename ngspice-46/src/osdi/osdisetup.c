@@ -710,7 +710,7 @@ static int dcpath_pair_cmp(const void *a, const void *b) {
 
 void OSDIdcpathEdges(CKTcircuit *ckt, int type,
                      void (*join)(void *, int, int), void *arg, int reactive,
-                     unsigned char *absent) {
+                     unsigned char *absent, unsigned char *internal) {
   /* Enhancement-595: with `reactive` set, an entry flagged REACT joins as
    * well as one flagged RESIST -- the walk that decides whether a node the
    * DC walk missed is carried by a capacitor in tran and ac. The symmetry
@@ -911,6 +911,37 @@ void OSDIdcpathEdges(CKTcircuit *ckt, int type,
           }
           if (!circuit)
             absent[g] = 1;
+        }
+      }
+      /* Enhancement-833 (hunt 2026-10-08 F17): the nodes the instance made for
+       * itself. Their names carry the '#' (`n1#mid`) by which the walk takes a
+       * BUILT-IN device's internal node as reached -- joined to its terminals
+       * by series elements no terminal table sees -- so a node of a module's
+       * own reached only through ddt() contributions was passed by: "singular
+       * matrix: check node n1#mid" down the whole ladder, every homotopy
+       * failed, and the transient operating point left it at 0.5 V where the
+       * built-in twin, an external node between two capacitors, was held at 0
+       * at once. The module's pattern says what joins such a node, so the walk
+       * checks it like any other node. A node collapsed onto a terminal is
+       * that terminal's circuit node, and ground is ground. Only a KIRCHHOFF
+       * node is marked -- an unknown whose nature is its discipline's
+       * potential. A branch's flow and the compiler's implicit equations
+       * (absdelay's `implicit_equation_1`, with no discipline) are defined by
+       * their own equations, not by KCL, and stay as they were; so does
+       * every node of a descriptor that says nothing about natures. */
+      if (internal && descr->unknown_nature) {
+        for (k = descr->num_terminals; k < descr->num_nodes; k++) {
+          uint32_t g = node_mapping[k], t;
+          bool circuit = false;
+          if (descr->nodes[k].is_flow || g == UINT32_MAX || g == 0 ||
+              descr->unknown_nature[k].ref_type != NATREF_DISCIPLINE_POTENTIAL)
+            continue;
+          for (t = 0; t < descr->num_terminals; t++) {
+            if (node_mapping[t] == g)
+              circuit = true;
+          }
+          if (!circuit)
+            internal[g] = 1;
         }
       }
       for (i = 0; i < n; i++) {
@@ -3022,6 +3053,123 @@ static uint64_t osdimc_hash_str(const char *s) {
   return h;
 }
 
+/* Enhancement-834 (hunt 2026-10-08 F18): the DEFINITION a model card belongs
+ * to. `nch.1` and `nch.2` are bins of one device type, `nch` -- the
+ * `<base>.<digits>` spelling ngspice's binning resolves an instance line's
+ * `nch` to, the rule Enhancement-826 reads -- and a process parameter is a
+ * property of the type. Its draw was keyed on the CARD, so the bins drew
+ * independently (g 0.930m against 0.869m in one trial, 1.100m against
+ * 1.113m in the next): a transistor's process shift jumped at a bin
+ * boundary. The draw is now keyed on the base name, so every bin of a
+ * definition takes one deviate -- the same z in a plain trial, the same
+ * stratum under -lhs, the same coordinate in a walk, one factor in the
+ * importance weight, and one `-inflate` scope. Any other name is its own
+ * definition and keys exactly as before (the hash of the whole name). */
+static size_t osdimc_def_len(const char *card) {
+  const char *dot, *q;
+  size_t n;
+  if (!card)
+    return 0;
+  n = strlen(card);
+  dot = strrchr(card, '.');
+  if (!dot || dot == card || !dot[1])
+    return n;
+  for (q = dot + 1; *q; q++)
+    if (!isdigit((unsigned char)*q))
+      return n;
+  return (size_t)(dot - card);
+}
+
+static bool osdimc_is_bin(const char *card) {
+  return card && osdimc_def_len(card) != strlen(card);
+}
+
+static uint64_t osdimc_def_hash(const char *card) {
+  uint64_t h = 0xcbf29ce484222325ull; /* FNV-1a, as osdimc_hash_str */
+  size_t n = osdimc_def_len(card);
+  for (size_t i = 0; i < n; i++)
+    h = (h ^ (uint64_t)(unsigned char)card[i]) * 0x100000001b3ull;
+  return h;
+}
+
+/* the definition's name, for the `-inflate` scope: the card's own name unless
+ * it is a bin */
+static const char *osdimc_def_name(const char *card, char *buf, size_t cap) {
+  size_t n = osdimc_def_len(card);
+  if (!card || n == strlen(card) || n + 1 > cap)
+    return card;
+  memcpy(buf, card, n);
+  buf[n] = '\0';
+  return buf;
+}
+
+/* The (definition, parameter) pairs a bin has already taken, for the walk
+ * coordinates and the importance weight. Only bins are entered: any other
+ * card is the only one of its definition. */
+typedef struct {
+  uint64_t def;
+  uint32_t id;
+  int k;
+} OsdimcBinDim;
+typedef struct {
+  OsdimcBinDim *v;
+  int n, cap;
+} OsdimcBinDims;
+
+static int osdimc_bin_find(const OsdimcBinDims *b, uint64_t def, uint32_t id) {
+  for (int i = 0; i < b->n; i++)
+    if (b->v[i].def == def && b->v[i].id == id)
+      return b->v[i].k;
+  return -1;
+}
+
+static void osdimc_bin_add(OsdimcBinDims *b, uint64_t def, uint32_t id, int k) {
+  if (b->n == b->cap) {
+    b->cap = b->cap ? 2 * b->cap : 16;
+    b->v = TREALLOC(OsdimcBinDim, b->v, b->cap);
+  }
+  b->v[b->n].def = def;
+  b->v[b->n].id = id;
+  b->v[b->n].k = k;
+  b->n++;
+}
+
+/* Is this (card, process parameter) the first of its definition? A bin's
+ * later siblings answer false, and share what the first took. */
+static bool osdimc_bin_first(OsdimcBinDims *b, const char *card, uint32_t id,
+                             int k) {
+  uint64_t def;
+  if (!osdimc_is_bin(card))
+    return true;
+  def = osdimc_def_hash(card);
+  if (osdimc_bin_find(b, def, id) >= 0)
+    return false;
+  osdimc_bin_add(b, def, id, k);
+  return true;
+}
+
+/* the walk coordinate of a process parameter: the next one, or -- for a later
+ * bin of a definition -- the one its first bin took, consuming none */
+static int osdimc_walk_slot(OsdimcBinDims *b, const char *card, uint32_t id,
+                            int *walk_k) {
+  if (osdimc_is_bin(card)) {
+    int k = osdimc_bin_find(b, osdimc_def_hash(card), id);
+    if (k >= 0)
+      return k;
+    osdimc_bin_add(b, osdimc_def_hash(card), id, *walk_k);
+  }
+  return (*walk_k)++;
+}
+
+/* ... for the appliers: a uniform parameter takes no coordinate in a walk
+ * (osdimc_walk_value holds it at its nominal), so it consumes none here */
+static int osdimc_walk_slot_for(OsdimcBinDims *b, const OsdiStatParam *info,
+                                const char *card, uint32_t id, int *walk_k) {
+  if (info->dist & OSDI_DIST_UNIFORM)
+    return *walk_k;
+  return osdimc_walk_slot(b, card, id, walk_k);
+}
+
 /* E-537 (hunt P): the per-trial base key, shared by the draw applier and the
  * importance-weight walker so the two can never disagree about which value was
  * drawn. */
@@ -4505,14 +4653,18 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
      * the types before it, so the per-type application lands every parameter
      * on the same coordinate whatever order (or how many times) it runs. */
     int walk_k = 0, walk_nu = 0;
+    OsdimcBinDims bins = {NULL, 0, 0};   /* Enhancement-834 */
     if (osdimc_walk_on)
       osdimc_walk_count(ckt, type, &walk_k, &walk_nu, NULL);
 
     for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
          gen_model = gen_model->GENnextModel) {
       void *model = osdi_model_data(gen_model);
-      uint64_t kmodel =
-          osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_model->GENmodName));
+      const char *card = (char *)gen_model->GENmodName;
+      char defbuf[256];
+      /* Enhancement-834: keyed on the definition, so the bins of one model
+         draw one deviate */
+      uint64_t kmodel = osdimc_mix(kbase ^ osdimc_def_hash(card));
 
       for (uint32_t s = 0; s < entry->num_stat_params; s++) {
         uint32_t id = infos[s].param_id;
@@ -4540,17 +4692,22 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
              * parameters -- the draw goes on the default re-resolved from
              * THIS trial's values, in the setup's tail (osdimc_apply_derived);
              * the walk coordinate is consumed here so the order holds */
-            if (osdimc_walk_on)
-              (void)osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
+            if (osdimc_walk_on) {
+              int kk = osdimc_walk_slot_for(&bins, &infos[s], card, id, &walk_k);  /* E-834 */
+              (void)osdimc_walk_value(&infos[s], e->nominal, &kk, &z);
+            }
             continue;
           }
           if (osdimc_walk_on) {                       /* MC hunt F3 */
-            val = osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
+            /* Enhancement-834: a later bin takes its first bin's coordinate */
+            int kk = osdimc_walk_slot_for(&bins, &infos[s], card, id, &walk_k);
+            val = osdimc_walk_value(&infos[s], e->nominal, &kk, &z);
           } else {
-            /* E-538: this parameter's own inflation (1.0 when out of scope) */
-            double sc = osdimc_scale_for((char *)gen_model->GENmodName,
+            /* E-538: this parameter's own inflation (1.0 when out of scope);
+               E-834: scoped by the definition */
+            double sc = osdimc_scale_for(osdimc_def_name(card, defbuf, sizeof defbuf),
                                          descr->param_opvar[id].name[0]);
-            osdimc_lhs_kdim = osdimc_mix(kdimbase ^ osdimc_hash_str((char *)gen_model->GENmodName) ^ id);
+            osdimc_lhs_kdim = osdimc_mix(kdimbase ^ osdimc_def_hash(card) ^ id);
             val = osdimc_value(osdimc_mix(kmodel ^ id), &infos[s], e->nominal,
                                sc, &z);
             osdimc_lhs_kdim = 0;
@@ -4613,6 +4770,7 @@ static void osdimc_apply_type(CKTcircuit *ckt, int type, int seed,
         }
       }
     }
+    tfree(bins.v);                       /* Enhancement-834 */
   }
 }
 
@@ -4659,13 +4817,16 @@ static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry
   uint64_t kbase = osdimc_kbase(seed);
   uint64_t kdimbase = osdimc_mix(((uint64_t)(uint32_t)seed << 32) ^ 0x6c6873ull);
   int walk_k = 0, walk_nu = 0;
+  OsdimcBinDims bins = {NULL, 0, 0};     /* Enhancement-834 */
   if (osdimc_walk_on)
     osdimc_walk_count(ckt, type, &walk_k, &walk_nu, NULL);
 
   for (GENmodel *gen_model = inModel; gen_model;
        gen_model = gen_model->GENnextModel) {
     void *model = osdi_model_data(gen_model);
-    uint64_t kmodel = osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_model->GENmodName));
+    const char *card = (char *)gen_model->GENmodName;
+    char defbuf[256];
+    uint64_t kmodel = osdimc_mix(kbase ^ osdimc_def_hash(card));   /* E-834 */
     bool rederive_model = false, rederive_inst = false;
     OsdiInitInfo init_info;
     OsdiNgspiceHandle handle;
@@ -4737,8 +4898,10 @@ static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry
             osdimc_cornered(entry, id))                    /* Enhancement-654 */
           continue;
         if (!(infos[s].derived && e->given == 0)) {
-          if (osdimc_walk_on)                 /* consumed by osdimc_apply_type */
-            (void)osdimc_walk_value(&infos[s], e->nominal, &walk_k, &z);
+          if (osdimc_walk_on) {               /* consumed by osdimc_apply_type */
+            int kk = osdimc_walk_slot_for(&bins, &infos[s], card, id, &walk_k);  /* E-834 */
+            (void)osdimc_walk_value(&infos[s], e->nominal, &kk, &z);
+          }
           continue;
         }
         {
@@ -4751,10 +4914,12 @@ static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry
         if (osdimc_zero_sigma(&infos[s], e, (char *)gen_model->GENmodName, pname))
           continue;
         if (osdimc_walk_on) {
-          val = osdimc_walk_value(&infos[s], nom, &walk_k, &z);
+          int kk = osdimc_walk_slot_for(&bins, &infos[s], card, id, &walk_k);    /* E-834 */
+          val = osdimc_walk_value(&infos[s], nom, &kk, &z);
         } else {
-          double sc = osdimc_scale_for((char *)gen_model->GENmodName, pname);
-          osdimc_lhs_kdim = osdimc_mix(kdimbase ^ osdimc_hash_str((char *)gen_model->GENmodName) ^ id);
+          double sc = osdimc_scale_for(osdimc_def_name(card, defbuf, sizeof defbuf),
+                                       pname);                     /* E-834 */
+          osdimc_lhs_kdim = osdimc_mix(kdimbase ^ osdimc_def_hash(card) ^ id);
           val = osdimc_value(osdimc_mix(kmodel ^ id), &infos[s], nom, sc, &z);
           osdimc_lhs_kdim = 0;
         }
@@ -4806,6 +4971,7 @@ static void osdimc_apply_derived(CKTcircuit *ckt, const OsdiRegistryEntry *entry
       }
     }
   }
+  tfree(bins.v);                         /* Enhancement-834 */
 }
 
 /* MC hunt F3: the walk value of one parameter. A Gaussian one takes the next
@@ -4904,21 +5070,30 @@ static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
     const OsdiStatParam *infos = entry->stat_param_infos;
     if (entry->num_stat_params == 0 || !infos)
       continue;
+    OsdimcBinDims bins = {NULL, 0, 0};   /* Enhancement-834 */
     for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
          gen_model = gen_model->GENnextModel) {
       void *model = osdi_model_data(gen_model);
       for (uint32_t s = 0; s < entry->num_stat_params; s++) {
         uint32_t id = infos[s].param_id;
         int *cnt = (infos[s].dist & OSDI_DIST_UNIFORM) ? nunif : ngauss;
+        bool held = false;
         if (osdimc_cornered(entry, id)) {                 /* E-667 */
           if (!ncorner)
             continue;
           cnt = ncorner;
+          held = true;
         }
         if (id >= descr->num_instance_params) {
           OsdiMcNominal *e = osdimc_find(model, id);
-          if (e && !e->pinned && !osdimc_gated_off(&infos[s], e)) /* E-555 */
-            (*cnt)++;
+          if (e && !e->pinned && !osdimc_gated_off(&infos[s], e)) { /* E-555 */
+            /* Enhancement-834: the bins of one definition share a dimension;
+               a corner's held entries are named per card, as before */
+            if (held)
+              (*cnt)++;
+            else
+              (void)osdimc_walk_slot(&bins, (char *)gen_model->GENmodName, id, cnt);
+          }
         } else {
           for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
                gen_inst = gen_inst->GENnextInstance) {
@@ -4930,6 +5105,7 @@ static void osdimc_walk_count(CKTcircuit *ckt, int upto, int *ngauss,
         }
       }
     }
+    tfree(bins.v);
   }
 }
 
@@ -5155,11 +5331,13 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
     if (entry->num_stat_params == 0 || !infos)
       continue;
 
+    OsdimcBinDims bins = {NULL, 0, 0};   /* Enhancement-834 */
     for (GENmodel *gen_model = ckt->CKThead[type]; gen_model;
          gen_model = gen_model->GENnextModel) {
       void *model = osdi_model_data(gen_model);
-      uint64_t kmodel =
-          osdimc_mix(kbase ^ osdimc_hash_str((char *)gen_model->GENmodName));
+      const char *card = (char *)gen_model->GENmodName;
+      char defbuf[256];
+      uint64_t kmodel = osdimc_mix(kbase ^ osdimc_def_hash(card));   /* E-834 */
 
       for (uint32_t s = 0; s < entry->num_stat_params; s++) {
         uint32_t id = infos[s].param_id;
@@ -5169,13 +5347,17 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
           OsdiMcNominal *e = osdimc_find(model, id);
           if (!e || e->pinned || osdimc_gated_off(&infos[s], e)) /* E-555 */
             continue;
+          /* Enhancement-834: the bins of one definition drew one deviate --
+           * one factor of the weight */
+          if (!osdimc_bin_first(&bins, card, id, 0))
+            continue;
           /* E-538: weight EXACTLY the dimensions that were inflated. A
            * parameter `-inflate` left out of scope was drawn at its true
            * sigma, so it carries no likelihood ratio -- and keeping it out of
            * the product is the whole point: the weight stays low-dimensional
            * and the estimate usable. */
-          double sc = osdimc_scale_for((char *)gen_model->GENmodName,
-                                       descr->param_opvar[id].name[0]);
+          double sc = osdimc_scale_for(osdimc_def_name(card, defbuf, sizeof defbuf),
+                                       descr->param_opvar[id].name[0]);   /* E-834 */
           if (sc == 1.0)
             continue;
           logw += osdimc_log_lr(osdimc_mix(kmodel ^ id), &infos[s], sc);
@@ -5197,6 +5379,7 @@ double OSDImcSampleLogLR(CKTcircuit *ckt) {
         }
       }
     }
+    tfree(bins.v);
   }
   return logw;
 }

@@ -225,6 +225,9 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
     JOB* job;
     double	startTime;
     int		error, i, error2;
+#ifdef OSDI
+    int         osdi_seed_fresh = 0;   /* Enhancement-832 */
+#endif
 
     int         ANALmaxnum = spice_num_analysis();
 
@@ -357,6 +360,14 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
         ckt->CKTtime = 0.0;
         ckt->CKTcurrentAnalysis = 0;
 
+#ifdef OSDI
+        /* Enhancement-832: the unseeded draws' seed for this job's first
+           analysis, set before the setup so a draw in a parameter's default
+           and the analysis see one value; each later analysis takes a new one */
+        OSDIanalysisSeed();
+        osdi_seed_fresh = 1;
+#endif
+
 #ifdef WANT_SENSE2
         senflag = 0;
         if (sens_num < ANALmaxnum)
@@ -365,6 +376,11 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
                     senflag = 1;
                     ckt->CKTcurJob = job;
                     ckt->CKTsenInfo = (SENstruct*)job;
+#ifdef OSDI
+                    if (!osdi_seed_fresh)    /* Enhancement-832 */
+                        OSDIanalysisSeed();
+                    osdi_seed_fresh = 0;
+#endif
                     error = analInfo[sens_num]->an_func(ckt, reset);
 #ifdef OSDI
                     {   /* Enhancement-829: a $fatal in @(final_step) */
@@ -462,6 +478,13 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
                             return(error);
                         }
                         /* gtri - end - 6/10/91 - wbk - Setup event-driven data */
+                    }
+#endif
+#ifdef OSDI
+                    if (reset) {             /* Enhancement-832 */
+                        if (!osdi_seed_fresh)
+                            OSDIanalysisSeed();
+                        osdi_seed_fresh = 0;
                     }
 #endif
                     error = analInfo[i]->an_func(ckt, reset);
