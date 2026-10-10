@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+// a current 1/(1 + 1/V): 0 at 0 V, but its derivative there is inf/inf
+module divg(a, b);
+    inout a, b;
+    electrical a, b;
+    analog I(a, b) <+ 1e-3 / (1 + 1 / V(a, b));
+endmodule

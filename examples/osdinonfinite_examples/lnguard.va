@@ -1,0 +1,7 @@
+`include "disciplines.vams"
+// (control) the same ln() with a guard
+module lnguard(x, o);
+    inout x, o;
+    electrical x, o;
+    analog V(o) <+ ln(max(V(x), 1e-30));
+endmodule

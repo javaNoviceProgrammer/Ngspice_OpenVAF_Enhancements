@@ -993,11 +993,90 @@ static void eval(const OsdiDescriptor *descr, const GENinstance *gen_inst,
   }
 }
 
+/* Enhancement-854 (second robustness campaign 2026-10-10, F10): a device that
+ * loads a NaN or an infinity -- `ln(V(x))` at Newton's zero start -- leaves
+ * nothing the solver can recover from: every homotopy restarts from the same
+ * point, and the operating point ended "Timestep too small; cause
+ * unrecorded", naming neither the device nor the value. The non-finite
+ * entries of this instance's right-hand side rows and Jacobian entries are
+ * counted before and after it loads, so a value another device left there is
+ * not charged to it. */
+static int nonfinite_count(const CKTcircuit *ckt, const void *inst,
+                           const OsdiDescriptor *descr) {
+  const uint32_t *nm =
+      (const uint32_t *)(((const char *)inst) + descr->node_mapping_offset);
+  double *const *jp =
+      (double *const *)(((const char *)inst) + descr->jacobian_ptr_resist_offset);
+  int n = 0;
+  for (uint32_t i = 0; i < descr->num_nodes; i++)
+    if (nm[i] != 0 && !isfinite(ckt->CKTrhs[nm[i]]))
+      n++;
+  for (uint32_t j = 0; j < descr->num_jacobian_entries; j++)
+    if (jp[j] && !isfinite(*jp[j]))
+      n++;
+  return n;
+}
+
+static void nonfinite_report(CKTcircuit *ckt, const GENinstance *gen_inst,
+                             const void *inst, OsdiExtraInstData *extra,
+                             const OsdiDescriptor *descr) {
+  const uint32_t *nm =
+      (const uint32_t *)(((const char *)inst) + descr->node_mapping_offset);
+  double *const *jp =
+      (double *const *)(((const char *)inst) + descr->jacobian_ptr_resist_offset);
+  DS_CREATE(what, 128);
+  uint32_t i, j;
+
+  /* the trouble element the final message names, whatever is printed here;
+     CKTtrouble names it before a singular node */
+  ckt->CKTtroubleElt = (GENinstance *) gen_inst;
+  ckt->CKTtroubleNonfinite = (GENinstance *) gen_inst;
+  if (extra->nonfinite_told)
+    return;
+  extra->nonfinite_told = true;
+
+  for (i = 0; i < descr->num_nodes; i++)
+    if (nm[i] != 0 && !isfinite(ckt->CKTrhs[nm[i]]))
+      break;
+  if (i < descr->num_nodes) {
+    ds_cat_str(&what, "the residual of ");
+    ds_cat_str(&what, descr->nodes[i].name);
+    ds_cat_str(&what, isnan(ckt->CKTrhs[nm[i]]) ? " is NaN" :
+                ckt->CKTrhs[nm[i]] > 0 ? " is +inf" : " is -inf");
+  } else {
+    for (j = 0; j < descr->num_jacobian_entries; j++)
+      if (jp[j] && !isfinite(*jp[j]))
+        break;
+    if (j < descr->num_jacobian_entries) {
+      const OsdiNodePair *np = &descr->jacobian_entries[j].nodes;
+      ds_cat_str(&what, "the derivative of ");
+      ds_cat_str(&what, descr->nodes[np->node_1].name);
+      ds_cat_str(&what, "'s residual by ");
+      ds_cat_str(&what, descr->nodes[np->node_2].name);
+      ds_cat_str(&what, isnan(*jp[j]) ? " is NaN" : *jp[j] > 0 ? " is +inf" : " is -inf");
+    }
+  }
+  ds_cat_str(&what, ", at");
+  for (i = 0; i < descr->num_terminals; i++) {
+    char buf[64];
+    snprintf(buf, sizeof buf, "%s %s = %g V", i ? "," : "",
+             descr->nodes[i].name, ckt->CKTrhsOld[nm[i]]);
+    ds_cat_str(&what, buf);
+  }
+  fprintf(stderr,
+          "Warning: %s (Verilog-A module %s) loaded a value that is not "
+          "finite: %s. Newton cannot continue from it; if the analysis fails, "
+          "the model needs a guard at these voltages.\n",
+          gen_inst->GENname, descr->name, ds_get_buf(&what));
+  ds_free(&what);
+}
+
 static void load(CKTcircuit *ckt, const GENinstance *gen_inst, void *model,
                  void *inst, OsdiExtraInstData *extra_inst_data, bool is_tran,
                  bool is_init_tran, const OsdiDescriptor *descr) {
 
-  NG_IGNORE(extra_inst_data);
+  /* Enhancement-854 */
+  int nonfinite_before = nonfinite_count(ckt, inst, descr);
 
   double dump;
   if (is_tran) {
@@ -1049,6 +1128,9 @@ static void load(CKTcircuit *ckt, const GENinstance *gen_inst, void *model,
      */
     descr->load_spice_rhs_dc(inst, model, ckt->CKTrhs, ckt->CKTrhsOld);
   }
+
+  if (nonfinite_count(ckt, inst, descr) > nonfinite_before)
+    nonfinite_report(ckt, gen_inst, inst, extra_inst_data, descr);
 }
 
 

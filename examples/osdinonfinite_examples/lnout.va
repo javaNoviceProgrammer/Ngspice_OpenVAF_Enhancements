@@ -1,0 +1,8 @@
+`include "disciplines.vams"
+// F10 of the second robustness campaign: ln() of a terminal voltage, which
+// Newton's zero start evaluates at 0 V
+module lnout(x, o);
+    inout x, o;
+    electrical x, o;
+    analog V(o) <+ ln(V(x));
+endmodule

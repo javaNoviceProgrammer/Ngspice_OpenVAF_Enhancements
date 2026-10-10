@@ -59,9 +59,9 @@ Nothing was fixed; this is the list.
 | [F6](#f6) | *(fixed in [E-850](../../enhancements_doc/Enhancement-850.md): the floor is 1e-200, which only a zero gain meets, and a frequency that meets it is reported)* **noise:** `inoise_spectrum` is wrong wherever the gain is below 1e-10. The gain squared is floored at 1e-20 with no note: 16 times low at 1 Hz through 1 fF | low |
 | [F7](#f7) | *(fixed in [E-851](../../enhancements_doc/Enhancement-851.md): the result and the substituted vectors carry 17 digits)* **measure:** the `meas` command's result keeps 7 significant digits, a `%e` round trip through `let`; a `.meas` card's keeps 16 (E-802). `val=<vector>` is substituted the same way | low |
 | [F8](#f8) | *(fixed in [E-852](../../enhancements_doc/Enhancement-852.md): the t = 0 point is solved and written, and the run after it is unchanged)* **uic:** a `uic` transient has no t = 0 sample, so the `.ic` state is never output | low |
-| [F9](#f9) | **diagnostic:** `.option method=gear maxord=6` without `dynorder` is identical to `maxord=2`, and nothing says so | low |
-| [F10](#f10) | **diagnostic:** an OSDI device that loads a non-finite value at Newton's start (`ln(V(x))` at 0 V) ends the op with "cause unrecorded" and names nothing; a B-source `ln()` converges | low |
-| [F11](#f11) | **measure, consistency:** AVG integrates by trapezoids and INTEG by Simpson's rules, so INTEG/(to−from) and AVG disagree on the same window, by 2e-3 on a sampled sine. E-302 calls them the same quantity | low |
+| [F9](#f9) | *(fixed in [E-853](../../enhancements_doc/Enhancement-853.md): a note says when maxord has no effect; trap, which dynorder and ordfix took to order 3 on stale coefficients, stays at 2)* **diagnostic:** `.option method=gear maxord=6` without `dynorder` is identical to `maxord=2`, and nothing says so | low |
+| [F10](#f10) | *(fixed in [E-854](../../enhancements_doc/Enhancement-854.md): the failure names the instance, and a warning gives the value and the terminal voltages)* **diagnostic:** an OSDI device that loads a non-finite value at Newton's start (`ln(V(x))` at 0 V) ends the op with "cause unrecorded" and names nothing; a B-source `ln()` converges | low |
+| [F11](#f11) | *(fixed in [E-855](../../enhancements_doc/Enhancement-855.md): AVG integrates its points with INTEG's rule)* **measure, consistency:** AVG integrates by trapezoids and INTEG by Simpson's rules, so INTEG/(to−from) and AVG disagree on the same window, by 2e-3 on a sampled sine. E-302 calls them the same quantity | low |
 
 <a id="f1"></a>
 ## F1 — a ternary or an equality with a logical operand collapses the integer
@@ -297,6 +297,13 @@ start at the first step. This is upstream's condition.
 <a id="f9"></a>
 ## F9 — `maxord` above 2 does nothing without `dynorder`
 
+*Fixed in [E-853](../../enhancements_doc/Enhancement-853.md). A note at the start of the
+transient says that `maxord` has no effect without `dynorder` or `ordfix`, and that trap's order
+is 2 at most. The dig found trap with `dynorder` or `ordfix` taken to order 3. `NIcomCof` refuses
+that order, and the step ran on the previous step's coefficients: 19 rejected steps with
+`dynorder maxord=3`, and `ordfix=3` ran past 300 s. Trap now stays at order 2, and every trap
+`maxord` above 2 gives the run of 2, bit for bit.*
+
 | options | points | final value |
 |---|---|---|
 | `method=gear maxord=2` | 3 390 | 5.711600823213e-3 |
@@ -310,6 +317,12 @@ results to the last digit on every network.
 
 <a id="f10"></a>
 ## F10 — an OSDI device's non-finite load is not named
+
+*Fixed in [E-854](../../enhancements_doc/Enhancement-854.md). Each instance's right-hand side
+rows and Jacobian entries are checked as it loads. The failure now reads "trouble with
+qm-instance n1, which loaded a value that is not finite", under KLU too, where it had named the
+singular node. A warning gives the value, the residual of `flow(o)` is NaN, and the terminal
+voltages.*
 
 ```verilog
 `include "disciplines.vams"
@@ -326,6 +339,10 @@ told which one.
 
 <a id="f11"></a>
 ## F11 — AVG and INTEG integrate differently
+
+*Fixed in [E-855](../../enhancements_doc/Enhancement-855.md). AVG integrates the points of its
+window with INTEG's rule, through one function the three share, so AVG = INTEG/(to−from) to
+rounding. The sine's AVG is now 1.4e-4 from the analytic average, against 1.9e-3.*
 
 AVG integrates by trapezoids. INTEG and RMS use Simpson's 3/8 or 1/3 rule on runs of equal
 steps, and trapezoids elsewhere. So INTEG/(to−from) and AVG over the same window differ: by

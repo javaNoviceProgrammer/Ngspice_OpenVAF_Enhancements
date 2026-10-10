@@ -185,6 +185,8 @@ typedef struct OsdiExtraInstData {
    * exactly when the opvar storage still holds its initial zeros. Set in the
    * single eval() funnel in osdiload.c; read by OSDIask. */
   bool opvars_valid;
+  /* Enhancement-854: this instance's non-finite load has been reported */
+  bool nonfinite_told;
   uint32_t eval_flags;
 
   /* Waveform history for absdelay — one row per slot, indexed by timepoint. */

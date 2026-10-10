@@ -480,6 +480,7 @@ struct CKTcircuit {
     double CKTrelDv;            /* rel limit for iter-iter voltage change */
     int CKTtroubleNode;         /* Non-convergent node number */
     GENinstance *CKTtroubleElt; /* Non-convergent device instance */
+    GENinstance *CKTtroubleNonfinite; /* Enhancement-854: an instance that loaded a NaN or an infinity */
     int CKTvarHertz;            /* variable HERTZ in B source */
 /* gtri - evt - wbk - 5/20/91 - add event-driven and enhancements data */
 #ifdef XSPICE

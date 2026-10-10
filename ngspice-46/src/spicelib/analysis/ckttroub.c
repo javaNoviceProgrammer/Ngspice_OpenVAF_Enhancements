@@ -85,7 +85,13 @@ CKTtrouble(CKTcircuit *ckt, char *optmsg)
 
     msg_p += strlen(msg_p);
 
-    if (ckt->CKTtroubleNode) {
+    /* Enhancement-854: a device that loaded a NaN or an infinity is the
+       cause; the singular row KLU then reports is its consequence */
+    if (ckt->CKTtroubleNonfinite) {
+	sprintf(msg_p, "trouble with %s-instance %s, which loaded a value that is not finite\n",
+	    ckt->CKTtroubleNonfinite->GENmodPtr->GENmodName,
+	    ckt->CKTtroubleNonfinite->GENname);
+    } else if (ckt->CKTtroubleNode) {
 	sprintf(msg_p, "trouble with node \"%s\"\n",
 		CKTnodName(ckt, ckt->CKTtroubleNode));
     } else if (ckt->CKTtroubleElt) {

@@ -336,3 +336,15 @@ scripting ngspice:
   and written, with each capacitor at its initial voltage. Where a source makes
   a capacitor jump, its currents are those just after the jump, without the
   impulse.
+- **`maxord` above 2** does nothing unless `dynorder` or `ordfix` is set: the
+  default order control takes Gear to order 2 at most. Since
+  [E-853](../../enhancements_doc/Enhancement-853.md) a note says so. Trap's
+  order is 2 at most whatever the options: `dynorder` and `ordfix` took it to 3
+  on stale coefficients, and `ordfix=3` could hang.
+- **A Verilog-A device that loads a NaN or an infinity**, such as `ln(V(x))` at
+  Newton's zero start, failed the analysis with "cause unrecorded". Since
+  [E-854](../../enhancements_doc/Enhancement-854.md) the failure names the
+  instance, and a warning gives the value and the terminal voltages.
+- **AVG and INTEG** integrated by different rules, so AVG and
+  INTEG/(to−from) differed by up to 2e-3. Since
+  [E-855](../../enhancements_doc/Enhancement-855.md) AVG uses INTEG's rule.

@@ -1114,6 +1114,51 @@ e468_nested_complaint(const char *what)
 }
 
 
+/* Enhancement-855 (second robustness campaign 2026-10-10, F11): the integral
+ * of y over x, the n points in the order given -- Simpson's 3/8 or 1/3 rule on
+ * runs of equal widths, the trapezoid elsewhere. INTEG and RMS integrated this
+ * way and AVG by trapezoids, so INTEG/(to-from) and AVG over one window
+ * differed (2e-3 on a sampled sine), where Enhancement-302 calls them the same
+ * quantity; all three integrate with it now. */
+static double
+measure_quad(const double *x, const double *y, int n)
+{
+    double *width;
+    double sum1 = 0.0, sum2 = 0.0, sum3 = 0.0;
+    int i;
+
+    if (n < 2)
+        return 0.0;
+    width = TMALLOC(double, n + 1);
+    for (i = 0; i < n - 1; i++)
+        width[i] = x[i+1] - x[i];
+    width[i++] = 0;
+    width[i++] = 0;
+
+    i = 0;
+    while (i < n - 1) {
+        // Simpson's 3/8 Rule
+        if (AlmostEqualUlps(width[i], width[i+1], 100) &&
+            AlmostEqualUlps(width[i], width[i+2], 100)) {
+            sum1 += 3*width[i] * (y[i] + 3*(y[i+1] + y[i+2]) + y[i+3]) / 8.0;
+            i += 3;
+        }
+        // Simpson's 1/3 Rule
+        else if (AlmostEqualUlps(width[i], width[i+1], 100)) {
+            sum2 += width[i] * (y[i] + 4*y[i+1] + y[i+2]) / 3.0;
+            i += 2;
+        }
+        // Trapezoidal Rule
+        else {
+            sum3 += width[i] * (y[i] + y[i+1]) / 2;
+            i++;
+        }
+    }
+    txfree(width);
+    return sum1 + sum2 + sum3;
+}
+
+
 static int
 measure_minMaxAvg(
     MEASUREPTR meas,                /* in : parsed measurement data request */
@@ -1123,13 +1168,17 @@ measure_minMaxAvg(
     int i;
     struct dvec *d, *dScale;
     double value, svalue, mValue, mValueAt;
-    double pvalue = 0.0, sprev = 0.0, Tsum = 0.0;
+    double sprev = 0.0;
     /* Enhancement-303: the immediately preceding RAW sample (in or out of the window),
        needed to interpolate the exact point where a dc sweep crosses `from` or `to`. */
     double prev_s = 0.0, prev_v = 0.0;
     bool have_prev = FALSE;
     int first;
     bool ac_check = FALSE, sp_check = FALSE, dc_check = FALSE, tran_check = FALSE;
+    /* Enhancement-855: AVG's points, integrated by measure_quad as INTEG's are */
+    double *ax = NULL, *ay = NULL;
+    int an = 0;
+#define AVG_PT(xv, yv) do { ax[an] = (xv); ay[an++] = (yv); } while (0)
 
     mValue = 0;
     mValueAt = svalue = 0;
@@ -1203,6 +1252,11 @@ measure_minMaxAvg(
     if (measure_check_len(meas, d, dScale) != MEASUREMENT_OK)
         return MEASUREMENT_FAILURE;
 
+    if (mFunctionType == AT_AVG) {
+        ax = TMALLOC(double, d->v_length + 3);
+        ay = TMALLOC(double, d->v_length + 3);
+    }
+
     for (i = 0; i < d->v_length; i++) {
         if (ac_check) {
             if (d->v_compdata) {
@@ -1251,10 +1305,8 @@ measure_minMaxAvg(
                     /* crossing INTO the window: open it at the exact boundary */
                     double b = (prev_s < meas->m_from) ? meas->m_from : meas->m_to;
                     double t = (b - prev_s) / (svalue - prev_s);
-                    mValue = 0.0;
-                    Tsum = 0.0;
-                    pvalue = prev_v + t * (value - prev_v);
                     sprev = b;
+                    AVG_PT(b, prev_v + t * (value - prev_v));
                     mValueAt = b;
                     first = 1;          /* this sample now accumulates against `b` */
                 } else if (!in_win && prev_in && first != 0) {
@@ -1262,9 +1314,8 @@ measure_minMaxAvg(
                     double b = (svalue > meas->m_to) ? meas->m_to : meas->m_from;
                     double t = (b - prev_s) / (svalue - prev_s);
                     double bv = prev_v + t * (value - prev_v);
-                    mValue += 0.5 * (bv + pvalue) * (b - sprev);
-                    Tsum += (b - sprev);
                     sprev = b;
+                    AVG_PT(b, bv);
                     break;
                 }
             }
@@ -1306,10 +1357,8 @@ measure_minMaxAvg(
                                                     'y', meas);
                         svalue = meas->m_to;
                     }
-                    mValue += 0.5 * (value + pvalue) * (svalue - sprev);
-                    Tsum += (svalue - sprev);
-                    pvalue = value;
                     sprev = svalue;
+                    AVG_PT(svalue, value);
                 }
                 break;
             }
@@ -1327,9 +1376,7 @@ measure_minMaxAvg(
                 mValueAt = svalue;
                 break;
             case AT_AVG:
-                mValue = 0.0;
                 mValueAt = svalue;
-                Tsum = 0.0;
                 /* Enhancement-302: and START at exactly `from`, for the same reason --
                    otherwise the first partial interval is dropped as well.
                    NOT for a dc sweep: only time/frequency scales are guaranteed to
@@ -1344,12 +1391,11 @@ measure_minMaxAvg(
                        next sample and this one never entered the sum. */
                     double fvalue = measure_interpolate(dScale, d, i - 1, i,
                                                         meas->m_from, 'y', meas);
-                    mValue = 0.5 * (value + fvalue) * (svalue - meas->m_from);
-                    Tsum = svalue - meas->m_from;
                     mValueAt = meas->m_from;
+                    AVG_PT(meas->m_from, fvalue);
                 }
-                pvalue = value;
                 sprev = svalue;
+                AVG_PT(svalue, value);
                 break;
             default:
                 fprintf(cp_err, "Error: improper min/max/avg call.\n");
@@ -1374,10 +1420,8 @@ measure_minMaxAvg(
                 break;
             }
             case AT_AVG: {
-                mValue += 0.5 * (value + pvalue) * (svalue - sprev);
-                Tsum += (svalue - sprev);
-                pvalue = value;
                 sprev = svalue;
+                AVG_PT(svalue, value);
                 break;
             }
             default :
@@ -1405,13 +1449,28 @@ measure_minMaxAvg(
      *
      * RMS already failed here, but only by arithmetic accident -- see the
      * matching guard in measure_rms_integral(). */
-    if (first == 0)
+    if (first == 0) {
+        tfree(ax);
+        tfree(ay);
         return MEASUREMENT_OK;              /* m_measured is still NAN */
+    }
 
     switch (mFunctionType)
     {
     case AT_AVG: {
-        meas->m_measured = mValue / (first ? Tsum : 1.0);
+        /* Enhancement-855: the integral of the same points by the same rule as
+           INTEG's, so AVG = INTEG/(to-from); it was a trapezoid sum. A dc sweep
+           may descend: INTEG walks it upward (E-304), so the points are put in
+           that order, and the rule groups the same steps. */
+        if (an > 1 && ax[an-1] < ax[0]) {
+            int k;
+            for (k = 0; k < an / 2; k++) {
+                double tx = ax[k], ty = ay[k];
+                ax[k] = ax[an-1-k];  ay[k] = ay[an-1-k];
+                ax[an-1-k] = tx;     ay[an-1-k] = ty;
+            }
+        }
+        meas->m_measured = measure_quad(ax, ay, an) / (ax[an-1] - ax[0]);
         /* Enhancement-302: report the END OF THE WINDOW, not `svalue` -- which, when
            the loop broke on the first out-of-window sample, was a time the average
            never covered (a 250us window was echoed as "to=2.50280e-04"). `sprev` is
@@ -1435,7 +1494,10 @@ measure_minMaxAvg(
         fprintf(cp_err, "Error: improper min/max/avg call.\n");
         return MEASUREMENT_FAILURE;
     }
+    tfree(ax);
+    tfree(ay);
     return MEASUREMENT_OK;
+#undef AVG_PT
 }
 
 
@@ -1613,10 +1675,7 @@ measure_rms_integral(
     double *x;                  /* temp x array */
     double *y;                  /* temp y array */
     double toVal;               /* to time value */
-    double *width;              /* temp width array */
-    double sum1;                /* first sum */
-    double sum2;                /* second sum */
-    double sum3;                /* third sum */
+    double integral;            /* Enhancement-855: measure_quad's */
     int first;
     bool ac_check = FALSE, sp_check = FALSE, dc_check = FALSE, tran_check = FALSE;
 
@@ -1695,7 +1754,6 @@ measure_rms_integral(
                        ? d->v_length : xScale->v_length;
         x     = TMALLOC(double, nbuf);
         y     = TMALLOC(double, nbuf);
-        width = TMALLOC(double, nbuf + 1);
     }
 
     xy_size = 0;
@@ -1794,33 +1852,8 @@ measure_rms_integral(
             y[xy_size++] = value;
     }
 
-    // evaluate segment width
-    for (i = 0; i < xy_size-1; i++)
-        width[i] = x[i+1] - x[i];
-    width[i++] = 0;
-    width[i++] = 0;
-
-    // Compute Integral (area under curve)
-    i = 0;
-    sum1 = sum2 = sum3 = 0.0;
-    while (i < xy_size-1) {
-        // Simpson's 3/8 Rule
-        if (AlmostEqualUlps(width[i], width[i+1], 100) &&
-            AlmostEqualUlps(width[i], width[i+2], 100)) {
-            sum1 += 3*width[i] * (y[i] + 3*(y[i+1] + y[i+2]) + y[i+3]) / 8.0;
-            i += 3;
-        }
-        // Simpson's 1/3 Rule
-        else if (AlmostEqualUlps(width[i], width[i+1], 100)) {
-            sum2 += width[i] * (y[i] + 4*y[i+1] + y[i+2]) / 3.0;
-            i += 2;
-        }
-        // Trapezoidal Rule
-        else {
-            sum3 += width[i] * (y[i] + y[i+1]) / 2;
-            i++;
-        }
-    }
+    // Compute Integral (area under curve) -- Enhancement-855: measure_quad
+    integral = measure_quad(x, y, xy_size);
 
     /* Now set the measurement values if not set.
        Enhancement-304: the window ran to the end of the data rather than hitting `to`,
@@ -1840,7 +1873,6 @@ measure_rms_integral(
     if (xy_size < 2) {
         txfree(x);
         txfree(y);
-        txfree(width);
         return MEASUREMENT_OK;              /* m_measured is still NAN */
     }
 
@@ -1850,16 +1882,15 @@ measure_rms_integral(
     meas->m_to = toVal;
 
     if (mFunctionType == AT_RMS) {
-        meas->m_measured = (sum1 + sum2 + sum3)/ (toVal - meas->m_measured_at);
+        meas->m_measured = integral / (toVal - meas->m_measured_at);
         meas->m_measured = sqrt(meas->m_measured);
 
     } else {
-        meas->m_measured = (sum1 + sum2 + sum3);
+        meas->m_measured = integral;
     }
 
     txfree(x);
     txfree(y);
-    txfree(width);
     return MEASUREMENT_OK;
 }
 

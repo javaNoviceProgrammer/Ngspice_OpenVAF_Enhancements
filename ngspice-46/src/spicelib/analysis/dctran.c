@@ -187,6 +187,18 @@ uic_t0_point(CKTcircuit *ckt, runDesc *plot)
 }
 
 
+/* Enhancement-853: the highest order dynorder may use. Trap has no order
+ * above 2 -- NIcomCof refuses order 3 with E_ORDER, which its caller does not
+ * check, so a step ran on the last step's coefficients -- and maxord also set
+ * dynorder's order hold, so maxord above 2 still moved a trap run. */
+static int
+order_ceiling(const CKTcircuit *ckt)
+{
+    if (ckt->CKTintegrateMethod == TRAPEZOIDAL && ckt->CKTmaxOrder > 2)
+        return 2;
+    return ckt->CKTmaxOrder;
+}
+
 int
 DCtran(CKTcircuit *ckt,
        int restart)   /* forced restart flag */
@@ -414,6 +426,27 @@ DCtran(CKTcircuit *ckt,
         firsttime = 1;
         ckt->CKTlanding = 0;   /* Enhancement-759 */
         ckt->CKTforceReject = 0;
+
+        /* Enhancement-853 (second robustness campaign 2026-10-10, F9): the
+         * stock order control only toggles Gear between orders 1 and 2, and
+         * trap's order is 2 at most; only dynorder (Enhancement-128) and
+         * ordfix (Enhancement-181) go higher. `maxord` was accepted up to 6
+         * and range-checked, and a run with maxord=6 was the run with
+         * maxord=2 to the last digit, without a word. */
+        if (ckt->CKTmaxOrder > 2 && !ft_optimizing) {
+            if (ckt->CKTintegrateMethod == GEAR && !ckt->CKTdynorder &&
+                    ckt->CKTordFix == 0)
+                fprintf(stdout, "Note: maxord=%d has no effect without dynorder: "
+                        "the default order control takes Gear to order 2 at "
+                        "most. `.option dynorder` lets the order rise to %d, "
+                        "and `ordfix=%d` pins it.\n",
+                        ckt->CKTmaxOrder, ckt->CKTmaxOrder, ckt->CKTmaxOrder);
+            else if (ckt->CKTintegrateMethod == TRAPEZOIDAL)
+                fprintf(stdout, "Note: maxord=%d has no effect with "
+                        "method=trap, whose order is 2 at most.\n",
+                        ckt->CKTmaxOrder);
+        }
+
         save_mode = (ckt->CKTmode&MODEUIC) | MODETRANOP | MODEINITJCT;
         save_order = ckt->CKTorder;
 
@@ -777,7 +810,7 @@ resume:
         /* hold the order low for a few steps after the discontinuity so it does
          * not race up to a high order inside the violent post-breakpoint transient
          * (E-128) */
-        ckt->CKTorderHold = ckt->CKTdynorder ? ckt->CKTmaxOrder + 2 : 0;
+        ckt->CKTorderHold = ckt->CKTdynorder ? order_ceiling(ckt) + 2 : 0;
         ckt->CKTorderRej = 0;
     }
 #endif
@@ -792,7 +825,7 @@ resume:
         ckt->CKTorderCnt = 0;       /* Enhancement-128: breakpoint -> rebuild order history */
         /* hold the order low for a few steps after the discontinuity so it does not
          * race up to a high order inside the violent post-breakpoint transient */
-        ckt->CKTorderHold = ckt->CKTdynorder ? ckt->CKTmaxOrder + 2 : 0;
+        ckt->CKTorderHold = ckt->CKTdynorder ? order_ceiling(ckt) + 2 : 0;
         ckt->CKTorderRej = 0;
 #ifdef STEPDEBUG
         if( (ckt->CKTdelta > .1*ckt->CKTsaveDelta) ||
@@ -1359,7 +1392,8 @@ resume:
                     /* Enhancement-181: ramp straight to the pinned order as the
                      * BDF history builds (order k needs k back points); no LTE
                      * involvement, no step-size change */
-                    int tgt = MIN(ckt->CKTordFix, ckt->CKTmaxOrder);
+                    int pin = MIN(ckt->CKTordFix, order_ceiling(ckt));   /* E-853 */
+                    int tgt = pin;
                     if (tgt > ckt->CKTorderCnt)
                         tgt = ckt->CKTorderCnt;
                     if (tgt < 1)
@@ -1373,7 +1407,7 @@ resume:
                      * step ratios destabilize variable-step BDF at high order
                      * and low-order ramp steps near full size would seed an
                      * O(h^3) error floor that masks the measurement */
-                    newdelta = ((ckt->CKTorder < ckt->CKTordFix &&
+                    newdelta = ((ckt->CKTorder < pin &&
                                  ckt->CKTorder <= 2) ? 2.0 : 1.15) * ckt->CKTdelta;
                 } else if (ckt->CKTdynorder && ckt->CKTmaxOrder > 1) {
                     /* Enhancement-128: advanced LTE-based order control. The stock
@@ -1388,7 +1422,7 @@ resume:
                      * over successive smooth steps it still climbs to the order (up to
                      * maxord) that the local truncation error rewards. */
                     int curOrder = ckt->CKTorder;
-                    int availOrder = MIN(ckt->CKTmaxOrder, ckt->CKTorderCnt);
+                    int availOrder = MIN(order_ceiling(ckt), ckt->CKTorderCnt);   /* E-853 */
                     double lteCur = 1e30, lteUp = 0.0, lteDn = 0.0, bestLte;
                     int changed = 0;
                     /* The RAW LTE-limited step per order -- pass a huge input so

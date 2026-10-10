@@ -87,6 +87,7 @@ CKTinit(CKTcircuit **ckt)		/* new circuit to create */
     sckt->CKTstat->devCounts = TMALLOC(size_t, DEVmaxnum+1);
     sckt->CKTtroubleNode = 0;
     sckt->CKTtroubleElt = NULL;
+    sckt->CKTtroubleNonfinite = NULL;   /* Enhancement-854 */
     sckt->CKTtimePoints = NULL;
     sckt->CKTnodeDamping = 0;
     sckt->CKTabsDv = 0.5;

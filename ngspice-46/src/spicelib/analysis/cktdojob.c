@@ -321,6 +321,7 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
     ckt->CKTrelDv = task->TSKrelDv;
     ckt->CKTtroubleNode = 0;
     ckt->CKTtroubleElt = NULL;
+    ckt->CKTtroubleNonfinite = NULL;   /* Enhancement-854 */
     ckt->CKTnoopac = task->TSKnoopac && ckt->CKTisLinear;
     ckt->CKTepsmin = task->TSKepsmin;
 
