@@ -111,6 +111,26 @@ void SMPconstMult(SMPmatrix *, double);
 void SMPmultiply(SMPmatrix *, double *, double *, double *, double *);
 void SMPmultiplyAbs(SMPmatrix *, double *, double *);   /* Enhancement-568: Out[i] = sum_j |A_ij| |X_j| */
 
+/* Enhancement-860: a copy of the loaded complex matrix, taken before it is
+ * factored -- entry k is A[row[k]][col[k]], 1-based external indices, the
+ * rhs's -- for the residual of an ac solve */
+typedef struct SMPcCopy {
+    int n, cap;
+    int *row, *col;
+    double *re, *im;
+    void **elt;             /* Sparse: the elements, kept between calls */
+    const void *owner;      /* the matrix they belong to */
+    int owner_elts;         /* its element count then */
+} SMPcCopy;
+/* fresh: the matrix may be new (NIACSHOULDREORDER), rebuild the element list */
+void SMPcCopyLoaded(SMPmatrix *, SMPcCopy *, int fresh);
+/* r = b - A x and den = |A| |x| + |b| over rows 1..n, A the copy (or, under
+ * KLU, the loaded matrix KLU keeps through the factorization) */
+void SMPcResidual(SMPmatrix *, const SMPcCopy *, int n,
+                  const double *br, const double *bi,
+                  const double *xr, const double *xi,
+                  double *rr, double *ri, double *den);
+
 #ifdef CIDER
 void SMPcSolveForCIDER (SMPmatrix *, double [], double [], double [], double []) ;
 int SMPluFacForCIDER (SMPmatrix *) ;

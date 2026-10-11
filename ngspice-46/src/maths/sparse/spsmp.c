@@ -282,6 +282,100 @@ SMPsolveForCIDER (SMPmatrix *Matrix, double RHS[], double RHSsolution[])
 }
 #endif
 
+/*
+ * SMPcCopyLoaded() -- Enhancement-860: copy the loaded complex matrix, before
+ * it is factored, with 1-based external indices (see smpdefs.h)
+ */
+static void
+smp_copy_put (SMPcCopy *copy, int row, int col, void *elt)
+{
+    if (copy->n >= copy->cap) {
+        copy->cap = copy->cap ? 2 * copy->cap : 256 ;
+        copy->row = (int *) realloc (copy->row, (size_t) copy->cap * sizeof (int)) ;
+        copy->col = (int *) realloc (copy->col, (size_t) copy->cap * sizeof (int)) ;
+        copy->re = (double *) realloc (copy->re, (size_t) copy->cap * sizeof (double)) ;
+        copy->im = (double *) realloc (copy->im, (size_t) copy->cap * sizeof (double)) ;
+        copy->elt = (void **) realloc (copy->elt, (size_t) copy->cap * sizeof (void *)) ;
+    }
+    copy->row [copy->n] = row ;
+    copy->col [copy->n] = col ;
+    copy->elt [copy->n] = elt ;
+    copy->n++ ;
+}
+
+/* Sparse factors in place: copy the loaded values. The list of elements is
+ * built once per matrix -- an element keeps its external row and column
+ * through a reordering, and a fill-in, which nothing loads, holds 0 here */
+static void
+smp_copy_sparse (MatrixPtr M, SMPcCopy *copy, int fresh)
+{
+    ElementPtr e ;
+    int j, k ;
+
+    if (fresh || copy->owner != (const void *) M || copy->owner_elts != M->Elements) {
+        copy->n = 0 ;
+        for (j = 1 ; j <= M->Size ; j++)
+            for (e = M->FirstInCol [j] ; e != NULL ; e = e->NextInCol)
+                smp_copy_put (copy, M->IntToExtRowMap [e->Row],
+                              M->IntToExtColMap [j], (void *) e) ;
+        copy->owner = (const void *) M ;
+        copy->owner_elts = M->Elements ;
+    }
+    for (k = 0 ; k < copy->n ; k++) {
+        e = (ElementPtr) copy->elt [k] ;
+        copy->re [k] = e->Real ;
+        copy->im [k] = e->Imag ;
+    }
+}
+
+void
+SMPcCopyLoaded (SMPmatrix *eMatrix, SMPcCopy *copy, int fresh)
+{
+    smp_copy_sparse (eMatrix->SPmatrix, copy, fresh) ;
+}
+
+
+static void
+smp_residual_copy (const SMPcCopy *copy, int n, const double *xr, const double *xi,
+                   double *rr, double *ri, double *den)
+{
+    int k ;
+
+    for (k = 0 ; k < copy->n ; k++) {
+        int r = copy->row [k], c = copy->col [k] ;
+        double ar = copy->re [k], ai = copy->im [k] ;
+        if (r < 1 || r > n || c < 1 || c > n)
+            continue ;
+        rr [r] -= ar * xr [c] - ai * xi [c] ;
+        ri [r] -= ar * xi [c] + ai * xr [c] ;
+        den [r] += (fabs (ar) + fabs (ai)) * (fabs (xr [c]) + fabs (xi [c])) ;
+    }
+}
+
+static void
+smp_residual_start (int n, const double *br, const double *bi,
+                    double *rr, double *ri, double *den)
+{
+    int i ;
+
+    for (i = 0 ; i <= n ; i++) {
+        rr [i] = br [i] ;
+        ri [i] = bi [i] ;
+        den [i] = fabs (br [i]) + fabs (bi [i]) ;
+    }
+}
+
+void
+SMPcResidual (SMPmatrix *eMatrix, const SMPcCopy *copy, int n,
+              const double *br, const double *bi,
+              const double *xr, const double *xi,
+              double *rr, double *ri, double *den)
+{
+    (void) eMatrix ;
+    smp_residual_start (n, br, bi, rr, ri, den) ;
+    smp_residual_copy (copy, n, xr, xi, rr, ri, den) ;
+}
+
 /* Enhancement-856: out[i] = max_j |Re A_ij| over row i (0-based external)
  * of the loaded matrix, for i < n */
 void

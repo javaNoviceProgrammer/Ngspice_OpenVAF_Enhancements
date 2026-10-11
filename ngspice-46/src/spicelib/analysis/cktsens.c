@@ -251,6 +251,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
     double* output_values;
     IFcomplex* output_cvalues;
     double delta_var;
+    int central = 0, lower_moved = 0;   /* Enhancement-861 */
     struct sens_modsave *saved_models = NULL;   /* Enhancement-440 */
     /* Enhancement-683 (hunt F2 of 2026-09-21): the base operating point, kept
      * for the @(final_step) evaluation at the end. An AC sweep re-runs
@@ -821,7 +822,18 @@ int sens_sens(CKTcircuit* ckt, int restart)
                 }
             }
 #endif
-            if (sens_load(sg, ckt, is_dc)) {
+            /* Enhancement-861: a central difference, (p + delta) against
+             * (p - delta) over 2 delta, where the parameter is not zero. The
+             * one-sided step against the nominal load was exact for a
+             * parameter that enters the stamp linearly, a gain or a source,
+             * and low by delta/p for one that enters as 1/p: every
+             * sensitivity to a resistance was low by the factor 1/(1 + 1e-6)
+             * exactly. The load at p - delta takes the nominal load's place,
+             * so the count of loads is the same. A parameter at zero keeps
+             * the one-sided step: zero is how several models switch an effect
+             * off, and -delta is no value for it. */
+            central = (sg->value != 0.0);
+            if (!central && sens_load(sg, ckt, is_dc)) {
                 if (error && error != E_BADPARM)
                     goto err;
                 continue;
@@ -891,15 +903,66 @@ int sens_sens(CKTcircuit* ckt, int restart)
                 inst_size = inst_need;
             }
 
+            /* Enhancement-861: the lower side, loaded first and negated below
+             * with the upper one's sign, as the nominal load was. A lower
+             * value that moves a Verilog-A node collapse goes to E-417's
+             * path below. */
+            lower_moved = 0;
+            if (central) {
+                IFvalue lvalue;
+                lvalue.rValue = sg->value - delta_var;
+#ifdef OSDI
+                snprintf(va_what, sizeof va_what, "%s:%s to %.10g",
+                         sg->instance->GENname, sg->ptable[sg->param].keyword,
+                         lvalue.rValue);
+                OSDIsensPerturbing(va_what);
+                va_fatal0 = OSDIfatalsReported();
+#endif
+                sens_setp(sg, ckt, &lvalue);
+                if (error && error != E_BADPARM) {
+#ifdef OSDI
+                    OSDIsensPerturbing(NULL);
+#endif
+                    goto err;
+                }
+                (void)sens_temp(sg, ckt);
+                lower_moved = OSDIcollapseChanged(sg->instance);
+                if (!lower_moved && sens_load(sg, ckt, is_dc)) {
+                    int load_err = error;
+                    /* put the parameter back, as the normal path does */
+                    value.rValue = sg->value;
+                    sens_setp(sg, ckt, &value);
+                    if (mod_size) {
+                        memcpy(sg->model, mod_buf, mod_size);
+                        mod_size = 0;
+                    }
+                    if (inst_size) {
+                        memcpy(sg->instance, inst_buf, inst_size);
+                        inst_size = 0;
+                    }
+                    (void)sens_temp(sg, ckt);
+#ifdef OSDI
+                    OSDIsensPerturbing(NULL);
+#endif
+                    if (load_err && load_err != E_BADPARM) {
+                        error = load_err;
+                        goto err;
+                    }
+                    continue;
+                }
+            }
+
 #ifdef OSDI
             /* Enhancement-825: a Verilog-A task raised from here on, in the
              * perturbed setup pass or the perturbed load, is this
-             * perturbation's: label it so, and count what it reports */
+             * perturbation's: label it so, and count what it reports
+             * (Enhancement-861: counted from the lower side's load on) */
             snprintf(va_what, sizeof va_what, "%s:%s to %.10g",
                      sg->instance->GENname, sg->ptable[sg->param].keyword,
                      nvalue.rValue);
             OSDIsensPerturbing(va_what);
-            va_fatal0 = OSDIfatalsReported();
+            if (!central)
+                va_fatal0 = OSDIfatalsReported();
 #endif
             sens_setp(sg, ckt, &nvalue);
             if (error && error != E_BADPARM) {
@@ -942,7 +1005,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
              * it here would allocate nodes and trip the CKTlastNode guard
              * above), so the mapping cannot be rebuilt. Report the parameter as
              * insensitive and say so, rather than print the roundoff. */
-            if (OSDIcollapseChanged(sg->instance)) {
+            if (OSDIcollapseChanged(sg->instance) || lower_moved) {
 #ifdef OSDI
                 OSDIsensPerturbing(NULL);       /* Enhancement-825 */
                 if (OSDIfatalsReported() != va_fatal0)
@@ -1156,7 +1219,7 @@ int sens_sens(CKTcircuit* ckt, int restart)
                     output_values[n] = delta_I[branch_eq];
                 }
 //                fprintf (stderr, "output_values real PRIMA: %-.14g\n", output_values [n]) ;
-                output_values[n] /= delta_var;
+                output_values[n] /= central ? 2.0 * delta_var : delta_var;
 //                fprintf(stderr, "output_values real DOPO: %-.14g - delta_var: %-.9g\n", output_values [n], delta_var);
             }
             else {
@@ -1175,8 +1238,8 @@ int sens_sens(CKTcircuit* ckt, int restart)
                         delta_iI[branch_eq];
                 }
 //                                fprintf (stderr, "output_values complex: %-.9g j%-.9g\n", output_cvalues [n].real, output_cvalues [n].imag) ;
-                output_cvalues[n].real /= delta_var;
-                output_cvalues[n].imag /= delta_var;
+                output_cvalues[n].real /= central ? 2.0 * delta_var : delta_var;
+                output_cvalues[n].imag /= central ? 2.0 * delta_var : delta_var;
             }
             /* Enhancement-468: never hand back a non-finite sensitivity.
              *

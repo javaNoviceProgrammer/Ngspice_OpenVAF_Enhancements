@@ -49,8 +49,8 @@ Nothing was fixed; this is the list.
 | [F2](#f2) | *(fixed in [E-857](../../enhancements_doc/Enhancement-857.md): a sign after an operator takes the power chain after it, as in the B-source, and `let` takes a unary plus)* **expressions, wrong value:** in a `.param`, a unary minus after a binary operator works only before a number. Before a name, a parenthesis or a function, `{2*-p}`, `{1/-(2)}` and `{x*-sin(y)}` give "Formula() error" and the netlist is not loaded: 114 of the 4 000 random expressions. Before another minus, one sign is dropped without a word: `{2*--2}` is −4, `{0+--2}` is −2, `{2---2}` is 4. The B-source gets all of them right, and `let` all but the unary plus | high |
 | [F3](#f3) | *(fixed in [E-858](../../enhancements_doc/Enhancement-858.md): `mil` is 25.4e-6 in a `.param` too, an exponent and a suffix fold into one exact decimal, and the value reaches the element with 17 digits)* **expressions, wrong value:** `mil` is 25.4e-6 as an element value, in a B-source and in `let`, and 1e-3 in a `.param` | medium |
 | [F4](#f4) | *(fixed in [E-859](../../enhancements_doc/Enhancement-859.md): the front end reads the scale factor after the exponent, the netlist's value to the bit)* **expressions, wrong value:** `let` drops a scale suffix after an exponent: `let x = 1.5e2u` is 150, where a netlist reads 1.5e-4 | medium |
-| [F5](#f5) | **ac accuracy:** with the default `pivrel` of 1e-3, the ac solve of inductive networks at low frequency loses up to 6 digits on matrices of condition 5: 22 of 300 networks under Sparse (up to 3.4e-6), 5 under KLU (2e-7). `pivrel=1` gives 1e-16 | medium |
-| [F6](#f6) | **sens accuracy:** every dc sensitivity to a resistance is low by a factor of exactly 1 − 1e-6; to a gain or a source it is exact to 1e-10 | low |
+| [F5](#f5) | *(fixed in [E-860](../../enhancements_doc/Enhancement-860.md): one step of iterative refinement after the ac solve where the residual says so)* **ac accuracy:** with the default `pivrel` of 1e-3, the ac solve of inductive networks at low frequency loses up to 6 digits on matrices of condition 5: 22 of 300 networks under Sparse (up to 3.4e-6), 5 under KLU (2e-7). `pivrel=1` gives 1e-16 | medium |
+| [F6](#f6) | *(fixed in [E-861](../../enhancements_doc/Enhancement-861.md): a central difference where the parameter is not zero)* **sens accuracy:** every dc sensitivity to a resistance is low by a factor of exactly 1 − 1e-6; to a gain or a source it is exact to 1e-10 | low |
 | [F7](#f7) | **constants, openvaf-r:** inside one model, `$vt(T)` and `` `P_K*T/`P_Q `` differ by 1.05e-6; the compiler's comment says they agree. Both differ from ngspice's kT/q, so a Verilog-A resistor's thermal noise is up to 6.4e-7 above the built-in one's | low |
 | [F8](#f8) | **front end:** `let x = tan(0)` fails "argument out of range for tan" | low |
 | [F9](#f9) | **front end:** `%` on a complex vector refuses every real divisor: `v(1) % 2` after an ac fails "argument out of range for mod" | low |
@@ -190,6 +190,13 @@ different number, silently.
 <a id="f5"></a>
 ## F5 — the ac solve loses digits on inductive networks at low frequency
 
+*Fixed in [E-860](../../enhancements_doc/Enhancement-860.md). After each ac solve the residual
+gives the componentwise backward error. Where that is above rounding, one step of iterative
+refinement with the same factors restores the digits; a point solved well keeps its bits.
+Flagged networks went from 22 under Sparse and 5 under KLU to 1 under each, and that one is
+off by 1.5e-9 under both alike, as it was before. Its cost is one pass over the matrix per
+frequency: +6 to +25 % on circuits whose devices load almost nothing.*
+
 At a few hertz, a 1 nH inductor's branch row carries jωL ~ 1e-8 beside entries of order 1. The
 factorization accepts a pivot down to `pivrel` (1e-3) of its column's largest entry, and Sparse
 orders the matrix once, at the first frequency. On 300 inductor-heavy networks swept from
@@ -208,6 +215,10 @@ of a residual and a back-substitution.
 
 <a id="f6"></a>
 ## F6 — dc sensitivities to a resistance are low by 1e-6
+
+*Fixed in [E-861](../../enhancements_doc/Enhancement-861.md). The step is central, p + δ against
+p − δ over 2δ, where the parameter is not zero, with the same number of loads. dV(4)/dR1 comes
+out 1.6e-11 from the analytic value, in dc and ac alike.*
 
 ```spice
 vin 1 0 dc 1

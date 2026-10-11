@@ -369,3 +369,13 @@ scripting ngspice:
   `plot`: `let x = 1.5e2u` was 150. Since
   [E-859](../../enhancements_doc/Enhancement-859.md) it is 1.5e-4, as on an
   element line.
+- **ac on inductive networks at low frequency** could lose up to 6 digits to
+  threshold pivoting (`pivrel` 1e-3). Since
+  [E-860](../../enhancements_doc/Enhancement-860.md) each ac solve checks its
+  residual and refines where it must. A point solved well keeps its bits; the
+  check costs up to a quarter more time on circuits whose devices load almost
+  nothing.
+- **`sens` to a resistance** was low by exactly 1e-6, a one-sided difference
+  of a 1/R stamp. Since [E-861](../../enhancements_doc/Enhancement-861.md) the
+  difference is central where the parameter is not zero, accurate to about
+  1e-10.
