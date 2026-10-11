@@ -19,6 +19,8 @@ Modified: 2001 AlansFixes
 #include "ngspice/smpdefs.h"
 #include "ngspice/sperror.h"
 #include "ngspice/fteext.h"
+
+#include <float.h>
 #ifdef OSDI
 #include "ngspice/optdefs.h"  /* Enhancement-736: ERRP_PIVTOL */
 #include "ngspice/osdiitf.h"   /* Enhancement-689: OSDIuicSeed */
@@ -29,6 +31,122 @@ static int msgcount = 0;
 static int smallpivcount = 0;   /* Enhancement-736 */
 static int smallpivlastcol = 0;
 static double smallpivlastmag = 0.0;
+
+
+/* Enhancement-867: iterative refinement of the real solve, the twin of
+ * Enhancement-860's for ac.
+ *
+ * Sparse never scales a row and orders the matrix once per analysis: an
+ * operating point at its first iteration, a dc sweep at its first point.
+ * A VCVS of gain 1e12 in a follower whose feedback runs through a 0 V source
+ * put the gain beside entries of 1 in one row, and the order Sparse chose
+ * there lost the gain's worth of digits: 1.8e-5 at the operating point, 2.4e-4
+ * through a transient, 25 % at a gain of 1e15.  A dc sweep of a resistance
+ * kept the order its first point chose while the load moved eight decades,
+ * and an ammeter beside it read 0.5 % wrong.  KLU was exact on both.
+ *
+ * Sparse's factorization is given a copy of the loaded matrix (SMPloadCopy,
+ * taken after the diagonal gmin is added); KLU keeps its own.  After the
+ * solve the residual r = b - A x gives the componentwise backward error
+ * max |r_i| / (|A| |x| + |b|)_i; where that is above rounding, A d = r is
+ * solved with the same factors and x + d kept while its backward error
+ * falls.  A solve that was good costs one pass over the matrix's entries. */
+#define NI_REFINE_TOL   (64.0 * DBL_EPSILON)
+#define NI_REFINE_STEPS 2
+
+static SMPcCopy ni_copy;
+static double *ni_buf;
+static int ni_buf_n;
+static int *ni_kind;      /* 1 for a branch current, 0 for a node voltage */
+
+/* b, r, den, fl, the candidate y and the scale s, each n + 1 long; the
+ * unknowns' kinds once per NIiter call (kinds == 0) */
+static double *
+ni_scratch(CKTcircuit *ckt, int n, int *kinds)
+{
+    CKTnode *node;
+    int i;
+
+    if (n + 1 > ni_buf_n) {
+        ni_buf = TREALLOC(double, ni_buf, 6 * (size_t) (n + 1));
+        ni_kind = TREALLOC(int, ni_kind, (size_t) (n + 1));
+        ni_buf_n = n + 1;
+        *kinds = 0;
+    }
+    if (!*kinds) {
+        for (i = 0; i <= n; i++)
+            ni_kind[i] = 0;
+        for (node = ckt->CKTnodes; node; node = node->next)
+            if (node->number > 0 && node->number <= n && node->type == SP_CURRENT)
+                ni_kind[node->number] = 1;
+        *kinds = 1;
+    }
+    return ni_buf;
+}
+
+/* The residual b - A x into r, and x's backward error: row i's residual
+ * against max((|A| |x| + |b|)_i, (|A| s)_i), s_j the largest unknown of j's
+ * kind (volts or amperes).  The first is the componentwise measure; the
+ * second keeps a row whose unknowns are all at rounding -- two nodes a 0 V
+ * source ties to ground -- from reading as a backward error of 1. */
+static double
+ni_residual(CKTcircuit *ckt, int n, const double *b, const double *x,
+            double *s, double *r, double *den, double *fl)
+{
+    double w = 0.0, sv = 0.0, si = 0.0;
+    int i;
+
+    for (i = 1; i <= n; i++) {
+        double a = fabs(x[i]);
+        if (ni_kind[i]) {
+            if (a > si)
+                si = a;
+        } else if (a > sv) {
+            sv = a;
+        }
+    }
+    s[0] = 0.0;
+    for (i = 1; i <= n; i++)
+        s[i] = ni_kind[i] ? si : sv;
+    SMPresidual(ckt->CKTmatrix, n, b, x, s, r, den, fl);
+    for (i = 1; i <= n; i++) {
+        double num = fabs(r[i]), d = den[i] > fl[i] ? den[i] : fl[i];
+        /* a row whose terms are down where doubles lose precision has no
+         * measurable backward error */
+        if (num > 0.0 && d >= DBL_MIN / DBL_EPSILON) {
+            double q = num / d;
+            if (q > w)
+                w = q;
+        }
+    }
+    return w;
+}
+
+/* x = CKTrhs, the solution of A x = b with b in buf */
+static void
+ni_refine(CKTcircuit *ckt, double *buf, int n)
+{
+    double *b = buf, *r = b + (n + 1), *den = r + (n + 1), *fl = den + (n + 1);
+    double *y = fl + (n + 1), *s = y + (n + 1);
+    double *x = ckt->CKTrhs;
+    double w, w1;
+    int i, step;
+
+    x[0] = 0.0;
+    w = ni_residual(ckt, n, b, x, s, r, den, fl);
+    for (step = 0; step < NI_REFINE_STEPS && w > NI_REFINE_TOL; step++) {
+        r[0] = 0.0;
+        SMPsolve(ckt->CKTmatrix, r, ckt->CKTrhsSpare);
+        for (i = 1; i <= n; i++)
+            y[i] = x[i] + r[i];
+        y[0] = 0.0;
+        w1 = ni_residual(ckt, n, b, y, s, r, den, fl);
+        if (!(w1 < w))
+            break;
+        memcpy(x, y, (size_t) (n + 1) * sizeof(double));
+        w = w1;
+    }
+}
 
 
 /* Enhancement-736: .option pivtol, "the absolute minimum value for a matrix
@@ -89,6 +207,7 @@ NIiter(CKTcircuit *ckt, int maxIter)
     int error, i, j;
 
     int iterno = 0;
+    int ni_kinds = 0;       /* Enhancement-867: ni_kind filled for this call */
     int ipass = 0;
     int fixpass = 0;   /* Enhancement-568: iterations spent in MODEINITFIX */
     int fixmax;        /* Enhancement-568: the most it may spend there */
@@ -308,6 +427,12 @@ NIiter(CKTcircuit *ckt, int maxIter)
                 }
             }
 
+            /* Enhancement-867: every solve can become the accepted point --
+             * a converged NIiter returns the iterate its last load used,
+             * CKTrhsOld -- except the junction guess's, which MODEINITFIX
+             * always follows; that one is not checked */
+            ckt->CKTmatrix->SMPloadCopy =
+                (ckt->CKTmode & MODEINITJCT) ? NULL : &ni_copy;
             if (ckt->CKTniState & NISHOULDREORDER) {
                 startTime = SPfrontEnd->IFseconds();
 
@@ -467,7 +592,19 @@ NIiter(CKTcircuit *ckt, int maxIter)
                        (size_t) ckt->CKTnumStates * sizeof(double));
 
             startTime = SPfrontEnd->IFseconds();
-            SMPsolve(ckt->CKTmatrix, ckt->CKTrhs, ckt->CKTrhsSpare);
+            {
+                /* Enhancement-867: b kept for the residual */
+                int nref = SMPmatSize(ckt->CKTmatrix);
+                double *refbuf = (nref > 0 && !(ckt->CKTmode & MODEINITJCT)) ?
+                    ni_scratch(ckt, nref, &ni_kinds) : NULL;
+                if (refbuf) {
+                    memcpy(refbuf, ckt->CKTrhs, (size_t) (nref + 1) * sizeof(double));
+                    refbuf[0] = 0.0;
+                }
+                SMPsolve(ckt->CKTmatrix, ckt->CKTrhs, ckt->CKTrhsSpare);
+                if (refbuf)
+                    ni_refine(ckt, refbuf, nref);
+            }
             ckt->CKTstat->STATsolveTime +=
                 SPfrontEnd->IFseconds() - startTime;
 #ifdef STEPDEBUG

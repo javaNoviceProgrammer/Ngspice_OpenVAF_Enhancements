@@ -67,6 +67,7 @@ CircuitIsDigital (void)
 
 static void LoadGmin_CSC (double **diag, unsigned int n, double Gmin) ;
 static void LoadGmin (SMPmatrix *eMatrix, double Gmin) ;
+static void smp_copy_sparse_real (MatrixPtr M, SMPcCopy *copy, int fresh) ;   /* Enhancement-867 */
 
 typedef struct sElement {
     unsigned int row ;
@@ -856,6 +857,8 @@ SMPluFac (SMPmatrix *Matrix, double PivTol, double Gmin)
     } else {
         spSetReal (Matrix->SPmatrix) ;
         LoadGmin (Matrix, Gmin) ;
+        if (Matrix->SMPloadCopy)   /* Enhancement-867 */
+            smp_copy_sparse_real (Matrix->SPmatrix, Matrix->SMPloadCopy, 0) ;
         return spFactor (Matrix->SPmatrix) ;
     }
 }
@@ -1131,6 +1134,8 @@ SMPreorder (SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
         int error ;
         spSetReal (Matrix->SPmatrix) ;
         LoadGmin (Matrix, Gmin) ;
+        if (Matrix->SMPloadCopy)   /* Enhancement-867 */
+            smp_copy_sparse_real (Matrix->SPmatrix, Matrix->SMPloadCopy, 1) ;
         error = spOrderAndFactor (Matrix->SPmatrix, NULL, (spREAL)PivRel, (spREAL)PivTol, YES) ;
         klu_note_sparse_small_pivot (Matrix) ;   /* Enhancement-736 */
         return error ;
@@ -1571,6 +1576,83 @@ SMPcResidual (SMPmatrix *eMatrix, const SMPcCopy *copy, int n,
         }
     } else {
         smp_residual_copy (copy, n, xr, xi, rr, ri, den) ;
+    }
+}
+
+/*
+ * Enhancement-867: the real twin for NIiter. Sparse factors in place and adds
+ * the diagonal gmin just before, so SMPluFac and SMPreorder copy the values
+ * between the two when the matrix carries a copy (SMPloadCopy). The element
+ * list is rebuilt after an ordering (fill-ins appear, an element count moves)
+ * or on another matrix; a fill-in, which nothing loads, holds 0.
+ */
+static void
+smp_copy_sparse_real (MatrixPtr M, SMPcCopy *copy, int fresh)
+{
+    ElementPtr e ;
+    int j, k ;
+
+    if (fresh || M->NeedsOrdering || copy->owner != (const void *) M ||
+        copy->owner_elts != M->Elements) {
+        copy->n = 0 ;
+        for (j = 1 ; j <= M->Size ; j++)
+            for (e = M->FirstInCol [j] ; e != NULL ; e = e->NextInCol)
+                smp_copy_put (copy, M->IntToExtRowMap [e->Row],
+                              M->IntToExtColMap [j], (void *) e) ;
+        copy->owner = (const void *) M ;
+        copy->owner_elts = M->Elements ;
+    }
+    for (k = 0 ; k < copy->n ; k++)
+        copy->re [k] = ((ElementPtr) copy->elt [k])->Real ;
+}
+
+void
+SMPresidual (SMPmatrix *eMatrix, int n, const double *b, const double *x,
+             const double *s, double *r, double *den, double *fl)
+{
+    int i ;
+
+    for (i = 0 ; i <= n ; i++) {
+        r [i] = b [i] ;
+        den [i] = fabs (b [i]) ;
+        fl [i] = 0.0 ;
+    }
+    if (eMatrix->CKTkluMODE)
+    {
+        /* KLU factors into its own Numeric object: Ax is the loaded matrix,
+         * the diagonal gmin included (LoadGmin_CSC adds it there) */
+        int *Ap = eMatrix->SMPkluMatrix->KLUmatrixAp ;
+        int *Ai = eMatrix->SMPkluMatrix->KLUmatrixAi ;
+        double *Ax = eMatrix->SMPkluMatrix->KLUmatrixAx ;
+        int j, N = (int)eMatrix->SMPkluMatrix->KLUmatrixN ;
+
+        if (Ap == NULL || Ai == NULL || Ax == NULL)
+            return ;
+        for (j = 0 ; j < N && j < n ; j++) {
+            double xj = x [j + 1], xa = fabs (xj), sj = s [j + 1] ;
+            for (i = Ap [j] ; i < Ap [j + 1] ; i++) {
+                int row = Ai [i] + 1 ;
+                if (row > n)
+                    continue ;
+                r [row] -= Ax [i] * xj ;
+                den [row] += fabs (Ax [i]) * xa ;
+                fl [row] += fabs (Ax [i]) * sj ;
+            }
+        }
+    } else {
+        const SMPcCopy *copy = eMatrix->SMPloadCopy ;
+        int k ;
+
+        if (copy == NULL || copy->owner != (const void *) eMatrix->SPmatrix)
+            return ;
+        for (k = 0 ; k < copy->n ; k++) {
+            int row = copy->row [k], col = copy->col [k] ;
+            if (row < 1 || row > n || col < 1 || col > n)
+                continue ;
+            r [row] -= copy->re [k] * x [col] ;
+            den [row] += fabs (copy->re [k]) * fabs (x [col]) ;
+            fl [row] += fabs (copy->re [k]) * s [col] ;
+        }
     }
 }
 

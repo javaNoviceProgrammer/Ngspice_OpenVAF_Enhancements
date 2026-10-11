@@ -107,6 +107,7 @@ extern double logb(double);
 #endif
 
 static void LoadGmin(SMPmatrix *eMatrix, double Gmin);
+static void smp_copy_sparse_real(MatrixPtr M, SMPcCopy *copy, int fresh);   /* Enhancement-867 */
 
 
 /*
@@ -171,6 +172,8 @@ SMPluFac(SMPmatrix *Matrix, double PivTol, double Gmin)
     NG_IGNORE(PivTol);
     spSetReal( Matrix->SPmatrix );
     LoadGmin( Matrix, Gmin );
+    if (Matrix->SMPloadCopy)   /* Enhancement-867 */
+        smp_copy_sparse_real( Matrix->SPmatrix, Matrix->SMPloadCopy, 0 );
     return spFactor( Matrix->SPmatrix );
 }
 
@@ -221,6 +224,8 @@ SMPreorder(SMPmatrix *Matrix, double PivTol, double PivRel, double Gmin)
     int error;
     spSetReal( Matrix->SPmatrix );
     LoadGmin( Matrix, Gmin );
+    if (Matrix->SMPloadCopy)   /* Enhancement-867 */
+        smp_copy_sparse_real( Matrix->SPmatrix, Matrix->SMPloadCopy, 1 );
     error = spOrderAndFactor( Matrix->SPmatrix, NULL,
                               PivRel, PivTol, YES );
     /* Enhancement-736 */
@@ -374,6 +379,54 @@ SMPcResidual (SMPmatrix *eMatrix, const SMPcCopy *copy, int n,
     (void) eMatrix ;
     smp_residual_start (n, br, bi, rr, ri, den) ;
     smp_residual_copy (copy, n, xr, xi, rr, ri, den) ;
+}
+
+/*
+ * Enhancement-867: the real twin for NIiter (see klusmp.c): the values copied
+ * between LoadGmin and the factorization, and the residual over them
+ */
+static void
+smp_copy_sparse_real (MatrixPtr M, SMPcCopy *copy, int fresh)
+{
+    ElementPtr e ;
+    int j, k ;
+
+    if (fresh || M->NeedsOrdering || copy->owner != (const void *) M ||
+        copy->owner_elts != M->Elements) {
+        copy->n = 0 ;
+        for (j = 1 ; j <= M->Size ; j++)
+            for (e = M->FirstInCol [j] ; e != NULL ; e = e->NextInCol)
+                smp_copy_put (copy, M->IntToExtRowMap [e->Row],
+                              M->IntToExtColMap [j], (void *) e) ;
+        copy->owner = (const void *) M ;
+        copy->owner_elts = M->Elements ;
+    }
+    for (k = 0 ; k < copy->n ; k++)
+        copy->re [k] = ((ElementPtr) copy->elt [k])->Real ;
+}
+
+void
+SMPresidual (SMPmatrix *eMatrix, int n, const double *b, const double *x,
+             const double *s, double *r, double *den, double *fl)
+{
+    const SMPcCopy *copy = eMatrix->SMPloadCopy ;
+    int i, k ;
+
+    for (i = 0 ; i <= n ; i++) {
+        r [i] = b [i] ;
+        den [i] = fabs (b [i]) ;
+        fl [i] = 0.0 ;
+    }
+    if (copy == NULL || copy->owner != (const void *) eMatrix->SPmatrix)
+        return ;
+    for (k = 0 ; k < copy->n ; k++) {
+        int row = copy->row [k], col = copy->col [k] ;
+        if (row < 1 || row > n || col < 1 || col > n)
+            continue ;
+        r [row] -= copy->re [k] * x [col] ;
+        den [row] += fabs (copy->re [k]) * fabs (x [col]) ;
+        fl [row] += fabs (copy->re [k]) * s [col] ;
+    }
 }
 
 /* Enhancement-856: out[i] = max_j |Re A_ij| over row i (0-based external)

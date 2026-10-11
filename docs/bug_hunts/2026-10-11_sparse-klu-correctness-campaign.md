@@ -44,15 +44,23 @@ Nothing was fixed; this is the list.
 
 | | Finding | Severity |
 |---|---|---|
-| [F1](#f1) | **dc and transient accuracy, Sparse:** a unity follower built from a high-gain VCVS, with a 0 V source in its feedback path, loses digits in proportion to the gain. At a gain of 1e9 the transient is 2.2e-7 off; at 1e12 the op is 1.8e-5 high after 126 iterations of gmin stepping and the transient 2.4e-4 off; at 1e15 the transient is 25 % off. KLU is exact to 3e-16 at every gain, in 3 iterations. Of 300 random high-gain networks, 20 are wrong under Sparse where KLU is right (worst: a 3.5 mV node 12 % off), and 1 the other way round | high |
-| [F2](#f2) | **dc sweep accuracy, Sparse:** a dc sweep of a resistance reuses the pivot order chosen at its first point, and Sparse's refactor tests only for an exactly zero pivot. Five elements and an ammeter: sweeping the load from 0.1 Ω to 40 MΩ, the ammeter reads up to 0.5 % wrong; starting the sweep at 10 kΩ, or solving any of those values as an `op`, gives 1e-9. KLU is exact | medium |
-| [F3](#f3) | **dc accuracy, Sparse:** where a node is held only through teraohm resistors, or a small current flows beside large ones, Sparse loses digits that KLU keeps. Teraohm dead ends beside a VCVS read 0.56 mV low on 1.56 V; a 1.4e-11 A ammeter reading next to 70 A is 40 % off. The residual is 2e-17 A: Sparse never scales a row, and KLU's default row scaling makes the difference | medium |
+| [F1](#f1) | *(fixed in [E-867](../../enhancements_doc/Enhancement-867.md): the real solve refines its answer where the residual says so, as the ac solve does since E-860; the follower is exact at every gain, in 3 iterations)* **dc and transient accuracy, Sparse:** a unity follower built from a high-gain VCVS, with a 0 V source in its feedback path, loses digits in proportion to the gain. At a gain of 1e9 the transient is 2.2e-7 off; at 1e12 the op is 1.8e-5 high after 126 iterations of gmin stepping and the transient 2.4e-4 off; at 1e15 the transient is 25 % off. KLU is exact to 3e-16 at every gain, in 3 iterations. Of 300 random high-gain networks, 20 are wrong under Sparse where KLU is right (worst: a 3.5 mV node 12 % off), and 1 the other way round | high |
+| [F2](#f2) | *(fixed in [E-867](../../enhancements_doc/Enhancement-867.md): the same refinement; the ammeter reads 0.6217/R to 1.7e-9 from either end)* **dc sweep accuracy, Sparse:** a dc sweep of a resistance reuses the pivot order chosen at its first point, and Sparse's refactor tests only for an exactly zero pivot. Five elements and an ammeter: sweeping the load from 0.1 Ω to 40 MΩ, the ammeter reads up to 0.5 % wrong; starting the sweep at 10 kΩ, or solving any of those values as an `op`, gives 1e-9. KLU is exact | medium |
+| [F3](#f3) | *(its deck and seed 365 exact since [E-867](../../enhancements_doc/Enhancement-867.md); seed 187 is not)* **dc accuracy, Sparse:** where a node is held only through teraohm resistors, or a small current flows beside large ones, Sparse loses digits that KLU keeps. Teraohm dead ends beside a VCVS read 0.56 mV low on 1.56 V; a 1.4e-11 A ammeter reading next to 70 A is 40 % off. The residual is 2e-17 A: Sparse never scales a row, and KLU's default row scaling makes the difference | medium |
 | [F4](#f4) | **sensitivity, both solvers:** `sens … ac` gives the derivative with respect to an inductor coupled by a `K` element with its mutual inductance held fixed. `alter` moves M = k√(L1L2) with L1, so the two disagree: on a transformer `sens` gives 2528 − 977j and `alter` 5087 + 9448j. Every other parameter of 350 networks is right to 2.3e-7 | medium |
 | [N1](#n1) | **convergence cost:** a linear amplifier with a gain of 1e12 goes through dynamic gmin stepping, 126 iterations instead of 3, because the E-256 guard reads the amplified rounding of its input as a KCL violation. An inverter under KLU, the F1 follower under Sparse; 17 of the 300 high-gain networks under Sparse and 2 under KLU. E-568 measured this up to a gain of 1e9 | low |
 | [D1](#d1) | **diagnostic:** with `pivrel=1` Sparse's whole-matrix pivot search accepts nothing, so its fallback is recorded as a small pivot. With `pivtol` set or under `set ngdebug`, E-736 then reports "the pivot for node 4 … is 3370.9, below pivtol (1e-13)" | low |
 
 <a id="f1"></a>
 ## F1 — a high-gain loop through a 0 V source loses digits under Sparse
+
+*Fixed in [E-867](../../enhancements_doc/Enhancement-867.md). After each solve but the junction
+guess's, the residual gives the backward error. Each row is measured against the larger of
+|A||x| + |b| and |A| times the largest unknown of each kind, so rows at rounding do not count.
+Where that is above rounding, A d = r is solved with the same factors. The follower is exact to
+3e-16 at every gain up to 1e15, op and transient, in 3 iterations. Of the 300 high-gain networks,
+Sparse is wrong in 5, all of condition 7e16 or more; it was 25. Networks needing gmin stepping
+under Sparse: 17, now 3.*
 
 ```
 * unity follower: a VCVS of gain A, a 0 V source (an ammeter) in the feedback path
@@ -103,6 +111,11 @@ for ac, would also catch it: the residual is large against that row's own terms.
 <a id="f2"></a>
 ## F2 — a dc sweep of a resistance reuses a stale pivot order under Sparse
 
+*Fixed in [E-867](../../enhancements_doc/Enhancement-867.md), by F1's refinement. The order is
+still reused; the residual catches what it costs. The ammeter reads 0.6217/R to 1.7e-9, started
+at 0.1 Ω or 100 Ω, and seed 239's sensor to 1.4e-9. No network of family A now disagrees with a
+fresh `op` beyond rounding.*
+
 ```
 * the reduced deck: an ammeter, with a 1.4 ohm resistor across it, feeds the swept load
 v1 2 0 0.6217
@@ -147,6 +160,11 @@ The reuse that matters is the dc sweep of an element value: a resistance, or `@d
 
 <a id="f3"></a>
 ## F3 — high-impedance nodes and small currents beside large ones, under Sparse
+
+*Partly closed by [E-867](../../enhancements_doc/Enhancement-867.md). The teraohm deck below is
+exact, seed 30 at a scale of 1e9 is within 7.5e-13, and seed 365's 1.4e-11 A sensor is within
+2.4e-16. Seed 187's 6e-8 A beside 4e5 A is still 1.5e-3 off under Sparse (KLU 1e-7). There the
+refinement's floor for that row is set by the 4e5 A, and the residual is at rounding against it.*
 
 ```
 * teraohm dead ends beside a VCVS: every node is exactly v(1)
@@ -216,6 +234,10 @@ is a short at dc.
 
 <a id="n1"></a>
 ## N1 — a high-gain linear amplifier falls into gmin stepping
+
+*Since [E-867](../../enhancements_doc/Enhancement-867.md) the F1 follower under Sparse converges
+in 3 iterations, since its solve is now accurate. The inverter below under KLU still steps: its
+solve was already good, and the guard declines it.*
 
 ```
 * inverting amplifier, gain -10, VCVS open-loop gain 1e12

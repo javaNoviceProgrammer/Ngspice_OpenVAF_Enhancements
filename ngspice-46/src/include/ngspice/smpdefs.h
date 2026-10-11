@@ -23,6 +23,8 @@ Modified: 2000  AlansFixes
 #include "ngspice/spmatrix.h"
 #endif
 
+struct SMPcCopy ;
+
 /* SMPmatrix structure - Francesco Lannutti (2012-02) */
 typedef struct sSMPmatrix {
     MatrixFrame *SPmatrix ;                /* pointer to sparse matrix */
@@ -52,6 +54,11 @@ typedef struct sSMPmatrix {
      * onto the diagonal and on whatever the Markowitz exchanges put there. */
     double **SMPgminDiag ;
     int SMPgminDiagSize ;
+    /* Enhancement-867: when set, the real factorizations (SMPluFac,
+     * SMPreorder) copy the loaded matrix here under Sparse -- after the
+     * diagonal gmin is added, before it is factored in place -- for the
+     * residual of NIiter's solve (SMPresidual); NULL from SMPnewMatrix */
+    struct SMPcCopy *SMPloadCopy ;
 } SMPmatrix ;
 
 
@@ -130,6 +137,11 @@ void SMPcResidual(SMPmatrix *, const SMPcCopy *, int n,
                   const double *br, const double *bi,
                   const double *xr, const double *xi,
                   double *rr, double *ri, double *den);
+/* Enhancement-867: the real twin, r = b - A x, den = |A| |x| + |b| and
+ * fl = |A| s over rows 1..n, A as factored by the last real factorization:
+ * Matrix's SMPloadCopy under Sparse, KLU's own loaded matrix under KLU */
+void SMPresidual(SMPmatrix *, int n, const double *b, const double *x,
+                 const double *s, double *r, double *den, double *fl);
 
 #ifdef CIDER
 void SMPcSolveForCIDER (SMPmatrix *, double [], double [], double [], double []) ;

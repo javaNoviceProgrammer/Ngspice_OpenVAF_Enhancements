@@ -400,3 +400,15 @@ scripting ngspice:
   twice, the second time as `v(all)`; `print all` printed `all = …`. Since
   [E-866](../../enhancements_doc/Enhancement-866.md) the roots keep their
   names.
+- **A high-gain loop through a 0 V source, under Sparse** lost about the gain
+  times the rounding of a double: a follower built from a VCVS of gain 1e12,
+  with an ammeter in its feedback, was 1.8e-5 off at the operating point and
+  2.4e-4 through a transient. **A dc sweep of a resistance** kept the pivot
+  order of its first point, and an ammeter beside the swept load read up to
+  0.5 % wrong. KLU, which scales its rows, was exact on both. Since
+  [E-867](../../enhancements_doc/Enhancement-867.md) the op, dc and transient
+  solve checks its residual and refines where it must, as ac does since E-860.
+  A solve that was good keeps its bits; the check costs up to a fifth more
+  time on circuits whose devices load almost nothing. A small current beside
+  currents thirteen decades larger can still be off under Sparse; KLU, or
+  `.option pivrel=1`, gets it.
