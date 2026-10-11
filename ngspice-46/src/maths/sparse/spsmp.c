@@ -282,6 +282,25 @@ SMPsolveForCIDER (SMPmatrix *Matrix, double RHS[], double RHSsolution[])
 }
 #endif
 
+/* Enhancement-856: out[i] = max_j |Re A_ij| over row i (0-based external)
+ * of the loaded matrix, for i < n */
+void
+SMProwMaxReal(SMPmatrix *eMatrix, int n, double *out)
+{
+    MatrixPtr M = eMatrix->SPmatrix;
+    ElementPtr e;
+    int i, j;
+
+    for (i = 0; i < n; i++)
+        out[i] = 0.0;
+    for (j = 1; j <= M->Size; j++)
+        for (e = M->FirstInCol[j]; e != NULL; e = e->NextInCol) {
+            int er = M->IntToExtRowMap[e->Row] - 1;
+            if (er >= 0 && er < n && fabs(e->Real) > out[er])
+                out[er] = fabs(e->Real);
+        }
+}
+
 /*
  * SMPmatSize()
  */

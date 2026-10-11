@@ -45,8 +45,8 @@ Nothing was fixed; this is the list.
 
 | | Finding | Severity |
 |---|---|---|
-| [F1](#f1) | **pz, wrong result:** `.pz` silently returns a wrong set of poles and zeros on 4 of 252 networks, once under KLU only. The roots it gives miss ngspice's own ac response by 240 % to 450 %; the exact roots reproduce it to 1e-13 | high |
-| [F2](#f2) | **expressions, wrong value:** in a `.param`, a unary minus after a binary operator works only before a number. Before a name, a parenthesis or a function, `{2*-p}`, `{1/-(2)}` and `{x*-sin(y)}` give "Formula() error" and the netlist is not loaded: 114 of the 4 000 random expressions. Before another minus, one sign is dropped without a word: `{2*--2}` is −4, `{0+--2}` is −2, `{2---2}` is 4. The B-source gets all of them right, and `let` all but the unary plus | high |
+| [F1](#f1) | *(fixed in [E-856](../../enhancements_doc/Enhancement-856.md): a found root is divided out analytically, a pair on the jω axis is declared, and the noise beyond the last root is not taken for a root; the runs did warn)* **pz, wrong result:** `.pz` silently returns a wrong set of poles and zeros on 4 of 252 networks, once under KLU only. The roots it gives miss ngspice's own ac response by 240 % to 450 %; the exact roots reproduce it to 1e-13 | high |
+| [F2](#f2) | *(fixed in [E-857](../../enhancements_doc/Enhancement-857.md): a sign after an operator takes the power chain after it, as in the B-source, and `let` takes a unary plus)* **expressions, wrong value:** in a `.param`, a unary minus after a binary operator works only before a number. Before a name, a parenthesis or a function, `{2*-p}`, `{1/-(2)}` and `{x*-sin(y)}` give "Formula() error" and the netlist is not loaded: 114 of the 4 000 random expressions. Before another minus, one sign is dropped without a word: `{2*--2}` is −4, `{0+--2}` is −2, `{2---2}` is 4. The B-source gets all of them right, and `let` all but the unary plus | high |
 | [F3](#f3) | **expressions, wrong value:** `mil` is 25.4e-6 as an element value, in a B-source and in `let`, and 1e-3 in a `.param` | medium |
 | [F4](#f4) | **expressions, wrong value:** `let` drops a scale suffix after an exponent: `let x = 1.5e2u` is 150, where a netlist reads 1.5e-4 | medium |
 | [F5](#f5) | **ac accuracy:** with the default `pivrel` of 1e-3, the ac solve of inductive networks at low frequency loses up to 6 digits on matrices of condition 5: 22 of 300 networks under Sparse (up to 3.4e-6), 5 under KLU (2e-7). `pivrel=1` gives 1e-16 | medium |
@@ -59,6 +59,21 @@ Nothing was fixed; this is the list.
 
 <a id="f1"></a>
 ## F1 — `.pz` returns a wrong set of poles and zeros
+
+*Fixed in [E-856](../../enhancements_doc/Enhancement-856.md). The four runs were not silent: each
+printed "Pole-zero iteration limit reached; giving up after N trials with K roots found", which
+this page missed. The dig found why the search gave up. Each root it found was divided out of
+the function by |p − s|², which isn't analytic at a complex trial, so Muller wandered around a
+pair it had started next to. A pair on the jω axis was found to the last digit and never
+declared, because the test of a repeated point measured the real part against |Re s| = 0. Now:
+- the factor is (p − s), or (p − s)(p̄ − s) for a pair;
+- a repeated complex point is tested against |s|;
+- a point beyond the last root, where s·C swamps G, is a root only if the function grows around
+  it as at a zero.
+
+All 252 networks match the exact roots under both solvers. On 859 more, E-855 had 18 runs with
+a wrong set, 2 of them without a warning; now none, apart from a zero at 1.7e-6 among roots of
+1e5 to 1e9, which the search reports as 0.*
 
 ```spice
 * pz 1233 (scratchpad rc3/min/pz_1233.cir), no source at the input port
@@ -95,6 +110,12 @@ refused with "the input signal is shorted on the way to the output".
 
 <a id="f2"></a>
 ## F2 — a unary minus after an operator in a `.param`
+
+*Fixed in [E-857](../../enhancements_doc/Enhancement-857.md). A sign after an operator now takes
+the power chain after it as its operand, as the B-source's grammar does, and is evaluated as an
+atom. The dig found a third form, silent like the second: the flag negated the number before `^`
+saw it. So `{2*-3^2}` was 18 where the B-source gives −18; this page's generator always
+bracketed its power chains. `let` takes a unary plus.*
 
 ```spice
 .param p = 3

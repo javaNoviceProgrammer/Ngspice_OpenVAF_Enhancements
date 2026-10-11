@@ -348,3 +348,15 @@ scripting ngspice:
 - **AVG and INTEG** integrated by different rules, so AVG and
   INTEG/(to−from) differed by up to 2e-3. Since
   [E-855](../../enhancements_doc/Enhancement-855.md) AVG uses INTEG's rule.
+- **`.pz` lost complex roots** on 4 of 252 random networks: the search gave up
+  at its iteration limit ("Pole-zero iteration limit reached") and the plot held
+  the roots found so far. Since [E-856](../../enhancements_doc/Enhancement-856.md)
+  a found root is divided out analytically and a pair on the jω axis is
+  declared, and those networks give every root. Where the warning remains, the
+  search has wandered past its last root, and every set seen with it was
+  complete.
+- **A sign after an operator in a `.param`**: `{2*-p}` was refused and stopped
+  the netlist, `{2*--2}` was −4, and `{2*-3^2}` was 18. Since
+  [E-857](../../enhancements_doc/Enhancement-857.md) a sign after an operator
+  takes the power chain after it, as in a B-source: −6, 4 and −18. A deck that
+  relied on the old values changes. `let` takes a unary plus.

@@ -29,6 +29,7 @@ static int CKTpzStrat(PZtrial** set);
 static int CKTpzStep(int strat, PZtrial** set);
 static int CKTpzRunTrial(CKTcircuit* ckt, PZtrial** new_trialp, PZtrial** set);
 static int CKTpzVerify(PZtrial** set, PZtrial* new_trial);
+static int pz_row_scales(CKTcircuit* ckt);
 static void clear_trials(int mode);
 static void check_flat(PZtrial* a, PZtrial* b);
 void CKTpzUpdateSet(PZtrial** set, PZtrial* new);
@@ -132,6 +133,8 @@ static int	Last_Move, Consec_Moves;
 static int	NIter, NTrials;
 static int	Aberr_Num;
 static int	Complex_Init_From_K;	/* Enhancement-737 */
+static double* Row_G, * Row_C;		/* Enhancement-856 */
+static int	Row_N;
 
 int PZeval(int strat, PZtrial** set, PZtrial** new_trial_p);
 static PZtrial* pzseek(PZtrial* t, int dir);
@@ -163,6 +166,10 @@ CKTpzFindZeros(CKTcircuit* ckt, PZtrial** rootinfo, int* rootcount)
 
     Seq_Num = 1;
 
+    error = pz_row_scales(ckt);
+    if (error != OK)
+        return error;
+
     CKTpzReset(neighborhood);
 
     do {
@@ -184,11 +191,11 @@ CKTpzFindZeros(CKTcircuit* ckt, PZtrial** rootinfo, int* rootcount)
         /* Evaluate current strategy */
         error = PZeval(strat, neighborhood, &new_trial);
         if (error != OK)
-            return error;
+            goto done;
 
         error = CKTpzRunTrial(ckt, &new_trial, neighborhood);
         if (error != OK)
-            return error;
+            goto done;
 
         if (new_trial->flags & ISAROOT) {
             if (CKTpzVerify(neighborhood, new_trial)) {
@@ -237,6 +244,8 @@ CKTpzFindZeros(CKTcircuit* ckt, PZtrial** rootinfo, int* rootcount)
         clear_trials(ISAROOT);
         *rootinfo = NULL;
         *rootcount = 0;
+        tfree(Row_G);
+        tfree(Row_C);
         MERROR(E_SHORT, "The input signal is shorted on the way to the output");
     }
     else
@@ -255,6 +264,9 @@ CKTpzFindZeros(CKTcircuit* ckt, PZtrial** rootinfo, int* rootcount)
         SPfrontEnd->IFerrorf(ERR_WARNING, "Pole-zero iteration limit reached; giving up after %d trials with %d root%s found (.option pzeig does not iterate)", Seq_Num, NZeros, NZeros == 1 ? "" : "s");
     }
 
+done:
+    tfree(Row_G);
+    tfree(Row_C);
     return error;
 }
 
@@ -594,6 +606,170 @@ int CKTpzStrat(PZtrial** set)
     return suggestion;
 }
 
+/* Enhancement-856: the factor root p contributes to the deflation at s,
+ * normalized: (p - s), or (p - s)(conj(p) - s) for a complex pair, which is
+ * stored once. The search took |p - s|^2 whenever p - s was complex. On the
+ * real axis, where the search starts, that is the pair's factor and the same
+ * bits; at a complex trial it is not analytic -- a real root was divided out
+ * by |p - s|^2 -- and Muller, fitting a quadratic to det(G + sC) / prod,
+ * wandered to the iteration limit around a pair it had started next to. */
+static void
+root_factor(const PZtrial* p, const SPcomplex* s, SPcomplex* frac, int* mag)
+{
+    SPcomplex d, conj_frac;
+    int d_mag = 0, conj_mag = 0;
+
+    d.real = p->s.real - s->real;
+    d.imag = p->s.imag - s->imag;
+    C_NORM(d, d_mag);
+    if (p->s.imag != 0.0) {
+        conj_frac.real = p->s.real - s->real;
+        conj_frac.imag = -p->s.imag - s->imag;
+        C_NORM(conj_frac, conj_mag);
+        C_MUL(d, conj_frac);
+        d_mag += conj_mag;
+    }
+    C_NORM(d, d_mag);
+    *frac = d;
+    *mag = d_mag;
+}
+
+/* Enhancement-856: the deflated determinant at s, as a trial computes it,
+ * without making a trial of it */
+static int
+pz_deflated(CKTcircuit* ckt, SPcomplex* s, SPcomplex* f, int* mag)
+{
+    PZAN* job = (PZAN*)ckt->CKTcurJob;
+    SPcomplex def_frac, frac, v;
+    int def_mag = 0, frac_mag, v_mag, i, error;
+    PZtrial* p;
+
+    ckt->CKTniState |= NIPZSHOULDREORDER;
+    CKTpzLoad(ckt, s);
+    error = SMPcReorder(ckt->CKTmatrix, 1.0e-30, 0.0, &(job->PZnumswaps));
+    if (error == E_SINGULAR) {
+        f->real = f->imag = 0.0;
+        *mag = 0;
+        return OK;
+    }
+    if (error != OK)
+        return error;
+    error = SMPcDProd(ckt->CKTmatrix, &v, &v_mag);
+    if (error != OK)
+        return error;
+
+    def_frac.real = 1.0;
+    def_frac.imag = 0.0;
+    for (p = Trials; p; p = p->next)
+        if (p->flags & ISAROOT) {
+            root_factor(p, s, &frac, &frac_mag);
+            for (i = p->multiplicity; i > 0; i--) {
+                C_MUL(def_frac, frac);
+                def_mag += frac_mag;
+                C_NORM(def_frac, def_mag);
+            }
+        }
+    C_DIV(v, def_frac);
+    v_mag -= def_mag;
+    C_NORM(v, v_mag);
+    *f = v;
+    *mag = v_mag;
+    return OK;
+}
+
+/* Enhancement-856: the largest conductance in each row, from a load at s = 0,
+ * and the largest capacitance or inductance, from a load at s = 1e40, where
+ * s*C has swamped G in every row that has one */
+#define PZ_C_PROBE 1.0e40
+
+static int
+pz_row_scales(CKTcircuit* ckt)
+{
+    SPcomplex s;
+    int i;
+
+    Row_N = SMPmatSize(ckt->CKTmatrix);
+    tfree(Row_G);
+    tfree(Row_C);
+    Row_G = TMALLOC(double, Row_N + 1);
+    Row_C = TMALLOC(double, Row_N + 1);
+
+    s.real = 0.0;
+    s.imag = 0.0;
+    CKTpzLoad(ckt, &s);
+    SMProwMaxReal(ckt->CKTmatrix, Row_N, Row_G);
+    s.real = PZ_C_PROBE;
+    CKTpzLoad(ckt, &s);
+    SMProwMaxReal(ckt->CKTmatrix, Row_N, Row_C);
+    for (i = 0; i < Row_N; i++)
+        Row_C[i] /= PZ_C_PROBE;
+    ckt->CKTniState |= NIPZSHOULDREORDER;
+    return OK;
+}
+
+/* Enhancement-856: 1 if at s some row's s*C reaches its G -- the only place
+ * the rounding of G + s*C can lose G, and so make a singular matrix or a
+ * stalled Muller search out of noise. Below it, in every row, the search's
+ * zeros are as they were. */
+static int
+pz_c_dominates(SPcomplex* s)
+{
+    double m = hypot(s->real, s->imag);
+    int i;
+
+    for (i = 0; i < Row_N; i++)
+        if (Row_G[i] > 0.0 && Row_C[i] > 0.0 && m * Row_C[i] >= Row_G[i])
+            return 1;
+    return 0;
+}
+
+/* Enhancement-856: 1 if s, where a complex Muller search has stopped or the
+ * matrix is singular, is a zero of the deflated determinant, 0 if it is
+ * rounding noise, -1 on an error. Near a simple zero |f| grows with the
+ * distance, 1e-6 of |s| away some 2^10 times its value 1e-9 away; 2^7 is
+ * asked on either side.
+ * Beyond the last root, where s*C has swamped the conductances (|s| ~ 1e21),
+ * the determinant is noise that does not grow and is now and then exactly
+ * singular. The determinant zero everywhere (the shorted input, every trial
+ * a root) is left as it was. */
+static int
+pz_is_zero(CKTcircuit* ckt, SPcomplex* s)
+{
+    PZtrial* p;
+    int k;
+
+    for (p = Trials; p; p = p->next)
+        if (!(p->flags & ISAROOT))
+            break;
+    if (!p)
+        return 1;
+
+    for (k = -1; k <= 1; k += 2) {
+        SPcomplex t, f_near, f_far;
+        int mag_near, mag_far;
+        t.real = s->real * (1.0 + k * 1e-9);
+        t.imag = s->imag * (1.0 + k * 1e-9);
+        if (pz_deflated(ckt, &t, &f_near, &mag_near) != OK)
+            return -1;
+        t.real = s->real * (1.0 + k * 1e-6);
+        t.imag = s->imag * (1.0 + k * 1e-6);
+        if (pz_deflated(ckt, &t, &f_far, &mag_far) != OK)
+            return -1;
+#ifdef PZDEBUG
+        DEBUG(1) fprintf(stderr, "zero test at %g %g, side %d: %g %g %d / %g %g %d\n",
+                         s->real, s->imag, k, f_near.real, f_near.imag, mag_near,
+                         f_far.real, f_far.imag, mag_far);
+#endif
+        if ((f_near.real == 0.0 && f_near.imag == 0.0) ||
+            (f_far.real == 0.0 && f_far.imag == 0.0))
+            return 0;
+        if (log2(hypot(f_far.real, f_far.imag)) + mag_far <
+            log2(hypot(f_near.real, f_near.imag)) + mag_near + 7.0)
+            return 0;
+    }
+    return 1;
+}
+
 /* CKTpzRunTrial: eval the function at a given 's', fold in deflation */
 
 int
@@ -608,7 +784,7 @@ CKTpzRunTrial(CKTcircuit* ckt, PZtrial** new_trialp, PZtrial** set)
     int		def_mag, diff_mag, error = 0;
     int		i;
     int		pretest, shifted, was_shifted;
-    int		repeat;
+    int		repeat, same;
 
     new_trial = *new_trialp;
 
@@ -651,9 +827,21 @@ CKTpzRunTrial(CKTcircuit* ckt, PZtrial** new_trialp, PZtrial** set)
                 reltol = 1e-12;
             }
 
-            if (diff_frac.imag == 0.0 &&
-                fabs(diff_frac.real) / (fabs(p->s.real) + abstol / reltol)
-                < reltol) {
+            /* Enhancement-856: two complex points are the same point when
+             * they agree to reltol of their modulus. The test was only the
+             * real-axis one, which asks for equal imaginary parts and a
+             * real part within reltol of |Re p|: a Muller search on a pair
+             * at +-j1.47e8, its real part jittering by 1e-9 (1e-17 of |s|)
+             * at the rounding floor, never met it and ran to the iteration
+             * limit with the pair in hand. */
+            same = (diff_frac.imag == 0.0 &&
+                    fabs(diff_frac.real) / (fabs(p->s.real) + abstol / reltol)
+                    < reltol);
+            if (!same && new_trial->s.imag != 0.0 && p->s.imag != 0.0 &&
+                hypot(diff_frac.real, diff_frac.imag) /
+                (hypot(p->s.real, p->s.imag) + abstol / reltol) < reltol)
+                same = 1;
+            if (same) {
 
 #ifdef PZDEBUG
                 DEBUG(1) {
@@ -663,7 +851,10 @@ CKTpzRunTrial(CKTcircuit* ckt, PZtrial** new_trialp, PZtrial** set)
                     fprintf(stderr, "ab=%g,rel=%g\n", abstol, reltol);
                 }
 #endif
-                if (was_shifted || p->count >= 3
+                /* alter() moves a point along the real axis, between its
+                 * neighbours there; a complex point that repeats is where
+                 * Muller has converged */
+                if (was_shifted || p->count >= 3 || new_trial->s.imag != 0.0
                     || !alter(new_trial, set[1], abstol, reltol)) {
                     /* assume either a root or minima */
                     p->count = 0;
@@ -681,14 +872,7 @@ CKTpzRunTrial(CKTcircuit* ckt, PZtrial** new_trialp, PZtrial** set)
                 if (!CKTpzTrapped)
                     p->count = 0;
                 if (p->flags & ISAROOT) {
-                    diff_mag = 0;
-                    C_NORM(diff_frac, diff_mag);
-                    if (diff_frac.imag != 0.0) {
-                        C_MAG2(diff_frac);
-                        diff_mag *= 2;
-                    }
-                    C_NORM(diff_frac, diff_mag);
-
+                    root_factor(p, &new_trial->s, &diff_frac, &diff_mag);
                     for (i = p->multiplicity; i > 0; i--) {
                         C_MUL(def_frac, diff_frac);
                         def_mag += diff_mag;
@@ -744,6 +928,22 @@ CKTpzRunTrial(CKTcircuit* ckt, PZtrial** new_trialp, PZtrial** set)
         }
         else {
             /* Regular zero, as precise as we can get it */
+            /* Enhancement-856: ...if it is a zero. Where s*C has swamped G
+             * (|s| ~ 1e21 beyond the last root) a search stalls on noise:
+             * a real bracket on noise's sign changes, or Muller, now that
+             * it converges, on noise's minima. */
+            if (pz_c_dominates(&new_trial->s)) {
+                int k = pz_is_zero(ckt, &new_trial->s);
+                if (k < 0)
+                    return E_PANIC;
+                if (!k) {
+                    new_trial->flags = ISANABERRATION;
+#ifdef PZDEBUG
+                    show_trial(new_trial, '!');
+#endif
+                    return OK;      /* the caller frees it */
+                }
+            }
             error = E_SINGULAR;
         }
 
@@ -793,6 +993,23 @@ CKTpzRunTrial(CKTcircuit* ckt, PZtrial** new_trialp, PZtrial** set)
 
         if (error == E_SINGULAR || (new_trial->f_raw.real == 0.0
             && new_trial->f_raw.imag == 0.0)) {
+            /* Enhancement-856: a singular matrix is a root only where the
+             * determinant is a zero (pz_is_zero): beyond the last root it
+             * is singular now and then in the rounding, and Muller, now
+             * that it converges, walked to such points, as did a real-axis
+             * march to 1e22. */
+            if (!pretest && pz_c_dominates(&new_trial->s)) {
+                int k = pz_is_zero(ckt, &new_trial->s);
+                if (k < 0)
+                    return E_PANIC;
+                if (!k) {
+                    new_trial->flags = ISANABERRATION;
+#ifdef PZDEBUG
+                    show_trial(new_trial, '!');
+#endif
+                    return OK;      /* the caller frees it */
+                }
+            }
             new_trial->f_raw.real = 0.0;
             new_trial->f_raw.imag = 0.0;
             new_trial->mag_raw = 0;

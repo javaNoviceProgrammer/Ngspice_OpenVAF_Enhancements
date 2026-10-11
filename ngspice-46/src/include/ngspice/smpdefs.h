@@ -89,6 +89,7 @@ void SMPcSolve( SMPmatrix *, double [], double [], double [], double []);
 void SMPsolve( SMPmatrix *, double [], double []);
 int SMPmatSize( SMPmatrix *);
 void SMPdenseExtractReal(SMPmatrix *Matrix, int n, double *out);
+void SMProwMaxReal(SMPmatrix *Matrix, int n, double *out);   /* Enhancement-856: max |Re A_ij| per row */
 int SMPnewMatrix( SMPmatrix *, int );
 void SMPsizeHint( SMPmatrix *, int );                   /* F8: the matrix spans this many unknowns */
 int  SMPzeroLines( SMPmatrix *, unsigned char *, unsigned char *, int ); /* Enhancement-571: mark all-zero rows / columns, 1-based external */

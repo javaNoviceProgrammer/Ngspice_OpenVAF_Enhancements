@@ -1453,6 +1453,42 @@ SMPdenseExtractReal (SMPmatrix *eMatrix, int n, double *out)
 }
 
 /*
+ * SMProwMaxReal() -- Enhancement-856: out[i] = max_j |Re A_ij| over row i
+ * (0-based external) of the loaded matrix, for i < n: what
+ * SMPdenseExtractReal reads, without the dense copy
+ */
+void
+SMProwMaxReal (SMPmatrix *eMatrix, int n, double *out)
+{
+    int i, j ;
+
+    for (i = 0 ; i < n ; i++)
+        out [i] = 0.0 ;
+
+    if (eMatrix->CKTkluMODE)
+    {
+        int *Ap = eMatrix->SMPkluMatrix->KLUmatrixAp ;
+        int *Ai = eMatrix->SMPkluMatrix->KLUmatrixAi ;
+        double *Ax = eMatrix->SMPkluMatrix->KLUmatrixAxComplex ;
+
+        for (j = 0 ; j < (int)eMatrix->SMPkluMatrix->KLUmatrixN ; j++)
+            for (i = Ap [j] ; i < Ap [j + 1] ; i++)
+                if (Ai [i] < n && fabs (Ax [2 * i]) > out [Ai [i]])
+                    out [Ai [i]] = fabs (Ax [2 * i]) ;
+    } else {
+        MatrixPtr M = eMatrix->SPmatrix ;
+        ElementPtr e ;
+
+        for (j = 1 ; j <= M->Size ; j++)
+            for (e = M->FirstInCol [j] ; e != NULL ; e = e->NextInCol) {
+                int er = M->IntToExtRowMap [e->Row] - 1 ;
+                if (er >= 0 && er < n && fabs (e->Real) > out [er])
+                    out [er] = fabs (e->Real) ;
+            }
+    }
+}
+
+/*
  * SMPmatSize()
  */
 int

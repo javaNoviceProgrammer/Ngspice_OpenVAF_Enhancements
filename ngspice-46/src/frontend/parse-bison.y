@@ -51,13 +51,14 @@
 }
 
 /*
- * This gramar has two expected shift/reduce conflicts
+ * This gramar has three expected shift/reduce conflicts
  *   exp1 '-' exp2  can
  *     o  yield an exp, interpreting '-' as a binary operator
  *     o  yield a list of two expressions
  *          exp1  and
  *          unary '-' exp2
  *     the first interpretation is favoured. (bison defaults to 'shift')
+ *   exp1 '+' exp2  the same, since Enhancement-857's unary '+'
  *   TOK_STR '(' exp1 ')'  can
  *     o  yield an exp, per function application
  *     o  yield a list of two expressions
@@ -68,11 +69,11 @@
  * to verify:
  *   execute bison --report=state
  *
- * the %expect 2
+ * the %expect 3
  *   manifests my expectation, and will issue a `warning' when not met
  */
 
-%expect 2
+%expect 3
 
 %token <num>  TOK_NUM
 %token <str>  TOK_STR
@@ -139,6 +140,9 @@ exp:
   | '(' exp ')'                       { $$ = $2; }
 
   | '-' exp  %prec NEG                { $$ = PP_mkunode(PT_OP_UMINUS, $2); }
+  /* Enhancement-857: a unary plus, as the B-source's grammar and numparam
+   * take it; `let x = 2*+3` was a syntax error. */
+  | '+' exp  %prec NEG                { $$ = $2; }
   | '~' exp                           { $$ = PP_mkunode(PT_OP_NOT, $2); }
 
   | TOK_STR '(' exp ')'               { $$ = PP_mkfnode($1, $3);

@@ -1035,6 +1035,73 @@ operate(char op, double x, double y)
 
 #define nprece 9 /* maximal nb of precedence levels */
 
+
+/* Enhancement-857: the end of the operand of a sign that follows an operator,
+ * or NULL if none follows it. The operand is what the B-source's grammar
+ * (inpptree-parser.y, NEG below '^') and `let`'s give it: a power chain,
+ * sign* primary ('^' sign* primary)*, where a primary is a number with its
+ * suffix, a name, a function call or a parenthesis. So `2*-3^2` is
+ * 2*(-(3^2)) and `2^-3^2` is 2^(-(3^2)). */
+static const char *
+unary_operand_end(const char *s, const char *s_end)
+{
+    for (;;) {
+        const char *t;
+        bool paren = FALSE;
+
+        while (s < s_end && ((unsigned char) *s <= ' ' ||
+                             *s == '-' || *s == '+' || *s == '!'))
+            s++;
+        if (s >= s_end)
+            return NULL;
+
+        if (*s == '.' || (*s >= '0' && *s <= '9')) {
+            char *e;
+            (void) strtod(s, &e);
+            if (e == s)
+                return NULL;
+            s = (e < s_end) ? e : s_end;
+            while (s < s_end && alfa(*s))
+                s++;
+        } else if (alfa(*s)) {
+            s = fetchid(s, s_end);
+            for (t = s; t < s_end && (unsigned char) *t <= ' '; t++)
+                ;
+            if (t < s_end && *t == '(') {
+                s = t;      /* a function call */
+                paren = TRUE;
+            }
+        } else if (*s == '(') {
+            paren = TRUE;
+        } else {
+            return NULL;
+        }
+
+        if (paren) {
+            int depth = 0;
+            for (; s < s_end; s++)
+                if (*s == '(')
+                    depth++;
+                else if (*s == ')' && --depth == 0)
+                    break;
+            if (s >= s_end)
+                return NULL;
+            s++;
+        }
+
+        /* a '^' or '**' continues the chain */
+        for (t = s; t < s_end && (unsigned char) *t <= ' '; t++)
+            ;
+        if (t < s_end && *t == '^')
+            s = t + 1;
+        else if (t + 1 < s_end && t[0] == '*' && t[1] == '*')
+            s = t + 2;
+        else
+            return s;
+    }
+}
+
+
 static double
 formula(dico_t *dico, const char *s, const char *s_end, bool *perror)
 {
@@ -1048,7 +1115,6 @@ formula(dico_t *dico, const char *s, const char *s_end, bool *perror)
        Allowed transitions:  1->2->(3,1) and 3->(3,1).
     */
     bool error = *perror;
-    bool negate = 0;
     unsigned char state, oldstate, topop, ustack, level, fu;
     double u = 0.0;
     double accu[nprece + 1];
@@ -1228,10 +1294,29 @@ formula(dico_t *dico, const char *s, const char *s_end, bool *perror)
             s = s_next;
         } else if (((c == '.') || ((c >= '0') && (c <= '9')))) {
             u = fetchnumber(dico, &s, &error);
-            if (negate) {
-                u = -1 * u;
-                negate = 0;
+            state = S_atom;
+        } else if ((c == '-' || c == '+') &&
+                   (oldstate == S_binop || oldstate == S_unop)) {
+            /* Enhancement-857: a sign after an operator is unary, and its
+             * operand is evaluated here as an atom. It used to set a flag
+             * that only a NUMBER consumed: before a name, a parenthesis or a
+             * function the flag was left over and the formula refused
+             * (`{2*-p}`, `{1/-(2)}`); a second minus set it again rather
+             * than clearing it (`{2*--2}` was -4, `{2---2}` 4); it negated
+             * the number before `^` saw it (`{2*-3^2}` was 18); and a plus
+             * there was a misplaced operator (`{2*+3}`). The B-source and
+             * `let` read all of these as written. A sign at the start of a
+             * formula, or of a parenthesis, keeps the old reading, 0 - x. */
+            const char *e = unary_operand_end(s + 1, s_end);
+            if (!e) {
+                error = message(dico, " Nothing follows the \"%c\" in %s\n",
+                                c, s_orig);
+                break;
             }
+            u = formula(dico, s + 1, e, &error);
+            if (c == '-')
+                u = -u;
+            s = e;
             state = S_atom;
         } else {
             c = fetchoperator(dico, s_end, &s, &state, &level, &error);
@@ -1243,12 +1328,6 @@ formula(dico_t *dico, const char *s, const char *s_end, bool *perror)
         ok = (oldstate == S_init) || (state == S_init) ||
             ((oldstate == S_atom) && (state == S_binop)) ||
             ((oldstate != S_atom) && (state != S_binop));
-
-        if (oldstate == S_binop && state == S_binop && c == '-') {
-            ok = 1;
-            negate = 1;
-            continue;
-        }
 
         if (!ok)
             error = message(dico, " Misplaced operator\n");
@@ -1310,10 +1389,6 @@ formula(dico_t *dico, const char *s, const char *s_end, bool *perror)
 
     if ((natom == 0) || (oldstate != S_stop))
         error = message(dico, " Expression err: %s\n", s_orig);
-
-    if (negate == 1)
-        error = message(dico,
-                        " Problem with formula eval -- wrongly determined negation!\n");
 
     *perror = error;
 
