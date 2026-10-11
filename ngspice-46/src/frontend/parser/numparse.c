@@ -30,6 +30,86 @@ static int get_decimal_number(const char **p_str, double *p_val,
                               struct digit_span *span);
 
 
+/* The power of ten the scale factor at *p_cur stands for, 0 for none; *p_cur
+ * is advanced past it, and *mil is 25.4 for mil (Enhancement-859: taken out
+ * of ft_numparse so that it follows an exponent too). */
+static double scale_factor(const char **p_cur, double *mil)
+{
+    const char *p = *p_cur;
+    double expo;
+
+    switch (*p) {
+    case 't':
+    case 'T':
+        expo = 12.0;
+        ++p;
+        break;
+    case 'g':
+    case 'G':
+        expo = 9.0;
+        ++p;
+        break;
+    case 'k':
+    case 'K':
+        expo = 3.0;
+        ++p;
+        break;
+    case 'u':
+    case 'U':
+        expo = -6.0;
+        ++p;
+        break;
+    case 'n':
+    case 'N':
+        expo = -9.0;
+        ++p;
+        break;
+    case 'p':
+    case 'P':
+        expo = -12.0;
+        ++p;
+        break;
+    case 'f':
+    case 'F':
+        expo = -15.0;
+        ++p;
+        break;
+    case 'a':
+    case 'A':
+        expo = -18.0;
+        ++p;
+        break;
+    case 'm':
+    case 'M': {
+        char ch_cur;
+
+        /* Can be either m, mil, or meg. */
+        if (((ch_cur = p[1]) == 'e' || ch_cur == 'E') &&
+                (((ch_cur = p[2]) == 'g') || ch_cur == 'G')) {
+            expo = 6.0;
+            p += 3;
+        }
+        else if (((ch_cur = p[1]) == 'i' || ch_cur == 'I') &&
+                (((ch_cur = p[2]) == 'l') || ch_cur == 'L')) {
+            expo = -6.0;
+            *mil = 25.4;
+            p += 3;
+        }
+        else { /* plain m for milli */
+            expo = -3.0;
+            ++p;
+        }
+        break;
+    }
+    default:
+        expo = 0.0;
+    }
+
+    *p_cur = p;
+    return expo;
+}
+
+
 /* Parse a number. This will handle things like 10M, etc... If the number
  * must not end before the end of the string, then whole is TRUE.
  * If whole is FALSE and there is more left to the number, the argument
@@ -60,10 +140,12 @@ int ft_numparse(char **p_str, bool whole, double *p_val)
         return -1;
     }
 
-    /* Now look for the scale factor or the exponent (can't have both). */
-    switch (*p_cur) {
-    case 'e':
-    case 'E':
+    /* Now look for an exponent, then a scale factor. Enhancement-859: both
+     * can be there, as the netlist (INPevaluate) and numparam read them --
+     * this parser took one or the other, so `let x = 1.5e2u` was 150 where
+     * an element value 1.5e2u is 1.5e-4, and `1e3meg` 1000, without a word. */
+    expo = 0.0;
+    if (*p_cur == 'e' || *p_cur == 'E') {
         /* Parse another number. Note that a decimal number such as 1.23
          * is allowed as the exponent */
         ++p_cur;
@@ -71,71 +153,12 @@ int ft_numparse(char **p_str, bool whole, double *p_val)
             expo = 0.0;
             --p_cur; /* The "E" was not part of the number */
         }
-        break;
-    case 't':
-    case 'T':
-        expo = 12.0;
-        ++p_cur;
-        break;
-    case 'g':
-    case 'G':
-        expo = 9.0;
-        ++p_cur;
-        break;
-    case 'k':
-    case 'K':
-        expo = 3.0;
-        ++p_cur;
-        break;
-    case 'u':
-    case 'U':
-        expo = -6.0;
-        ++p_cur;
-        break;
-    case 'n':
-    case 'N':
-        expo = -9.0;
-        ++p_cur;
-        break;
-    case 'p':
-    case 'P':
-        expo = -12.0;
-        ++p_cur;
-        break;
-    case 'f':
-    case 'F':
-        expo = -15.0;
-        ++p_cur;
-        break;
-    case 'a':
-    case 'A':
-        expo = -18.0;
-        ++p_cur;
-        break;
-    case 'm':
-    case 'M': {
-        char ch_cur;
-
-        /* Can be either m, mil, or meg. */
-        if (((ch_cur = p_cur[1]) == 'e' || ch_cur == 'E') &&
-                (((ch_cur = p_cur[2]) == 'g') || ch_cur == 'G')) {
-            expo = 6.0;
-            p_cur += 3;
+        else {
+            expo += scale_factor(&p_cur, &mil);
         }
-        else if (((ch_cur = p_cur[1]) == 'i' || ch_cur == 'I') &&
-                (((ch_cur = p_cur[2]) == 'l') || ch_cur == 'L')) {
-            expo = -6.0;
-            mil = 25.4;
-            p_cur += 3;
-        }
-        else { /* plain m for milli */
-            expo = -3.0;
-            ++p_cur;
-        }
-        break;
     }
-    default:
-        expo = 0.0;
+    else {
+        expo = scale_factor(&p_cur, &mil);
     }
 
     /* p_cur is now pointing to the fist char after the number */

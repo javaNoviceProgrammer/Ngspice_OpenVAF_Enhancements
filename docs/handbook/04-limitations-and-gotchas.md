@@ -360,3 +360,12 @@ scripting ngspice:
   [E-857](../../enhancements_doc/Enhancement-857.md) a sign after an operator
   takes the power chain after it, as in a B-source: −6, 4 and −18. A deck that
   relied on the old values changes. `let` takes a unary plus.
+- **`mil` in a `.param`** was milli: `{1mil}` was 1e-3 where `1mil` on an
+  element is 25.4e-6. Since [E-858](../../enhancements_doc/Enhancement-858.md)
+  it is 25.4e-6 everywhere, and a `.param` value reaches the element with all
+  17 digits (`{0.1+0.2}` was 0.3). A deck that wrote `mil` meaning milli
+  changes by a factor of 39.
+- **A scale factor after an exponent** was dropped by `let`, `print` and
+  `plot`: `let x = 1.5e2u` was 150. Since
+  [E-859](../../enhancements_doc/Enhancement-859.md) it is 1.5e-4, as on an
+  element line.

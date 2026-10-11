@@ -743,6 +743,43 @@ unitexp(const char *s)
 }
 
 
+/* Enhancement-858: if s[0..n) is a plain decimal -- digits, an optional point
+ * and an optional exponent -- the length of its mantissa, with the exponent in
+ * *exp10; -1 otherwise (a hex float, say) */
+static int
+decimal_parts(const char *s, int n, int *exp10)
+{
+    int i = 0, digits = 0, m;
+
+    while (i < n && s[i] >= '0' && s[i] <= '9') {
+        i++;
+        digits++;
+    }
+    if (i < n && s[i] == '.')
+        for (i++; i < n && s[i] >= '0' && s[i] <= '9'; i++)
+            digits++;
+    if (digits == 0)
+        return -1;
+
+    m = i;
+    *exp10 = 0;
+    if (i < n && (s[i] == 'e' || s[i] == 'E')) {
+        long e = 0;
+        int neg = 0, edigits = 0;
+        i++;
+        if (i < n && (s[i] == '+' || s[i] == '-'))
+            neg = (s[i++] == '-');
+        for (; i < n && s[i] >= '0' && s[i] <= '9'; i++, edigits++)
+            if (e < 100000)
+                e = 10 * e + (s[i] - '0');
+        if (edigits == 0)
+            return -1;
+        *exp10 = (int) (neg ? -e : e);
+    }
+    return (i == n) ? m : -1;
+}
+
+
 static const char *
 fetchid(const char *s, const char *s_end)
 {
@@ -776,20 +813,31 @@ fetchnumber(dico_t *dico, const char **pi, bool *perror)
      * a second time and landed an ulp off for a third of such spellings,
      * which then failed the model's own `from [1.1u:...]` at the bound (the
      * netlist parser, INPevaluate, reads the same spelling correctly since
-     * this enhancement). A mantissa that carries its own exponent keeps the
-     * multiplication. */
+     * this enhancement).
+     *
+     * Enhancement-858: `mil` is 25.4e-6, as in the netlist, a B-source and
+     * `let` (the manual's scale-factor table); this table had no MIL, read
+     * `m` and let "il" go, so `{1mil}` was 1e-3 where `r1 1 0 1mil` is
+     * 25.4e-6, 39 times apart. A mantissa that carries its own exponent is
+     * folded too, its exponent and the suffix's added: `{66.5e4u}` was
+     * 0.6649999999999999 where the netlist reads 0.665, and 37 of 300 such
+     * spellings landed an ulp off. The result is INPevaluate's to the bit:
+     * the exact decimal, times 25.4 for mil. */
     {
-        int e10 = unitexp(s + n);
+        double mil = ciprefix("MIL", s + n) ? 25.4 : 1.0;
+        int e10 = (mil != 1.0) ? -6 : unitexp(s + n);
         if (e10 != 0) {
             char buf[80];
-            if (n > 0 && n < 60 && !memchr(s, 'e', (size_t) n) &&
-                !memchr(s, 'E', (size_t) n)) {
-                memcpy(buf, s, (size_t) n);
-                sprintf(buf + n, "e%d", e10);
+            int e = 0;
+            int m = decimal_parts(s, n, &e);
+            if (m > 0 && m < 60) {
+                memcpy(buf, s, (size_t) m);
+                sprintf(buf + m, "e%d", e + e10);
                 u = strtod(buf, NULL);
             } else {
                 u *= pow(10.0, (double) e10);
             }
+            u *= mil;
         }
     }
 
@@ -1480,13 +1528,19 @@ static char *string_expr(dico_t *dico, DSTRINGPTR qstr_p,
  *   sign, leading digit, '.', 'e', sign, upto 3 digits exponent
  * ==> 8 chars, thus we have 17 left for precision
  * don't print a leading '+', something choked
+ *
+ * Enhancement-858: 16 of them are used, 17 significant digits, and one
+ * space follows. "% 23.15e  " kept 16 significant digits, which a double
+ * does not always survive: `{1mil}` reached the element as 2.54e-05, an ulp
+ * from the 2.5399999999999997e-05 that `1mil` is, and `{sin(45f/7.1f)}`
+ * an ulp from the B-source's value.
  */
 
 static void
 double_to_string(DSTRINGPTR qstr_p, double value)
 {
     char buf[ACT_CHARACTS + 1];
-    if (snprintf(buf, sizeof(buf), "% 23.15e  ", value) != ACT_CHARACTS) {
+    if (snprintf(buf, sizeof(buf), "% 24.16e ", value) != ACT_CHARACTS) {
         fprintf(stderr, "ERROR: xpressn.c, %s(%d)\n", __FUNCTION__, __LINE__);
         controlled_exit(1);
     }

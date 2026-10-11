@@ -47,8 +47,8 @@ Nothing was fixed; this is the list.
 |---|---|---|
 | [F1](#f1) | *(fixed in [E-856](../../enhancements_doc/Enhancement-856.md): a found root is divided out analytically, a pair on the jω axis is declared, and the noise beyond the last root is not taken for a root; the runs did warn)* **pz, wrong result:** `.pz` silently returns a wrong set of poles and zeros on 4 of 252 networks, once under KLU only. The roots it gives miss ngspice's own ac response by 240 % to 450 %; the exact roots reproduce it to 1e-13 | high |
 | [F2](#f2) | *(fixed in [E-857](../../enhancements_doc/Enhancement-857.md): a sign after an operator takes the power chain after it, as in the B-source, and `let` takes a unary plus)* **expressions, wrong value:** in a `.param`, a unary minus after a binary operator works only before a number. Before a name, a parenthesis or a function, `{2*-p}`, `{1/-(2)}` and `{x*-sin(y)}` give "Formula() error" and the netlist is not loaded: 114 of the 4 000 random expressions. Before another minus, one sign is dropped without a word: `{2*--2}` is −4, `{0+--2}` is −2, `{2---2}` is 4. The B-source gets all of them right, and `let` all but the unary plus | high |
-| [F3](#f3) | **expressions, wrong value:** `mil` is 25.4e-6 as an element value, in a B-source and in `let`, and 1e-3 in a `.param` | medium |
-| [F4](#f4) | **expressions, wrong value:** `let` drops a scale suffix after an exponent: `let x = 1.5e2u` is 150, where a netlist reads 1.5e-4 | medium |
+| [F3](#f3) | *(fixed in [E-858](../../enhancements_doc/Enhancement-858.md): `mil` is 25.4e-6 in a `.param` too, an exponent and a suffix fold into one exact decimal, and the value reaches the element with 17 digits)* **expressions, wrong value:** `mil` is 25.4e-6 as an element value, in a B-source and in `let`, and 1e-3 in a `.param` | medium |
+| [F4](#f4) | *(fixed in [E-859](../../enhancements_doc/Enhancement-859.md): the front end reads the scale factor after the exponent, the netlist's value to the bit)* **expressions, wrong value:** `let` drops a scale suffix after an exponent: `let x = 1.5e2u` is 150, where a netlist reads 1.5e-4 | medium |
 | [F5](#f5) | **ac accuracy:** with the default `pivrel` of 1e-3, the ac solve of inductive networks at low frequency loses up to 6 digits on matrices of condition 5: 22 of 300 networks under Sparse (up to 3.4e-6), 5 under KLU (2e-7). `pivrel=1` gives 1e-16 | medium |
 | [F6](#f6) | **sens accuracy:** every dc sensitivity to a resistance is low by a factor of exactly 1 − 1e-6; to a gain or a source it is exact to 1e-10 | low |
 | [F7](#f7) | **constants, openvaf-r:** inside one model, `$vt(T)` and `` `P_K*T/`P_Q `` differ by 1.05e-6; the compiler's comment says they agree. Both differ from ngspice's kT/q, so a Verilog-A resistor's thermal noise is up to 6.4e-7 above the built-in one's | low |
@@ -152,6 +152,13 @@ easy to step around once it is understood. The wrong sign is not, since nothing 
 <a id="f3"></a>
 ## F3 — `mil` is milli in a `.param`
 
+*Fixed in [E-858](../../enhancements_doc/Enhancement-858.md). `mil` is 25.4e-6 in a `.param`, as
+in the netlist. The dig found two more drifts from the netlist's reading of the same text. A
+mantissa with its own exponent was multiplied by the suffix, a second rounding, which put 37 of
+300 such spellings an ulp off. And the value went back into the deck with 16 significant digits,
+so `{0.1+0.2}` reached the element as 0.3. Both are fixed: 316 suffixed spellings now give one
+double through an element value, a `.param`, a B-source and `let`.*
+
 ```spice
 .param p = {1mil}
 r1 1 0 1mil
@@ -165,6 +172,10 @@ apart in one netlist, without a word.
 
 <a id="f4"></a>
 ## F4 — `let` drops a scale suffix after an exponent
+
+*Fixed in [E-859](../../enhancements_doc/Enhancement-859.md). `ft_numparse` reads the scale
+factor after the exponent, and the two go to `INPdecimal` as one exact decimal: the netlist's
+value to the bit.*
 
 | text | element value, B-source | `let` |
 |---|---|---|
