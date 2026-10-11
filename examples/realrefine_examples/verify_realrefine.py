@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """verify_realrefine.py -- Enhancement-867: iterative refinement of the real
-(op, dc, transient) solve, the twin of Enhancement-860's for ac.
+(op, dc, transient) solve, the twin of Enhancement-860's for ac, and
+Enhancement-868: the rows it measures.
 
 F1 and F2 of the Sparse and KLU correctness campaign of 2026-10-11.
 
@@ -27,6 +28,15 @@ A d = r is solved with the same factors and x + d kept while it improves.
       both nodes; v(1) is -1e-6 / (g + g/(1 + g R)) to 1e-12
   [9] (control) the follower wired straight back and an inverting amplifier
       at a gain of 1e12: exact, as before
+
+Enhancement-868 (F3): the refinement measured every row against the larger
+of its own terms and its unknowns' kind scale, which kept a small current's
+KCL row out when a far larger current flowed elsewhere. Now a row counts
+unless its terms are at rounding of that scale, and a step is weighed
+against x on common denominators.
+  [10] F3, seed 187: a 6e-8 A sensor beside a 4e5 A inductor current, to
+       1e-10 of the exact value (1.5e-3 under Sparse, 1e-7 under KLU on E-867)
+  [11] F3, seed 365: a 1.4e-11 A sensor beside 70 A, to 1e-10
 
 Exit code 0 = pass.
 """
@@ -195,6 +205,76 @@ e2 = abs(v2 + 1.234567 * 1e12 / (1e12 + 11)) / 1.234567 if v2 is not None else N
 check("[9] (control) the follower wired straight back and an inverting amplifier at 1e12: exact",
       e1 is not None and e2 is not None and e1 < 1e-14 and e2 < 1e-14,
       "%s, %s" % ("%.1e" % e1 if e1 is not None else "no run", "%.1e" % e2 if e2 is not None else "no run"))
+
+# [10], [11]
+SEED187 = """r0 1 0 57019618.98386242
+r1 2 0 42397944.61363008
+r2 3 0 1185.9215958681307
+r3 4 0 42059127.20699907
+r4 5 0 51128813.449417315
+r5 6 0 697823.9731702745
+r6 7 0 288391.3119583305
+r7 8 0 9300491.413212392
+r8 2 7 29.425791697455953
+r9 3 4 1174786.1697386906
+r10 5 7 -565996.6235436329
+r11 5 8 1210.1106383772549
+r12 2 7 11077.613244577262
+r13 2 5 439723.69128716626
+r14 4 1 14015638.662788715
+r15 8 7 0.10938035001433531
+r16 6 5 1822315.736195656
+r17 0 2 39.74957521939269
+r18 5 4 273796.1680618052
+r19 0 7 3073122.6287010685
+r20 6 1 2483810.871308726
+r21 3 2 -0.0012556996767788722
+r22 0 5 -5133.455796710275
+r23 0 6 0.014246036697135521
+r24 6 0 386220.73502011097
+r25 8 3 15.715699941553577
+r26 0 2 -0.7262969178642956
+r27 5 0 0.03309971875041973
+r28 7 1 41542450.7741002
+r29 5 3 1373.171848818692
+l30 4 0 1e-06
+l31 3 6 1e-06
+v32 3 0 dc 1.147477777345856
+i33 0 2 dc 7.078565387998658e-06
+i34 7 8 dc 0.000318864045430833
+vs35 1 6 dc 0
+f36 1 2 vs35 0.5995116493229709
+h37 8 7 vs35 3.5010869067548067
+e38 2 6 3 8 -3817.422434250245
+e39 2 7 6 5 456.43823518511186"""
+SEED365 = """r0 1 0 293446473.18810284
+r1 2 0 21894812.25696983
+r2 3 0 10225.175917759236
+r3 4 0 2260.023588341368
+r4 5 0 51618.572104596846
+r5 6 0 51464.58205587395
+r6 7 0 70190129200.4543
+r7 3 1 0.014126042098234743
+r8 4 2 75.17495239494531
+r9 3 4 2574949.2507745503
+r10 5 0 0.013495007435801978
+r11 4 3 413837.44322997204
+r12 2 1 0.011429488129989047
+r13 6 2 386911.1253369749
+v14 3 0 dc 0.9554280147914062
+i15 2 6 dc 6.152411360410914e-06
+vs16 7 5 dc 0
+e17 2 5 3 7 2873.024115233174
+f18 3 4 vs16 0.04272931680153288
+h19 5 6 vs16 32.874536537289934"""
+for tag, net, vec, ex in (("[10] F3, seed 187: a 6e-8 A sensor beside 4e5 A, to 1e-10", SEED187, "vs35#branch",
+                           -6.17015011302667408e-08),
+                          ("[11] F3, seed 365: a 1.4e-11 A sensor beside 70 A, to 1e-10", SEED365, "vs16#branch",
+                           -1.36209807697663075e-11)):
+    out = run("f3_%s" % vec[:4], net, "op\nprint %s" % vec)
+    v = scalar(out, vec)
+    w = abs(v - ex) / abs(ex) if v is not None else None
+    check(tag, w is not None and w < 1e-10, "%s (%s = %s)" % ("%.1e" % w if w is not None else "no run", vec, v))
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

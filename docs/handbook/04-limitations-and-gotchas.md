@@ -409,6 +409,12 @@ scripting ngspice:
   [E-867](../../enhancements_doc/Enhancement-867.md) the op, dc and transient
   solve checks its residual and refines where it must, as ac does since E-860.
   A solve that was good keeps its bits; the check costs up to a fifth more
-  time on circuits whose devices load almost nothing. A small current beside
-  currents thirteen decades larger can still be off under Sparse; KLU, or
-  `.option pivrel=1`, gets it.
+  time on circuits whose devices load almost nothing. Since
+  [E-868](../../enhancements_doc/Enhancement-868.md) that includes a small
+  current beside currents thirteen decades larger: a 6e-8 A sensor next to a
+  4e5 A inductor was 1.5e-3 off.
+- **A linear amplifier of gain 1e12** went through gmin stepping, 126
+  iterations instead of 3: the false-convergence guard read the gain times the
+  rounding of its 1e-12 V control voltage as a KCL violation. Since
+  [E-869](../../enhancements_doc/Enhancement-869.md) the guard allows what x's
+  rounding makes of a row, and gains up to 1e15 converge in plain Newton.

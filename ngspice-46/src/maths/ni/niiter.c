@@ -59,8 +59,9 @@ static double *ni_buf;
 static int ni_buf_n;
 static int *ni_kind;      /* 1 for a branch current, 0 for a node voltage */
 
-/* b, r, den, fl, the candidate y and the scale s, each n + 1 long; the
- * unknowns' kinds once per NIiter call (kinds == 0) */
+/* b, r, den, fl, the candidate y, the scale s, the guard's |G| s, and x's
+ * residual and terms while y is weighed, each n + 1 long; the unknowns'
+ * kinds once per NIiter call (kinds == 0) */
 static double *
 ni_scratch(CKTcircuit *ckt, int n, int *kinds)
 {
@@ -68,7 +69,7 @@ ni_scratch(CKTcircuit *ckt, int n, int *kinds)
     int i;
 
     if (n + 1 > ni_buf_n) {
-        ni_buf = TREALLOC(double, ni_buf, 6 * (size_t) (n + 1));
+        ni_buf = TREALLOC(double, ni_buf, 9 * (size_t) (n + 1));
         ni_kind = TREALLOC(int, ni_kind, (size_t) (n + 1));
         ni_buf_n = n + 1;
         *kinds = 0;
@@ -84,16 +85,12 @@ ni_scratch(CKTcircuit *ckt, int n, int *kinds)
     return ni_buf;
 }
 
-/* The residual b - A x into r, and x's backward error: row i's residual
- * against max((|A| |x| + |b|)_i, (|A| s)_i), s_j the largest unknown of j's
- * kind (volts or amperes).  The first is the componentwise measure; the
- * second keeps a row whose unknowns are all at rounding -- two nodes a 0 V
- * source ties to ground -- from reading as a backward error of 1. */
-static double
-ni_residual(CKTcircuit *ckt, int n, const double *b, const double *x,
-            double *s, double *r, double *den, double *fl)
+/* s_j = the largest |x| of j's kind, volts for a node, amperes for a branch:
+ * the scale x_j's rounding is relative to (ni_kind filled) */
+static void
+ni_kind_scale(int n, const double *x, double *s)
 {
-    double w = 0.0, sv = 0.0, si = 0.0;
+    double sv = 0.0, si = 0.0;
     int i;
 
     for (i = 1; i <= n; i++) {
@@ -108,13 +105,39 @@ ni_residual(CKTcircuit *ckt, int n, const double *b, const double *x,
     s[0] = 0.0;
     for (i = 1; i <= n; i++)
         s[i] = ni_kind[i] ? si : sv;
+}
+
+/* Enhancement-868: a row whose own terms are this far below its scale
+ * (|A| s)_i carries only rounding -- the unknowns of two nodes a 0 V source
+ * ties to ground -- and has no backward error to measure */
+#define NI_NOISE_ROW    (1024.0 * DBL_EPSILON)
+/* Enhancement-869: the E-256 guard's floor, in units of (|G| s)_k -- the
+ * same line, so a row the refinement takes for rounding the guard does too */
+#define NI_GUARD_ROUND  NI_NOISE_ROW
+
+/* The residual b - A x into r, and x's backward error: the componentwise
+ * max |r_i| / (|A| |x| + |b|)_i over the rows that carry more than
+ * rounding.  Enhancement-867 measured every row against the larger of
+ * (|A| |x| + |b|)_i and (|A| s)_i, which kept the rounding rows out but also
+ * a row whose branch current sits beside a far larger one elsewhere: a 6e-8 A
+ * sensor's KCL row next to a 4e5 A inductor read 2e-16 and its 1.5e-3 error
+ * stood (Enhancement-868, F3 of the 2026-10-11 campaign). */
+static double
+ni_residual(CKTcircuit *ckt, int n, const double *b, const double *x,
+            double *s, double *r, double *den, double *fl)
+{
+    double w = 0.0;
+    int i;
+
+    ni_kind_scale(n, x, s);
     SMPresidual(ckt->CKTmatrix, n, b, x, s, r, den, fl);
     for (i = 1; i <= n; i++) {
-        double num = fabs(r[i]), d = den[i] > fl[i] ? den[i] : fl[i];
+        double num = fabs(r[i]);
         /* a row whose terms are down where doubles lose precision has no
-         * measurable backward error */
-        if (num > 0.0 && d >= DBL_MIN / DBL_EPSILON) {
-            double q = num / d;
+         * measurable backward error, nor one that is all rounding */
+        if (num > 0.0 && den[i] >= DBL_MIN / DBL_EPSILON &&
+            den[i] > NI_NOISE_ROW * fl[i]) {
+            double q = num / den[i];
             if (q > w)
                 w = q;
         }
@@ -122,12 +145,18 @@ ni_residual(CKTcircuit *ckt, int n, const double *b, const double *x,
     return w;
 }
 
-/* x = CKTrhs, the solution of A x = b with b in buf */
+/* x = CKTrhs, the solution of A x = b with b in buf.  Enhancement-868: the
+ * candidate x + d is weighed against x row by row over the larger of the two
+ * rows' terms.  A row whose true value is 0 has terms that are all error and
+ * shrink with its residual, so its own ratio stays at 1 however much better
+ * the step makes it -- a numerically singular network's KCL row went from
+ * 3.6e-5 to 6.3e-9 and the step was refused. */
 static void
 ni_refine(CKTcircuit *ckt, double *buf, int n)
 {
     double *b = buf, *r = b + (n + 1), *den = r + (n + 1), *fl = den + (n + 1);
     double *y = fl + (n + 1), *s = y + (n + 1);
+    double *rx = buf + 7 * (size_t) (n + 1), *dx = rx + (n + 1);
     double *x = ckt->CKTrhs;
     double w, w1;
     int i, step;
@@ -135,13 +164,25 @@ ni_refine(CKTcircuit *ckt, double *buf, int n)
     x[0] = 0.0;
     w = ni_residual(ckt, n, b, x, s, r, den, fl);
     for (step = 0; step < NI_REFINE_STEPS && w > NI_REFINE_TOL; step++) {
+        double ex = 0.0, ey = 0.0;
+        memcpy(rx, r, (size_t) (n + 1) * sizeof(double));
+        memcpy(dx, den, (size_t) (n + 1) * sizeof(double));
         r[0] = 0.0;
         SMPsolve(ckt->CKTmatrix, r, ckt->CKTrhsSpare);
         for (i = 1; i <= n; i++)
             y[i] = x[i] + r[i];
         y[0] = 0.0;
         w1 = ni_residual(ckt, n, b, y, s, r, den, fl);
-        if (!(w1 < w))
+        for (i = 1; i <= n; i++) {
+            double d = dx[i] > den[i] ? dx[i] : den[i];
+            if (d < DBL_MIN / DBL_EPSILON || d <= NI_NOISE_ROW * fl[i])
+                continue;
+            if (fabs(rx[i]) / d > ex)
+                ex = fabs(rx[i]) / d;
+            if (fabs(r[i]) / d > ey)
+                ey = fabs(r[i]) / d;
+        }
+        if (!(ey < ex))
             break;
         memcpy(x, y, (size_t) (n + 1) * sizeof(double));
         w = w1;
@@ -379,9 +420,27 @@ NIiter(CKTcircuit *ckt, int maxIter)
                  * finer than the reltol voltage test can resolve, two above the
                  * worst rounding seen.  A non-finite residual still fires.  The
                  * line-search / trust-region merit is untouched. */
+                /* Enhancement-869: and never below what x's own rounding makes of
+                 * the row.  x_j is good to about eps times the largest unknown of
+                 * its kind, not eps times itself: the control voltage of a VCVS of
+                 * gain A in feedback is v(out)/A, rounded at the circuit's volts,
+                 * and the gain multiplies that rounding into its branch row.  At a
+                 * gain of 1e12 an inverting amplifier's row carried 2.5e-5 of
+                 * residual in 2.5 of terms, ten times the exemption, and a linear
+                 * circuit went through 126 iterations of gmin stepping (3 up to
+                 * 1e11).  The bound is 1024 eps of (|G| s)_k, s_j the largest
+                 * unknown of j's kind -- 2e-13 of a row's own scale, where a real
+                 * KCL violation sits many decades higher -- the line below which
+                 * the refinement takes a row for rounding (NI_NOISE_ROW). */
+                double *scaleterm = NULL;
                 if (ckt->CKTdcFirstTry && !ckt->CKTlinesearch && !ckt->CKTtrustregion) {
+                    double *gb = ni_scratch(ckt, sz, &ni_kinds);
+                    double *gs = gb + 5 * (size_t) (sz + 1);
                     absterm = TMALLOC(double, (size_t) sz + 1);
                     SMPmultiplyAbs(ckt->CKTmatrix, absterm, ckt->CKTrhsOld);
+                    ni_kind_scale(sz, ckt->CKTrhsOld, gs);
+                    scaleterm = gb + 6 * (size_t) (sz + 1);
+                    SMPmultiplyAbs(ckt->CKTmatrix, scaleterm, gs);
                 }
                 for (k = 1; k <= sz; k++) {
                     double resid = ckt->CKTrhsSpare[k] - ckt->CKTrhs[k];
@@ -392,6 +451,8 @@ NIiter(CKTcircuit *ckt, int maxIter)
                     if (absterm) {
                         double roundoff = 1.0e-6 *
                             (absterm[k] + fabs(ckt->CKTrhs[k]));
+                        if (roundoff < NI_GUARD_ROUND * scaleterm[k])   /* E-869 */
+                            roundoff = NI_GUARD_ROUND * scaleterm[k];
                         if (!finite(resid))
                             guard_merit = resid;      /* NaN / Inf: !finite() below fires */
                         else if (fabs(resid) > roundoff && w > guard_merit)

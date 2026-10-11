@@ -1,6 +1,7 @@
-# realrefine_examples — Enhancement-867
+# realrefine_examples — Enhancement-867 and Enhancement-868
 
-[E-867](../../enhancements_doc/Enhancement-867.md): F1 and F2 of the
+[E-867](../../enhancements_doc/Enhancement-867.md): F1 and F2, and
+[E-868](../../enhancements_doc/Enhancement-868.md): F3, of the
 [Sparse and KLU correctness campaign of 2026-10-11](../../docs/bug_hunts/2026-10-11_sparse-klu-correctness-campaign.md).
 
 Under Sparse, a follower built from a VCVS of gain A, whose feedback runs through a 0 V source,
@@ -27,5 +28,13 @@ The checks:
 - **[9]** (control) The follower wired straight back, and an inverting amplifier, at a gain of
   1e12: exact, as before.
 
-Run: `python3 verify_realrefine.py` (9 checks per solver). On the E-866 binaries [1] to [7] fail
-under Sparse; under KLU all pass.
+E-868 changed which rows the refinement measures. E-867 measured every row against the larger of
+its own terms and its unknowns' scale, which left out the KCL row of a small current when a far
+larger current flowed elsewhere. Now a row counts unless its terms are at rounding of that scale,
+and a step is weighed against x on common denominators.
+- **[10]** F3, seed 187: a 6e-8 A sensor beside a 4e5 A inductor current, to 1e-10 of the exact
+  value (1.5e-3 under Sparse and 1e-7 under KLU on E-867).
+- **[11]** F3, seed 365: a 1.4e-11 A sensor beside 70 A, to 1e-10.
+
+Run: `python3 verify_realrefine.py` (11 checks per solver). On the E-866 binaries [1] to [7] fail
+under Sparse; under KLU all of those pass. On the E-867 binaries [10] fails under both solvers.
