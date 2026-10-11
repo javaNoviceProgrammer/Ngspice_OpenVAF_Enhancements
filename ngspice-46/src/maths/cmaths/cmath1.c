@@ -708,9 +708,14 @@ cx_cosh(void *data, short int type, int length, int *newlength, short int *newty
 }
 
 
-/** tan for real valued vectors. Used by cx_tanh.
-    Prior to this use macro rcheck() to check for input values not being 0.
-    Return NULL if 0.*/
+/** tan for real valued vectors. Used by cx_tan.
+    Return NULL if a result is not finite.
+    Enhancement-863: the check was rcheck(tan(x) != 0), which refused a
+    valid result -- `let x = tan(0)` failed "argument out of range for tan"
+    while tan(0.5) was fine, and tan(0) is 0 in a .param and a B-source. The
+    pole it meant to guard, cos(x) = 0, is never exactly met by a double, and
+    tan of a finite argument is finite; a NaN or infinite argument is what
+    still has no tangent. */
 static double *d_tan(double *dd, int length)
 {
     int xrc = 0;
@@ -718,8 +723,8 @@ static double *d_tan(double *dd, int length)
 
     int i;
     for (i = 0; i < length; i++) {
-        rcheck(tan(degtorad(dd[i])) != 0, "tan");
         d[i] = tan(degtorad(dd[i]));
+        rcheck(isfinite(d[i]), "tan");
     }
 
 EXITPOINT:

@@ -117,6 +117,57 @@ impl<'a> Processor<'a> {
         Ok(res)
     }
 
+    /// Enhancement-862: the value of an argument-less macro whose body is one
+    /// positive number -- constants.vams's `P_K` and `P_Q` -- as defined at
+    /// the end of preprocessing, following a body that is one argument-less
+    /// macro call (`` `define P_K `P_K_NIST1998 ``); `None` for any other.
+    pub(crate) fn numeric_macro(&self, name: &str) -> Option<f64> {
+        self.numeric_macro_at(name, 0)
+    }
+
+    fn numeric_macro_at(&self, name: &str, depth: u32) -> Option<f64> {
+        if depth > 8 {
+            return None;
+        }
+        let def = self.macros.get(name)?;
+        if def.arg_cnt != 0 {
+            return None;
+        }
+        let file = def.span.to_file_span(&self.source_map).file;
+        let src = self.sources.file_text(file).ok()?;
+        let mut text = String::new();
+        let mut call = None;
+        for tok in &def.body {
+            match tok.kind {
+                ParsedTokenKind::MacroCall(ref c) if call.is_none() && text.trim().is_empty() => {
+                    call = Some(c.name);
+                }
+                ParsedTokenKind::ResolvedToken(kind) if call.is_some() => {
+                    if !kind.is_trivia() {
+                        return None;
+                    }
+                }
+                ParsedTokenKind::ResolvedToken(kind) => {
+                    if kind.is_trivia() {
+                        continue;
+                    }
+                    text.push_str(
+                        src.get(usize::from(tok.range.start())..usize::from(tok.range.end()))?,
+                    );
+                }
+                _ => return None,
+            }
+        }
+        if let Some(callee) = call {
+            return self.numeric_macro_at(callee.trim_start_matches('`'), depth + 1);
+        }
+        let mut t = text.trim();
+        while t.starts_with('(') && t.ends_with(')') {
+            t = t[1..t.len() - 1].trim();
+        }
+        t.parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0)
+    }
+
     pub fn run(&mut self, file: FileId) -> (Vec<Token>, Diagnostics) {
         let working_dir = self.sources.file_path(file).parent().unwrap();
 

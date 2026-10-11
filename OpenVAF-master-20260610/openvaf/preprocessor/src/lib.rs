@@ -41,6 +41,10 @@ pub struct Preprocess {
     /// declared one: the default rise/fall time for `transition()` filters
     /// that omit those arguments.
     pub default_transition: Option<ordered_float::OrderedFloat<f64>>,
+    /// Enhancement-862: the compilation's `P_K` and `P_Q`, when it defines
+    /// both as numbers (constants.vams, either branch): the constants `$vt`
+    /// uses, so that `$vt(T)` and `` `P_K*T/`P_Q `` agree.
+    pub vt_constants: Option<(ordered_float::OrderedFloat<f64>, ordered_float::OrderedFloat<f64>)>,
 }
 
 /// # Panics
@@ -50,11 +54,18 @@ pub fn preprocess(sources: &dyn SourceProvider, file: FileId) -> Preprocess {
     // let _scope = span.enter();
 
     let storage = ScopedTextArea::new();
-    let (ts, diagnostics, sm, default_transition) =
+    let (ts, diagnostics, sm, default_transition, vt_constants) =
         match Processor::new(&storage, file, sources) {
             Ok(mut processor) => {
                 let (ts, diagnostics) = processor.run(file);
-                (ts, diagnostics, processor.source_map, processor.default_transition)
+                let vt_constants =
+                    match (processor.numeric_macro("P_K"), processor.numeric_macro("P_Q")) {
+                        (Some(k), Some(q)) => {
+                            Some((ordered_float::OrderedFloat(k), ordered_float::OrderedFloat(q)))
+                        }
+                        _ => None,
+                    };
+                (ts, diagnostics, processor.source_map, processor.default_transition, vt_constants)
             }
             Err(FileReadError::Io(error)) => (
                 vec![],
@@ -64,6 +75,7 @@ pub fn preprocess(sources: &dyn SourceProvider, file: FileId) -> Preprocess {
                     span: None,
                 }],
                 SourceMap::new(file, 0.into()),
+                None,
                 None,
             ),
             Err(FileReadError::InvalidTextFormat(err)) => (
@@ -75,6 +87,7 @@ pub fn preprocess(sources: &dyn SourceProvider, file: FileId) -> Preprocess {
                 }],
                 SourceMap::new(file, 0.into()),
                 None,
+                None,
             ),
         };
 
@@ -83,6 +96,7 @@ pub fn preprocess(sources: &dyn SourceProvider, file: FileId) -> Preprocess {
         diagnostics: Arc::new(diagnostics),
         sm: Arc::new(sm),
         default_transition,
+        vt_constants,
     }
 }
 

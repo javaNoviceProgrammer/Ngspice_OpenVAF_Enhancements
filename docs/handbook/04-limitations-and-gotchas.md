@@ -379,3 +379,12 @@ scripting ngspice:
   of a 1/R stamp. Since [E-861](../../enhancements_doc/Enhancement-861.md) the
   difference is central where the parameter is not zero, accurate to about
   1e-10.
+- **`$vt` and `` `P_K*T/`P_Q ``** differed by 1.05e-6 inside one model: `$vt`
+  took the 2019 SI constants while `constants.vams` defaults to NIST 1998.
+  Since [E-862](../../enhancements_doc/Enhancement-862.md) `$vt` uses the
+  model's own `P_K` and `P_Q`. ngspice's built-in devices use CODATA 2014, so
+  a Verilog-A model on the default header still sits about 1.4e-6 from a
+  built-in device's kT/q; a model can define `P_K` and `P_Q` as ngspice's to
+  match it exactly.
+- **`let x = tan(0)`** failed "argument out of range". Since
+  [E-863](../../enhancements_doc/Enhancement-863.md) it is 0.

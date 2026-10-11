@@ -43,6 +43,15 @@ impl CompilationDB {
         self.preprocess(self.root_file).default_transition.map_or(0.0, |v| v.into_inner())
     }
 
+    /// Enhancement-862: the compilation's `P_K` and `P_Q`, when it defines
+    /// both (constants.vams's default NIST1998 set or its NIST2018 branch):
+    /// the constants `$vt` uses.
+    pub fn vt_constants(&self) -> Option<(f64, f64)> {
+        self.preprocess(self.root_file)
+            .vt_constants
+            .map(|(k, q)| (k.into_inner(), q.into_inner()))
+    }
+
     pub fn new_fs(
         root_file: AbsPathBuf,
         include_dirs: &[AbsPathBuf],

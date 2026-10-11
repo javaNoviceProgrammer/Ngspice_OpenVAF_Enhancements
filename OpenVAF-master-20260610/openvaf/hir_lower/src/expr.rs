@@ -3821,16 +3821,20 @@ impl BodyLoweringCtx<'_, '_, '_> {
                 }
             }
             BuiltIn::vt => {
-                // LRM 9.15 defines $vt only as kT/q; the VALUES follow the
-                // 2019 exact SI definitions -- the same source the shipped
-                // constants.vams defaults `P_K/`P_Q to (E-519's NIST2018 set)
-                // -- so `$vt(T)` and ``P_K*T/`P_Q`` agree inside one model.
-                // They used to differ by ~1.2e-6 relative: this arm carried
-                // CODATA-2010 values while the header shipped the exact ones
-                // (kernel audit).
+                // LRM 9.15 defines $vt only as kT/q. Enhancement-862: k and q
+                // are the model's own `P_K` and `P_Q` when it defines both --
+                // constants.vams's default NIST1998 set or, with
+                // PHYSICAL_CONSTANTS_NIST2018, the 2019 exact SI one (E-519)
+                // -- computed as (k*T)/q, the order ``P_K*T/`P_Q`` evaluates
+                // in, so the two agree to the bit inside one model. This arm
+                // took the 2019 SI values whatever the model included, and its
+                // comment said the header defaulted to them; the default is
+                // NIST1998, and `$vt(T)` sat 1.05e-6 below ``P_K*T/`P_Q``. A
+                // model that names no constants keeps the 2019 SI values.
                 const KB: f64 = 1.380649e-23;
                 const Q: f64 = 1.602176634e-19;
 
+                let model_kq = self.ctx.db.vt_constants();
                 let fac = self.ctx.fconst(KB / Q);
                 let temp = match args.get(0) {
                     Some(temp) => {
@@ -3860,7 +3864,15 @@ impl BodyLoweringCtx<'_, '_, '_> {
                     None => self.ctx.use_param(ParamKind::Temperature),
                 };
 
-                self.ctx.ins().fmul(fac, temp)
+                match model_kq {
+                    Some((k, q)) => {
+                        let k = self.ctx.fconst(k);
+                        let q = self.ctx.fconst(q);
+                        let kt = self.ctx.ins().fmul(k, temp);
+                        self.ctx.ins().fdiv(kt, q)
+                    }
+                    None => self.ctx.ins().fmul(fac, temp),
+                }
             }
 
             BuiltIn::ddx => {

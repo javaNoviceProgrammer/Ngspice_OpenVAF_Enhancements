@@ -51,8 +51,8 @@ Nothing was fixed; this is the list.
 | [F4](#f4) | *(fixed in [E-859](../../enhancements_doc/Enhancement-859.md): the front end reads the scale factor after the exponent, the netlist's value to the bit)* **expressions, wrong value:** `let` drops a scale suffix after an exponent: `let x = 1.5e2u` is 150, where a netlist reads 1.5e-4 | medium |
 | [F5](#f5) | *(fixed in [E-860](../../enhancements_doc/Enhancement-860.md): one step of iterative refinement after the ac solve where the residual says so)* **ac accuracy:** with the default `pivrel` of 1e-3, the ac solve of inductive networks at low frequency loses up to 6 digits on matrices of condition 5: 22 of 300 networks under Sparse (up to 3.4e-6), 5 under KLU (2e-7). `pivrel=1` gives 1e-16 | medium |
 | [F6](#f6) | *(fixed in [E-861](../../enhancements_doc/Enhancement-861.md): a central difference where the parameter is not zero)* **sens accuracy:** every dc sensitivity to a resistance is low by a factor of exactly 1 − 1e-6; to a gain or a source it is exact to 1e-10 | low |
-| [F7](#f7) | **constants, openvaf-r:** inside one model, `$vt(T)` and `` `P_K*T/`P_Q `` differ by 1.05e-6; the compiler's comment says they agree. Both differ from ngspice's kT/q, so a Verilog-A resistor's thermal noise is up to 6.4e-7 above the built-in one's | low |
-| [F8](#f8) | **front end:** `let x = tan(0)` fails "argument out of range for tan" | low |
+| [F7](#f7) | *(fixed in [E-862](../../enhancements_doc/Enhancement-862.md): `$vt` uses the model's own `P_K` and `P_Q`, so the two agree to the bit; ngspice's CODATA 2014 values stay its own)* **constants, openvaf-r:** inside one model, `$vt(T)` and `` `P_K*T/`P_Q `` differ by 1.05e-6; the compiler's comment says they agree. Both differ from ngspice's kT/q, so a Verilog-A resistor's thermal noise is up to 6.4e-7 above the built-in one's | low |
+| [F8](#f8) | *(fixed in [E-863](../../enhancements_doc/Enhancement-863.md): the result is checked to be finite)* **front end:** `let x = tan(0)` fails "argument out of range for tan" | low |
 | [F9](#f9) | **front end:** `%` on a complex vector refuses every real divisor: `v(1) % 2` after an ac fails "argument out of range for mod" | low |
 | [F10](#f10) | **expressions:** `2^3^2` is 64 in a `.param` and a B-source, and 512 in `let`. The manual's precedence table puts unary minus above `**`, which would make `-2^2` 4; all three give −4 | low |
 | [F11](#f11) | **output:** `write` names a pz plot's vectors `v(pole(2))` and `v(zero(1))`, and adds a duplicate `v(all)` to a plot with one pole; `print all` prints that pole as `all = …` | low |
@@ -242,6 +242,14 @@ off. A central difference would make it 1e-12.
 <a id="f7"></a>
 ## F7 — three values of kT/q
 
+*Fixed in [E-862](../../enhancements_doc/Enhancement-862.md). `$vt` uses the model's own `P_K` and
+`P_Q` when it defines both, computed as (k·T)/q, so `$vt(T)` and `` `P_K*T/`P_Q `` agree to the
+bit on the default header and on each of its branches. A model that names no constants keeps
+the 2019 values. ngspice's CODATA 2014 constants stay its own. A model that wants them
+defines `P_K` and `P_Q` so, and its `$vt` is then ngspice's kT/q to the bit. The Verilog-A
+resistor's noise above the built-in one is that same choice of standard, NIST 1998 against
+CODATA 2014, and stays.*
+
 ```verilog
 V(a) <+ $vt(300.15);
 V(b) <+ `P_K * 300.15 / `P_Q;
@@ -259,6 +267,9 @@ noise of 102 networks above the all-built-in run's, by up to 6.4e-7 in amplitude
 
 <a id="f8"></a>
 ## F8 — `let` refuses tan(0)
+
+*Fixed in [E-863](../../enhancements_doc/Enhancement-863.md). The tangent is checked to be
+finite instead.*
 
 `let b = tan(0)` fails "argument out of range for tan"; `tan(0.5)` is fine. `d_tan` in
 `cmath1.c` checks `tan(x) != 0`, which only refuses a valid result. The `.param` and B-source
