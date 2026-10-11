@@ -47,9 +47,10 @@ Nothing was fixed; this is the list.
 | [F1](#f1) | *(fixed in [E-867](../../enhancements_doc/Enhancement-867.md): the real solve refines its answer where the residual says so, as the ac solve does since E-860; the follower is exact at every gain, in 3 iterations)* **dc and transient accuracy, Sparse:** a unity follower built from a high-gain VCVS, with a 0 V source in its feedback path, loses digits in proportion to the gain. At a gain of 1e9 the transient is 2.2e-7 off; at 1e12 the op is 1.8e-5 high after 126 iterations of gmin stepping and the transient 2.4e-4 off; at 1e15 the transient is 25 % off. KLU is exact to 3e-16 at every gain, in 3 iterations. Of 300 random high-gain networks, 20 are wrong under Sparse where KLU is right (worst: a 3.5 mV node 12 % off), and 1 the other way round | high |
 | [F2](#f2) | *(fixed in [E-867](../../enhancements_doc/Enhancement-867.md): the same refinement; the ammeter reads 0.6217/R to 1.7e-9 from either end)* **dc sweep accuracy, Sparse:** a dc sweep of a resistance reuses the pivot order chosen at its first point, and Sparse's refactor tests only for an exactly zero pivot. Five elements and an ammeter: sweeping the load from 0.1 Ω to 40 MΩ, the ammeter reads up to 0.5 % wrong; starting the sweep at 10 kΩ, or solving any of those values as an `op`, gives 1e-9. KLU is exact | medium |
 | [F3](#f3) | *(fixed in [E-867](../../enhancements_doc/Enhancement-867.md) and [E-868](../../enhancements_doc/Enhancement-868.md): the refinement measures every row that carries more than rounding; the teraohm deck, seed 365 and seed 187 are exact under both solvers)* **dc accuracy, Sparse:** where a node is held only through teraohm resistors, or a small current flows beside large ones, Sparse loses digits that KLU keeps. Teraohm dead ends beside a VCVS read 0.56 mV low on 1.56 V; a 1.4e-11 A ammeter reading next to 70 A is 40 % off. The residual is 2e-17 A: Sparse never scales a row, and KLU's default row scaling makes the difference | medium |
-| [F4](#f4) | **sensitivity, both solvers:** `sens … ac` gives the derivative with respect to an inductor coupled by a `K` element with its mutual inductance held fixed. `alter` moves M = k√(L1L2) with L1, so the two disagree: on a transformer `sens` gives 2528 − 977j and `alter` 5087 + 9448j. Every other parameter of 350 networks is right to 2.3e-7 | medium |
+| [F4](#f4) | *(fixed in [E-870](../../enhancements_doc/Enhancement-870.md): an inductor's couplings are set up, recomputed and loaded with it; the transformer's d/dL1 is exact to 1.3e-9)* **sensitivity, both solvers:** `sens … ac` gives the derivative with respect to an inductor coupled by a `K` element with its mutual inductance held fixed. `alter` moves M = k√(L1L2) with L1, so the two disagree: on a transformer `sens` gives 2528 − 977j and `alter` 5087 + 9448j. Every other parameter of 350 networks is right to 2.3e-7 | medium |
 | [N1](#n1) | *(fixed in [E-869](../../enhancements_doc/Enhancement-869.md): the guard also allows 1024 ε of a row's own scale, the line below which the refinement takes a row for rounding; the inverter takes 3 iterations up to a gain of 1e15)* **convergence cost:** a linear amplifier with a gain of 1e12 goes through dynamic gmin stepping, 126 iterations instead of 3, because the E-256 guard reads the amplified rounding of its input as a KCL violation. An inverter under KLU, the F1 follower under Sparse; 17 of the 300 high-gain networks under Sparse and 2 under KLU. E-568 measured this up to a gain of 1e9 | low |
-| [D1](#d1) | **diagnostic:** with `pivrel=1` Sparse's whole-matrix pivot search accepts nothing, so its fallback is recorded as a small pivot. With `pivtol` set or under `set ngdebug`, E-736 then reports "the pivot for node 4 … is 3370.9, below pivtol (1e-13)" | low |
+| [D1](#d1) | *(fixed in [E-871](../../enhancements_doc/Enhancement-871.md): only a pivot at or below the absolute threshold is a small pivot)* **diagnostic:** with `pivrel=1` Sparse's whole-matrix pivot search accepts nothing, so its fallback is recorded as a small pivot. With `pivtol` set or under `set ngdebug`, E-736 then reports "the pivot for node 4 … is 3370.9, below pivtol (1e-13)" | low |
+| [F5](#f5) | *(found while folding F4; fixed in [E-872](../../enhancements_doc/Enhancement-872.md): the links are cleared before the systems are freed, and a system is reported once)* **memory, both solvers:** the coupled-inductor check of `MUTtemp` freed its systems while the inductors and couplings kept pointing at them. Every point of a `dc temp` sweep wrote into freed memory (Guard Malloc: SIGSEGV), and a coupling that went wrong at a later temperature was never reported | medium |
 
 <a id="f1"></a>
 ## F1 — a high-gain loop through a 0 V source loses digits under Sparse
@@ -207,6 +208,12 @@ refinement step measured componentwise, as for F1, would catch it too.
 <a id="f4"></a>
 ## F4 — `sens … ac` holds a coupled inductor's mutual inductance fixed
 
+*Fixed in [E-870](../../enhancements_doc/Enhancement-870.md). When the perturbed device is an
+inductor, its couplings are set up into the perturbation's matrix beside it, their M is
+recomputed from the perturbed inductance, and they are loaded at both values. `sens` now gives
+5086.58 + 9447.94j, the exact derivative to 1.3e-9 under both solvers, and no coupled inductor of
+family F is flagged (288 per solver before). Folding it turned up [F5](#f5).*
+
 ```
 * coupled inductors: d v(3) / d L1 from sens and from alter
 v1 1 0 dc 0 ac 1
@@ -271,6 +278,11 @@ networks of C, 17 needed more than 20 iterations under Sparse and 2 under KLU, u
 <a id="d1"></a>
 ## D1 — `pivrel=1` is reported as a small pivot
 
+*Fixed in [E-871](../../enhancements_doc/Enhancement-871.md). The fallback is a small pivot only
+when the largest element is at or below the absolute threshold. The follower reports nothing,
+and the teraohm network reports its real 3.2e-14, which the false 3370.9 had hidden. The pivots
+and the answers are unchanged.*
+
 `SearchEntireMatrix` accepts an element only if `Magnitude > RelThreshold * LargestInCol`.
 With `pivrel=1` the inequality is strict, so no element is accepted, and the search falls back
 to the largest element of the reduced matrix. E-736 records that fallback as a pivot below
@@ -283,6 +295,37 @@ Warning: the pivot for node 4 (from the equation of node e19#branch) is 3370.9, 
 The pivot chosen is the right one, and the cost is nil: the diagonal searches run first and
 succeed on a 60 × 60 resistor mesh, whose op takes the same 0.07 s at `pivrel=1`. Only the
 message is wrong, and it appears only with `pivtol` set or under `set ngdebug`.
+
+<a id="f5"></a>
+## F5 — the coupled-inductor check writes into freed memory when it runs twice
+
+*Found while folding F4, and fixed in [E-872](../../enhancements_doc/Enhancement-872.md).*
+
+`MUTtemp` groups coupled inductors into systems (with `indverbosity`, on by default), checks
+that each is positive definite, and frees the systems. The inductors' `system` and the links
+between them were left pointing at the freed memory; only `INDsetup` cleared them. A `dc temp`
+sweep re-runs the temperature step at every point without a setup. Its second `MUTtemp` found the
+pointers set, took each pair to be in a system already, and wrote into freed memory:
+
+```
+* coupled inductors through a dc temperature sweep
+v1 1 0 dc 1 ac 1
+r1 1 2 50
+l1 2 0 10u
+l2 3 0 40u
+k1 l1 l2 0.9
+r2 3 0 200
+.control
+dc temp 0 100 10
+.endc
+.end
+```
+
+Under Guard Malloc (`DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib`) this dies with SIGSEGV in
+`MUTtemp`; without it the sweep runs on. No system is ever built again, so an L1 with `tc1=-0.02`
+passes through zero on the way to 100 °C without the report it would get at a fixed temperature.
+Since E-872 the links are cleared before the systems are freed, and each system is reported
+once.
 
 ## Not defects
 

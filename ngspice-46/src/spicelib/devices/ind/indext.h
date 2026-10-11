@@ -30,6 +30,7 @@ extern void MUTsPrint(GENmodel*,CKTcircuit*);
 extern int MUTsSetup(SENstruct*,GENmodel*);
 extern int MUTsetup(SMPmatrix*,GENmodel*,CKTcircuit*,int*);
 extern int MUTtemp(GENmodel *inModel, CKTcircuit *ckt);
+extern void MUTfactors(GENmodel *inModel);   /* Enhancement-870 */
 
 #ifdef KLU
 extern int INDbindCSC (GENmodel*, CKTcircuit*) ;

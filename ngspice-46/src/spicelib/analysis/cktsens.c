@@ -16,6 +16,7 @@ Modified: 2000 AlanFixes
 #include "ngspice/sensdefs.h"
 #include "ngspice/sensgen.h"
 #include "ngspice/osdiitf.h"
+#include "ind/inddefs.h"         /* Enhancement-870: MUTfactors */
 
 /* #define ASDEBUG */
 #ifdef ASDEBUG
@@ -203,6 +204,22 @@ static int check_filter(char *name)
 
 static int	error;
 
+/* Enhancement-870: an inductor's coupling.  A K element's mutual inductance
+ * is M = k sqrt(L1 L2), a device of its own (MUT) that the perturbation of an
+ * inductance never re-evaluated: `sens ... ac` gave dV/dL1 with M held at its
+ * nominal value, where the deck names k and `alter l1` moves M with L1.  On a
+ * transformer, 2528 - 977j against 5087 + 9448j.  When the perturbed device is
+ * an inductor, the couplings are set up into delta_Y beside it, their M is
+ * recomputed from the perturbed inductance, and they are loaded at both
+ * values; a coupling of other inductors loads the same M twice and cancels. */
+static int sens_ind_type = -1, sens_mut_type = -1;
+
+static int sens_couples(sgen* sg, CKTcircuit* ckt)
+{
+    return sg->dev == sens_ind_type && sens_mut_type >= 0 &&
+        ckt->CKThead[sens_mut_type] != NULL;
+}
+
 /* Enhancement-841 (robustness and correctness campaign 2026-10-10, F4): each
  * perturbation re-runs a model's DEVsetup into delta_Y, which binds that
  * model's instances' matrix pointers to delta_Y's elements. The ac path put
@@ -344,6 +361,8 @@ int sens_sens(CKTcircuit* ckt, int restart)
 
         freq = 0.0;
         is_dc = (job->step_type == SENS_DC);
+        sens_ind_type = CKTtypelook("Inductor");     /* Enhancement-870 */
+        sens_mut_type = CKTtypelook("mutual");
         nfreqs = count_steps(job->step_type, job->start_freq,
             job->stop_freq, job->n_freq_steps,
             &step_size, &error);
@@ -762,6 +781,9 @@ int sens_sens(CKTcircuit* ckt, int restart)
                 /* XXXX insert old state base here ?? */
                 fn(delta_Y, sg->model, ckt, &ckt->CKTnumStates);
                 rebound = 1;    /* Enhancement-841 */
+                if (!is_dc && sens_couples(sg, ckt))   /* Enhancement-870 */
+                    (void) DEVices[sens_mut_type]->DEVsetup(delta_Y,
+                        ckt->CKThead[sens_mut_type], ckt, &ckt->CKTnumStates);
                 if (node != ckt->CKTlastNode) {
                     fprintf(stderr, "Internal Error: node allocation in DEVsetup() during sensitivity analysis, this will cause serious troubles !, please report this issue !\n");
                     controlled_exit(EXIT_FAILURE);
@@ -1551,6 +1573,11 @@ sens_load(sgen* sg, CKTcircuit* ckt, int is_dc)
     else
         return 1;
 
+    /* Enhancement-870: the inductor's couplings, at the M it now gives */
+    if (!error && !is_dc && sens_couples(sg, ckt) &&
+        DEVices[sens_mut_type]->DEVacLoad)
+        error = DEVices[sens_mut_type]->DEVacLoad(ckt->CKThead[sens_mut_type], ckt);
+
     return error;
 }
 
@@ -1568,6 +1595,9 @@ sens_temp(sgen* sg, CKTcircuit* ckt)
         error = fn(sg->model, ckt);
     else
         return 1;
+
+    if (sens_couples(sg, ckt))      /* Enhancement-870: M follows L */
+        MUTfactors(ckt->CKThead[sens_mut_type]);
 
     return error;
 }

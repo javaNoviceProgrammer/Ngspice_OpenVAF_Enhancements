@@ -157,6 +157,7 @@ struct sMUTinstance {
                                  * set equal to  0 if not a design parameter */
 
     MUTinstance *system_next_mut;
+    unsigned MUTsysWarned : 1;  /* Enhancement-872: its system's check has spoken */
 
 #ifdef KLU
     BindElement *MUTbr1br2Binding ;

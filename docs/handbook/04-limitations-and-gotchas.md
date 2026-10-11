@@ -418,3 +418,17 @@ scripting ngspice:
   rounding of its 1e-12 V control voltage as a KCL violation. Since
   [E-869](../../enhancements_doc/Enhancement-869.md) the guard allows what x's
   rounding makes of a row, and gains up to 1e15 converge in plain Newton.
+- **`sens … ac` to an inductor coupled by a `K`** held the mutual inductance
+  at its nominal value. M = k√(L1L2) should follow L1, as it does under
+  `alter`; on a transformer the sensitivity was a quarter of the true one,
+  with the sign of its imaginary part flipped. Since
+  [E-870](../../enhancements_doc/Enhancement-870.md) the couplings move with
+  the inductance.
+- **`.option pivrel=1` with `pivtol` set** made Sparse report pivots of 1e+12
+  as "below pivtol". Since [E-871](../../enhancements_doc/Enhancement-871.md)
+  only a pivot at or below `pivtol` is reported.
+- **A `dc temp` sweep of coupled inductors** wrote into freed memory at every
+  point after the first, and a coupling that went wrong at a later
+  temperature was never reported. Since
+  [E-872](../../enhancements_doc/Enhancement-872.md) the coupled-inductor check
+  is rebuilt at each point, and reports each system once.

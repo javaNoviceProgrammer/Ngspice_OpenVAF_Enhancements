@@ -32,6 +32,22 @@ cholesky(double *a, int n)
 }
 
 
+/* Enhancement-870: M = k sqrt(L1 L2) for every coupling, from the inductances
+ * as they stand -- what `sens` needs after it perturbs an inductor, without
+ * MUTtemp's checks and reports */
+void
+MUTfactors(GENmodel *inModel)
+{
+    MUTmodel *model = (MUTmodel*) inModel;
+    MUTinstance *here;
+
+    for (; model; model = MUTnextModel(model))
+        for (here = MUTinstances(model); here; here = MUTnextInstance(here))
+            if (here->MUTind1 && here->MUTind2)
+                here->MUTfactor = here->MUTcoupling *
+                    sqrt(fabs(here->MUTind1->INDinduct * here->MUTind2->INDinduct));
+}
+
 int
 MUTtemp(GENmodel *inModel, CKTcircuit *ckt)
 {
@@ -197,6 +213,17 @@ MUTtemp(GENmodel *inModel, CKTcircuit *ckt)
             }
 
             if (!positive || repetitions || (expect && ckt->CKTindverbosity > 1)) {
+                /* Enhancement-872: the systems are rebuilt at every call now,
+                 * so a `dc temp` point would repeat the report; once per
+                 * system, as when only the first call built them */
+                int fresh = 0;
+                for (mut = system->first_mut; mut; mut = mut->system_next_mut)
+                    if (!mut->MUTsysWarned) {
+                        mut->MUTsysWarned = 1;
+                        fresh = 1;
+                    }
+                if (!fresh)
+                    continue;
                 fprintf(stderr, "The Inductive System consisting of\n");
                 for (ind = system->first_ind; ind; ind = ind->system_next_ind)
                     fprintf(stderr, " %s", ind->INDname);
@@ -223,8 +250,28 @@ MUTtemp(GENmodel *inModel, CKTcircuit *ckt)
         tfree(pop);
         tfree(INDmatrix);
 
+        /* Enhancement-872: the inductors and couplings kept pointing into the
+         * systems freed here, and only INDsetup cleared them.  A second
+         * MUTtemp without a setup between -- every point of `dc temp`, a
+         * `set temp`, an `alter` on a kept setup -- found the stale pointer
+         * non-NULL, took the pair to be in a system already and wrote into
+         * freed memory (Guard Malloc: SIGSEGV in MUTtemp at a dc temperature
+         * sweep's second point).  Unlink them before the systems go. */
         for (system = first_system; system;) {
             struct INDsystem *next_system = system->next_system;
+            INDinstance *ind = system->first_ind;
+            MUTinstance *mut = system->first_mut;
+            while (ind) {
+                INDinstance *next_ind = ind->system_next_ind;
+                ind->system = NULL;
+                ind->system_next_ind = NULL;
+                ind = next_ind;
+            }
+            while (mut) {
+                MUTinstance *next_mut = mut->system_next_mut;
+                mut->system_next_mut = NULL;
+                mut = next_mut;
+            }
             tfree(system);
             system = next_system;
         }

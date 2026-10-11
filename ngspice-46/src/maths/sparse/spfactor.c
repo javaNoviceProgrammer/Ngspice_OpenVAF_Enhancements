@@ -1971,10 +1971,17 @@ SearchEntireMatrix( MatrixPtr Matrix, int Step )
         return NULL;
     }
 
-    /* Enhancement-736: no element of the reduced matrix is above the absolute
-     * threshold; the largest is taken, and the first such pivot of this
-     * ordering is remembered for spWhereSmallPivot() -- ngspice maps
-     * spSMALL_PIVOT to OK, so the record is the only trace of it. */
+    /* No element passed both tests; the largest is taken.  Enhancement-871:
+     * only when that is because none is above the absolute threshold is it a
+     * small pivot.  With pivrel=1 the relative test, strict as it is, admits
+     * nothing at all, and every search that reached here was recorded and
+     * reported "below pivtol" -- a pivot of 3370.9 against a pivtol of 1e-13.
+     *
+     * Enhancement-736: the first small pivot of this ordering is remembered
+     * for spWhereSmallPivot() -- ngspice maps spSMALL_PIVOT to OK, so the
+     * record is the only trace of it. */
+    if (LargestElementMag > Matrix->AbsThreshold)
+        return pLargestElement;
     if (Matrix->SmallPivotRow == 0) {
         Matrix->SmallPivotRow = Matrix->IntToExtRowMap[pLargestElement->Row];
         Matrix->SmallPivotCol = Matrix->IntToExtColMap[pLargestElement->Col];
