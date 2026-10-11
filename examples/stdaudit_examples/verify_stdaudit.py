@@ -84,7 +84,7 @@ def cxvals(out):
             for m in re.finditer(r"^\d+\s+[\d.eE+-]+\s+([-\d.eE+]+),\s*([-\d.eE+]+)",
                                  out, re.M)]
     vals += [complex(float(m.group(2)), float(m.group(3)))
-             for m in re.finditer(r"^(v\([a-z0-9]+\)|all) = ([-\d.eE+]+),([-\d.eE+]+)",
+             for m in re.finditer(r"^(v\([a-z0-9]+\)|all|pole\(\d+\)|zero\(\d+\)) = ([-\d.eE+]+),([-\d.eE+]+)",
                                   out, re.M)]
     return vals
 

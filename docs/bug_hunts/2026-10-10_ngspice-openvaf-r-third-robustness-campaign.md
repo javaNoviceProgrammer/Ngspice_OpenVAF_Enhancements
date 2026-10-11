@@ -53,9 +53,9 @@ Nothing was fixed; this is the list.
 | [F6](#f6) | *(fixed in [E-861](../../enhancements_doc/Enhancement-861.md): a central difference where the parameter is not zero)* **sens accuracy:** every dc sensitivity to a resistance is low by a factor of exactly 1 − 1e-6; to a gain or a source it is exact to 1e-10 | low |
 | [F7](#f7) | *(fixed in [E-862](../../enhancements_doc/Enhancement-862.md): `$vt` uses the model's own `P_K` and `P_Q`, so the two agree to the bit; ngspice's CODATA 2014 values stay its own)* **constants, openvaf-r:** inside one model, `$vt(T)` and `` `P_K*T/`P_Q `` differ by 1.05e-6; the compiler's comment says they agree. Both differ from ngspice's kT/q, so a Verilog-A resistor's thermal noise is up to 6.4e-7 above the built-in one's | low |
 | [F8](#f8) | *(fixed in [E-863](../../enhancements_doc/Enhancement-863.md): the result is checked to be finite)* **front end:** `let x = tan(0)` fails "argument out of range for tan" | low |
-| [F9](#f9) | **front end:** `%` on a complex vector refuses every real divisor: `v(1) % 2` after an ac fails "argument out of range for mod" | low |
-| [F10](#f10) | **expressions:** `2^3^2` is 64 in a `.param` and a B-source, and 512 in `let`. The manual's precedence table puts unary minus above `**`, which would make `-2^2` 4; all three give −4 | low |
-| [F11](#f11) | **output:** `write` names a pz plot's vectors `v(pole(2))` and `v(zero(1))`, and adds a duplicate `v(all)` to a plot with one pole; `print all` prints that pole as `all = …` | low |
+| [F9](#f9) | *(fixed in [E-864](../../enhancements_doc/Enhancement-864.md): a divisor with no imaginary part takes both parts modulo itself)* **front end:** `%` on a complex vector refuses every real divisor: `v(1) % 2` after an ac fails "argument out of range for mod" | low |
+| [F10](#f10) | *(fixed in [E-865](../../enhancements_doc/Enhancement-865.md): `^` associates left to right in `let` too, as in Verilog-A, which this row had wrong; the precedence table is the manual's error, and the handbook gives the parsers' order)* **expressions:** `2^3^2` is 64 in a `.param` and a B-source, and 512 in `let`. The manual's precedence table puts unary minus above `**`, which would make `-2^2` 4; all three give −4 | low |
+| [F11](#f11) | *(fixed in [E-866](../../enhancements_doc/Enhancement-866.md): a name of the form `f(...)` is written as it is, and a lone vector found by `all` keeps its name)* **output:** `write` names a pz plot's vectors `v(pole(2))` and `v(zero(1))`, and adds a duplicate `v(all)` to a plot with one pole; `print all` prints that pole as `all = …` | low |
 
 <a id="f1"></a>
 ## F1 — `.pz` returns a wrong set of poles and zeros
@@ -278,6 +278,9 @@ finite instead.*
 <a id="f9"></a>
 ## F9 — complex `%` refuses a real divisor
 
+*Fixed in [E-864](../../enhancements_doc/Enhancement-864.md). A divisor with no imaginary part
+takes both parts modulo itself; a divisor of 0 is still refused.*
+
 ```
 ac lin 2 1k 2k
 let a = v(1) % 2
@@ -289,6 +292,12 @@ complex, has an imaginary part of 0. `v(1) % (2+j(1))` evaluates.
 
 <a id="f10"></a>
 ## F10 — power associativity and the precedence table
+
+*Fixed in [E-865](../../enhancements_doc/Enhancement-865.md). `'^'` is `%left` in `let`'s grammar:
+2^3^2 is 64 in all three parsers. Verilog-A does not evaluate right to left as this section
+says. Its LRM associates every binary operator left to right, and openvaf-r gives 64. It also
+puts unary operators above `**`, so −2**2 is 4 there; that is the rule the manual's table
+describes, and ngspice's parsers do not follow it. The handbook now gives their order.*
 
 | | `.param` | B-source | `let` |
 |---|---|---|---|
@@ -303,6 +312,10 @@ three parsers agree on −4, so the table is what is wrong there.
 
 <a id="f11"></a>
 ## F11 — a pz plot's names in `write` and `print all`
+
+*Fixed in [E-866](../../enhancements_doc/Enhancement-866.md). `write` leaves a name of the form
+`f(...)` as it is, and a lone vector found by `all` keeps its own name: one variable `pole(1)`,
+and `pole(1) = …`.*
 
 `display` after `pz` shows `pole(1)`. `write` of the plot names its variables `pole(1)`,
 `v(pole(2))`, `v(zero(1))`. When the plot holds one pole, it writes it twice, as `pole(1)` and

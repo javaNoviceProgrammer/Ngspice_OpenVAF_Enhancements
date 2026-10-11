@@ -77,7 +77,15 @@ ft_evaluate(struct pnode *node)
         return NULL;
     }
 
-    if (node->pn_name && !ft_evdb && d && !d->v_link2) {
+    /* Enhancement-866: `all` (and allv, alli, ally, alle) names a list of
+     * vectors; on a plot that holds one, the list is that one vector, which
+     * keeps its own name. It took the word: `print all` on a pz plot with one
+     * pole printed `all = ...`, and `write` wrote the pole twice, the second
+     * time as v(all). */
+    if (node->pn_name && !ft_evdb && d && !d->v_link2 &&
+        !(eq(node->pn_name, "all") || eq(node->pn_name, "allv") ||
+          eq(node->pn_name, "alli") || eq(node->pn_name, "ally") ||
+          eq(node->pn_name, "alle"))) {
         if (d->v_name)
             tfree(d->v_name); /* patch by Stefan Jones */
         d->v_name = copy(node->pn_name);

@@ -145,7 +145,8 @@ print all
 .endc
 .end
 """)
-    m = re.search(r"all = (-?[0-9.eE+-]+),\s*(-?[0-9.eE+-]+)", log)
+    # a lone pole prints under its own name since Enhancement-866 (`all =` before)
+    m = re.search(r"(?:pole\(1\)|all) = (-?[0-9.eE+-]+),\s*(-?[0-9.eE+-]+)", log)
     poles[tag] = (float(m.group(1)), float(m.group(2))) if m else None
 check("OSDI pole == -1e6 rad/s exactly",
       poles["osdi"] is not None and abs(poles["osdi"][0] + 1e6) < 1e-3

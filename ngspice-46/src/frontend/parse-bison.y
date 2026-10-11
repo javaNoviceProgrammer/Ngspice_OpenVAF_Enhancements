@@ -92,7 +92,11 @@
 %left   '-' '+'
 %left   '*' '/' '%'
 %left   NEG      /* negation--unary minus */
-%right  '^'      /* exponentiation */
+/* Enhancement-865: '^' associates left to right, as the manual says of equal-
+ * precedence binary operators (2.11.5), as the .param and the B-source take
+ * it, and as Verilog-A's LRM takes `**`: 2^3^2 is 64. It was %right, and
+ * `let` alone gave 512. */
+%left   '^'      /* exponentiation */
 %left   '[' ']'
 
 %initial-action      /* initialize yylval */

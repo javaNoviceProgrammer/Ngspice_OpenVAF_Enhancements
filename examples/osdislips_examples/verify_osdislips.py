@@ -422,7 +422,9 @@ for args, tag in [("1 0 2 0 vol pz", "z8"), ("1 0 2 0 pz vol", "z9")]:
     check(f"[7] pz {args} runs (the pole at -1e6)", re.search(r"-1\.00000e\+06", out) is not None
           and "Error" not in out, out[-300:])
 out = pz("1 0 2 0 cur pol", "z10")
-check("[7] pz 1 0 2 0 cur pol is accepted and runs", "Error" not in out and "all =" in out,
+# a lone pole prints under its own name since Enhancement-866 (`all =` before)
+check("[7] pz 1 0 2 0 cur pol is accepted and runs", "Error" not in out
+      and ("pole(1) =" in out or "all =" in out),
       out[-300:])
 
 # ------------------------------------------------------------- [8] ---

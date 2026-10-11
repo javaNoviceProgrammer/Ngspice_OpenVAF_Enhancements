@@ -87,7 +87,8 @@ def pz_roots(body, pzcard, solver):
     for m in re.finditer(r"(pole|zero)\(\d+\)\s*=\s*([-\d.eE+]+),([-\d.eE+]+)",
                          r.stdout + r.stderr):
         roots.append((m.group(1), float(m.group(2)), float(m.group(3))))
-    # single-root prints come out as "all = re,im" with no pole()/zero() label
+    # a single root printed as "all = re,im", with no pole()/zero() label, until
+    # Enhancement-866 gave it its own name; the fallback reads older binaries
     if not roots:
         for m in re.finditer(r"all\s*=\s*([-\d.eE+]+),([-\d.eE+]+)",
                              r.stdout + r.stderr):
@@ -137,7 +138,7 @@ compare("[1] series RLC: complex-conjugate pole pair identical across solvers",
 compare("[2] RC lowpass: single real pole (no regression on the old-good case)",
         "r1 in out 1k\nc1 out 0 1n",
         "pz in 0 out 0 vol pol",
-        expect=[("root", -1e6, 0.0)])
+        expect=[("pole", -1e6, 0.0)])
 
 # [3] lead network: zero -1/(R1 C1) = -1e6, pole -1/((R1||R2) C1) = -2e6
 compare("[3] lead network: real pole + real finite zero",

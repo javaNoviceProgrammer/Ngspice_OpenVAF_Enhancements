@@ -233,7 +233,10 @@ def main():
               "aborted" if broke else "ran")
         # the delay-free pole is -G/C at `out`; G is 1/ro plus whatever small
         # conductance the module itself contributes there.
-        pole = num(out, "all")
+        # a lone pole prints under its own name since Enhancement-866
+        pole = num(out, "pole(1)")
+        if pole is None:
+            pole = num(out, "all")
         check(f"{mod}: reports the delay-free pole -1/(ro*co)",
               pole is not None and abs(pole + 1e6) / 1e6 < 1e-3, f"pole={pole}")
         n = len([ln for ln in out.splitlines() if "as a ZERO delay" in ln])

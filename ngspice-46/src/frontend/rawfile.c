@@ -218,7 +218,12 @@ void raw_write(char *name, struct plot *pl, bool app, bool binary)
                 || v == pl->pl_scale
                 /* Bug-hunt F12: a qualified cross-plot vector (`dc2.v(a)`)
                  * keeps its name -- as for currents above. */
-                || strstr(v->v_name, ".v(") != NULL)
+                || strstr(v->v_name, ".v(") != NULL
+                /* Enhancement-866: a name already of the form f(...) is no
+                 * node name -- a pz plot's `zero(1)`, `pole(2)` were written
+                 * v(zero(1)), v(pole(2)) and did not load back under their
+                 * own names */
+                || strchr(v->v_name, '(') != NULL)
                fprintf(fp, "\t%d\t%s\t%s", i++, v->v_name, ft_typenames(v->v_type));
             else
                fprintf(fp, "\t%d\tv(%s)\t%s", i++, v->v_name, ft_typenames(v->v_type));

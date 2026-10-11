@@ -388,3 +388,15 @@ scripting ngspice:
   match it exactly.
 - **`let x = tan(0)`** failed "argument out of range". Since
   [E-863](../../enhancements_doc/Enhancement-863.md) it is 0.
+- **Complex `%` with a real divisor** (`let a = v(1) % 2` after an ac) was
+  refused. Since [E-864](../../enhancements_doc/Enhancement-864.md) each part
+  is taken modulo the divisor.
+- **Power chains** associate left to right in all three of ngspice's parsers
+  since [E-865](../../enhancements_doc/Enhancement-865.md): 2^3^2 is 64 (`let`
+  gave 512). Unary minus binds *below* `^`: −2^2 is −4 in a `.param`, a
+  B-source and `let`, whatever the manual's precedence table (§2.11.5) says.
+  Verilog-A differs here: there −2**2 is 4.
+- **`write` on a pz plot** named the roots `v(zero(1))` and wrote a lone pole
+  twice, the second time as `v(all)`; `print all` printed `all = …`. Since
+  [E-866](../../enhancements_doc/Enhancement-866.md) the roots keep their
+  names.

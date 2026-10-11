@@ -849,7 +849,17 @@ void *cx_mod(void *data1, void *data2, short int datatype1, short int datatype2,
             rcheck(fabs(realpart(c1)) <= (double) INT_MAX, "mod");
             rcheck(fabs(imagpart(c1)) <= (double) INT_MAX, "mod");
             rcheck(realpart(c2) != 0.0 && fabs(realpart(c2)) <= (double) INT_MAX, "mod");
-            rcheck(imagpart(c2) != 0.0 && fabs(imagpart(c2)) <= (double) INT_MAX, "mod");
+            /* Enhancement-864: a divisor with no imaginary part -- a real one,
+             * promoted -- takes both parts modulo itself. The check asked for
+             * a nonzero imaginary part as well, so `v(1) % 2` after an ac
+             * failed "argument out of range for mod" while `v(1) % (2+j(1))`
+             * evaluated. A complex divisor keeps E-480's part-by-part rule. */
+            if (imagpart(c2) == 0.0) {
+                realpart(c[i]) = fmod(realpart(c1), realpart(c2));
+                imagpart(c[i]) = fmod(imagpart(c1), realpart(c2));
+                continue;
+            }
+            rcheck(fabs(imagpart(c2)) <= (double) INT_MAX, "mod");
             realpart(c[i]) = fmod(realpart(c1), realpart(c2));
             imagpart(c[i]) = fmod(imagpart(c1), imagpart(c2));
         }

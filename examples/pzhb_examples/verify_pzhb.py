@@ -115,7 +115,8 @@ def main():
 
     # [2] pz itself is untouched by the fix
     _, p1 = run("pz in 0 mid 0 vol pz\nprint all", "c")
-    m = re.search(r"^all\s*=\s*(%s)" % NUM, p1, re.M)
+    # a lone pole prints under its own name since Enhancement-866 (`all =` before)
+    m = re.search(r"^(?:pole\(1\)|all)\s*=\s*(%s)" % NUM, p1, re.M)
     pole = float(m.group(1)) if m else None
     # R1||R2 = 500 with C1 = 1n -> pole at -1/(500*1n) = -2e6 rad/s
     check("pz still reports the correct pole", pole is not None and abs(pole + 2e6) < 2e6 * 0.01,
