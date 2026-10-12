@@ -199,6 +199,29 @@ order_ceiling(const CKTcircuit *ckt)
     return ckt->CKTmaxOrder;
 }
 
+
+/* Enhancement-874: the top state slot a staged step rotates through. The
+ * accepted history is CKTstates[0 .. CKTmaxOrder+1]; a staged step parks its
+ * interior stages above it, one slot each (TR-BDF2 has one, SDIRK s-1), so the
+ * splice leaves the history intact. They were parked at CKTmaxOrder+1 itself,
+ * which CKTterr reads as the oldest accepted point at TR-BDF2's order 2: the
+ * truncation estimate compared a stage value with the old points' spacing and
+ * scaled as a first-order method's, so an RC took 580 045 points at
+ * reltol=1e-6 where trap took 512. The slots are allocated here when a deck
+ * that did not set up for a staged method (a `loadstate`, a method changed
+ * by `option`) first needs them; CKTunsetup frees all of CKTstates. */
+static int
+staged_top(CKTcircuit *ckt, int stages)
+{
+    int top = ckt->CKTmaxOrder + stages;   /* history to CKTmaxOrder+1, then stages-1 */
+    int i;
+
+    for (i = ckt->CKTmaxOrder + 2; i <= top; i++)
+        if (!ckt->CKTstates[i])
+            ckt->CKTstates[i] = TMALLOC(double, ckt->CKTnumStates);
+    return top;
+}
+
 int
 DCtran(CKTcircuit *ckt,
        int restart)   /* forced restart flag */
@@ -446,6 +469,14 @@ DCtran(CKTcircuit *ckt,
                         "method=trap, whose order is 2 at most.\n",
                         ckt->CKTmaxOrder);
         }
+        /* Enhancement-874: a staged method's order is its own (cktdojob) */
+        if ((ckt->CKTintegrateMethod == TRBDF2 || ckt->CKTintegrateMethod == SDIRK) &&
+                ckt->CKTmaxOrderAsked != 2 &&
+                ckt->CKTmaxOrderAsked != ckt->CKTmaxOrder && !ft_optimizing)
+            fprintf(stdout, "Note: maxord=%d has no effect with method=%s, "
+                    "whose order is %d.\n", ckt->CKTmaxOrderAsked,
+                    ckt->CKTintegrateMethod == TRBDF2 ? "trbdf2" : "sdirk",
+                    ckt->CKTmaxOrder);
 
         save_mode = (ckt->CKTmode&MODEUIC) | MODETRANOP | MODEINITJCT;
         save_order = ckt->CKTorder;
@@ -1069,6 +1100,7 @@ resume:
             double *tmpstate;
             double t_full = ckt->CKTtime;
             double g = ckt->CKTtrGamma;
+            int top = staged_top(ckt, 2);   /* Enhancement-874 */
 
             /* The composite step is second order by construction -- there is
              * no order-1 variant to fall back to. dctran drops CKTorder to 1
@@ -1086,8 +1118,8 @@ resume:
             ckt->CKTtime = t_full;
 
             if (converged == 0) {
-                tmpstate = ckt->CKTstates[ckt->CKTmaxOrder+1];
-                for (i = ckt->CKTmaxOrder; i >= 0; i--)
+                tmpstate = ckt->CKTstates[top];
+                for (i = top - 1; i >= 0; i--)
                     ckt->CKTstates[i+1] = ckt->CKTstates[i];
                 ckt->CKTstates[0] = tmpstate;
 
@@ -1099,9 +1131,9 @@ resume:
                  * converged: on failure the step is retried or the delta cut,
                  * and either path must start from an untouched history. */
                 tmpstate = ckt->CKTstates[1];
-                for (i = 1; i <= ckt->CKTmaxOrder; i++)
+                for (i = 1; i < top; i++)
                     ckt->CKTstates[i] = ckt->CKTstates[i+1];
-                ckt->CKTstates[ckt->CKTmaxOrder+1] = tmpstate;
+                ckt->CKTstates[top] = tmpstate;
             }
             ckt->CKTtrStage = 0;
         } else if (ckt->CKTintegrateMethod == SDIRK) {
@@ -1120,6 +1152,7 @@ resume:
             double *tmpstate;
             double t_full = ckt->CKTtime;
             int s = ckt->CKTsdirkStages;
+            int top = staged_top(ckt, s);   /* Enhancement-874 */
 
             ckt->CKTorder = 3;
             converged = 0;
@@ -1133,8 +1166,8 @@ resume:
                 if (converged != 0)
                     break;
                 if (stage < s) {
-                    tmpstate = ckt->CKTstates[ckt->CKTmaxOrder+1];
-                    for (i = ckt->CKTmaxOrder; i >= 0; i--)
+                    tmpstate = ckt->CKTstates[top];
+                    for (i = top - 1; i >= 0; i--)
                         ckt->CKTstates[i+1] = ckt->CKTstates[i];
                     ckt->CKTstates[0] = tmpstate;
                 }
@@ -1143,9 +1176,9 @@ resume:
              * failed to converge leaves the history untouched for the retry. */
             for (r = 0; r < (stage > s ? s : stage) - 1; r++) {
                 tmpstate = ckt->CKTstates[1];
-                for (i = 1; i <= ckt->CKTmaxOrder; i++)
+                for (i = 1; i < top; i++)
                     ckt->CKTstates[i] = ckt->CKTstates[i+1];
-                ckt->CKTstates[ckt->CKTmaxOrder+1] = tmpstate;
+                ckt->CKTstates[top] = tmpstate;
             }
             ckt->CKTsdirkStage = 0;
         } else {

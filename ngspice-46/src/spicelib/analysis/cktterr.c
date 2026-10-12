@@ -130,6 +130,20 @@ terr(int qcap, CKTcircuit *ckt, double *timeStep, double abs_ccap)
             factor = gearCoeff[ckt->CKTorder > 1 ? ckt->CKTorder - 1 : 0];
             break;
     }
+    /* Enhancement-873: the constants above multiply the derivative
+     * q^(k+1), and diff[0] is the divided difference, which is q^(k+1)/(k+1)!.
+     * SPICE's trtol of 7 makes up the 3! of order 2, the orders it uses; at
+     * order k >= 3 (Gear and Adams under dynorder, SDIRK always) the estimate
+     * was still (k+1)!/3! too small -- 4 at order 3, 20 at 4, 840 at 6.
+     * Dynorder (Enhancement-128) chose the order by that estimate, so it took
+     * the high orders for 20 to 840 times cheaper than they were, at steps
+     * they cannot carry: an RLC network whose node peaks at 0.919 V reached
+     * 2.5e7 at maxord=4 and 9e22 at maxord=6, with nothing said. Orders 1 and
+     * 2 are left as SPICE has them. */
+    if (ckt->CKTorder >= 3 && ckt->CKTorder <= 6) {
+        static const double fact_rel[] = { 0.0, 0.0, 0.0, 4.0, 20.0, 120.0, 840.0 };
+        factor *= fact_rel[ckt->CKTorder];
+    }
     del = ckt->CKTtrtol * tol/MAX(ckt->CKTabstol,factor * fabs(diff[0]));
     if(ckt->CKTorder == 2) {
         del = sqrt(del);

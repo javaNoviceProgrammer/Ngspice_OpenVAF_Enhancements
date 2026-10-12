@@ -256,12 +256,17 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
     ckt->CKTtrStage = 0;
     NIsdirkInfo(&ckt->CKTsdirkStages, &ckt->CKTsdirkGamma);
     ckt->CKTsdirkStage = 0;
-    /* Enhancement-419: the SDIRK tableau is order 3, so CKTterr walks divided
-     * differences down to CKTstates[4] and the step needs one slot per stage
-     * plus the value at t. Both are bounded by CKTmaxOrder, whose default is 2
-     * -- leaving it there would have CKTterr read a slot the rotation never
-     * refreshes, i.e. a stale LTE built from another timepoint entirely. */
-    if (ckt->CKTintegrateMethod == SDIRK && ckt->CKTmaxOrder < 3)
+    /* Enhancement-874: a staged method has one order, 2 for TR-BDF2 and 3 for
+     * SDIRK, and `maxord` is pinned to it. CKTmaxOrder + 1 is the depth of the
+     * accepted history the rotation in dctran keeps, and CKTterr reads it to
+     * CKTstates[order + 1]: the SDIRK tableau needs CKTstates[4], which the
+     * default maxord of 2 would leave stale (Enhancement-419 raised it to 3).
+     * The interior stages are parked in slots above that depth (dctran's
+     * staged_top), so they never stand in for an accepted point. */
+    ckt->CKTmaxOrderAsked = ckt->CKTmaxOrder;
+    if (ckt->CKTintegrateMethod == TRBDF2)
+        ckt->CKTmaxOrder = 2;
+    else if (ckt->CKTintegrateMethod == SDIRK)
         ckt->CKTmaxOrder = 3;
     ckt->CKTbypass = task->TSKbypass;
     ckt->CKTdcMaxIter = task->TSKdcMaxIter;

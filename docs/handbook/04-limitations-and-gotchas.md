@@ -432,3 +432,18 @@ scripting ngspice:
   temperature was never reported. Since
   [E-872](../../enhancements_doc/Enhancement-872.md) the coupled-inductor check
   is rebuilt at each point, and reports each system once.
+- **`dynorder` with `maxord` above 3** could make a stable network explode
+  without a word: 9e22 V on a node that peaks at 0.919 V at `maxord=6`. The
+  truncation estimate at order k ≥ 3 was (k+1)!/3! too small, so the high orders
+  looked cheap. Since [E-873](../../enhancements_doc/Enhancement-873.md) every
+  order is measured alike. Orders 1 and 2 are unchanged; `sdirk`'s order-3
+  estimate is four times larger, as it should be.
+- **`trbdf2` and `sdirk`** needed ten times the points per decade of `reltol`
+  at the default `maxord`: 580 045 points for an RC at 1e-6 where trap needed
+  512. Since [E-874](../../enhancements_doc/Enhancement-874.md) their stages no
+  longer overwrite the history, and `maxord` is pinned to their order (2 and 3),
+  with a note when it is given otherwise.
+- **A PULSE voltage source** could skip the end of a rise it had landed at the
+  start of, when floating-point rounding put the rise at the end of the period
+  before; a repeating PWL could skip a knot the same way. Since
+  [E-875](../../enhancements_doc/Enhancement-875.md) every corner is landed.

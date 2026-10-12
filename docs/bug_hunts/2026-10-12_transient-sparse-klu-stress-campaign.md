@@ -62,12 +62,13 @@ Nothing was fixed; this is the list.
 
 | | Finding | Severity |
 |---|---|---|
-| [F1](#f1) | **transient accuracy, both solvers:** `dynorder` raises the Gear or Adams order on a stiff network until the integration is unstable, and the answer explodes with status 0 and no message. A nine-element RLC network whose node peaks at 0.919 V reaches 2.5e7 at `gear maxord=4 dynorder`, 9.2e22 at `maxord=6`, and 1.2e8 at `adams maxord=3 dynorder`. Over Family A the worst cases are 2e21×, 6e28× and 7e192× the trap error | high |
-| [F2](#f2) | **transient cost, both solvers:** `trbdf2` and `sdirk` at the default `maxord=2` take ten times the points for every decade of `reltol`, the scaling of a first-order method. At `reltol=1e-6` an RC needs 580 045 and 265 117 points against trap's 512. Their truncation estimate reads an interior stage parked in the history slot of q(tₙ₋₂); at `maxord=3` (`trbdf2`) or `6` (`sdirk`) they need 388 and 121 | high |
+| [F1](#f1) | *(fixed in [E-873](../../enhancements_doc/Enhancement-873.md): the truncation estimate at order k ≥ 3 was (k+1)!/3! too small; scaled, the network gives 0.919 V at every `maxord`)* **transient accuracy, both solvers:** `dynorder` raises the Gear or Adams order on a stiff network until the integration is unstable, and the answer explodes with status 0 and no message. A nine-element RLC network whose node peaks at 0.919 V reaches 2.5e7 at `gear maxord=4 dynorder`, 9.2e22 at `maxord=6`, and 1.2e8 at `adams maxord=3 dynorder`. Over Family A the worst cases are 2e21×, 6e28× and 7e192× the trap error | high |
+| [F2](#f2) | *(fixed in [E-874](../../enhancements_doc/Enhancement-874.md): the stages sit above the history and `maxord` is pinned to the method's order; the RC takes 388 and 165 points at 1e-6)* **transient cost, both solvers:** `trbdf2` and `sdirk` at the default `maxord=2` take ten times the points for every decade of `reltol`, the scaling of a first-order method. At `reltol=1e-6` an RC needs 580 045 and 265 117 points against trap's 512. Their truncation estimate reads an interior stage parked in the history slot of q(tₙ₋₂); at `maxord=3` (`trbdf2`) or `6` (`sdirk`) they need 388 and 121 | high |
 | [F3](#f3) | **transient hang, both solvers:** `dynorder` with `trbdf2` or `sdirk` freezes the step at the first step's size. The staged method resets the order every step, so `dynorder` "changes" it every step and holds the step. An RC under `trbdf2 dynorder` takes 1 391 814 points against 130. 61 runs of Families A and C never ended | high |
 | [F4](#f4) | **transient accuracy, stock code:** a PULSE current source stops scheduling breakpoints once an edge is shorter than `minbreak`; every later edge is stepped over. The same pulse into the same RC is 3.0e-2 off as a current source and 2.8e-4 as a voltage source. On one Family A network, trap at default tolerance is 31 % off | medium |
 | [F5](#f5) | **transient robustness, stock code:** after one Newton iteration runs far, every retry starts from that iteration (`PREDICTOR` is off). A Van der Pol oscillator from a B-source ends in "timestep too small" under every method, solver and tolerance; clamped at ±1 kV, which changes nothing on the true path, it runs | medium |
 | [F6](#f6) | **checkpoint:** `loadstate` refuses every checkpoint taken with `maxord` above 2, including `trbdf2 maxord=3`, F2's workaround. It says "does not match this circuit (equations 4 vs 4, states 2 vs 2)": the check compares `maxord` against the default before the options are copied in, and the message prints the two counts that match | medium |
+| [F8](#f8) | *(found while folding F2; fixed in [E-875](../../enhancements_doc/Enhancement-875.md): a time within `minbreak` of the period's end is the next period's start)* **transient accuracy, stock code:** a voltage source landed on a pulse's rise reads it, through floor((t − TD)/PER) = 3.999999999999843, as the end of the period before, and schedules the rise's end one point late. A step that goes past it skips it: `trbdf2` 21× less accurate than trap on a Family A network. A repeating PWL does the same. Under trap, corners are missed in 28 of 60 random pulses and knots in 32 of 60 repeating PWLs | medium |
 | [F7](#f7) | **checkpoint:** a `loadstate` continuation drops the end of a voltage-source edge shorter than `minbreak`, which the uninterrupted run lands on. Two Family D continuations were 17× and 55× less accurate; two more were F4's current-source chain | low |
 | [D1](#d1) | **options:** `xmu` outside [0, 0.5] is accepted silently: `xmu=2` turns 3.757e-7 into −2.53e-7 | low |
 | [D2](#d2) | **options:** `ordfix=-1`, `ordfix=100` and `reltol=10` pass without a word | low |
@@ -76,6 +77,13 @@ Nothing was fixed; this is the list.
 
 <a id="f1"></a>
 ## F1 — `dynorder` raises the order into instability, and the answer explodes without a word
+
+*Fixed in [E-873](../../enhancements_doc/Enhancement-873.md). The constants in `CKTterr` are error
+constants for q⁽ᵏ⁺¹⁾, and the code multiplied them by the divided difference, q⁽ᵏ⁺¹⁾/(k+1)!. trtol's 7
+makes up the 3! of order 2, so at order k ≥ 3 the estimate was (k+1)!/3! too small, and `dynorder`
+took the high orders for 20 to 840 times cheaper than they were. Scaled at orders 3 to 6, the
+network gives a peak of 0.919 V and −0.6996 V at the end under every setting below. No Family A run
+blows up.*
 
 `dynorder` ([E-128](../../enhancements_doc/Enhancement-128.md)) picks the Gear or Adams order by
 which allows the biggest step. It never asks whether that order is stable for the circuit's poles.
@@ -134,6 +142,12 @@ so plain Gear never gets there.
 
 <a id="f2"></a>
 ## F2 — `trbdf2` and `sdirk` at the default `maxord` take ten times the points per decade of `reltol`
+
+*Fixed in [E-874](../../enhancements_doc/Enhancement-874.md). A staged step rotates through slots
+above the accepted history, and `maxord` is pinned to the method's order. The RC takes 38, 80, 183
+and 388 points under `trbdf2` and 34, 60, 98 and 165 under `sdirk`, within 1.42 times trap's error.
+`sdirk` takes more than at `maxord=6` before, because E-873 made its order-3 estimate four times
+larger. With larger steps a skipped pulse corner showed: [F8](#f8).*
 
 ```
 * a sine into an RC
@@ -327,6 +341,26 @@ the difference costs no accuracy: 374 points against 597, at 8.3e-6 both. The in
 `resume` is no exception. None of the 97 resumed runs was on the uninterrupted grid, because the
 step lands on the `stop when` time. Five were 12 to 163× less accurate, all with a PULSE current
 source whose edges are at or under `minbreak`.
+
+<a id="f8"></a>
+## F8 — a voltage source landed on a pulse's rise schedules the rise's end one point late
+
+*Found while folding F2; fixed in [E-875](../../enhancements_doc/Enhancement-875.md). A time within
+`minbreak` of the period's end is taken as the next period's start, for PULSE and for a repeating
+PWL. No corner or knot of the 120 random decks is missed, under trap, `trbdf2` and `sdirk`.*
+
+With F2 fixed, `trbdf2` on Family A seed 1134 was 21× less accurate than trap at `reltol=1e-7`
+(7.2e-4 against 3.5e-5). It had stepped over the end of a 26 ps rise. `VSRCaccept` finds a pulse's
+next corner from the time within the period, floor((t − TD)/PER). Landed on the fifth rise, that
+quotient is 3.999999999999843. The point reads as the end of the fourth period, and the "next
+pulse" it waits for is 3.6e-21 s away. That breakpoint is under `minbreak` and dropped, and the
+rise's end is scheduled only at the next accepted point. Trap's truncation estimate usually
+rejects a step across the rise; `trbdf2`'s and `sdirk`'s do not.
+
+Trap misses corners too. On E-872 it missed them in 28 of 60 random pulses into an RC, and knots in
+32 of 60 repeating PWLs with an edge at each repeat's start. The repeating PWL wraps its time the
+same way, and wrapped only past its last knot, so a point landed a hair under it found no knot
+ahead.
 
 <a id="d1"></a>
 ## D1 — `xmu` outside [0, 0.5] is accepted, and the answer is wrong

@@ -216,3 +216,12 @@ with one; and `delta` starts at ~1e−10 and grows ~1.5× per step, so it reache
 large `tmax` pin only well into the run. The last is general: **you cannot
 excite a stiff transient early in an ngspice run, because the step controller
 has not grown yet.**
+
+**Update ([E-874](Enhancement-874.md), [E-873](Enhancement-873.md)).** The interior stages were
+spliced back into `CKTstates[maxord+1]` (and `[maxord]` for SDIRK), the slot the truncation
+estimate reads as the oldest accepted point at the default `maxord`. Under LTE control TR-BDF2 and
+SDIRK therefore scaled as first-order methods: an RC took 580 045 and 265 117 points at
+`reltol=1e-6`, where trap took 512. The order-pinned measurements above ran under `ordfix` and
+stand; the per-iteration comparison of TR-BDF2 and SDIRK was taken under the defect. The stages now
+sit above the history, `maxord` is pinned to the method's order, and SDIRK's order-3 estimate, like
+every order above 2, is no longer (k+1)!/3! too small. The RC takes 388 and 165 points.

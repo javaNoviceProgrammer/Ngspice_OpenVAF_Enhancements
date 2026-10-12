@@ -111,3 +111,9 @@ is `maxord` 3–4; higher `maxord` is more aggressive (and, like all BDF beyond 
 less robust at loose tolerance — the same reason stock ngspice caps its default Gear
 order at 2). Automatic engagement (turning it on when the dynamics are detected as
 smooth) and a per-device rather than whole-circuit order are natural follow-ups.
+
+**Update ([E-873](Enhancement-873.md)).** The truncation estimate at order k ≥ 3 was (k+1)!/3!
+too small, so this controller took the high orders for 20 to 840 times cheaper than they were. On
+a stiff RLC network that peaks at 0.919 V, `maxord=4` to `6` reached 2.5e7 to 9e22 V. Every order
+is now measured alike. The RC above takes 228 rows against stock's 670, at 0.015 % error; the LC
+534 against 3 535, at 0.090 %.

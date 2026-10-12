@@ -160,6 +160,8 @@ struct CKTcircuit {
 #endif /*PREDICTOR*/
     int CKTorder;               /* the integration method order */
     int CKTmaxOrder;            /* maximum integration method order */
+    int CKTmaxOrderAsked;       /* Enhancement-874: `maxord` as given, before a
+                                   staged method pins CKTmaxOrder to its order */
     int CKTintegrateMethod;     /* the integration method to be used */
     double CKTxmu;              /* for trapezoidal method */
     /* Enhancement-419: TR-BDF2 sub-step bookkeeping. `CKTtrStage` is 0 outside

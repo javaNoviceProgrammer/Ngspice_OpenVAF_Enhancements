@@ -1000,7 +1000,9 @@ CKTunsetup(CKTcircuit *ckt)
     if (!ckt->CKTisSetup)
         return OK;
 
-    for(i=0;i<=ckt->CKTmaxOrder+1;i++) {
+    /* Enhancement-874: all of them -- a staged step allocates slots above
+       CKTmaxOrder+1, and CKTmaxOrder may have changed since the setup */
+    for (i = 0; i < (int) NUMELEMS(ckt->CKTstates); i++) {
         tfree(ckt->CKTstates[i]);
     }
 

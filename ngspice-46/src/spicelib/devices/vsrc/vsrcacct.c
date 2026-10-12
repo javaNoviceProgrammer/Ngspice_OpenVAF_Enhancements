@@ -105,6 +105,16 @@ VSRCaccept(CKTcircuit *ckt, GENmodel *inModel)
                                 time -= basetime;
                             }
 
+                            /* Enhancement-875: a point landed on a period's
+                             * first corner can read as the end of the period
+                             * before -- (t - TD)/PER = 3.999999999999843 at
+                             * the fifth rise -- and the "next pulse" it then
+                             * awaits is 3.6e-21 s away, under minbreak. The
+                             * rise's end went unscheduled until the next
+                             * point; a step that went past it skipped it. */
+                            if (PER - time <= ckt->CKTminBreak)
+                                time -= PER;
+
                             /* A request for a breakpoint very close
                              * to the current time will be ignored.
                              * Adjust so the next corner will be
@@ -179,7 +189,9 @@ VSRCaccept(CKTcircuit *ckt, GENmodel *inModel)
                             time = ckt->CKTtime - here->VSRCrdelay;
                             end =
                                 here->VSRCcoeffs[here->VSRCfunctionOrder - 2];
-                            if (time > end) {
+                            /* Enhancement-875: a point landed a hair under
+                             * the last knot is on it, and the repeat starts */
+                            if (time > end - ckt->CKTminBreak) {
                                 if (here->VSRCrGiven) {
                                     /* Repeating. */
 
@@ -188,6 +200,11 @@ VSRCaccept(CKTcircuit *ckt, GENmodel *inModel)
                                     time -=
                                         here->VSRCcoeffs[here->VSRCrBreakpt];
                                     time -= period * floor(time / period);
+                                    /* Enhancement-875: as for PULSE, a point
+                                     * on the repeat's start must not read as
+                                     * its end, past every knot */
+                                    if (period - time <= ckt->CKTminBreak)
+                                        time -= period;
                                     time +=
                                         here->VSRCcoeffs[here->VSRCrBreakpt];
                                 } else {

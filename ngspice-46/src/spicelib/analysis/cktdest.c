@@ -63,7 +63,7 @@ CKTdestroy(CKTcircuit *ckt)
                 DEVices[i]->DEVdestroy();
         }
 
-    for(i=0;i<=ckt->CKTmaxOrder+1;i++){
+    for (i = 0; i < (int) NUMELEMS(ckt->CKTstates); i++) {   /* Enhancement-874 */
         FREE(ckt->CKTstates[i]);
     }
     if(ckt->CKTmatrix) {
