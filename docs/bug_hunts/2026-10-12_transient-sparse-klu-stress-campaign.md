@@ -69,7 +69,7 @@ Nothing was fixed; this is the list.
 | [F5](#f5) | *(fixed in [E-878](../../enhancements_doc/Enhancement-878.md): a step that does not converge is retried from where it started; the oscillator peaks at 2.0199 V)* **transient robustness, stock code:** after one Newton iteration runs far, every retry starts from that iteration (`PREDICTOR` is off). A Van der Pol oscillator from a B-source ends in "timestep too small" under every method, solver and tolerance; clamped at ±1 kV, which changes nothing on the true path, it runs | medium |
 | [F6](#f6) | *(fixed in [E-879](../../enhancements_doc/Enhancement-879.md): `loadstate` copies the method and `maxord` before the setup, and a mismatch names the order)* **checkpoint:** `loadstate` refuses every checkpoint taken with `maxord` above 2, including `trbdf2 maxord=3`, F2's workaround. It says "does not match this circuit (equations 4 vs 4, states 2 vs 2)": the check compares `maxord` against the default before the options are copied in, and the message prints the two counts that match | medium |
 | [F8](#f8) | *(found while folding F2; fixed in [E-875](../../enhancements_doc/Enhancement-875.md): a time within `minbreak` of the period's end is the next period's start)* **transient accuracy, stock code:** a voltage source landed on a pulse's rise reads it, through floor((t − TD)/PER) = 3.999999999999843, as the end of the period before, and schedules the rise's end one point late. A step that goes past it skips it: `trbdf2` 21× less accurate than trap on a Family A network. A repeating PWL does the same. Under trap, corners are missed in 28 of 60 random pulses and knots in 32 of 60 repeating PWLs | medium |
-| [F7](#f7) | **checkpoint:** a `loadstate` continuation drops the end of a voltage-source edge shorter than `minbreak`, which the uninterrupted run lands on. Two Family D continuations were 17× and 55× less accurate; two more were F4's current-source chain | low |
+| [F7](#f7) | *(fixed in [E-880](../../enhancements_doc/Enhancement-880.md): a resume, in memory or from a checkpoint, re-derived `minbreak` by the rule of a build without XSPICE, 5e6 times larger; it now takes the run's)* **checkpoint:** a `loadstate` continuation drops the end of a voltage-source edge shorter than `minbreak`, which the uninterrupted run lands on. Two Family D continuations were 17× and 55× less accurate; two more were F4's current-source chain | low |
 | [D1](#d1) | **options:** `xmu` outside [0, 0.5] is accepted silently: `xmu=2` turns 3.757e-7 into −2.53e-7 | low |
 | [D2](#d2) | **options:** `ordfix=-1`, `ordfix=100` and `reltol=10` pass without a word | low |
 | [D3](#d3) | **diagnostic:** an unknown `method` prints "unsupported integration method" without naming it or saying that trap runs instead | low |
@@ -349,6 +349,13 @@ Family D, 34 of 96 checkpoint trials stopped here.
 
 <a id="f7"></a>
 ## F7 — a checkpoint continuation drops the end of an edge shorter than `minbreak`
+
+*Fixed in [E-880](../../enhancements_doc/Enhancement-880.md). The cause was not the checkpoint:
+the continuation is the in-memory resume, point for point. `CKTdoJob` puts `minbreak`'s 0 back for
+every job, and both resume branches re-derived it as tmax/20 000 where the run, under XSPICE, had
+started with ten times `delmin`: 1e-12 s against 2e-18 s on these decks. All three now use the
+run's rule. Every Family D resume and continuation that was more than 10× worse now matches the
+uninterrupted run, except one under `ordfix=6`.*
 
 None of the 62 `loadstate` continuations that ran was on the uninterrupted run's time grid. E-131
 reports bit-identical continuations on its decks. In four of them the continuation was more than

@@ -102,6 +102,24 @@ t0_restore(CKTcircuit *ckt)
 }
 
 
+/* Enhancement-880: the smallest spacing kept between breakpoints when no
+ * `minbreak` is given. A run starts with ten times delmin under XSPICE and
+ * tmax/20 000 without it; a `resume` and a checkpoint continuation re-derived
+ * it with the second rule in either build, because CKTdoJob puts the option's
+ * 0 back for every job. With XSPICE that is 5e6 times the first rule's value:
+ * the continuation skipped a 10 fs edge's end that the run had landed on, and
+ * took another grid from the stop on. All three now take the run's rule. */
+static double
+tran_minbreak(const CKTcircuit *ckt)
+{
+#ifdef XSPICE
+    return 10.0 * ckt->CKTdelmin;
+#else
+    return ckt->CKTmaxStep * 5e-5;
+#endif
+}
+
+
 /* Enhancement-878: the solution a step starts from, kept so that a step whose
  * Newton iteration does not converge is retried from it. PREDICTOR is not
  * compiled in, so a step starts at CKTrhsOld, and after a failed one that held
@@ -335,7 +353,7 @@ DCtran(CKTcircuit *ckt,
         INIT_STATS();
         firsttime = 0;
         if(ckt->CKTminBreak == 0)
-            ckt->CKTminBreak = ckt->CKTmaxStep * 5e-5;
+            ckt->CKTminBreak = tran_minbreak(ckt);   /* Enhancement-880 */
 
 #ifdef XSPICE
         /* The in-memory `resume` inherits these from the original run; a
@@ -454,16 +472,9 @@ DCtran(CKTcircuit *ckt,
         add_bkpt();
 #endif
 
-#ifdef XSPICE
-        /* Modify setting of CKTminBreak
-           Set to 10 times delmin (minimum delta step time). */
+        /* ten times delmin under XSPICE; a resume takes the same (E-880) */
         if(ckt->CKTminBreak == 0)
-            ckt->CKTminBreak = 10.0 * ckt->CKTdelmin;
-
-#else
-        if(ckt->CKTminBreak == 0)
-            ckt->CKTminBreak = ckt->CKTmaxStep * 5e-5;
-#endif
+            ckt->CKTminBreak = tran_minbreak(ckt);
 
 #ifdef XSPICE
         /* set anal_init and anal_type */
@@ -684,7 +695,7 @@ DCtran(CKTcircuit *ckt,
 
         INIT_STATS();
         if(ckt->CKTminBreak == 0)
-            ckt->CKTminBreak = ckt->CKTmaxStep * 5e-5;
+            ckt->CKTminBreak = tran_minbreak(ckt);   /* Enhancement-880 */
         firsttime=0;
         /* To get rawfile working */
         error = SPfrontEnd->OUTpBeginPlot (NULL, NULL,

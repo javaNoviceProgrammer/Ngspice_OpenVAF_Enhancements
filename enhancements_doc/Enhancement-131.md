@@ -135,3 +135,10 @@ file format, and a periodic auto-checkpoint option during a long run.
 `loadstate` in a fresh process: the circuit was set up before the task's options reached it, with
 the default `maxord` of 2. The method and `maxord` are now copied first, and a mismatch names the
 order.
+
+**Update ([E-880](Enhancement-880.md)).** A continuation re-derived `minbreak` by the rule of a
+build without XSPICE, as the in-memory `resume` did, 5e6 times the value the run started with; it
+skipped edges the run had landed on. It now takes the run's rule. A continuation is the in-memory
+resume point for point; it differs from a run without the stop only by the breakpoint `stop when`
+sets at the stop time.
+

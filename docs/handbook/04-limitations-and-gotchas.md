@@ -465,3 +465,8 @@ scripting ngspice:
   match this circuit", naming two counts that matched. Since
   [E-879](../../enhancements_doc/Enhancement-879.md) it restores, and a real
   mismatch names the order.
+- **A resumed transient** (`resume`, or `loadstate`) re-derived `minbreak`
+  5e6 times larger than the run had it, and stepped over short edges the run
+  had landed on. Since [E-880](../../enhancements_doc/Enhancement-880.md) it
+  keeps the run's spacing. `stop when time > t` still lands the run on t, so a
+  continuation follows a run with the same stop.
