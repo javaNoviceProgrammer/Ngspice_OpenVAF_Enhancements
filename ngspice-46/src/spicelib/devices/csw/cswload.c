@@ -90,6 +90,12 @@ CSWload(GENmodel *inModel, CKTcircuit *ckt)
                     }
                 }
 
+                /* Enhancement-884: this switch asked for the landing under
+                   way, which lies on its crossing: it turns over in the step
+                   after, not here */
+                if (ckt->CKTlanding == 2 && here->CSWlandHold)
+                    current_state = previous_state;
+
                 if (current_state != old_current_state) {
                     ckt->CKTnoncon++;    /* ensure one more iteration */
                     ckt->CKTtroubleElt = (GENinstance *) here;
@@ -124,14 +130,19 @@ CSWload(GENmodel *inModel, CKTcircuit *ckt)
                             internalerror("bad value for previous region in cswload");
                     }
                 }
+                if (ckt->CKTlanding == 2 && here->CSWlandHold)
+                    current_state = previous_state;   /* Enhancement-884 */
             }
 
             ckt->CKTstate0[here->CSWswitchstate] = current_state;
             ckt->CKTstate1[here->CSWswitchstate] = previous_state;
 
-//            ckt->CKTstate0[here->CSWctrlvalue] = i_ctrl;
-            /* FIXME: without this statement truncation is not used, as with SW.
-               But test are needed to check if improvments are possible. */
+            /* Enhancement-884: stored, for the landing on the crossing
+               (CSWtrunc). Stock ngspice left it out ("without this statement
+               truncation is not used, as with SW. But test are needed to check
+               if improvments are possible."), and the approach limit in
+               CSWtrunc, which reads it, stays off as it was. */
+            ckt->CKTstate0[here->CSWctrlvalue] = i_ctrl;
 
             if (current_state == REALLY_ON || current_state == HYST_ON)
                 g_now = model->CSWonConduct;

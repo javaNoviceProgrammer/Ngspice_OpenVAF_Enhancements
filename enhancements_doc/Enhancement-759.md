@@ -160,3 +160,12 @@ crossing at 83.33 ns, after one refinement.
 - The new compiler on an ngspice that does not serve `$osdi$point` makes no requests.
 - The crossing itself is still found by linear interpolation, refined once; an
   expression with two crossings in one step is seen as none or one, as before.
+
+
+**Update ([E-884](Enhancement-884.md)).** The built-in switches (`sw`, `csw`) land on their
+crossing too, through the same request (`CKTlandRequest`): the table's "plain `if`, built-in
+`sw`: unchanged" row no longer holds for the switch, which closes within 0.1 ns of its crossing
+at a 100 ns step. A switch's landing lies on the crossing, with the switch holding its accepted
+state there, and the step after it starts at order 1. The retry now takes the earliest request
+as its step, whatever a device type later in the table estimated; with the OSDI devices last in
+the table, their landings are as before.

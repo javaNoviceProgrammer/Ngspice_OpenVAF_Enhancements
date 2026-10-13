@@ -13,7 +13,8 @@ D1, D2 and D3 of the transient stress campaign of 2026-10-12.
   [4] E-882: reltol=1 and reltol=10 are refused, and the run is the default
       run (E-875: taken without a word)
   [5] E-882: gear with ordfix=4 at the default maxord=2 says the order is
-      pinned at 2; at maxord=4 it says nothing (E-875: no word)
+      pinned at 2; at maxord=4 there is no such note (E-875: no word; E-888's
+      note on ordfix itself is printed either way)
   [6] E-883: method=trbdf (a typo) names the value and the valid ones, and
       says trap is kept; after `option method=gear`, method=foo says gear is
       kept; the generic "unsupported integration method" line is gone
@@ -96,9 +97,9 @@ check("[4] E-882: reltol=1 and reltol=10 are refused, and the run is the default
 
 n2 = run("of4_mo2", "method=gear ordfix=4")[1]
 n4 = run("of4_mo4", "method=gear maxord=4 ordfix=4")[1]
-check("[5] E-882: gear ordfix=4 at maxord=2 says the order is pinned at 2; at maxord=4 nothing",
-      "the order is pinned at 2" in n2 and "ordfix=" not in n4,
-      "maxord=2 note %s, maxord=4 note %s" % ("pinned at 2" in n2, "ordfix=" in n4))
+check("[5] E-882: gear ordfix=4 at maxord=2 says the order is pinned at 2; at maxord=4 no ceiling note",
+      "the order is pinned at 2" in n2 and "is above the highest order" not in n4,
+      "maxord=2 note %s, maxord=4 note %s" % ("pinned at 2" in n2, "is above the highest order" in n4))
 
 t = run("m_trbdf", "method=trbdf")[1]
 g = run("m_foo", "method=gear", "option method=foo")[1]

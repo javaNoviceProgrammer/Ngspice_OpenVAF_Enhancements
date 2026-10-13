@@ -257,6 +257,248 @@ if_refuse_stale(const char *what)
     return TRUE;
 }
 
+/* Enhancement-887 (transient stress campaign 2026-10-12, N5): an `option`
+ * given while a run is paused, before `resume`. `option` writes the default
+ * task. A run started by `run` IS that task, and CKTdoJob copies every option
+ * from it again at the resume: a new method or maxord met history slots the
+ * run had not allocated, and `option klu` a matrix built for Sparse --
+ * segmentation faults in CAPload and NIiter. A run started by an analysis
+ * command (`tran ...`) has its own copy of the task, made at the command, and
+ * there nothing reached the resumed run, without a word.
+ *
+ * Both now resume alike. The options read afresh at every step -- the
+ * tolerances, the iteration limit, gmin, gshunt, the pivot thresholds and the
+ * Newton aids -- are taken by the resumed run, which says so. The ones the
+ * run was built on -- the method, maxord, ordfix, dynorder, the temperatures,
+ * cshunt and the solver -- keep the values the run started with, and a note
+ * says the new ones take effect from the next analysis. The comparison is
+ * against the task as the run started (a copy taken here, at the start), so
+ * an option set before the run is not reported. */
+static const struct {
+    const char *name;
+    int hold;   /* kept at the run's start value */
+} e887_tbl[] = {
+    { "reltol", 0 }, { "abstol", 0 }, { "vntol", 0 }, { "chgtol", 0 },
+    { "trtol", 0 }, { "xmu", 0 }, { "trgamma", 0 }, { "itl4", 0 },
+    { "gmin", 0 }, { "gshunt", 0 }, { "pivtol", 0 }, { "pivrel", 0 },
+    { "absdv", 0 }, { "reldv", 0 }, { "bypass", 0 }, { "nodedamping", 0 },
+    { "linesearch", 0 }, { "trustregion", 0 },
+    { "method", 1 }, { "maxord", 1 }, { "ordfix", 1 }, { "dynorder", 1 },
+    { "temp", 1 }, { "tnom", 1 }, { "cshunt", 1 },
+#ifdef KLU
+    { "klu", 1 }, { "klu_ordering", 1 }, { "klu_scale", 1 }, { "klu_btf", 1 },
+    { "klu_memgrow_factor", 1 },
+#endif
+};
+#define E887_N ((int) (sizeof(e887_tbl) / sizeof(e887_tbl[0])))
+
+struct e887_run {
+    TSKtask start;          /* the task as the run started (options only read) */
+    double noted[E887_N];   /* the held values already named */
+};
+
+static double
+e887_get(const TSKtask *t, int k)
+{
+    switch (k) {
+    case 0:  return t->TSKreltol;
+    case 1:  return t->TSKabstol;
+    case 2:  return t->TSKvoltTol;
+    case 3:  return t->TSKchgtol;
+    case 4:  return t->TSKtrtol;
+    case 5:  return t->TSKxmu;
+    case 6:  return t->TSKtrGamma;
+    case 7:  return t->TSKtranMaxIter;
+    case 8:  return t->TSKgmin;
+    case 9:  return t->TSKgshunt;
+    case 10: return t->TSKpivotAbsTol;
+    case 11: return t->TSKpivotRelTol;
+    case 12: return t->TSKabsDv;
+    case 13: return t->TSKrelDv;
+    case 14: return t->TSKbypass;
+    case 15: return t->TSKnodeDamping;
+    case 16: return t->TSKlinesearch;
+    case 17: return t->TSKtrustregion;
+    case 18: return t->TSKintegrateMethod;
+    case 19: return t->TSKmaxOrder;
+    case 20: return t->TSKordFix;
+    case 21: return t->TSKdynorder;
+    case 22: return t->TSKtemp;
+    case 23: return t->TSKnomTemp;
+    case 24: return t->TSKcshunt;
+#ifdef KLU
+    case 25: return t->TSKkluMODE;
+    case 26: return t->TSKkluOrdering;
+    case 27: return t->TSKkluScale;
+    case 28: return t->TSKkluBTF;
+    case 29: return t->TSKkluMemGrowFactor;
+#endif
+    default: return 0.0;
+    }
+}
+
+static void
+e887_set(TSKtask *t, int k, double v)
+{
+    switch (k) {
+    case 0:  t->TSKreltol = v; break;
+    case 1:  t->TSKabstol = v; break;
+    case 2:  t->TSKvoltTol = v; break;
+    case 3:  t->TSKchgtol = v; break;
+    case 4:  t->TSKtrtol = v; break;
+    case 5:  t->TSKxmu = v; break;
+    case 6:  t->TSKtrGamma = v; break;
+    case 7:  t->TSKtranMaxIter = (int) v; break;
+    case 8:  t->TSKgmin = v; break;
+    case 9:  t->TSKgshunt = v; break;
+    case 10: t->TSKpivotAbsTol = v; break;
+    case 11: t->TSKpivotRelTol = v; break;
+    case 12: t->TSKabsDv = v; break;
+    case 13: t->TSKrelDv = v; break;
+    case 14: t->TSKbypass = (int) v; break;
+    case 15: t->TSKnodeDamping = v != 0.0; break;
+    case 16: t->TSKlinesearch = v != 0.0; break;
+    case 17: t->TSKtrustregion = v != 0.0; break;
+    case 18: t->TSKintegrateMethod = (int) v; break;
+    case 19: t->TSKmaxOrder = (int) v; break;
+    case 20: t->TSKordFix = (int) v; break;
+    case 21: t->TSKdynorder = v != 0.0; break;
+    case 22: t->TSKtemp = v; break;
+    case 23: t->TSKnomTemp = v; break;
+    case 24: t->TSKcshunt = v; break;
+#ifdef KLU
+    case 25: t->TSKkluMODE = v != 0.0; break;
+    case 26: t->TSKkluOrdering = (int) v; break;
+    case 27: t->TSKkluScale = (int) v; break;
+    case 28: t->TSKkluBTF = (int) v; break;
+    case 29: t->TSKkluMemGrowFactor = v; break;
+#endif
+    default: break;
+    }
+}
+
+/* "name = value", as the option is written */
+static void
+e887_fmt(DSTRING *ds, int k, double v)
+{
+    const char *name = e887_tbl[k].name;
+    if (eq(name, "method")) {
+        int m = (int) v;
+        ds_cat_str(ds, "method = ");
+        ds_cat_str(ds, m == GEAR ? "gear" : m == TRBDF2 ? "trbdf2" : m == SDIRK ? "sdirk" :
+                 m == ADAMS ? "adams" : "trap");
+    } else if (eq(name, "klu")) {
+        ds_cat_str(ds, v != 0.0 ? "klu" : "sparse");
+    } else if (eq(name, "dynorder") || eq(name, "linesearch") || eq(name, "trustregion") ||
+               eq(name, "nodedamping")) {
+        ds_cat_str(ds, name);
+        ds_cat_str(ds, v != 0.0 ? " on" : " off");
+    } else {
+        char buf[64];
+        if (eq(name, "temp") || eq(name, "tnom"))
+            v -= CONSTCtoK;
+        (void) snprintf(buf, sizeof(buf), "%s = %g", name, v);
+        ds_cat_str(ds, buf);
+    }
+}
+
+/* ", " between items and " and " before the last */
+static void
+e887_join(DSTRING *ds, int i, int n)
+{
+    if (i > 0)
+        ds_cat_str(ds, i == n - 1 ? " and " : ", ");
+}
+
+static void
+e887_snapshot(TSKtask *task)
+{
+    struct e887_run *r;
+    int k;
+    if (!ft_curckt || !task)
+        return;
+    if (!ft_curckt->ci_runopts)
+        ft_curckt->ci_runopts = TMALLOC(struct e887_run, 1);
+    r = (struct e887_run *) ft_curckt->ci_runopts;
+    r->start = *task;
+    for (k = 0; k < E887_N; k++)
+        r->noted[k] = e887_get(task, k);
+}
+
+/* Before the resume: what changed in the default task since the run started.
+ * held[k] is set where the run's task was given back its start value for the
+ * resume, and want[k] keeps the value given, for e887_resume_end. */
+static void
+e887_resume_begin(TSKtask *cur, TSKtask *def, int *held, double *want)
+{
+    struct e887_run *r = ft_curckt ? (struct e887_run *) ft_curckt->ci_runopts : NULL;
+    int k, napplied = 0, nheld = 0, i;
+    int applied_k[E887_N], held_k[E887_N];
+    for (k = 0; k < E887_N; k++)
+        held[k] = 0;
+    if (!r || !cur || !def)
+        return;
+    for (k = 0; k < E887_N; k++) {
+        double was = e887_get(&r->start, k), now = e887_get(def, k);
+        if (was == now)
+            continue;
+        if (!e887_tbl[k].hold) {
+            e887_set(cur, k, now);
+            e887_set(&r->start, k, now);
+            applied_k[napplied++] = k;
+        } else {
+            e887_set(cur, k, was);
+            held[k] = 1;
+            want[k] = now;
+            if (r->noted[k] != now) {
+                r->noted[k] = now;
+                held_k[nheld++] = k;
+            }
+        }
+    }
+    if (napplied > 0) {
+        DS_CREATE(ds, 200);
+        ds_cat_str(&ds, "Note: the resumed run takes ");
+        for (i = 0; i < napplied; i++) {
+            e887_join(&ds, i, napplied);
+            e887_fmt(&ds, applied_k[i], e887_get(def, applied_k[i]));
+        }
+        ds_cat_str(&ds, ", given during the pause.\n");
+        fputs(ds_get_buf(&ds), stdout);
+        ds_free(&ds);
+    }
+    if (nheld > 0) {
+        DS_CREATE(ds, 200);
+        ds_cat_str(&ds, "Note: ");
+        for (i = 0; i < nheld; i++) {
+            e887_join(&ds, i, nheld);
+            e887_fmt(&ds, held_k[i], want[held_k[i]]);
+        }
+        ds_cat_str(&ds, nheld > 1 ? ", given during the pause, take" : ", given during the pause, takes");
+        ds_cat_str(&ds, " effect from the next analysis; the resumed run keeps ");
+        for (i = 0; i < nheld; i++) {
+            e887_join(&ds, i, nheld);
+            e887_fmt(&ds, held_k[i], e887_get(&r->start, held_k[i]));
+        }
+        ds_cat_str(&ds, ", which it was built on.\n");
+        fputs(ds_get_buf(&ds), stdout);
+        ds_free(&ds);
+    }
+}
+
+/* After the resume: a run started by `run` resumed the default task itself;
+ * the values given during the pause go back into it, for the next analysis */
+static void
+e887_resume_end(TSKtask *cur, TSKtask *def, const int *held, const double *want)
+{
+    int k;
+    if (!cur || cur != def)
+        return;
+    for (k = 0; k < E887_N; k++)
+        if (held[k])
+            e887_set(def, k, want[k]);
+}
+
 int
 if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
 {
@@ -449,6 +691,7 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
         /*CDHW Run the analysis pointed to by ci_curTask CDHW*/
 
         ft_curckt->ci_curOpt = ft_curckt->ci_defOpt;
+        e887_snapshot(ft_curckt->ci_curTask);   /* Enhancement-887 */
         MCSAVErunBegin();                       /* Enhancement-624: which plot is current now */
         CSAVErunBegin();                        /* Enhancement-701: the savecorner twin */
         if ((err = ft_sim->doAnalyses (ckt, 1, ft_curckt->ci_curTask)) != OK) {
@@ -474,7 +717,17 @@ if_run(CKTcircuit *ckt, char *what, wordlist *args, INPtables *tab)
             ft_curckt->ci_deck_ran = TRUE;  /* Enhancement-802 */
         CSAVErun(what, MCS_OK);             /* Enhancement-701: one row per corner run */
     } else if (eq(what, "resume")) {
-        if ((err = ft_sim->doAnalyses (ckt, 0, ft_curckt->ci_curTask)) != OK) {
+        int e887_held[E887_N];
+        double e887_want[E887_N];
+        /* Enhancement-887: a checkpoint's continuation (loadstate) starts
+           from the options set now -- Enhancement-879 built the circuit on
+           them -- and is the start a later pause compares against */
+        if (ckt->CKTcheckpoint)
+            e887_snapshot(ft_curckt->ci_curTask);
+        e887_resume_begin(ft_curckt->ci_curTask, ft_curckt->ci_defTask, e887_held, e887_want);
+        err = ft_sim->doAnalyses (ckt, 0, ft_curckt->ci_curTask);
+        e887_resume_end(ft_curckt->ci_curTask, ft_curckt->ci_defTask, e887_held, e887_want);
+        if (err != OK) {
             ft_sperror(err, "doAnalyses");
             /* wrd_end(); */
             if (err == E_PAUSE)

@@ -80,14 +80,10 @@ int OSDItrunc(GENmodel *in_model, CKTcircuit *ckt, double *timestep) {
              * before it, and honouring a smaller cut would put a point
              * short of the crossing and approach it again -- two rejected
              * points per crossing instead of one. Several requests: the
-             * earliest lands (a later one is asked again from there). */
-            if (ckt->CKTforceReject) {
-              if (land < *timestep)
-                *timestep = land;
-            } else {
-              *timestep = land;
-              ckt->CKTforceReject = 1;
-            }
+             * earliest lands (a later one is asked again from there).
+             * Enhancement-884: through CKTlandRequest, which a built-in
+             * switch uses too; dctran takes the earliest request. */
+            CKTlandRequest(ckt, land, 0, timestep);
           }
         } else if (*del < 0.0) {
           /* Enhancement-24: a negative bound_step is the sentinel written by

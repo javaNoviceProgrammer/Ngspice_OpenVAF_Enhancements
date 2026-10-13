@@ -26,6 +26,23 @@ Modified: 2000 AlansFixes
 #define E426_BAD_OPT(cond, fmt, ...)                                    \
     ((cond) ? (fprintf(stderr, "\nWarning -- " fmt "\n\n", __VA_ARGS__), 1) : 0)
 
+/* Enhancement-886 (transient stress campaign 2026-10-12, N4): `newtrunc`
+ * estimates the truncation error from node voltages, as the difference between
+ * the predictor and the corrector, and the predictor is compiled in only by
+ * `--enable-predictor` (PREDICTOR), which also changes every device's Newton
+ * start; this build does not have it, and `newtrunc` says so. Its three
+ * tolerances, `ltereltol`, `lteabstol` and `ltetrtol`, were stored and read by
+ * nothing, without a word. */
+#ifdef PREDICTOR
+#define E886_LTE_IGNORED(name) ((void) 0)
+#else
+#define E886_LTE_IGNORED(name)                                              \
+    fprintf(stderr, "\nWarning -- Option %s has no effect: it is a tolerance "   \
+            "of newtrunc's voltage-based truncation estimate, which this build " \
+            "does not have (see newtrunc). The estimate from the charges, set " \
+            "by reltol, abstol, chgtol and trtol, is used.\n\n", name)
+#endif
+
 /* Enhancement-445: NIiter (maths/ni/niiter.c) raises any iteration limit below
  * NI_MIN_MAXITER to NI_MIN_MAXITER -- "some convergence issues that get
  * resolved by increasing max iter". Enhancement-426 found that floor, judged it
@@ -579,20 +596,28 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
 #endif
     case OPT_LTERELTOL:
         task->TSKlteReltol = val->rValue;
+        E886_LTE_IGNORED("ltereltol");
         break;
     case OPT_LTEABSTOL:
         task->TSKlteAbstol = val->rValue;
+        E886_LTE_IGNORED("lteabstol");
         break;
     case OPT_LTETRTOL:
         task->TSKlteTrtol = val->rValue;
+        E886_LTE_IGNORED("ltetrtol");
         break;
     case OPT_NEWTRUNC:
 #ifdef PREDICTOR
         task->TSKnewtrunc = (val->iValue != 0);
 #else
         task->TSKnewtrunc = 0;
-        fprintf(stderr, "Warning: Option 'newtrunc' ignored,\n"
-            "    compilation with preprocessor flag 'PREDICTOR' is required.\n");
+        /* Enhancement-886: say what runs instead */
+        if (val->iValue != 0)
+            fprintf(stderr, "\nWarning -- Option newtrunc is ignored: the voltage-based "
+                    "truncation estimate needs the predictor, which this build does not "
+                    "have (ngspice configured with --enable-predictor has it). The "
+                    "estimate from the charges, set by reltol, abstol, chgtol and trtol, "
+                    "is used.\n\n");
 #endif
         break;
 /* gtri - begin - wbk - add new options */

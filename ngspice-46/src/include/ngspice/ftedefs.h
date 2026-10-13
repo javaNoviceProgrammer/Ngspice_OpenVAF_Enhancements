@@ -78,6 +78,7 @@ struct circ {
        variable a user's `set temp` overwrites; `unset temp` gives it back. */
     bool ci_deck_temp_given;
     bool ci_deck_ran;         /* Enhancement-802: a `run` of the deck's own analyses succeeded */
+    void *ci_runopts;         /* Enhancement-887: the options the last run started with (spiceif.c) */
     double ci_deck_temp;
     /* Enhancement-770: a number no other circuit of this session has had.
        Code that remembers "this circuit" keys on it, never on the address of

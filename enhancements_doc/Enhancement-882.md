@@ -58,3 +58,8 @@ ngspice:
 - **[5]** Gear with `ordfix=4` at the default `maxord=2` says the order is pinned at 2; at
   `maxord=4` it says nothing.
 - **[7]** (control) `reltol=0` is refused as "must be greater than zero", as before.
+
+
+**Update ([E-888](Enhancement-888.md)).** Every `ordfix` run now prints a note of its own, so
+[5]'s "at `maxord=4` it says nothing" reads: no note that the order is pinned at a ceiling. The
+check looks for E-882's note by its text.

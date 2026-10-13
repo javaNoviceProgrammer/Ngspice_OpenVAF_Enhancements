@@ -472,6 +472,16 @@ struct CKTcircuit {
        crossing is the discontinuity's, not the smooth interval's) and not
        cut again by a $discontinuity announced there (OSDItrunc) */
     int CKTlanding;
+    /* Enhancement-884: the landing the requests of the attempt under way ask
+       for (the earliest), and whether one came from a built-in switch, whose
+       landing lies on its crossing and is a corner: the step after it, which
+       the switch turns over in, restarts at order 1, as after a source's
+       breakpoint */
+    double CKTlandStep;
+    int CKTlandBreak;
+    /* Enhancement-884: the last accepted point is a switch's landing; the
+       switch turns over in the step that follows, which asks for none */
+    int CKTlandedBreak;
     int CKTorderCnt;               /* E-128: accepted steps since the last order reset (history depth) */
     int CKTorderMaxUsed;           /* E-128: highest integration order actually selected (diagnostic) */
     int CKTorderHold;              /* E-128: steps to hold the order after a change (settling) */
@@ -647,6 +657,7 @@ extern int CKTtemp(CKTcircuit *);
 extern char *CKTtrouble(CKTcircuit *, char *);
 extern void CKTterr(int , CKTcircuit *, double *);
 extern void CKTterrFlux(int , CKTcircuit *, double *);   /* Enhancement-847: an inductor's flux */
+extern void CKTlandRequest(CKTcircuit *, double, int, double *);   /* Enhancement-884 */
 extern int CKTtrunc(CKTcircuit *, double *);
 extern int CKTtypelook(char *);
 extern int DCOaskQuest(CKTcircuit *, JOB *, int , IFvalue *);

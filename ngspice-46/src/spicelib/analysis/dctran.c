@@ -504,6 +504,9 @@ DCtran(CKTcircuit *ckt,
         firsttime = 1;
         ckt->CKTlanding = 0;   /* Enhancement-759 */
         ckt->CKTforceReject = 0;
+        ckt->CKTlandStep = 0.0;   /* Enhancement-884 */
+        ckt->CKTlandBreak = 0;
+        ckt->CKTlandedBreak = 0;
 
         /* Enhancement-853 (second robustness campaign 2026-10-10, F9): the
          * stock order control only toggles Gear between orders 1 and 2, and
@@ -532,6 +535,26 @@ DCtran(CKTcircuit *ckt,
                     ckt->CKTordFix, order_ceiling(ckt),
                     ckt->CKTintegrateMethod == TRAPEZOIDAL && ckt->CKTmaxOrder > 2
                     ? "method=trap" : "maxord", order_ceiling(ckt));
+        /* Enhancement-888 (transient stress campaign 2026-10-12, N6): ordfix
+         * is Enhancement-181's verification pin -- every converged step is
+         * accepted and the step grows to tmax, with no truncation-error
+         * estimate to check it. Nothing said so, and at an order that is not
+         * A-stable (Gear or Adams at 3 and above) a stiff network grew without
+         * bound: Adams at ordfix=3 ended a run at 3e201 V with exit 0. */
+        if (ckt->CKTordFix > 0 && !ft_optimizing) {
+            int pin = staged_method(ckt) ? ckt->CKTmaxOrder
+                      : MIN(ckt->CKTordFix, order_ceiling(ckt));
+            fprintf(stdout, "Note: ordfix=%d accepts every converged step: the step "
+                    "grows to tmax, and no truncation-error estimate checks it.\n",
+                    ckt->CKTordFix);
+            if (!staged_method(ckt) && pin >= 3 &&
+                    (ckt->CKTintegrateMethod == GEAR || ckt->CKTintegrateMethod == ADAMS))
+                fprintf(stdout, "Note: order %d of %s is not A-stable: on a stiff "
+                        "circuit the result can grow without bound at a fixed "
+                        "order. A run whose node passes %g V stops.\n", pin,
+                        ckt->CKTintegrateMethod == GEAR ? "gear" : "adams",
+                        DCPATH_DIVERGE_V);
+        }
         /* Enhancement-876: nor can dynorder move it */
         if (staged_method(ckt) && ckt->CKTdynorder && !ft_optimizing)
             fprintf(stdout, "Note: dynorder has no effect with method=%s, "
@@ -1454,6 +1477,12 @@ resume:
             if (ckt->CKTordFix > 0)
                 newdelta = 2.0 * ckt->CKTdelta;   /* grow to the tmax pin; the
                                                    * loop top clamps to CKTmaxStep */
+            /* Enhancement-884: a landing request is the step of the retry,
+             * whatever a device type later in the table estimated (or the
+             * fixed-order pin above, which would redo the point at twice the
+             * step and cross again) */
+            if (ckt->CKTforceReject)
+                newdelta = ckt->CKTlandStep;
             /* Enhancement-759: a device that asked to land on an event
              * (OSDItrunc) is honoured even when the landing lies in the
              * last tenth of the step under way; the LANDING attempt itself
@@ -1603,7 +1632,20 @@ resume:
                     }
                 }
                 /* time point OK  - 630 */
-                if (ckt->CKTlanding) {
+                ckt->CKTlandedBreak = (ckt->CKTlanding == 2);   /* Enhancement-884 */
+                if (ckt->CKTlanding == 2) {
+                    /* Enhancement-884: a switch's landing, on its crossing,
+                     * is a corner, like a source's breakpoint: the step after
+                     * it, which the switch turns over in, is taken at order 1
+                     * and at a tenth of the landing step at most.
+                     * Trap carried over the switching rings (a charge pump's
+                     * switch node rose to 2.66 V on a 2.49 V supply). */
+                    if (newdelta > 0.1 * ckt->CKTdelta)
+                        newdelta = 0.1 * ckt->CKTdelta;
+                    if (ckt->CKTordFix == 0 && !staged_method(ckt))
+                        ckt->CKTorder = 1;
+                    ckt->CKTlanding = 0;
+                } else if (ckt->CKTlanding) {
                     if (newdelta < ckt->CKTdelta / 8.0)
                         newdelta = ckt->CKTdelta / 8.0;
                     ckt->CKTlanding = 0;
@@ -1641,6 +1683,31 @@ resume:
                                 " a capacitor), or `.option dcpath=error` to refuse"
                                 " such a node at setup.",
                                 ckt->CKTtime, CKTnodName(ckt, nd), vd, ckt->CKTdcpathG);
+                            return(E_PRIVATE);
+                        }
+                    }
+                }
+
+                /* Enhancement-888: under ordfix nothing checks the step, and an
+                 * order that is not A-stable lets a stiff network diverge; a
+                 * node past E-679's bound (or not a number) ends the run, as a
+                 * held node's does */
+                if (ckt->CKTordFix > 0 && ckt->CKTnodes) {
+                    CKTnode *nd;
+                    for (nd = ckt->CKTnodes->next; nd; nd = nd->next) {
+                        double vd;
+                        if (nd->type != SP_VOLTAGE)
+                            continue;
+                        vd = ckt->CKTrhsOld[nd->number];
+                        if (!(fabs(vd) <= DCPATH_DIVERGE_V)) {
+                            errMsg = tprintf(
+                                "TRAN:  time = %g: the solution is diverging -- node '%s'"
+                                " has reached %g V.\n"
+                                "    ordfix=%d accepts every converged step, with no"
+                                " truncation-error control. Run without ordfix, or"
+                                " pin an order that is A-stable (gear or adams at 2"
+                                " at most).",
+                                ckt->CKTtime, nd->name, vd, ckt->CKTordFix);
                             return(E_PRIVATE);
                         }
                     }
@@ -1701,6 +1768,16 @@ resume:
                 ckt->CKTdelta = newdelta;
                 /* Enhancement-759: the retry of a forced rejection is the landing */
                 ckt->CKTlanding = ckt->CKTforceReject ? 1 : 0;
+                /* Enhancement-884: a switch's landing (2) is redone from the
+                 * accepted solution. The rejected attempt's solution has the
+                 * control past the threshold, and a switch with hysteresis
+                 * keeps the state its first iterate took for as long as the
+                 * control stays in the band: another switch, not landing,
+                 * would turn over early. */
+                if (ckt->CKTforceReject && ckt->CKTlandBreak) {
+                    ckt->CKTlanding = 2;
+                    acc_restore(ckt);
+                }
                 /* Enhancement-128: a HIGH rejection RATE means the current order
                  * overreaches the local dynamics (a stiff / fast-slewing region).
                  * CKTorderRej is a leaky bucket -- +1 per rejection, -1 per accepted

@@ -18,7 +18,7 @@ The checks, on an RC with an inductor whose answer at 4 µs is 3.757e-7:
 - **[3]** (E-882) `ordfix=-1` is refused; `ordfix=7` and `ordfix=1e9` warn that 6 is used.
 - **[4]** (E-882) `reltol=1` and `reltol=10` are refused, and the run is the default run.
 - **[5]** (E-882) Gear with `ordfix=4` at the default `maxord=2` says the order is pinned at 2; at
-  `maxord=4` it says nothing.
+  `maxord=4` there is no such note (E-888's note on `ordfix` itself is printed either way).
 - **[6]** (E-883) `method=trbdf` names the value and says trap is kept; after
   `option method=gear`, `method=foo` says gear is kept.
 - **[7]** (control) `reltol=0` is refused as "must be greater than zero", as before.

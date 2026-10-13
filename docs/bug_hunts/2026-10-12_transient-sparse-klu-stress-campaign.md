@@ -73,7 +73,7 @@ Nothing was fixed; this is the list.
 | [D1](#d1) | *(fixed in [E-881](../../enhancements_doc/Enhancement-881.md): refused with a warning)* **options:** `xmu` outside [0, 0.5] is accepted silently: `xmu=2` turns 3.757e-7 into −2.53e-7 | low |
 | [D2](#d2) | *(fixed in [E-882](../../enhancements_doc/Enhancement-882.md): refused, capped with a warning, or noted)* **options:** `ordfix=-1`, `ordfix=100` and `reltol=10` pass without a word | low |
 | [D3](#d3) | *(fixed in [E-883](../../enhancements_doc/Enhancement-883.md): the warning names the value and the kept method)* **diagnostic:** an unknown `method` prints "unsupported integration method" without naming it or saying that trap runs instead | low |
-| [N1](#n1)–N6 | notes: a switch without hysteresis at `reltol` ≤ 1e-6; `xmu` and the step control; trap on high-Q tanks; `newtrunc` compiled out; `option` during a pause; `ordfix` at orders that are not A-stable | — |
+| [N1](#n1)–N6 | *(N1, N2, N4, N5 and N6 fixed in [E-884](../../enhancements_doc/Enhancement-884.md) to [E-888](../../enhancements_doc/Enhancement-888.md); N3's switch edges by [E-884](../../enhancements_doc/Enhancement-884.md), its tanks documented)* notes: a switch without hysteresis at `reltol` ≤ 1e-6; `xmu` and the step control; trap on high-Q tanks; `newtrunc` compiled out; `option` during a pause; `ordfix` at orders that are not A-stable | — |
 
 <a id="f1"></a>
 ## F1 — `dynorder` raises the order into instability, and the answer explodes without a word
@@ -432,23 +432,35 @@ trap. The message names neither the value nor trap.
 ## Notes
 
 <a id="n1"></a>
-- **N1 — a switch without hysteresis at tight tolerance.** With `vh=0`, a switch whose control ramps
+- **N1 — a switch without hysteresis at tight tolerance.** *(fixed in [E-884](../../enhancements_doc/Enhancement-884.md): a built-in switch lands
+  on its crossing, keeping its state there, and the step after it starts at order 1; all 80 charge-pump
+  and boost references end, and a switch at a 100 ns step turns over within 0.1 ns)* With `vh=0`, a switch whose control ramps
   through `vt` ends the run ("timestep too small") at `reltol` ≤ 1e-6. This happened in 35 of 40
   charge-pump references and 5 of 15 boost references. Any hysteresis cures it: `vh=0.01` passes
   at 1e-7 on every deck tried. Stock `sw` behaviour.
-- **N2 — `xmu` below 0.5 and the step control.** On Family A, `xmu=0` is 106× the trap error at
+- **N2 — `xmu` below 0.5 and the step control.** *(fixed in [E-885](../../enhancements_doc/Enhancement-885.md): the first-order term is
+  estimated too; `xmu=0` takes backward Euler's steps)* On Family A, `xmu=0` is 106× the trap error at
   the same points (median), and `xmu=0.2` up to 764×. The truncation estimate keeps trap's
   constant. Stock.
-- **N3 — trap on high-Q tanks.** On 51 of 402 Family A networks, plain trap at default tolerance
+- **N3 — trap on high-Q tanks.** *(the switch edges fixed by [E-884](../../enhancements_doc/Enhancement-884.md)'s order-1 step after a
+  landing: the charge pump's switch node peaks at 2.50 V; the tanks are trap's phase error at the
+  default tolerance, now in the handbook)* On 51 of 402 Family A networks, plain trap at default tolerance
   is more than 1 % off. One is a 274 MHz tank with Q ≈ 130 that rings for the whole run, at 11
   points a period, ending 71 % off; `reltol=1e-7` gives 0.57 %. This is the spread the second
   campaign's Family D measured. Trap also rings at switch edges (a charge pump's switch node
   reaches 2.66 V on a 2.49 V supply), which is what `trbdf2` is for.
-- **N4 — `newtrunc` is compiled out:** `Warning: Option 'newtrunc' ignored`.
-- **N5 — `option` during a pause.** An `option` given between `stop` and `resume` has no effect on
+- **N4 — `newtrunc` is compiled out:** `Warning: Option 'newtrunc' ignored`. *([E-886](../../enhancements_doc/Enhancement-886.md): `newtrunc`
+  says what is used instead, and `ltereltol`, `lteabstol` and `ltetrtol`, which said nothing, say
+  they have no effect)*
+- **N5 — `option` during a pause.** *(fixed in [E-887](../../enhancements_doc/Enhancement-887.md): the options read at every step are taken by
+  the resumed run, the ones it was built on are kept until the next analysis, and a note names
+  each. Found while fixing it: on a run started by `run`, `option maxord=3` or `option klu` before
+  `resume` was a segmentation fault)* An `option` given between `stop` and `resume` has no effect on
   the resumed run, and nothing says so. Method, `maxord`, `dynorder`, solver and `reltol` all
   gave the same 1 346 iterations.
-- **N6 — `ordfix` with an order that is not A-stable.** `ordfix` pins the order with no truncation
+- **N6 — `ordfix` with an order that is not A-stable.** *(fixed in [E-888](../../enhancements_doc/Enhancement-888.md): an `ordfix` run says it
+  has no truncation control and, at Gear or Adams 3 and above, that the order is not A-stable; a
+  node past 1e15 V stops it)* `ordfix` pins the order with no truncation
   control; [E-181](../../enhancements_doc/Enhancement-181.md) calls it a verification instrument.
   On stiff networks `ordfix=3` under Adams and `ordfix=6` under Gear blow up: Family A to
   5e206×, Family C to inf. Status 0, no message.

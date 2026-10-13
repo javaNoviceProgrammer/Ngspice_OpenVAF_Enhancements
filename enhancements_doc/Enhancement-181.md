@@ -30,3 +30,9 @@ A pre-existing `-Wmissing-prototypes` warning (`DCtran_step_quit`, declared `ext
 ## Verification
 
 [`examples/corenum_examples/verify_corenum.py`](../examples/corenum_examples/verify_corenum.py) — 8 checks × both solvers: the BDF-residual certification (orders 1–6, ≤1e-12), measured convergence slopes, the LC dissipation conformance, the hard-DC aid matrix, the exact-rational precision mesh, `xmu`, `lvltim=1`, and the `ordfix` order report. The E-128 `dynorder` suite passes unchanged. Full example regression: 149/149.
+
+
+**Update ([E-888](Enhancement-888.md)).** An `ordfix` run now says that every converged step is
+accepted and no truncation estimate checks it, and, for Gear or Adams pinned at 3 and above,
+that the order is not A-stable. A node past 1e15 V ends the run: at `adams ordfix=3` a stiff
+network had ended at −3e201 V with exit 0.

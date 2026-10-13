@@ -91,6 +91,12 @@ SWload(GENmodel *inModel, CKTcircuit *ckt)
                     }
                 }
 
+                /* Enhancement-884: this switch asked for the landing under
+                   way, which lies on its crossing: it turns over in the step
+                   after, not here */
+                if (ckt->CKTlanding == 2 && here->SWlandHold)
+                    current_state = previous_state;
+
                 if (current_state != old_current_state) {
                     ckt->CKTnoncon++;       /* ensure one more iteration */
                     ckt->CKTtroubleElt = (GENinstance *) here;
@@ -120,6 +126,8 @@ SWload(GENmodel *inModel, CKTcircuit *ckt)
                             current_state = REALLY_ON;
                     }
                 }
+                if (ckt->CKTlanding == 2 && here->SWlandHold)
+                    current_state = previous_state;   /* Enhancement-884 */
             }
 
             // code added to force the state to be updated.

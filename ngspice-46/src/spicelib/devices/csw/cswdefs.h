@@ -45,6 +45,8 @@ typedef struct sCSWinstance {
     double CSWcond;        /* current conductance of switch */
 
     unsigned CSWzero_stateGiven : 1;  /* flag to indicate initial state */
+    unsigned CSWlandHold : 1;  /* Enhancement-884: this switch asked for the landing
+                               under way; it keeps its accepted state there */
 #ifndef NONOISE
     double CSWnVar[NSTATVARS];
 #else /* NONOISE */

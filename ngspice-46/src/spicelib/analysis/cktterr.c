@@ -152,6 +152,44 @@ terr(int qcap, CKTcircuit *ckt, double *timeStep, double abs_ccap)
     } else if (ckt->CKTorder > 3) {
         del = exp(log(del)/ckt->CKTorder);
     }
+    /* Enhancement-885 (transient stress campaign 2026-10-12, N2): with xmu
+     * below 0.5 the trapezoidal step is the theta method
+     * (1-xmu) i(n) + xmu i(n-1) = (q(n) - q(n-1))/h, whose local error starts
+     * at (xmu - 1/2) h^2 q'': first order. The estimate above measures the
+     * h^3 term of trap alone, so the step was sized as if the method were
+     * second order -- xmu = 0 ran at trap's points with 106 times trap's
+     * error, xmu = 0.2 up to 764 times. The first-order term is estimated as
+     * backward Euler's is: its constant on the second divided difference,
+     * so at xmu = 0, which IS backward Euler, the two estimates agree. */
+    if (ckt->CKTintegrateMethod == TRAPEZOIDAL && ckt->CKTorder == 2 &&
+            ckt->CKTxmu != 0.5) {
+        double h0 = ckt->CKTdeltaOld[0], h1 = ckt->CKTdeltaOld[1];
+        double q0 = ckt->CKTstates[0][qcap], q1 = ckt->CKTstates[1][qcap];
+        double q2 = ckt->CKTstates[2][qcap];
+        double dd2 = ((q0 - q1) / h0 - (q1 - q2) / h1) / (h0 + h1);
+        double del1 = ckt->CKTtrtol * tol /
+            MAX(ckt->CKTabstol, fabs(0.5 - ckt->CKTxmu) * fabs(dd2));
+        del = MIN(del, del1);
+    }
     *timeStep = MIN(*timeStep,del);
     return;
+}
+
+
+/* Enhancement-884: a device asks for the point under way to be redone at
+ * `land` after the last accepted point (Enhancement-759's protocol, which
+ * OSDItrunc uses for a Verilog-A event). The earliest request wins, and dctran
+ * takes it in place of the truncation estimate: a device type later in the
+ * table must not cut the landing short with an estimate that measures the
+ * discontinuity being landed on. `brk` marks a built-in switch's landing,
+ * which lies on its crossing and restarts the integration there. */
+void
+CKTlandRequest(CKTcircuit *ckt, double land, int brk, double *timeStep)
+{
+    if (!ckt->CKTforceReject || land < ckt->CKTlandStep) {
+        ckt->CKTlandStep = land;
+        ckt->CKTlandBreak = brk;
+    }
+    ckt->CKTforceReject = 1;
+    *timeStep = ckt->CKTlandStep;
 }

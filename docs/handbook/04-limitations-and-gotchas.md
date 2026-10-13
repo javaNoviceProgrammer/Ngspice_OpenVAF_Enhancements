@@ -477,3 +477,35 @@ scripting ngspice:
   [E-882](../../enhancements_doc/Enhancement-882.md) and
   [E-883](../../enhancements_doc/Enhancement-883.md) they are refused, capped
   with a warning, or named with what runs instead.
+- **Built-in switches (`sw`, `csw`)** turned over on the step grid: a crossing
+  was accepted where a step happened to end (11 ns late at a 100 ns step), and
+  at tight tolerance the step crept up on it until "Timestep too small" (a
+  charge pump with `vh=0` at `reltol=1e-6`). Since
+  [E-884](../../enhancements_doc/Enhancement-884.md) a switch lands on its
+  crossing and the step after it starts at order 1, which also stops trap
+  ringing at switch edges. The step after a landing crosses a picosecond-scale
+  transient in one backward-Euler step; tighten the tolerance, not `tmax`, to
+  resolve it.
+- **Trap on a high-Q tank** at the default tolerance keeps each step's error
+  within `reltol` but lets the phase drift: a 274 MHz tank with Q ≈ 130,
+  ringing for the whole run at 11 points a period, ended 71 % off, and
+  `reltol=1e-7` gave 0.57 %. For an oscillator or a long ring, tighten
+  `reltol` (or set `trtol=1`) and check the result against a tighter run.
+- **`xmu` below 0.5** is a first-order method; since
+  [E-885](../../enhancements_doc/Enhancement-885.md) the step control says so,
+  and `xmu=0` costs what backward Euler costs.
+- **`newtrunc`** needs a build configured with `--enable-predictor`; here it,
+  and its tolerances `ltereltol`, `lteabstol` and `ltetrtol`, have no effect,
+  and say so ([E-886](../../enhancements_doc/Enhancement-886.md)).
+- **An `option` given while a run is paused** reaches the resumed run only if
+  it is read at every step (the tolerances, `itl4`, `gmin`, the Newton aids);
+  the method, `maxord`, `ordfix`, `dynorder`, the temperatures and the solver
+  keep the run's values until the next analysis
+  ([E-887](../../enhancements_doc/Enhancement-887.md)). Before, a run started by
+  `run` took them all, and crashed on a new `maxord` or solver.
+- **`ordfix`** has no truncation control at all: every converged step is
+  accepted, at `tmax`. Gear or Adams pinned at 3 or above is not A-stable, and
+  a stiff circuit diverges; since
+  [E-888](../../enhancements_doc/Enhancement-888.md) the run says so and stops
+  when a node passes 1e15 V. Use `ordfix` to measure an integrator, not to
+  simulate.

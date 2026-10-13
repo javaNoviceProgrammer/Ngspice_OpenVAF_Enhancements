@@ -277,6 +277,7 @@ com_remcirc(wordlist *wl)
     wl_free(ft_curckt->ci_commands);
 
     tfree(ft_curckt->FTEstats);
+    tfree(ft_curckt->ci_runopts);   /* Enhancement-887 */
 
     if (ft_curckt->ci_name)
         tfree(ft_curckt->ci_name);
