@@ -242,6 +242,21 @@ com_loadstate(wordlist *wl)
             ckt->CKTkluBTF           = dtask->TSKkluBTF;
         }
 #endif
+        /* Enhancement-879: the integration method and maxord, too. They set
+           how many state vectors CKTsetup allocates and are part of the
+           signature below, and CKTdoJob copies them only at the resume,
+           after this setup: a checkpoint taken with maxord above 2 met the
+           default 2 here and was refused. A staged method's order is pinned
+           as CKTdoJob pins it (Enhancement-874). */
+        if (ft_curckt && ft_curckt->ci_defTask) {
+            TSKtask *dtask = ft_curckt->ci_defTask;
+            ckt->CKTintegrateMethod = dtask->TSKintegrateMethod;
+            ckt->CKTmaxOrder = ckt->CKTmaxOrderAsked = dtask->TSKmaxOrder;
+            if (ckt->CKTintegrateMethod == TRBDF2)
+                ckt->CKTmaxOrder = 2;
+            else if (ckt->CKTintegrateMethod == SDIRK)
+                ckt->CKTmaxOrder = 3;
+        }
         if ((err = CKTsetup(ckt)) != OK) {
             fprintf(cp_err, "Error: loadstate: circuit setup failed.\n");
             (void) fclose(fp);
@@ -259,10 +274,12 @@ com_loadstate(wordlist *wl)
     if (maxEqNum != ckt->CKTmaxEqNum ||
         numStates != ckt->CKTnumStates ||
         maxOrder != ckt->CKTmaxOrder) {
+        /* Enhancement-879: the order too -- it was the one that differed */
         fprintf(cp_err,
                 "Error: loadstate: checkpoint does not match this circuit "
-                "(equations %d vs %d, states %d vs %d).\n",
-                maxEqNum, ckt->CKTmaxEqNum, numStates, ckt->CKTnumStates);
+                "(equations %d vs %d, states %d vs %d, maximum order %d vs %d).\n",
+                maxEqNum, ckt->CKTmaxEqNum, numStates, ckt->CKTnumStates,
+                maxOrder, ckt->CKTmaxOrder);
         (void) fclose(fp);
         return;
     }

@@ -130,3 +130,8 @@ factorization on restore), checkpointing other analyses, an architecture-portabl
 file format, and a periodic auto-checkpoint option during a long run.
 
 **Update ([E-770](Enhancement-770.md)).** `savestate` was missing from the deck reader's list of commands whose arguments keep their case (`loadstate` is covered by `load`), so a checkpoint path written in a deck's `.control` block was lowercased: the same file on a case-insensitive macOS volume, a missing directory on Linux. It keeps its case now.
+
+**Update ([E-879](Enhancement-879.md)).** A checkpoint taken with `maxord` above 2 was refused by
+`loadstate` in a fresh process: the circuit was set up before the task's options reached it, with
+the default `maxord` of 2. The method and `maxord` are now copied first, and a mismatch names the
+order.

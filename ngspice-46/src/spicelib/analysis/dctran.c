@@ -102,6 +102,38 @@ t0_restore(CKTcircuit *ckt)
 }
 
 
+/* Enhancement-878: the solution a step starts from, kept so that a step whose
+ * Newton iteration does not converge is retried from it. PREDICTOR is not
+ * compiled in, so a step starts at CKTrhsOld, and after a failed one that held
+ * the failed iteration. Where the iteration had run far -- a cubic B-source at
+ * 1e10 V -- every retry started there, a cubic needs some 60 Newton steps back
+ * from 1e10 against itl4's 10, and no smaller step converged: a Van der Pol
+ * oscillator whose limit cycle peaks at 2.02 V ended in "Timestep too small"
+ * under every method, solver and tolerance. A retry now starts where the step
+ * started, as a step does. */
+static double *acc_rhs = NULL;
+static int acc_len = 0;
+
+static void
+acc_save(CKTcircuit *ckt)
+{
+    int n = SMPmatSize(ckt->CKTmatrix) + 1;
+    if (n > acc_len) {
+        acc_rhs = TREALLOC(double, acc_rhs, n);
+        acc_len = n;
+    }
+    memcpy(acc_rhs, ckt->CKTrhsOld, (size_t) n * sizeof(double));
+}
+
+static void
+acc_restore(CKTcircuit *ckt)
+{
+    int n = SMPmatSize(ckt->CKTmatrix) + 1;
+    if (acc_rhs && n <= acc_len)
+        memcpy(ckt->CKTrhsOld, acc_rhs, (size_t) n * sizeof(double));
+}
+
+
 /* Enhancement-852 (second robustness campaign 2026-10-10, F8): the t = 0
  * point of a `uic` transient. Nothing solves it: `uic` loads the circuit once
  * and leaves CKTrhsOld holding the .ic values and zeros, so a node a source
@@ -1098,6 +1130,7 @@ resume:
             g_mif_info.circuit.evt_step = ckt->CKTtime;
         }
 #endif
+        acc_save(ckt);   /* Enhancement-878 */
         /* Central solver step */
         if (ckt->CKTintegrateMethod == TRBDF2) {
             /* Enhancement-419: one composite step = two implicit solves.
@@ -1246,6 +1279,8 @@ resume:
             if(firsttime) {
                 ckt->CKTmode = (ckt->CKTmode&MODEUIC) | MODETRAN | MODEINITTRAN;
                 t0_restore(ckt);    /* Enhancement-846: retry from t = 0 */
+            } else {
+                acc_restore(ckt);   /* Enhancement-878: from where the step started */
             }
             ckt->CKTorder = 1;
 

@@ -66,8 +66,8 @@ Nothing was fixed; this is the list.
 | [F2](#f2) | *(fixed in [E-874](../../enhancements_doc/Enhancement-874.md): the stages sit above the history and `maxord` is pinned to the method's order; the RC takes 388 and 165 points at 1e-6)* **transient cost, both solvers:** `trbdf2` and `sdirk` at the default `maxord=2` take ten times the points for every decade of `reltol`, the scaling of a first-order method. At `reltol=1e-6` an RC needs 580 045 and 265 117 points against trap's 512. Their truncation estimate reads an interior stage parked in the history slot of q(tₙ₋₂); at `maxord=3` (`trbdf2`) or `6` (`sdirk`) they need 388 and 121 | high |
 | [F3](#f3) | *(fixed in [E-876](../../enhancements_doc/Enhancement-876.md): dynorder runs for Gear, Adams and trap only, and says it has no effect with the staged methods; the RC takes 38 points, the capacitor 16)* **transient hang, both solvers:** `dynorder` with `trbdf2` or `sdirk` freezes the step at the first step's size. The staged method resets the order every step, so `dynorder` "changes" it every step and holds the step. An RC under `trbdf2 dynorder` takes 1 391 814 points against 130. 61 runs of Families A and C never ended | high |
 | [F4](#f4) | *(fixed in [E-877](../../enhancements_doc/Enhancement-877.md): the current source schedules its corners as the voltage source does; the pulse is 2.8e-4 off, as from a voltage source)* **transient accuracy, stock code:** a PULSE current source stops scheduling breakpoints once an edge is shorter than `minbreak`; every later edge is stepped over. The same pulse into the same RC is 3.0e-2 off as a current source and 2.8e-4 as a voltage source. Over the 68 Family A networks with such a source, trap's median error is 3× that of the rest | medium |
-| [F5](#f5) | **transient robustness, stock code:** after one Newton iteration runs far, every retry starts from that iteration (`PREDICTOR` is off). A Van der Pol oscillator from a B-source ends in "timestep too small" under every method, solver and tolerance; clamped at ±1 kV, which changes nothing on the true path, it runs | medium |
-| [F6](#f6) | **checkpoint:** `loadstate` refuses every checkpoint taken with `maxord` above 2, including `trbdf2 maxord=3`, F2's workaround. It says "does not match this circuit (equations 4 vs 4, states 2 vs 2)": the check compares `maxord` against the default before the options are copied in, and the message prints the two counts that match | medium |
+| [F5](#f5) | *(fixed in [E-878](../../enhancements_doc/Enhancement-878.md): a step that does not converge is retried from where it started; the oscillator peaks at 2.0199 V)* **transient robustness, stock code:** after one Newton iteration runs far, every retry starts from that iteration (`PREDICTOR` is off). A Van der Pol oscillator from a B-source ends in "timestep too small" under every method, solver and tolerance; clamped at ±1 kV, which changes nothing on the true path, it runs | medium |
+| [F6](#f6) | *(fixed in [E-879](../../enhancements_doc/Enhancement-879.md): `loadstate` copies the method and `maxord` before the setup, and a mismatch names the order)* **checkpoint:** `loadstate` refuses every checkpoint taken with `maxord` above 2, including `trbdf2 maxord=3`, F2's workaround. It says "does not match this circuit (equations 4 vs 4, states 2 vs 2)": the check compares `maxord` against the default before the options are copied in, and the message prints the two counts that match | medium |
 | [F8](#f8) | *(found while folding F2; fixed in [E-875](../../enhancements_doc/Enhancement-875.md): a time within `minbreak` of the period's end is the next period's start)* **transient accuracy, stock code:** a voltage source landed on a pulse's rise reads it, through floor((t − TD)/PER) = 3.999999999999843, as the end of the period before, and schedules the rise's end one point late. A step that goes past it skips it: `trbdf2` 21× less accurate than trap on a Family A network. A repeating PWL does the same. Under trap, corners are missed in 28 of 60 random pulses and knots in 32 of 60 repeating PWLs | medium |
 | [F7](#f7) | **checkpoint:** a `loadstate` continuation drops the end of a voltage-source edge shorter than `minbreak`, which the uninterrupted run lands on. Two Family D continuations were 17× and 55× less accurate; two more were F4's current-source chain | low |
 | [D1](#d1) | **options:** `xmu` outside [0, 0.5] is accepted silently: `xmu=2` turns 3.757e-7 into −2.53e-7 | low |
@@ -282,6 +282,11 @@ checkpoint continuations (F7): pausing the run moves its points off a corner.
 <a id="f5"></a>
 ## F5 — one diverging Newton iteration ends the transient, under every method and solver
 
+*Fixed in [E-878](../../enhancements_doc/Enhancement-878.md). The solution a step starts from is
+kept, and a step whose iteration does not converge is retried from it. The oscillator runs under
+every method and both solvers, and peaks at 2.019945 V at `reltol=1e-6`. Family C's tight
+references fail in 40 cases instead of 59, none of them Van der Pol.*
+
 ```
 * Van der Pol from a B-source: a bounded limit cycle, peak 2.02 V (scipy Radau, rtol 1e-9)
 l1 x 0 78.66u
@@ -310,6 +315,10 @@ failed this way.
 
 <a id="f6"></a>
 ## F6 — `loadstate` refuses every checkpoint taken with `maxord` above 2, and says the counts match
+
+*Fixed in [E-879](../../enhancements_doc/Enhancement-879.md). `loadstate` copies the integration
+method and `maxord` from the task before it sets the circuit up, with the staged methods' pin.
+Every setting below restores; a real mismatch reads "maximum order 3 vs 2".*
 
 ```
 * run part of a transient and save it; then, in a fresh process, load it

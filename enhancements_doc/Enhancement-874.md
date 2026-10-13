@@ -107,4 +107,4 @@ step, so a checkpoint taken under `trbdf2` carried a slot that a fresh `loadstat
 allocated, and `loadstate` refused it: "checkpoint state layout does not match circuit". E-872
 restored the same checkpoint. `loadstate` now allocates such a slot. (`sdirk` checkpoints are
 refused before that, because its order of 3 differs from the default `maxord` the restoring
-circuit sees: F6 of the campaign.)
+circuit sees: F6 of the campaign, fixed in [E-879](Enhancement-879.md).)

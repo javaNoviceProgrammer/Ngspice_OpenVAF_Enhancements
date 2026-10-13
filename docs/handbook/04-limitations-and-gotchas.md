@@ -457,3 +457,11 @@ scripting ngspice:
   3 % off where the same pulse from a voltage source was 0.03 %. Since
   [E-877](../../enhancements_doc/Enhancement-877.md) both sources place their
   points alike.
+- **A transient whose Newton iteration ran away once** could end in "Timestep
+  too small" however small the step: the retry started from the runaway
+  iteration. Since [E-878](../../enhancements_doc/Enhancement-878.md) a retry
+  starts where the step started.
+- **`loadstate` with `maxord` above 2** refused the checkpoint as "does not
+  match this circuit", naming two counts that matched. Since
+  [E-879](../../enhancements_doc/Enhancement-879.md) it restores, and a real
+  mismatch names the order.
