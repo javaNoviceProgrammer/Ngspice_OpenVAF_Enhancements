@@ -321,6 +321,12 @@ com_loadstate(wordlist *wl)
     for (i = 0; i < 8; i++) {
         RD(&present, 1);
         if (present) {
+            /* Enhancement-874: a TR-BDF2 or SDIRK run allocates its stage
+               slots, above the history, at its first step; the circuit set
+               up here has not stepped yet. The length is CKTnumStates either
+               way, and CKTunsetup frees all eight. */
+            if (ckt->CKTstates[i] == NULL && i > ckt->CKTmaxOrder + 1)
+                ckt->CKTstates[i] = TMALLOC(double, ckt->CKTnumStates);
             if (ckt->CKTstates[i] == NULL)
                 goto mismatch;
             if (ckt->CKTnumStates > 0)

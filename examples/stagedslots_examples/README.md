@@ -19,6 +19,9 @@ The checks, on a sine into an RC at `reltol` 1e-3 to 1e-6:
   point as at the default, and a note says so for 6.
 - **[5]** (control) Trap, then `sdirk`, then `trbdf2` in one session, set by `option`, match fresh
   runs.
+- **[6]** A `trbdf2` checkpoint loads in a fresh process and ends where the uninterrupted run
+  ends.
 
-Run: `python3 verify_stagedslots.py` (5 checks per solver). On the E-872 binaries [1], [2] and [4]
-fail under both solvers.
+Run: `python3 verify_stagedslots.py` (6 checks per solver). On the E-872 binaries [1], [2] and [4]
+fail under both solvers; [6] fails on the E-875 binaries, whose `loadstate` refused the
+checkpoint.

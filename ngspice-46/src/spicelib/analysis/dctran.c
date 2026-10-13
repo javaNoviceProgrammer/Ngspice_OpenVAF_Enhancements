@@ -200,6 +200,18 @@ order_ceiling(const CKTcircuit *ckt)
 }
 
 
+/* Enhancement-876: TR-BDF2 and SDIRK have one order each, set at the start of
+ * every step. Dynorder re-decided it after each accepted step, so it "changed"
+ * the order every step, and the rule that a step changing the order does not
+ * also grow froze the step at its first size: 1 391 814 points for an RC where
+ * trbdf2 alone took 130, and runs that never ended. */
+static int
+staged_method(const CKTcircuit *ckt)
+{
+    return ckt->CKTintegrateMethod == TRBDF2 || ckt->CKTintegrateMethod == SDIRK;
+}
+
+
 /* Enhancement-874: the top state slot a staged step rotates through. The
  * accepted history is CKTstates[0 .. CKTmaxOrder+1]; a staged step parks its
  * interior stages above it, one slot each (TR-BDF2 has one, SDIRK s-1), so the
@@ -469,6 +481,12 @@ DCtran(CKTcircuit *ckt,
                         "method=trap, whose order is 2 at most.\n",
                         ckt->CKTmaxOrder);
         }
+        /* Enhancement-876: nor can dynorder move it */
+        if (staged_method(ckt) && ckt->CKTdynorder && !ft_optimizing)
+            fprintf(stdout, "Note: dynorder has no effect with method=%s, "
+                    "whose order is %d.\n",
+                    ckt->CKTintegrateMethod == TRBDF2 ? "trbdf2" : "sdirk",
+                    ckt->CKTmaxOrder);
         /* Enhancement-874: a staged method's order is its own (cktdojob) */
         if ((ckt->CKTintegrateMethod == TRBDF2 || ckt->CKTintegrateMethod == SDIRK) &&
                 ckt->CKTmaxOrderAsked != 2 &&
@@ -1442,7 +1460,8 @@ resume:
                      * O(h^3) error floor that masks the measurement */
                     newdelta = ((ckt->CKTorder < pin &&
                                  ckt->CKTorder <= 2) ? 2.0 : 1.15) * ckt->CKTdelta;
-                } else if (ckt->CKTdynorder && ckt->CKTmaxOrder > 1) {
+                } else if (ckt->CKTdynorder && ckt->CKTmaxOrder > 1 &&
+                           !staged_method(ckt)) {   /* Enhancement-876 */
                     /* Enhancement-128: advanced LTE-based order control. The stock
                      * controller only ever toggles order 1<->2. Here the LTE-limited
                      * timestep is evaluated at the current order and its immediate
@@ -1636,7 +1655,8 @@ resume:
                  * order toward the robust low order, while the isolated rejections
                  * normal on a smooth high-order run stay near zero and leave the order
                  * (and its efficiency) intact. Bounded so it cannot run away. */
-                if (ckt->CKTdynorder && ckt->CKTorder > 1 && !ckt->CKTforceReject) {
+                if (ckt->CKTdynorder && ckt->CKTorder > 1 && !ckt->CKTforceReject &&
+                    !staged_method(ckt)) {   /* Enhancement-876 */
                     ckt->CKTorderRej += 2;   /* E-759: a landing is not the order's fault */
                     if (ckt->CKTorderRej > 8)
                         ckt->CKTorderRej = 8;

@@ -24,6 +24,9 @@ the method's order (2 and 3).
       run point for point as at the default, and a Note says so for 6
   [5] (control) a method changed by `option` between two runs gets its stage
       slots: trap, then sdirk, then trbdf2 in one session match fresh runs
+  [6] a trbdf2 checkpoint (savestate) loads in a fresh process and ends where
+      the uninterrupted run ends (E-875: "checkpoint state layout does not
+      match circuit" -- the stage slot is allocated at the first step)
 
 Exit code 0 = pass.
 """
@@ -129,6 +132,30 @@ fa, fb = last("sdirk"), last("trbdf2")
 check("[5] (control) trap, then sdirk, then trbdf2 in one session match fresh runs",
       ma and mb and float(ma.group(1)) == fa and float(mb.group(1)) == fb,
       "session %s / %s, fresh %s / %s" % (ma.group(1) if ma else None, mb.group(1) if mb else None, fa, fb))
+
+# [6] a trbdf2 checkpoint across processes (checkpoints need Sparse: E-131)
+CK = """* trbdf2 checkpoint
+v1 in 0 pulse(0 1 0 1n 1n 1u 2u)
+r1 in out 1k
+c1 out 0 1n
+.option sparse method=trbdf2
+.tran 10n 4u
+.control
+set numdgt=17
+%s
+.endc
+.end
+"""
+ckfile = os.path.join(WORK, "ck.bin")
+run("ck1", CK % ("stop when time > 1.5u\nrun\nsavestate %s" % ckfile))
+out2 = run("ck2", CK % ("loadstate %s\nlet z = v(out)[length(v(out))-1]\nprint z" % ckfile))
+out3 = run("ck3", CK % "run\nlet z = v(out)[length(v(out))-1]\nprint z")
+m2 = re.search(r"^z\s*=\s*(\S+)", out2, re.M)
+m3 = re.search(r"^z\s*=\s*(\S+)", out3, re.M)
+ok6 = m2 is not None and m3 is not None and abs(float(m2.group(1)) - float(m3.group(1))) < 1e-3 * abs(float(m3.group(1)))
+check("[6] a trbdf2 checkpoint loads in a fresh process and ends where the uninterrupted run ends", ok6,
+      "loaded %s, uninterrupted %s%s" % (m2.group(1) if m2 else None, m3.group(1) if m3 else None,
+                                         "" if m2 else "; " + " ".join(l for l in out2.splitlines() if "loadstate" in l)[:120]))
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

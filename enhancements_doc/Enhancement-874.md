@@ -8,13 +8,15 @@ ngspice:
   SDIRK steps rotate through; the note for a `maxord` a staged method does not use.
 - `spicelib/analysis/cktdojob.c`: `maxord` pinned to the staged method's order, 2 or 3.
 - `spicelib/analysis/cktsetup.c`, `cktdest.c`: every state vector is freed.
+- `frontend/com_checkpoint.c`: `loadstate` allocates a stage slot the checkpoint carries (added
+  with [Enhancement-876](Enhancement-876.md)).
 - `include/ngspice/cktdefs.h`, `spicelib/devices/cktinit.c`: `CKTmaxOrderAsked`.
 
 `examples/stagedslots_examples/` (new). **ngspice only.**
 
 **Suites:**
-- [`stagedslots_examples`](../examples/stagedslots_examples/): 5 of 5 per solver. On the E-872
-  binaries [1], [2] and [4] fail; [3] and [5] are controls.
+- [`stagedslots_examples`](../examples/stagedslots_examples/): 6 of 6 per solver. On the E-872
+  binaries [1], [2] and [4] fail; [3] and [5] are controls; [6] fails on the E-875 binaries.
 - `integmethod`, `corenum`, `dynorder`, `maxordnote` and `opamp741` pass under both solvers.
 - The campaign's Family A, rerun with the `trbdf2`, `sdirk` and `ordfix` settings on its 540
   networks: no timeouts (there were two), and the staged methods take the points trap takes
@@ -97,3 +99,12 @@ Larger staged steps also exposed a skipped pulse corner, which
   point as at the default, and a note says so for 6.
 - **[5]** (control) Trap, then `sdirk`, then `trbdf2` in one session, set by `option`, match
   fresh runs.
+- **[6]** A `trbdf2` checkpoint (`savestate`) loads in a fresh process and ends where the
+  uninterrupted run ends.
+
+**Update (with [E-876](Enhancement-876.md)).** The stage slot is allocated at a staged run's first
+step, so a checkpoint taken under `trbdf2` carried a slot that a fresh `loadstate` circuit had not
+allocated, and `loadstate` refused it: "checkpoint state layout does not match circuit". E-872
+restored the same checkpoint. `loadstate` now allocates such a slot. (`sdirk` checkpoints are
+refused before that, because its order of 3 differs from the default `maxord` the restoring
+circuit sees: F6 of the campaign.)

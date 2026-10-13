@@ -19,9 +19,6 @@ extern void fftFree(void);
 
 extern bool ft_ngdebug; /* some additional debug info printed */
 
-#define SAMETIME(a,b)    (fabs((a)-(b))<= TIMETOL * PW)
-#define TIMETOL    1e-7
-
 int
 ISRCaccept(CKTcircuit *ckt, GENmodel *inModel)
         /* set up the breakpoint table.  */
@@ -49,112 +46,92 @@ ISRCaccept(CKTcircuit *ckt, GENmodel *inModel)
                     }
 
                     case PULSE: {
-
+                        /* Enhancement-877: the next corner is scheduled from the
+                         * time within the period, as VSRCaccept does. The chain
+                         * this replaces set the next corner only when an
+                         * accepted point landed on the current one, to 1e-7 PW;
+                         * a rise shorter than minbreak cannot be landed on, the
+                         * chain stopped, and every later edge was stepped over:
+                         * 0.1 ps edges into an RC were 3.0e-2 off where the same
+                         * pulse from a voltage source was 2.8e-4. The defaults
+                         * are ISRCload's (Enhancement-446), so the corners are
+                         * those of the waveform it loads. */
                         double TD, TR, TF, PW, PER;
-                        double tshift;
-                        double time = 0.;
-                        double basetime = 0;
-                        double PHASE;
-                        double phase;
-                        double deltat;
+                        double time, basetime;
+                        double PHASE, phase, deltat;
                         double tmax = 1e99;
+                        double wait, atime;
 
                         TD = here->ISRCfunctionOrder > 2
                             ? here->ISRCcoeffs[2] : 0.0;
                         TR = here->ISRCfunctionOrder > 3
-                            && here->ISRCcoeffs[3] != 0.0
+                            && here->ISRCcoeffs[3] > 0.0
                             ? here->ISRCcoeffs[3] : ckt->CKTstep;
                         TF = here->ISRCfunctionOrder > 4
-                            && here->ISRCcoeffs[4] != 0.0
+                            && here->ISRCcoeffs[4] > 0.0
                             ? here->ISRCcoeffs[4] : ckt->CKTstep;
                         PW = here->ISRCfunctionOrder > 5
-                            && here->ISRCcoeffs[5] != 0.0
+                            && here->ISRCcoeffs[5] >= 0.0
                             ? here->ISRCcoeffs[5] : ckt->CKTfinalTime;
                         PER = here->ISRCfunctionOrder > 6
-                            && here->ISRCcoeffs[6] != 0.0
+                            && here->ISRCcoeffs[6] > 0.0
                             ? here->ISRCcoeffs[6] : ckt->CKTfinalTime;
                         PHASE = here->ISRCfunctionOrder > 7
                             ? here->ISRCcoeffs[7] : 0.0;
 
                         /* offset time by delay */
                         time = ckt->CKTtime - TD;
-                        tshift = TD;
 
                         if (newcompat.xs) {
-                         /* normalize phase to 0 - 360° */
-                         /* normalize phase to cycles */
+                            /* normalize phase to cycles */
                             phase = PHASE / 360.0;
                             phase = fmod(phase, 1.0);
-                            deltat =  phase * PER;
+                            deltat = phase * PER;
                             while (deltat > 0)
                                 deltat -= PER;
                             time += deltat;
-                            tshift = TD - deltat;
-                        }
-                        else if (PHASE > 0.0) {
+                        } else if (PHASE > 0.0) {
+                            /* the 8th parameter is the number of pulses */
                             tmax = PHASE * PER;
+                            if (time > tmax)
+                                break;
                         }
 
-                        if (!newcompat.xs && time > tmax) {
-                            /* Do nothing */
-                        }
-                        else {
-                            if (time >= PER) {
-                                /* repeating signal - figure out where we are */
-                                /* in period */
-                                basetime = PER * floor(time / PER);
-                                time -= basetime;
-                            }
+                        if (ckt->CKTtime < here->ISRCbreak_time)
+                            break;
 
-                            if (time <= 0.0 || time >= TR + PW + TF) {
-                                if (ckt->CKTbreak && SAMETIME(time, 0.0)) {
-                                    error = CKTsetBreak(ckt, basetime + TR + tshift);
-                                    if (error) return(error);
-                                }
-                                else if (ckt->CKTbreak && SAMETIME(TR + PW + TF, time)) {
-                                    error = CKTsetBreak(ckt, basetime + PER + tshift);
-                                    if (error) return(error);
-                                }
-                                else if (ckt->CKTbreak && (time == -tshift)) {
-                                    error = CKTsetBreak(ckt, basetime + tshift);
-                                    if (error) return(error);
-                                }
-                                else if (ckt->CKTbreak && SAMETIME(PER, time)) {
-                                    error = CKTsetBreak(ckt, basetime + tshift + TR + PER);
-                                    if (error) return(error);
-                                }
-                            }
-                            else  if (time >= TR && time <= TR + PW) {
-                                if (ckt->CKTbreak && SAMETIME(time, TR)) {
-                                    error = CKTsetBreak(ckt, basetime + tshift + TR + PW);
-                                    if (error) return(error);
-                                }
-                                else if (ckt->CKTbreak && SAMETIME(TR + PW, time)) {
-                                    error = CKTsetBreak(ckt, basetime + tshift + TR + PW + TF);
-                                    if (error) return(error);
-                                }
-                            }
-                            else if (time > 0 && time < TR) {
-                                if (ckt->CKTbreak && SAMETIME(time, 0)) {
-                                    error = CKTsetBreak(ckt, basetime + tshift + TR);
-                                    if (error) return(error);
-                                }
-                                else if (ckt->CKTbreak && SAMETIME(time, TR)) {
-                                    error = CKTsetBreak(ckt, basetime + tshift + TR + PW);
-                                    if (error) return(error);
-                                }
-                            }
-                            else { /* time > TR + PW && < TR + PW + TF */
-                                if (ckt->CKTbreak && SAMETIME(time, TR + PW)) {
-                                    error = CKTsetBreak(ckt, basetime + tshift + TR + PW + TF);
-                                    if (error) return(error);
-                                }
-                                else if (ckt->CKTbreak && SAMETIME(time, TR + PW + TF)) {
-                                    error = CKTsetBreak(ckt, basetime + tshift + PER);
-                                    if (error) return(error);
-                                }
-                            }
+                        if (time >= PER) {
+                            /* repeating signal: where in the period are we? */
+                            basetime = PER * floor(time / PER);
+                            time -= basetime;
                         }
+                        /* Enhancement-875: a point on a period's first corner
+                         * must not read as the end of the period before */
+                        if (PER - time <= ckt->CKTminBreak)
+                            time -= PER;
+
+                        /* a corner closer than minbreak would be ignored; take
+                         * the one after it */
+                        atime = time + ckt->CKTminBreak;
+
+                        if (atime < 0.0)
+                            wait = -time;                   /* the first pulse */
+                        else if (atime < TR)
+                            wait = TR - time;               /* the end of the rise */
+                        else if (atime < TR + PW)
+                            wait = TR + PW - time;          /* the fall */
+                        else if (atime < TR + PW + TF)
+                            wait = TR + PW + TF - time;     /* the end of the fall */
+                        else
+                            wait = PER - time;              /* the next pulse */
+
+                        here->ISRCbreak_time = ckt->CKTtime + wait;
+                        error = CKTsetBreak(ckt, here->ISRCbreak_time);
+                        if (error)
+                            return error;
+                        /* a step that ends just short of the corner must still
+                         * ask for the one after it */
+                        here->ISRCbreak_time -= ckt->CKTminBreak;
                     }
                     break;
 

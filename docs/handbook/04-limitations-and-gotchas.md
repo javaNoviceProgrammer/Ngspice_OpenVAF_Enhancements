@@ -447,3 +447,13 @@ scripting ngspice:
   start of, when floating-point rounding put the rise at the end of the period
   before; a repeating PWL could skip a knot the same way. Since
   [E-875](../../enhancements_doc/Enhancement-875.md) every corner is landed.
+- **`dynorder` with `trbdf2` or `sdirk`** froze the step at its first size,
+  and a run could take millions of points or never end: each staged method
+  has one order, and `dynorder` re-decided it every step. Since
+  [E-876](../../enhancements_doc/Enhancement-876.md) `dynorder` leaves them
+  alone and says it has no effect.
+- **A PULSE current source with edges shorter than `minbreak`** stopped
+  scheduling its edges after the first period, and the run stepped over them:
+  3 % off where the same pulse from a voltage source was 0.03 %. Since
+  [E-877](../../enhancements_doc/Enhancement-877.md) both sources place their
+  points alike.

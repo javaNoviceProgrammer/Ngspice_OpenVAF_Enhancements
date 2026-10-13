@@ -52,6 +52,7 @@ typedef struct sISRCinstance {
     struct trnoise_state *ISRCtrnoise_state; /* transient noise */
     struct trrandom_state *ISRCtrrandom_state; /* transient random source */
     struct prbs_state *ISRCprbs_state; /* Enhancement-752: PRBS bit-sequence source */
+    double ISRCbreak_time;      /* Enhancement-877: the next PULSE corner, per run */
 
     /* needed for outputting results */
     double ISRCcurrent; /* current value */

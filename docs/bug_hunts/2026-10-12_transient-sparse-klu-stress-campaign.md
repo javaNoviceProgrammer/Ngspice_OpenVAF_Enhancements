@@ -64,8 +64,8 @@ Nothing was fixed; this is the list.
 |---|---|---|
 | [F1](#f1) | *(fixed in [E-873](../../enhancements_doc/Enhancement-873.md): the truncation estimate at order k ≥ 3 was (k+1)!/3! too small; scaled, the network gives 0.919 V at every `maxord`)* **transient accuracy, both solvers:** `dynorder` raises the Gear or Adams order on a stiff network until the integration is unstable, and the answer explodes with status 0 and no message. A nine-element RLC network whose node peaks at 0.919 V reaches 2.5e7 at `gear maxord=4 dynorder`, 9.2e22 at `maxord=6`, and 1.2e8 at `adams maxord=3 dynorder`. Over Family A the worst cases are 2e21×, 6e28× and 7e192× the trap error | high |
 | [F2](#f2) | *(fixed in [E-874](../../enhancements_doc/Enhancement-874.md): the stages sit above the history and `maxord` is pinned to the method's order; the RC takes 388 and 165 points at 1e-6)* **transient cost, both solvers:** `trbdf2` and `sdirk` at the default `maxord=2` take ten times the points for every decade of `reltol`, the scaling of a first-order method. At `reltol=1e-6` an RC needs 580 045 and 265 117 points against trap's 512. Their truncation estimate reads an interior stage parked in the history slot of q(tₙ₋₂); at `maxord=3` (`trbdf2`) or `6` (`sdirk`) they need 388 and 121 | high |
-| [F3](#f3) | **transient hang, both solvers:** `dynorder` with `trbdf2` or `sdirk` freezes the step at the first step's size. The staged method resets the order every step, so `dynorder` "changes" it every step and holds the step. An RC under `trbdf2 dynorder` takes 1 391 814 points against 130. 61 runs of Families A and C never ended | high |
-| [F4](#f4) | **transient accuracy, stock code:** a PULSE current source stops scheduling breakpoints once an edge is shorter than `minbreak`; every later edge is stepped over. The same pulse into the same RC is 3.0e-2 off as a current source and 2.8e-4 as a voltage source. On one Family A network, trap at default tolerance is 31 % off | medium |
+| [F3](#f3) | *(fixed in [E-876](../../enhancements_doc/Enhancement-876.md): dynorder runs for Gear, Adams and trap only, and says it has no effect with the staged methods; the RC takes 38 points, the capacitor 16)* **transient hang, both solvers:** `dynorder` with `trbdf2` or `sdirk` freezes the step at the first step's size. The staged method resets the order every step, so `dynorder` "changes" it every step and holds the step. An RC under `trbdf2 dynorder` takes 1 391 814 points against 130. 61 runs of Families A and C never ended | high |
+| [F4](#f4) | *(fixed in [E-877](../../enhancements_doc/Enhancement-877.md): the current source schedules its corners as the voltage source does; the pulse is 2.8e-4 off, as from a voltage source)* **transient accuracy, stock code:** a PULSE current source stops scheduling breakpoints once an edge is shorter than `minbreak`; every later edge is stepped over. The same pulse into the same RC is 3.0e-2 off as a current source and 2.8e-4 as a voltage source. Over the 68 Family A networks with such a source, trap's median error is 3× that of the rest | medium |
 | [F5](#f5) | **transient robustness, stock code:** after one Newton iteration runs far, every retry starts from that iteration (`PREDICTOR` is off). A Van der Pol oscillator from a B-source ends in "timestep too small" under every method, solver and tolerance; clamped at ±1 kV, which changes nothing on the true path, it runs | medium |
 | [F6](#f6) | **checkpoint:** `loadstate` refuses every checkpoint taken with `maxord` above 2, including `trbdf2 maxord=3`, F2's workaround. It says "does not match this circuit (equations 4 vs 4, states 2 vs 2)": the check compares `maxord` against the default before the options are copied in, and the message prints the two counts that match | medium |
 | [F8](#f8) | *(found while folding F2; fixed in [E-875](../../enhancements_doc/Enhancement-875.md): a time within `minbreak` of the period's end is the next period's start)* **transient accuracy, stock code:** a voltage source landed on a pulse's rise reads it, through floor((t − TD)/PER) = 3.999999999999843, as the end of the period before, and schedules the rise's end one point late. A step that goes past it skips it: `trbdf2` 21× less accurate than trap on a Family A network. A repeating PWL does the same. Under trap, corners are missed in 28 of 60 random pulses and knots in 32 of 60 repeating PWLs | medium |
@@ -197,6 +197,11 @@ the 60 s timeout.
 <a id="f3"></a>
 ## F3 — `dynorder` with `trbdf2` or `sdirk` freezes the step at its first size
 
+*Fixed in [E-876](../../enhancements_doc/Enhancement-876.md). The order selection and its
+rejection-rate order drop run for Gear, Adams and trap only; with `trbdf2` or `sdirk` a note says
+`dynorder` has no effect. The RC takes 38 points and the capacitor 16, as without `dynorder`; all 48
+Family A runs of the two settings end, at trap's point count.*
+
 `trbdf2` sets the order to 2 at the start of every step, and `sdirk` to 3. `dynorder` then
 re-decides the order after each accepted step. When a neighbouring order allows a bigger step, it
 "changes" the order, and its rule is not to grow the step in the same step that changes the order:
@@ -230,6 +235,12 @@ With a small first step, the run does not end:
 <a id="f4"></a>
 ## F4 — a PULSE current source stops scheduling its edges once an edge is shorter than `minbreak`
 
+*Fixed in [E-877](../../enhancements_doc/Enhancement-877.md). The PULSE case of `ISRCaccept` is
+`VSRCaccept`'s, with a per-run `ISRCbreak_time`, E-875's rule and the defaults of the current
+source's own load. The two sources put their points at the same times on 15 random pulses; the
+pulse below is 2.8e-4 off in 381 points. On the 68 Family A networks with such a source, trap's
+median error went from 5.3e-4 to 1.8e-4.*
+
 The voltage source schedules its next corner from its own `VSRCbreak_time`, skipping a corner
 closer than `minbreak` ([vsrcacct.c](../../ngspice-46/src/spicelib/devices/vsrc/vsrcacct.c)). The current source still has the
 older chain ([isrcacct.c](../../ngspice-46/src/spicelib/devices/isrc/isrcacct.c), unchanged from
@@ -255,13 +266,18 @@ tran 0.1u 13u
 
 The two decks have the same ODE. With 1 ns edges both land on every corner. With the 0.1 ps rise,
 the current source lands on its corners up to the second rise. From the second fall on, the
-nearest point to every edge is 17.4 ns after it. On Family A seed 1338 (a 9 fs rise, `minbreak`
-1.6 ps), plain trap at default tolerance reads −0.138 V where the answer is +0.114 V, 31 % of the
-range. Across Family A, plain trap has a median error of 5.3e-4 on networks with such a current
-source and 1.6e-4 on networks with no edge under `minbreak`.
+nearest point to every edge is 17.4 ns after it. Across Family A, plain trap has a median error of
+5.3e-4 on the 68 networks with such a current source and 1.6e-4 on networks with no edge under
+`minbreak`. On seed 1205 (`trtol=0.1`, `reltol=1e-5`) the run is 8.8e-4 off under Sparse and
+3.4e-5 under KLU, at the third edge of a 0.1 ps current pulse.
 
-The same chain is behind all five resumed runs of Family D that were more than 10× less accurate,
-and two of the four checkpoint continuations (F7): pausing the run moves its points off a corner.
+(The first version of this page put seed 1338's 31 % error at default tolerance down to this
+chain. That network rings for the whole run at 408 MHz with a Q of 42, and its error falls with
+`reltol`, to 1.7e-2 at 1e-5: it is N3's.)
+
+The same chain is behind three of the five resumed runs of Family D that were more than 10× less
+accurate (seeds 8, 124, 304; the other two run under `ordfix` and `trbdf2`), and two of the four
+checkpoint continuations (F7): pausing the run moves its points off a corner.
 
 <a id="f5"></a>
 ## F5 — one diverging Newton iteration ends the transient, under every method and solver
@@ -340,7 +356,7 @@ The voltage source's next corner time (`VSRCbreak_time`) is not in the checkpoin
 the difference costs no accuracy: 374 points against 597, at 8.3e-6 both. The in-memory
 `resume` is no exception. None of the 97 resumed runs was on the uninterrupted grid, because the
 step lands on the `stop when` time. Five were 12 to 163× less accurate, all with a PULSE current
-source whose edges are at or under `minbreak`.
+source whose edges are at or under `minbreak`; three of them are F4's chain.
 
 <a id="f8"></a>
 ## F8 — a voltage source landed on a pulse's rise schedules the rise's end one point late

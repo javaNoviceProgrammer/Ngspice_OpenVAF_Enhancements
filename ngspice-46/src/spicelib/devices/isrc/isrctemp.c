@@ -29,6 +29,7 @@ ISRCtemp(GENmodel *inModel, CKTcircuit *ckt)
         for (here = ISRCinstances(model); here != NULL ;
                 here=ISRCnextInstance(here)) {
 
+            here->ISRCbreak_time = -1.0;   /* Enhancement-877: per-run, as VSRCbreak_time */
             if (here->ISRCprbs_state)      /* Enhancement-752: per-run re-arm (E-498's rule) */
                 prbs_state_reset(here->ISRCprbs_state);
             if(here->ISRCacGiven && !here->ISRCacMGiven) {
