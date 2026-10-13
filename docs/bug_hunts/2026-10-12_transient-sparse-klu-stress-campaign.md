@@ -70,9 +70,9 @@ Nothing was fixed; this is the list.
 | [F6](#f6) | *(fixed in [E-879](../../enhancements_doc/Enhancement-879.md): `loadstate` copies the method and `maxord` before the setup, and a mismatch names the order)* **checkpoint:** `loadstate` refuses every checkpoint taken with `maxord` above 2, including `trbdf2 maxord=3`, F2's workaround. It says "does not match this circuit (equations 4 vs 4, states 2 vs 2)": the check compares `maxord` against the default before the options are copied in, and the message prints the two counts that match | medium |
 | [F8](#f8) | *(found while folding F2; fixed in [E-875](../../enhancements_doc/Enhancement-875.md): a time within `minbreak` of the period's end is the next period's start)* **transient accuracy, stock code:** a voltage source landed on a pulse's rise reads it, through floor((t − TD)/PER) = 3.999999999999843, as the end of the period before, and schedules the rise's end one point late. A step that goes past it skips it: `trbdf2` 21× less accurate than trap on a Family A network. A repeating PWL does the same. Under trap, corners are missed in 28 of 60 random pulses and knots in 32 of 60 repeating PWLs | medium |
 | [F7](#f7) | *(fixed in [E-880](../../enhancements_doc/Enhancement-880.md): a resume, in memory or from a checkpoint, re-derived `minbreak` by the rule of a build without XSPICE, 5e6 times larger; it now takes the run's)* **checkpoint:** a `loadstate` continuation drops the end of a voltage-source edge shorter than `minbreak`, which the uninterrupted run lands on. Two Family D continuations were 17× and 55× less accurate; two more were F4's current-source chain | low |
-| [D1](#d1) | **options:** `xmu` outside [0, 0.5] is accepted silently: `xmu=2` turns 3.757e-7 into −2.53e-7 | low |
-| [D2](#d2) | **options:** `ordfix=-1`, `ordfix=100` and `reltol=10` pass without a word | low |
-| [D3](#d3) | **diagnostic:** an unknown `method` prints "unsupported integration method" without naming it or saying that trap runs instead | low |
+| [D1](#d1) | *(fixed in [E-881](../../enhancements_doc/Enhancement-881.md): refused with a warning)* **options:** `xmu` outside [0, 0.5] is accepted silently: `xmu=2` turns 3.757e-7 into −2.53e-7 | low |
+| [D2](#d2) | *(fixed in [E-882](../../enhancements_doc/Enhancement-882.md): refused, capped with a warning, or noted)* **options:** `ordfix=-1`, `ordfix=100` and `reltol=10` pass without a word | low |
+| [D3](#d3) | *(fixed in [E-883](../../enhancements_doc/Enhancement-883.md): the warning names the value and the kept method)* **diagnostic:** an unknown `method` prints "unsupported integration method" without naming it or saying that trap runs instead | low |
 | [N1](#n1)–N6 | notes: a switch without hysteresis at `reltol` ≤ 1e-6; `xmu` and the step control; trap on high-Q tanks; `newtrunc` compiled out; `option` during a pause; `ordfix` at orders that are not A-stable | — |
 
 <a id="f1"></a>
@@ -397,6 +397,9 @@ ahead.
 <a id="d1"></a>
 ## D1 — `xmu` outside [0, 0.5] is accepted, and the answer is wrong
 
+*Fixed in [E-881](../../enhancements_doc/Enhancement-881.md): `Warning -- Option xmu = 2 must lie
+in [0, 0.5]; ignored, keeping 0.5`.*
+
 `xmu` blends trapezoidal (0.5) toward backward Euler (0). On an RC with an inductor whose answer
 is 3.757e-7 at 4 µs:
 - `.option xmu=-1` gives 2.58e-6;
@@ -408,12 +411,19 @@ Neither prints anything. Every sibling tolerance is range-checked
 <a id="d2"></a>
 ## D2 — `ordfix` and `reltol` take values that have no meaning
 
+*Fixed in [E-882](../../enhancements_doc/Enhancement-882.md). A negative `ordfix` is refused, one
+above 6 is set to 6 with a warning, and one above the method's and `maxord`'s ceiling draws a note.
+`reltol` of 1 or more is refused.*
+
 - **`ordfix`:** `ordfix=-1` is taken as off; `ordfix=7`, `100` and `1e9` are clipped to the order
   ceiling. No warning in any case.
 - **`reltol`:** `reltol=1` and `reltol=10` are accepted. E-426 refuses only `reltol <= 0`.
 
 <a id="d3"></a>
 ## D3 — an unknown `method` is named in neither the message nor what runs instead
+
+*Fixed in [E-883](../../enhancements_doc/Enhancement-883.md): `Warning -- Option method = trbdf is
+unknown (use trap, gear, trbdf2, sdirk or adams); ignored, keeping trap`.*
 
 `.option method=trbdf` (a typo), `method=bdf` or `method=gear2` prints
 `setAnalysisParm(options) ci_curOpt: unsupported integration method`, and the run goes on with

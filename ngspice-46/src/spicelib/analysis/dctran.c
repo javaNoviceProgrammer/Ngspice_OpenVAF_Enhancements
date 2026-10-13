@@ -524,6 +524,14 @@ DCtran(CKTcircuit *ckt,
                         "method=trap, whose order is 2 at most.\n",
                         ckt->CKTmaxOrder);
         }
+        /* Enhancement-882: an ordfix above what the method and maxord allow
+         * is pinned at that ceiling (Enhancement-853); say so */
+        if (ckt->CKTordFix > order_ceiling(ckt) && !staged_method(ckt) && !ft_optimizing)
+            fprintf(stdout, "Note: ordfix=%d is above the highest order allowed here "
+                    "(%d, from %s); the order is pinned at %d.\n",
+                    ckt->CKTordFix, order_ceiling(ckt),
+                    ckt->CKTintegrateMethod == TRAPEZOIDAL && ckt->CKTmaxOrder > 2
+                    ? "method=trap" : "maxord", order_ceiling(ckt));
         /* Enhancement-876: nor can dynorder move it */
         if (staged_method(ckt) && ckt->CKTdynorder && !ft_optimizing)
             fprintf(stdout, "Note: dynorder has no effect with method=%s, "

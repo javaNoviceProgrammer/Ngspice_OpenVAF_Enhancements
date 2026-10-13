@@ -470,3 +470,10 @@ scripting ngspice:
   had landed on. Since [E-880](../../enhancements_doc/Enhancement-880.md) it
   keeps the run's spacing. `stop when time > t` still lands the run on t, so a
   continuation follows a run with the same stop.
+- **Transient options with no reading** were taken without a word: `xmu`
+  outside [0, 0.5] (wrong answers), `ordfix=-1` or above 6, `reltol` of 1 or
+  more, and an unknown `method`, which ran trap after a generic message. Since
+  [E-881](../../enhancements_doc/Enhancement-881.md),
+  [E-882](../../enhancements_doc/Enhancement-882.md) and
+  [E-883](../../enhancements_doc/Enhancement-883.md) they are refused, capped
+  with a warning, or named with what runs instead.

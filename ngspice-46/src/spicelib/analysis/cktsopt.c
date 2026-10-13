@@ -187,6 +187,12 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
             "Option reltol = %g must be greater than zero; ignored, keeping %g",
             val->rValue, task->TSKreltol))
             break;
+        /* Enhancement-882: and below 1 -- a relative tolerance of 100 % or
+         * more has no reading, and reltol=10 ran without a word */
+        if (E426_BAD_OPT(val->rValue >= 1.0,
+            "Option reltol = %g must be less than 1; ignored, keeping %g",
+            val->rValue, task->TSKreltol))
+            break;
         task->TSKreltol = val->rValue;
         task->TSKtolGiven |= ERRP_RELTOL;
         break;
@@ -361,6 +367,14 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         task->TSKindverbosity = val->iValue;
         break;
     case OPT_XMU:
+        /* Enhancement-881: xmu weights trapezoidal (0.5) against backward
+         * Euler (0). Outside [0, 0.5] the formula is neither, and the answer
+         * was wrong in silence: an RC-L deck that ends at 3.757e-7 ended at
+         * 2.58e-6 with xmu=-1 and at -2.53e-7 with xmu=2. */
+        if (E426_BAD_OPT(val->rValue < 0.0 || val->rValue > 0.5,
+            "Option xmu = %.15g must lie in [0, 0.5]; ignored, keeping %g",
+            val->rValue, task->TSKxmu))
+            break;
         task->TSKxmu = val->rValue;
         break;
     case OPT_TRGAMMA:   /* Enhancement-419 */
@@ -410,7 +424,19 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
             task->TSKintegrateMethod=SDIRK;
         else if (strcmp(val->sValue,"gear")==0)
             task->TSKintegrateMethod=GEAR;
-        else return(E_METHOD);
+        else {
+            /* Enhancement-883: say which value, and what runs. E_METHOD drew
+             * "setAnalysisParm(options) ci_curOpt: unsupported integration
+             * method" -- no value, no word that the method stays -- so a
+             * `method=trbdf` typo ran trap. */
+            fprintf(stderr, "\nWarning -- Option method = %s is unknown "
+                    "(use trap, gear, trbdf2, sdirk or adams); ignored, keeping %s\n\n",
+                    val->sValue,
+                    task->TSKintegrateMethod == GEAR ? "gear" :
+                    task->TSKintegrateMethod == TRBDF2 ? "trbdf2" :
+                    task->TSKintegrateMethod == SDIRK ? "sdirk" :
+                    task->TSKintegrateMethod == ADAMS ? "adams" : "trap");
+        }
         break;
     case OPT_TRYTOCOMPACT:
         task->TSKtryToCompact = (val->iValue != 0);
@@ -444,6 +470,19 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
         task->TSKdynorder = (val->iValue != 0);
         break;
     case OPT_ORDFIX: /* Enhancement-181 */
+        /* Enhancement-882: 0 is off and 1 to 6 an order. A negative value was
+         * taken as off and one above 6 cut to the order ceiling, both without
+         * a word; they now say so, as maxord does. */
+        if (E426_BAD_OPT(val->iValue < 0,
+            "Option ordfix = %d must not be negative; ignored, keeping %d",
+            val->iValue, task->TSKordFix))
+            break;
+        if (val->iValue > 6) {
+            fprintf(stderr, "\nWarning -- Option ordfix = %d is above 6, the highest "
+                    "integration order; 6 is used\n\n", val->iValue);
+            task->TSKordFix = 6;
+            break;
+        }
         task->TSKordFix = val->iValue;
         break;
     case OPT_ABSDV:
