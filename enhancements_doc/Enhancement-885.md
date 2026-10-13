@@ -55,7 +55,7 @@ the first power. At `xmu=0` that IS backward Euler's estimate. The step is the s
 | 0.45 | 196 | 3.59e-3 |
 | 0.3 | 313 | 6.86e-3 |
 | 0.2 | 426 | 8.13e-3 |
-| 0 | 592 | 1.04e-2 — backward Euler's, point for point |
+| 0 | 592 | 1.04e-2 — backward Euler's steps |
 
 The error now follows the method's order at the tolerance asked for. A damped trap is still a
 first-order method, and costs what one costs.
@@ -63,7 +63,10 @@ first-order method, and costs what one costs.
 ## The checks
 
 `transnotes_examples`:
-- **[1]** `xmu=0` takes backward Euler's steps: the points and the value of `method=gear maxord=1`.
+- **[1]** `xmu=0` takes backward Euler's steps: the points and the value of `method=gear maxord=1`,
+  to rounding. The two are the same method computed two ways, trap's (q(n) − q(n−1))/h and
+  Gear's ag0·q(n) + ag1·q(n−1). They agree to the bit on arm64; on x86-64 under Sparse they are
+  one point apart in 589, and 4e-12 apart in value.
 - **[2]** `xmu=0.2` takes more points than trap, and its error is below 1 % of the range.
 - **[3]** (control) `xmu=0.5` is the default run.
 

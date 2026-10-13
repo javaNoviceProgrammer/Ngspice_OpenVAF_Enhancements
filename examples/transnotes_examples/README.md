@@ -17,7 +17,7 @@ N2, N4, N5 and N6 of the
 
 The checks:
 - **[1]** (E-885) `xmu=0` takes backward Euler's steps: the points and the value of
-  `method=gear maxord=1`.
+  `method=gear maxord=1`, to rounding.
 - **[2]** (E-885) `xmu=0.2` takes more points than trap, and its error is below 1 % of the range.
 - **[3]** (E-885, control) `xmu=0.5` is the default run.
 - **[4]** (E-886) `newtrunc` says it is ignored and what is used; `ltereltol`, `lteabstol` and

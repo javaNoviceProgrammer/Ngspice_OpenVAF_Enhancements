@@ -4,8 +4,8 @@ and Enhancement-888: N2, N4, N5 and N6 of the transient stress campaign of
 2026-10-12.
 
   [1] E-885: xmu=0 takes backward Euler's steps -- the points and the value of
-      method=gear maxord=1 (E-883: trap's step control, a quarter of the
-      points)
+      method=gear maxord=1, to rounding (E-883: trap's step control, a quarter
+      of the points)
   [2] E-885: xmu=0.2 takes more points than trap, and its error against a
       tight reference is below 1 % of the range (E-883: fewer points than
       trap, 1.7 %)
@@ -114,8 +114,13 @@ def err(d):
 
 z0, n0, d0 = xmu_run("xmu0", "xmu=0")
 zb, nb, db = xmu_run("be", "method=gear maxord=1")
-check("[1] E-885: xmu=0 takes backward Euler's steps",
-      n0 is not None and n0 == nb and z0 == zb, "xmu=0: %s points, %s; gear maxord=1: %s, %s" % (n0, z0, nb, zb))
+# the same method by two routes of arithmetic: trap's (q0 - q1)/h with ag1 = 0
+# and Gear's ag0 q0 + ag1 q1 round differently (equal on arm64, one point in
+# 590 apart on x86-64), so the steps agree to rounding, not to the bit
+check("[1] E-885: xmu=0 takes backward Euler's steps, to rounding",
+      n0 is not None and nb is not None and z0 is not None and zb is not None and
+      abs(n0 - nb) <= max(2, 0.01 * nb) and abs(z0 - zb) <= 1e-5 * abs(zb),
+      "xmu=0: %s points, %s; gear maxord=1: %s, %s" % (n0, z0, nb, zb))
 zt, nt, dt = xmu_run("trap", "reltol=1e-3")
 z2, n2, d2 = xmu_run("xmu02", "xmu=0.2")
 e2 = err(d2)
