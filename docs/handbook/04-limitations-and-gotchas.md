@@ -509,3 +509,19 @@ scripting ngspice:
   [E-888](../../enhancements_doc/Enhancement-888.md) the run says so and stops
   when a node passes 1e15 V. Use `ordfix` to measure an integrator, not to
   simulate.
+- **Newton's convergence** is two tests: no unknown moved more than `reltol`
+  of itself plus `vntol` (or `abstol`), and no device current moves more than
+  `reltol` of itself plus `abstol` over the last step. Until
+  [E-889](../../enhancements_doc/Enhancement-889.md) the second never decided
+  anything, and a Verilog-A device had none: a diode across a resistor between
+  two 100 V nodes was accepted 0.68 V forward, where the node test allows
+  0.1 V a step. The node test is still relative to the node's own voltage, and
+  linear elements have no device test. The same pair between two 1 kV nodes
+  converges with 1.67 mV across it, inside 1e-3 of 1 kV. A current into a
+  low-impedance node is resolved only to `vntol` over its resistance: 1.25 nA
+  into 65 Ω is 82 nV, under `vntol`. For a circuit that lives at a high common
+  mode, or a node that must carry nanoamps, lower `reltol` or `vntol`.
+- **The device tests cost iterations** where they find work: a BSIM4 ring
+  oscillator takes 14 % more Newton iterations since
+  [E-889](../../enhancements_doc/Enhancement-889.md), and 500 random diode, BJT
+  and MOSFET networks 1 % more.

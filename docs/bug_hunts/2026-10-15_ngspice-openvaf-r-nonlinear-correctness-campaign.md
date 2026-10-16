@@ -59,7 +59,7 @@ Nothing was fixed; this is the list.
 
 | | Finding | Severity |
 |---|---|---|
-| [F1](#f1) | **operating point:** the device convergence tests compare the point the device was loaded at with itself, so convergence rests on node-voltage changes alone. A diode across a resistor between two 100 V nodes converges 0.68 V forward with 2.47 mA of KCL error (the only solution is 0 V); at ordinary voltages a junction's current is reported up to 2 % off (20 × reltol); a nA current into a low-impedance node is missing from the solution. Built-in and Verilog-A devices alike. Stock | high |
+| [F1](#f1) | *(fixed in [E-889](../../enhancements_doc/Enhancement-889.md): the device tests read the new solution and their count decides, and a Verilog-A device has one; the diode converges off at 100 V, the sweep's current is within reltol; the second face is within `vntol`)* **operating point:** the device convergence tests compare the point the device was loaded at with itself, so convergence rests on node-voltage changes alone. A diode across a resistor between two 100 V nodes converges 0.68 V forward with 2.47 mA of KCL error (the only solution is 0 V); at ordinary voltages a junction's current is reported up to 2 % off (20 × reltol); a nA current into a low-impedance node is missing from the solution. Built-in and Verilog-A devices alike. Stock | high |
 | [F2](#f2) | **analysis:** `ft_polyfit` fits each local polynomial in absolute time. `fourier` at `polydegree=3` adds a 1e-4 floor and shifts a harmonic's phase by 1°; `deriv()` at `dpolydegree=3` returns 3e20 times the derivative over a 500 ms run | medium |
 | [F3](#f3) | **statistics:** `setseed N` is not reproducible within a session: the first `setseed 11` and every later one give different `sgauss` sequences | medium |
 | [D1](#d1) | **analysis:** `fourier` refuses a window exactly `nperiods` long by one ulp; on the `.four` route it then says "No transient data available" | low |
@@ -68,6 +68,17 @@ Nothing was fixed; this is the list.
 
 <a id="f1"></a>
 ## F1 — the device convergence tests compare the linearisation point with itself
+
+*Fixed in [E-889](../../enhancements_doc/Enhancement-889.md). It was worse than the deck showed:
+`NIiter` assigns `NIconvTest`'s return value to `CKTnoncon`, and `CKTconvTest` returns `OK` after a
+device has counted itself unconverged. So the count of all 30 tests was overwritten with 0,
+including the MOSFETs of levels 1 to 9, whose tests read the new solution. The tests now see the new
+solution, their count decides, and `OSDIconvTest` gives a Verilog-A device the same test. The diode,
+the npn and the MOSFET junction converge off at 100 V, built-in and Verilog-A alike. The `dc temp`
+sweep reports 0.5210601 V, its current within reltol. Family A's networks 1436 and 1031 converge to
+their solution, and 1031's built-in and Verilog-A runs now agree to 4 µV, where they differed by
+1.9 V. The second face below is within the tolerance's definition: 82 nV is under `vntol`, and a
+current into a 65 Ω node is resolved only to `vntol` over 65 Ω.*
 
 **The deck.** A diode across a 794 kΩ resistor, both between node 3 (driven to a voltage V3) and
 node 4, which nothing else touches. The only solution is 0 V across the pair.

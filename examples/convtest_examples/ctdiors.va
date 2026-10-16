@@ -1,0 +1,17 @@
+`include "disciplines.vams"
+// Enhancement-889: the same diode behind a series resistance, through an
+// internal node
+module ctdiors(a, c);
+    inout a, c; electrical a, c;
+    electrical ai;
+    parameter real is = 1e-14 from (0:inf);
+    parameter real rs = 10.0 from (0:inf);
+    real vt, vd, vcrit;
+    analog begin
+        vt = $vt;
+        vcrit = vt * ln(vt / (sqrt(2.0) * is));
+        vd = $limit(V(ai, c), "pnjlim", vt, vcrit);
+        I(ai, c) <+ is * (limexp(vd / vt) - 1.0);
+        I(a, ai) <+ V(a, ai) / rs;
+    end
+endmodule

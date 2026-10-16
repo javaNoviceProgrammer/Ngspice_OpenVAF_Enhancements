@@ -129,6 +129,9 @@ typedef struct OsdiRegistryEntry {
 /* Declared abstol of node `node_idx`'s potential nature, or 0.0 when the model
  * names none (in which case the circuit-wide tolerance applies as before). */
 double osdi_node_abstol(const OsdiRegistryEntry *entry, uint32_t node_idx);
+/* Enhancement-889: the same for the nature of the node's residual (its KCL
+ * row's flow) */
+double osdi_residual_abstol(const OsdiRegistryEntry *entry, uint32_t node_idx);
 
 /* Enhancement-401: one entry of OSDI_TERM_SHORT_INFOS. `node_1`/`node_2` are the
  * OSDI node indices of the two shorted terminals (`node_2` is UINT32_MAX when the

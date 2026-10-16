@@ -582,23 +582,12 @@ static bool osdi_discipline_abstol(const OsdiRegistryEntry *entry,
   return osdi_attr_abstol(attrs, entry->num_attributes, start, count, out);
 }
 
-double osdi_node_abstol(const OsdiRegistryEntry *entry, uint32_t node_idx) {
-  const OsdiDescriptor *descr;
-  const OsdiNature *natures;
-  const OsdiAttribute *attrs;
-  const OsdiNatureRef *ref;
+/* The declared abstol a nature reference resolves to, or 0.0 */
+static double osdi_nature_ref_abstol(const OsdiRegistryEntry *entry,
+                                     const OsdiNatureRef *ref) {
+  const OsdiNature *natures = (const OsdiNature *)entry->natures;
+  const OsdiAttribute *attrs = (const OsdiAttribute *)entry->attributes;
   uint32_t nat_idx;
-
-  if (!entry || !entry->natures || !entry->attributes) {
-    return 0.0;
-  }
-  descr = (const OsdiDescriptor *)entry->descriptor;
-  if (!descr || !descr->unknown_nature || node_idx >= descr->num_nodes) {
-    return 0.0;
-  }
-  natures = (const OsdiNature *)entry->natures;
-  attrs = (const OsdiAttribute *)entry->attributes;
-  ref = &descr->unknown_nature[node_idx];
 
   /* A node's unknown is reached either directly as a nature or through its
    * discipline's potential/flow nature -- and in the second case the
@@ -657,6 +646,35 @@ double osdi_node_abstol(const OsdiRegistryEntry *entry, uint32_t node_idx) {
     }
   }
   return 0.0;
+}
+
+double osdi_node_abstol(const OsdiRegistryEntry *entry, uint32_t node_idx) {
+  const OsdiDescriptor *descr;
+
+  if (!entry || !entry->natures || !entry->attributes) {
+    return 0.0;
+  }
+  descr = (const OsdiDescriptor *)entry->descriptor;
+  if (!descr || !descr->unknown_nature || node_idx >= descr->num_nodes) {
+    return 0.0;
+  }
+  return osdi_nature_ref_abstol(entry, &descr->unknown_nature[node_idx]);
+}
+
+/* Enhancement-889: the same for the nature of node `node_idx`'s RESIDUAL --
+ * the flow a KCL row balances (a current on an electrical node, a power on a
+ * thermal one) -- which OSDIconvTest judges a predicted change by */
+double osdi_residual_abstol(const OsdiRegistryEntry *entry, uint32_t node_idx) {
+  const OsdiDescriptor *descr;
+
+  if (!entry || !entry->natures || !entry->attributes) {
+    return 0.0;
+  }
+  descr = (const OsdiDescriptor *)entry->descriptor;
+  if (!descr || !descr->residual_nature || node_idx >= descr->num_nodes) {
+    return 0.0;
+  }
+  return osdi_nature_ref_abstol(entry, &descr->residual_nature[node_idx]);
 }
 
 /* `%m`: the instance name behind an OSDI handle (LRM 9.4.4). This is the same

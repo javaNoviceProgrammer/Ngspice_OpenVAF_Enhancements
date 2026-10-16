@@ -40,7 +40,7 @@ extern int OSDIbindCSCComplexToReal(GENmodel *inModel, CKTcircuit *ckt);
 extern int OSDIbindCSCComplex(GENmodel *inModel, CKTcircuit *ckt);
 #endif
 
-/* extern int OSDIconvTest(GENmodel*,CKTcircuit*); */
+extern int OSDIconvTest(GENmodel *, CKTcircuit *);   /* Enhancement-889 */
 /* extern int OSDImDelete(GENmodel*); */
 /* extern int OSDIgetic(GENmodel*,CKTcircuit*); */
 /* extern int OSDIsoaCheck(CKTcircuit *, GENmodel *); */

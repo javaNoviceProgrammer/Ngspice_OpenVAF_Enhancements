@@ -1,0 +1,14 @@
+`include "disciplines.vams"
+// Enhancement-889: the SPICE level-1 diode at dc, with pnjlim limiting
+module ctdio(a, c);
+    inout a, c; electrical a, c;
+    parameter real is = 1e-14 from (0:inf);
+    parameter real n = 1.0 from (0:inf);
+    real vt, vd, vcrit;
+    analog begin
+        vt = $vt;
+        vcrit = n * vt * ln(n * vt / (sqrt(2.0) * is));
+        vd = $limit(V(a, c), "pnjlim", n * vt, vcrit);
+        I(a, c) <+ is * (limexp(vd / (n * vt)) - 1.0);
+    end
+endmodule

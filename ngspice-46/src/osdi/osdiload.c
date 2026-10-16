@@ -33,6 +33,7 @@ int CKTvaInitErrRaised = 0;
 #include "ngspice/smpdefs.h"   /* Enhancement-689: SMPmatSize */
 #include "ngspice/dstring.h"   /* Enhancement-689: the seeding Note */
 #include "ngspice/randnumb.h"  /* Enhancement-832: ng_seed_generation */
+#include "ngspice/optdefs.h"   /* Enhancement-889: ERRP_ABSTOL */
 
 #include <math.h>
 #include <stdint.h>
@@ -2451,5 +2452,197 @@ int OSDIfinalStep(CKTcircuit *ckt) {
     }
   }
 
+  return OK;
+}
+
+/* Enhancement-889 (nonlinear correctness campaign 2026-10-15, F1): the
+ * convergence test the built-in devices have and a Verilog-A device had not.
+ * NIiter declares a point converged when no node moved more than its voltage
+ * tolerance in the last step; with nothing else checked, a junction between
+ * two 100 V nodes -- where the tolerance is 0.1 V a step -- was accepted 0.68 V
+ * forward with 2.47 mA of KCL error at its node, the only solution being 0 V.
+ *
+ * Each row of the instance's own resistive system, I_r with Jacobian J, is
+ * asked what the built-in tests ask of a device current: does the step just
+ * solved move it by more than reltol of it, dI_r = sum_j J_rj (x_new - x_k)_j?
+ * That is the instance's share of the KCL residual at x_k, the point it was
+ * loaded at and the one NIiter reports. Rows that only balance branch
+ * equations (a flow unknown's potential row) are not asked, nor rows whose
+ * every resistive entry is constant -- a linear element, which the built-ins
+ * do not test either (a resistor has no convergence test). An internal row
+ * nets to zero at the solution, so its own current is no scale: it is judged
+ * against the instance's largest terminal current, as the built-in diode
+ * judges its junction behind the series resistance by the junction current.
+ * x_new is the solution as NIconvTest shows it, with the unknowns that moved
+ * by no more than their own rounding held at the load point -- a closed
+ * switch between two 100 V nodes would otherwise predict picoamps from the
+ * last bits of its voltages for ever. Rows whose device nodes merge into one
+ * circuit node (a collapsed internal node) are judged as that one row. */
+int OSDIconvTest(GENmodel *inModel, CKTcircuit *ckt) {
+  static double *jac;          /* the packed resistive Jacobian of one instance */
+  static uint32_t jac_cap;
+  static double *node_tol;     /* per device node: its residual's abstol */
+  static int *node_slot;       /* per device node: its row's slot, or -1 */
+  static bool *node_term_nat;  /* per device node: a residual of the terminals' nature */
+  static bool *node_nonlin;    /* per device node: its row has a non-constant entry */
+  static uint32_t node_cap;
+  static uint32_t *slot_row;
+  static double *slot_i, *slot_di, *slot_tol;
+  static bool *slot_nonlin, *slot_term, *slot_nat;
+
+  OsdiRegistryEntry *entry = osdi_reg_entry_model(inModel);
+  const OsdiDescriptor *descr = entry->descriptor;
+  const double *x_new = ckt->CKTrhs;
+  const double *x_old = ckt->CKTconvLoaded;
+  uint32_t nn = descr->num_nodes, nt = descr->num_terminals;
+  uint32_t ne = descr->num_jacobian_entries;
+  uint32_t nres = descr->num_resistive_jacobian_entries;
+  bool user_abstol = (ckt->CKTtolGiven & ERRP_ABSTOL) != 0;
+  uint32_t i, e;
+
+  if (!x_old || !descr->write_jacobian_array_resist || nres == 0 || nn == 0)
+    return OK;
+
+  if (nres > jac_cap) {
+    jac = TREALLOC(double, jac, nres);
+    jac_cap = nres;
+  }
+  if (nn > node_cap) {
+    node_tol = TREALLOC(double, node_tol, nn);
+    node_slot = TREALLOC(int, node_slot, nn);
+    node_term_nat = TREALLOC(bool, node_term_nat, nn);
+    node_nonlin = TREALLOC(bool, node_nonlin, nn);
+    slot_row = TREALLOC(uint32_t, slot_row, nn);
+    slot_i = TREALLOC(double, slot_i, nn);
+    slot_di = TREALLOC(double, slot_di, nn);
+    slot_tol = TREALLOC(double, slot_tol, nn);
+    slot_nonlin = TREALLOC(bool, slot_nonlin, nn);
+    slot_term = TREALLOC(bool, slot_term, nn);
+    slot_nat = TREALLOC(bool, slot_nat, nn);
+    node_cap = nn;
+  }
+
+  /* a model whose every resistive entry is constant is linear, and has
+   * nothing to test: its instances are not visited (a ladder of 50 linear
+   * Verilog-A segments ran 12 % slower when they were) */
+  {
+    bool any = false;
+    for (i = 0; i < nn; i++)
+      node_nonlin[i] = false;
+    for (e = 0; e < ne; e++) {
+      uint32_t flags = descr->jacobian_entries[e].flags;
+      uint32_t n1 = descr->jacobian_entries[e].nodes.node_1;
+      if ((flags & JACOBIAN_ENTRY_RESIST) && !(flags & JACOBIAN_ENTRY_RESIST_CONST) &&
+          n1 < nn && !descr->nodes[n1].is_flow) {
+        node_nonlin[n1] = true;
+        any = true;
+      }
+    }
+    if (!any)
+      return OK;
+  }
+
+  /* per device node, once per call: the abstol of the residual's nature
+   * (the user's `abstol` wins, as NIconvTest lets `vntol` win over a
+   * nature's), and whether it is the nature the terminals balance */
+  for (i = 0; i < nn; i++) {
+    double t = user_abstol ? 0.0 : osdi_residual_abstol(entry, i);
+    node_tol[i] = (t > 0.0) ? t : ckt->CKTabstol;
+    node_term_nat[i] = true;
+    if (descr->residual_nature && nt > 0) {
+      const OsdiNatureRef *a = &descr->residual_nature[i];
+      const OsdiNatureRef *b = &descr->residual_nature[0];
+      node_term_nat[i] = a->ref_type == b->ref_type && a->index == b->index;
+    }
+  }
+
+  for (GENmodel *gen_model = inModel; gen_model;
+       gen_model = gen_model->GENnextModel) {
+    void *model = osdi_model_data(gen_model);
+    for (GENinstance *gen_inst = gen_model->GENinstances; gen_inst;
+         gen_inst = gen_inst->GENnextInstance) {
+      void *inst = osdi_instance_data(entry, gen_inst);
+      const uint32_t *nm =
+          (const uint32_t *)(((const char *)inst) + descr->node_mapping_offset);
+      uint32_t nslot = 0, k, p = 0;
+      double scale_term = 0.0;
+      bool moved = false;
+
+      /* none of its unknowns moved past rounding: it predicts no change
+       * (every instance of a linear circuit, the solve after the first) */
+      for (i = 0; i < nn && !moved; i++)
+        moved = nm[i] != 0 && x_new[nm[i]] != x_old[nm[i]];
+      if (!moved)
+        continue;
+
+      for (i = 0; i < nn; i++) {
+        uint32_t g = nm[i];
+        node_slot[i] = -1;
+        if (g == 0 || descr->nodes[i].is_flow)
+          continue;
+        for (k = 0; k < nslot; k++)
+          if (slot_row[k] == g)
+            break;
+        if (k == nslot) {
+          slot_row[k] = g;
+          slot_i[k] = slot_di[k] = 0.0;
+          slot_tol[k] = node_tol[i];
+          slot_nonlin[k] = slot_term[k] = false;
+          slot_nat[k] = node_term_nat[i];
+          nslot++;
+        }
+        node_slot[i] = (int)k;
+        if (node_nonlin[i])
+          slot_nonlin[k] = true;
+        if (i < nt)
+          slot_term[k] = true;
+        if (node_tol[i] < slot_tol[k])
+          slot_tol[k] = node_tol[i];
+        if (descr->nodes[i].resist_residual_off != UINT32_MAX)
+          slot_i[k] += *(const double *)(((const char *)inst) +
+                                         descr->nodes[i].resist_residual_off);
+      }
+      if (nslot == 0)
+        continue;
+
+      descr->write_jacobian_array_resist(inst, model, jac);
+      for (e = 0; e < ne && p < nres; e++) {
+        uint32_t flags = descr->jacobian_entries[e].flags;
+        uint32_t n1, g2;
+        double v;
+        int s;
+        if (!(flags & JACOBIAN_ENTRY_RESIST))
+          continue;
+        v = jac[p++];
+        n1 = descr->jacobian_entries[e].nodes.node_1;
+        if (n1 >= nn || (s = node_slot[n1]) < 0)
+          continue;
+        g2 = (descr->jacobian_entries[e].nodes.node_2 < nn)
+                 ? nm[descr->jacobian_entries[e].nodes.node_2] : 0;
+        if (g2 != 0)
+          slot_di[s] += v * (x_new[g2] - x_old[g2]);
+      }
+
+      for (k = 0; k < nslot; k++)
+        if (slot_term[k])
+          scale_term = fmax(scale_term, fmax(fabs(slot_i[k]),
+                                             fabs(slot_i[k] + slot_di[k])));
+
+      for (k = 0; k < nslot; k++) {
+        double scale, tol;
+        if (!slot_nonlin[k])
+          continue;
+        scale = fmax(fabs(slot_i[k]), fabs(slot_i[k] + slot_di[k]));
+        if (!slot_term[k] && slot_nat[k] && scale_term > scale)
+          scale = scale_term;
+        tol = ckt->CKTreltol * scale + slot_tol[k];
+        if (!(fabs(slot_di[k]) <= tol)) {   /* a NaN fails too */
+          ckt->CKTnoncon++;
+          ckt->CKTtroubleElt = gen_inst;
+          return OK;
+        }
+      }
+    }
+  }
   return OK;
 }

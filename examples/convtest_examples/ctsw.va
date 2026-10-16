@@ -1,0 +1,13 @@
+`include "disciplines.vams"
+// Enhancement-889: a smooth voltage-controlled switch, nonlinear in its
+// control: closed (gon) when V(ctl) is above 0.5 V
+module ctsw(a, b, ctl);
+    inout a, b, ctl; electrical a, b, ctl;
+    parameter real gon = 1e3 from (0:inf);
+    parameter real goff = 1e-9 from (0:inf);
+    real g;
+    analog begin
+        g = goff + (gon - goff) * 0.5 * (1.0 + tanh(20.0 * (V(ctl) - 0.5)));
+        I(a, b) <+ g * V(a, b);
+    end
+endmodule

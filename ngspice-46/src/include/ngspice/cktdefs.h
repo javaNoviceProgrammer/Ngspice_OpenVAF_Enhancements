@@ -225,6 +225,10 @@ struct CKTcircuit {
     double *CKTrhsOld;          /* previous rhs value for convergence
                                    testing */
     double *CKTrhsSpare;        /* spare rhs value for reordering */
+    double *CKTconvLoaded;      /* Enhancement-889: while CKTconvTest runs, the
+                                   point the devices were loaded at (CKTrhsOld
+                                   then points at the new solution); NULL
+                                   otherwise */
     double *CKTirhs;            /* current rhs value - being loaded
                                    (imag) */
     double *CKTirhsOld;         /* previous rhs value (imaginary)*/
