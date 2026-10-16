@@ -19,7 +19,7 @@ Author: 1985 Wayne A. Christopher, U. C. Berkeley CAD Group
 
 
 static void plotinterval(struct dvec *v, double lo, double hi, register double *coeffs,
-                         int degree, bool rotated);
+                         double *frame, int degree, bool rotated);
 static int get_xdirection(struct dvec *xs, int len, bool mn, bool analog);
 
 /* Plot the vector v, with scale xs.  If we are doing curve-fitting, then
@@ -32,6 +32,7 @@ ft_graf(struct dvec *v, struct dvec *xs, bool nostart)
     int degree, gridsize, length;
     register int i, j, l;
     double *scratch, *result, *gridbuf, *mm;
+    double frame[2];        /* Enhancement-890: the fit's coordinate */
     register double *xdata, *ydata;
     bool rot, increasing = FALSE;
     double dx = 0.0, dy = 0.0, lx = 0.0, ly = 0.0;
@@ -246,12 +247,12 @@ ft_graf(struct dvec *v, struct dvec *xs, bool nostart)
             xdata[i] = realpart(xs->v_compdata[i]);
 
     rot = FALSE;
-    while (!ft_polyfit(xdata, ydata, result, degree, scratch)) {
+    while (!ft_polyfit(xdata, ydata, result, degree, scratch, frame)) {
         /* Rotate the coordinate system 90 degrees and try again.
          * If it doesn't work this time, bump the interpolation
          * degree down by one...
          */
-        if (ft_polyfit(ydata, xdata, result, degree, scratch)) {
+        if (ft_polyfit(ydata, xdata, result, degree, scratch, frame)) {
             rot = TRUE;
             break;
         }
@@ -264,9 +265,9 @@ ft_graf(struct dvec *v, struct dvec *xs, bool nostart)
     /* Plot this part of the curve... */
     for (i = 0; i < degree; i++)
         if (rot)
-            plotinterval(v, ydata[i], ydata[i + 1], result, degree, TRUE);
+            plotinterval(v, ydata[i], ydata[i + 1], result, frame, degree, TRUE);
         else
-            plotinterval(v, xdata[i], xdata[i + 1], result, degree, FALSE);
+            plotinterval(v, xdata[i], xdata[i + 1], result, frame, degree, FALSE);
 
     /* Now plot the rest, piece by piece... l is the
      * last element under consideration.
@@ -291,8 +292,8 @@ ft_graf(struct dvec *v, struct dvec *xs, bool nostart)
             xdata[i] = realpart(xs->v_compdata[l]);
 
         rot = FALSE;
-        while (!ft_polyfit(xdata, ydata, result, degree, scratch)) {
-            if (ft_polyfit(ydata, xdata, result, degree, scratch)) {
+        while (!ft_polyfit(xdata, ydata, result, degree, scratch, frame)) {
+            if (ft_polyfit(ydata, xdata, result, degree, scratch, frame)) {
                 rot = TRUE;
                 break;
             }
@@ -305,10 +306,10 @@ ft_graf(struct dvec *v, struct dvec *xs, bool nostart)
 
         if (rot)
             plotinterval(v, ydata[degree - 1], ydata[degree],
-                         result, degree, TRUE);
+                         result, frame, degree, TRUE);
         else
             plotinterval(v, xdata[degree - 1], xdata[degree],
-                         result, degree, FALSE);
+                         result, frame, degree, FALSE);
     }
 
     tfree(scratch);
@@ -323,7 +324,7 @@ ft_graf(struct dvec *v, struct dvec *xs, bool nostart)
 #define GRANULARITY 10
 
 static void
-plotinterval(struct dvec *v, double lo, double hi, register double *coeffs, int degree, bool rotated)
+plotinterval(struct dvec *v, double lo, double hi, register double *coeffs, double *frame, int degree, bool rotated)
 {
     double incr, dx, dy, lx, ly;
     register int i;
@@ -345,9 +346,9 @@ plotinterval(struct dvec *v, double lo, double hi, register double *coeffs, int 
     incr = (hi - lo) / (double) (steps + 1);
     dx = lo + incr;
     lx = lo;
-    ly = ft_peval(lo, coeffs, degree);
+    ly = ft_pevalf(lo, frame, coeffs, degree);   /* Enhancement-890 */
     for (i = 0; i <= steps; i++, dx += incr) {
-        dy = ft_peval(dx, coeffs, degree);
+        dy = ft_pevalf(dx, frame, coeffs, degree);
         if (rotated)
             gr_point(v, dy, dx, ly, lx, -1);
         else

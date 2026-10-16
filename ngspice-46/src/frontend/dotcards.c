@@ -1245,9 +1245,12 @@ ft_cktcoms(bool terse)
                 err = fourier(command->wl_next, plot_cur);
                 if (!err)
                     fprintf(cp_out, "\n\n");
-                else
+                else if (!plot_cur)
+                    /* Enhancement-892: only when there is none -- fourier()
+                     * has said why it refused anything else, and this line,
+                     * printed after its reason, contradicted it */
                     fprintf(cp_err, "No transient data available for "
-                            "fourier analysis");
+                            "fourier analysis\n");
             }
         } else if (!eq(command->wl_word, ".save") &&
                    !eq(command->wl_word, ".savecur") &&        /* Enhancement-808 */

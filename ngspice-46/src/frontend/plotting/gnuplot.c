@@ -678,6 +678,29 @@ void ft_gnuplot(double *xlims, double *ylims,
    if scale vectors are of same length (there is little risk here!).
    Width of numbers printed is set by option 'numdgt'.
  */
+/* Enhancement-893 (nonlinear correctness campaign 2026-10-15, D2): a vector
+ * longer than its scale -- `let g = vector(1000)` in the constants plot, or
+ * after an `op`, has a one-point scale -- was written as its scale's length of
+ * rows: one row of 1000, without a word. Such a vector is written in full,
+ * its index standing in for the scale, and a note says so. */
+static bool wr_indexed(const struct dvec *v)
+{
+    return v->v_scale->v_length < v->v_length;
+}
+
+static int wr_rows(const struct dvec *v)
+{
+    return wr_indexed(v) ? v->v_length : v->v_scale->v_length;
+}
+
+static double wr_xval(const struct dvec *v, int i)
+{
+    const struct dvec *scale = v->v_scale;
+    if (wr_indexed(v))
+        return (double) i;
+    return isreal(scale) ? scale->v_realdata[i] : realpart(scale->v_compdata[i]);
+}
+
 void ft_writesimple(double *xlims, double *ylims,
         const char *filename, const char *title,
         const char *xlabel, const char *ylabel,
@@ -718,10 +741,12 @@ void ft_writesimple(double *xlims, double *ylims,
 
     /* print scale vector only once */
     if (singlescale) {
-        /* check if all vectors have equal scale length */
-        maxlen = vecs->v_length; /* first length of vector read */
+        /* check if all vectors have equal scale length (Enhancement-893: a
+         * vector longer than its scale is measured by its own length, and its
+         * index is its scale) */
+        maxlen = wr_rows(vecs); /* first length of vector read */
         for (v = vecs; v; v = v->v_link2)
-            if (v->v_scale->v_length != maxlen) {
+            if (wr_rows(v) != maxlen || wr_indexed(v) != wr_indexed(vecs)) {
                 fprintf(stderr,
                         "Error: Option 'singlescale' not possible.\n"
                         "       Vectors %s and %s have different lengths!\n"
@@ -734,8 +759,14 @@ void ft_writesimple(double *xlims, double *ylims,
         /* find maximum scale length from all vectors */
         maxlen = 0;
         for (v = vecs; v; v = v->v_link2)
-            maxlen = MAX(v->v_scale->v_length, maxlen);
+            maxlen = MAX(wr_rows(v), maxlen);
     }
+
+    for (v = vecs; v; v = v->v_link2)
+        if (wr_indexed(v))
+            fprintf(cp_err,
+                    "Note: %s has %d points and its scale '%s' has %d: the index is written in the scale's column.\n",
+                    v->v_name, v->v_length, v->v_scale->v_name, v->v_scale->v_length);
 
     /* Open the output data file. */
     if ((file_data = fopen(filename, appendwrite ? "a" : "w")) == NULL) {
@@ -756,7 +787,7 @@ void ft_writesimple(double *xlims, double *ylims,
         struct dvec *scale = vecs->v_scale;
 
         /* header: scale name once, then each vector (complex -> two columns) */
-        fprintf(file_data, "%s", scale->v_name);
+        fprintf(file_data, "%s", wr_indexed(vecs) ? "index" : scale->v_name);
         for (v = vecs; v; v = v->v_link2) {
             if (isreal(v))
                 fprintf(file_data, ",%s", v->v_name);
@@ -767,12 +798,8 @@ void ft_writesimple(double *xlims, double *ylims,
 
         /* data rows */
         for (i = 0; i < maxlen; i++) {
-            if (i < scale->v_length) {
-                double xval = isreal(scale)
-                    ? scale->v_realdata[i]
-                    : realpart(scale->v_compdata[i]);
-                fprintf(file_data, "%.*e", preci, xval);
-            }
+            if (i < scale->v_length || wr_indexed(vecs))
+                fprintf(file_data, "%.*e", preci, wr_xval(vecs, i));
             for (v = vecs; v; v = v->v_link2) {
                 if (i >= v->v_length)
                     fprintf(file_data, isreal(v) ? "," : ",,");
@@ -798,7 +825,7 @@ void ft_writesimple(double *xlims, double *ylims,
                 struct dvec* scale = v->v_scale;
                 /* If wr_singlescale is set, print scale name only in first column */
                 if (prscale)
-                    fprintf(file_data, "%s ", scale->v_name);
+                    fprintf(file_data, "%s ", wr_indexed(v) ? "index" : scale->v_name);
 
                 if (isreal(v))
                     fprintf(file_data, "%s ", v->v_name);
@@ -814,7 +841,7 @@ void ft_writesimple(double *xlims, double *ylims,
                 struct dvec* scale = v->v_scale;
                 /* If wr_singlescale is set, print scale name only in first column */
                 if (prscale)
-                    fprintf(file_data, " %-*s", preci + 7, scale->v_name);
+                    fprintf(file_data, " %-*s", preci + 7, wr_indexed(v) ? "index" : scale->v_name);
 
                 if (isreal(v))
                     fprintf(file_data, " %-*s", preci + 7, v->v_name);
@@ -839,7 +866,7 @@ void ft_writesimple(double *xlims, double *ylims,
              * branch below indexes the VECTOR's own data, so a vector shorter than
              * its scale (a synthetic vector carries the plot's scale) was read past
              * the end. Require both to have a point at `i`. */
-            if (i >= scale->v_length || i >= v->v_length) {
+            if ((i >= scale->v_length && !wr_indexed(v)) || i >= v->v_length) {
                 if (prscale)
                     fprintf(file_data, "%*s", preci + 8, "");
 
@@ -849,12 +876,8 @@ void ft_writesimple(double *xlims, double *ylims,
                     fprintf(file_data, "%*s", 2 * (preci + 8), "");
             }
             else {
-                if (prscale) {
-                    double xval = isreal(scale)
-                        ? scale->v_realdata[i]
-                        : realpart(scale->v_compdata[i]);
-                    fprintf(file_data, "% .*e ", preci, xval);
-                }
+                if (prscale)
+                    fprintf(file_data, "% .*e ", preci, wr_xval(v, i));
 
                 if (isreal(v))
                     fprintf(file_data, "% .*e ", preci, v->v_realdata[i]);

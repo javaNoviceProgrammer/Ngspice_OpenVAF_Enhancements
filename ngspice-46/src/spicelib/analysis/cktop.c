@@ -24,6 +24,37 @@ static int gillespie_src(CKTcircuit *, long int, long int, int);
 static int spice3_src(CKTcircuit *, long int, long int, int);
 
 
+/* Enhancement-894 (nonlinear correctness campaign 2026-10-15, N2): an
+ * operating point whose branch current passes a megaampere is reported. A
+ * source that forward-biases a junction with nothing in series leaves Newton
+ * nothing to limit its current, and the point converges anyway: a diode held
+ * 4.2 V forward carried 1e45 A, and the campaign's random networks reached
+ * 4e155 A, all reported without a word. A megaampere is past any junction a
+ * circuit models; the largest such current is named, once per point. */
+#define OP_CURRENT_BOUND 1.0e6
+
+static void
+op_current_check(CKTcircuit *ckt)
+{
+    CKTnode *node, *worst = NULL;
+    double big = OP_CURRENT_BOUND;
+
+    if (!ckt->CKTrhsOld)
+        return;
+    for (node = ckt->CKTnodes; node; node = node->next)
+        if (node->type == SP_CURRENT && node->number > 0 &&
+            fabs(ckt->CKTrhsOld[node->number]) > big) {
+            big = fabs(ckt->CKTrhsOld[node->number]);
+            worst = node;
+        }
+    if (worst)
+        fprintf(cp_err,
+                "Warning: the operating point carries %g A in %s, past any junction a circuit models:\n"
+                "    a source that forward-biases a junction with nothing in series leaves nothing to limit its current.\n",
+                ckt->CKTrhsOld[worst->number], worst->name);
+}
+
+
 int
 CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
        int iterlim)
@@ -288,6 +319,8 @@ CKTop (CKTcircuit *ckt, long int firstmode, long int continuemode,
     ckt->CKTlinesearch = ls_saved;
     if (converged == 0 && conv_aid && ckt->CKTconvhelp)
         fprintf(cp_err, "Note: DC operating point reached via %s.\n", conv_aid);
+    if (converged == 0)
+        op_current_check(ckt);      /* Enhancement-894 */
     return converged;
 }
 

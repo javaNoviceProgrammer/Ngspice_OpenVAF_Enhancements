@@ -249,8 +249,9 @@ extern void nutcom_source(wordlist *wl);
 /* interpolate.c */
 
 extern bool ft_interpolate(double *data, double *ndata, double *oscale, int olen, double *nscale, int nlen, int degree);
-extern bool ft_polyfit(double *xdata, double *ydata, double *result, int degree, double *scratch);
+extern bool ft_polyfit(double *xdata, double *ydata, double *result, int degree, double *scratch, double *frame);
 extern double ft_peval(double x, double *coeffs, int degree);
+extern double ft_pevalf(double x, const double *frame, double *coeffs, int degree);
 extern void ft_polyderiv(double *coeffs, int degree);
 
 /* numparse.c */

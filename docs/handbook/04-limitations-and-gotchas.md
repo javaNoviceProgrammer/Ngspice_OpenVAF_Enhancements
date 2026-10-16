@@ -525,3 +525,38 @@ scripting ngspice:
   oscillator takes 14 % more Newton iterations since
   [E-889](../../enhancements_doc/Enhancement-889.md), and 500 random diode, BJT
   and MOSFET networks 1 % more.
+- **`polydegree` and `dpolydegree`** above 2 were unusable late in a long
+  run: the local fit was made in the absolute time, and `deriv` at
+  `dpolydegree=3` read 3e20 times the derivative after 500 ms. Since
+  [E-890](../../enhancements_doc/Enhancement-890.md) the fit is local and any
+  degree is accurate. `deriv` of a nested `dc` sweep still fits across each
+  group boundary: take it per sweep, or ignore the point on either side of a
+  restart.
+- **`setseed N`** restarts every stream at the same state, however often it is
+  given ([E-891](../../enhancements_doc/Enhancement-891.md)). `set rndseed=N`
+  does not: setting the variable to the value it holds changes nothing.
+- **The Meyer gate capacitances of MOS levels 1 to 3** (given `tox`) are
+  capacitances, not charges, and do not conserve charge: a level-1 MOSFET
+  whose gate, bulk and tied drain and source are driven around a closed path
+  lost 67 % of the charge it moved each period, the same at every step size.
+  For charge pumps, switched-capacitor circuits or anything that integrates a
+  gate current over many cycles, use a charge-based model (BSIM3 or BSIM4
+  `capmod` 1 to 3 conserve to 1e-6 per period under trap). Pinned in
+  `nlnotes_examples` [9].
+- **MOS1 flicker noise at the default `nlev=2`** is
+  KF·gm²/(f^AF·W·Leff·Cox): AF is the exponent of the FREQUENCY, not of the
+  current as in the SPICE2 form, so `af=0.5` makes a 1/√f spectrum. `nlev=0`
+  gives KF·Id^AF/(f·Cox·Leff²), the 1/f form. Pinned in `nlnotes_examples` [10].
+- **The truncation tolerance's charge term** is `reltol` of the charge a
+  capacitor HOLDS, per step: a capacitor at a DC bias may err each step by
+  `reltol` of its whole charge, however small its swing. With `tmax=1m`, a
+  10 mV ripple on a 1 µF capacitor biased at 1 V was taken in 35 steps over
+  20 periods and missed by five times its amplitude; at 0 V bias it took 237.
+  This is SPICE's definition. The default `tmax` (the `tstep` of the `tran`
+  command) resolves the ripple; when you raise `tmax`, keep it a small fraction
+  of the period of the smallest signal you care about. Pinned in
+  `nlnotes_examples` [11].
+- **"the operating point carries … A in …, past any junction a circuit
+  models"** ([E-894](../../enhancements_doc/Enhancement-894.md)) names a branch
+  past a megaampere: almost always a source that forward-biases a junction
+  directly. Add the junction's series resistance, or the source's.

@@ -10,7 +10,7 @@
  * interpolated from, and sign is 1 if the old scale was increasing,
  * and -1 if it was decreasing.  */
 static int
-putinterval(double *poly, int degree, double *nvec,
+putinterval(double *poly, double *frame, int degree, double *nvec,
 	    int last, double *nscale, int nlen, double oval, int sign)
 {
     int end, i;
@@ -22,7 +22,7 @@ putinterval(double *poly, int degree, double *nvec,
     end--;
 
     for (i = last + 1; i <= end; i++)
-        nvec[i] = ft_peval(nscale[i], poly, degree);
+        nvec[i] = ft_pevalf(nscale[i], frame, poly, degree);   /* Enhancement-890 */
     return (end);
 }
 
@@ -40,6 +40,7 @@ ft_interpolate(double *data, double *ndata, double *oscale, int olen,
 	       double *nscale, int nlen, int degree)
 {
     double *result, *scratch, *xdata, *ydata, diff;
+    double frame[2];        /* Enhancement-890: the fit's coordinate */
     int sign = 1, lastone, i, l, middle, tdegree;
 
     if ((olen < 2) || (nlen < 2)) {
@@ -103,18 +104,18 @@ ft_interpolate(double *data, double *ndata, double *oscale, int olen,
 
     if (i < degree) {
         fprintf(cp_err, "Error: too few points to calculate polynomial\n");
-        return FALSE;
+        goto fail;
     }
 
     i = 0;
     tdegree = degree;
-    while (!ft_polyfit(xdata + i, ydata + i, result, tdegree, scratch)) {
+    while (!ft_polyfit(xdata + i, ydata + i, result, tdegree, scratch, frame)) {
         /* If it doesn't work this time, bump the interpolation
          * degree down by one.
          */
         if (--tdegree == 0) {
             fprintf(cp_err, "ft_interpolate: Internal Error.\n");
-            return (FALSE);
+            goto fail;
         }
         if (tdegree % 2)
             ++i;            // Drop left point.
@@ -127,7 +128,7 @@ ft_interpolate(double *data, double *ndata, double *oscale, int olen,
      * at.
      */
 
-    lastone = putinterval(result, tdegree, ndata, -1,
+    lastone = putinterval(result, frame, tdegree, ndata, -1,
                           nscale, nlen, xdata[middle], sign);
 
     /* Now plot the rest, piece by piece. l is the 
@@ -167,22 +168,24 @@ ft_interpolate(double *data, double *ndata, double *oscale, int olen,
 
         i = 0;
         tdegree = degree;
-        while (!ft_polyfit(xdata + i, ydata + i, result, tdegree, scratch)) {
+        while (!ft_polyfit(xdata + i, ydata + i, result, tdegree, scratch, frame)) {
             /* If it doesn't work this time, bump the interpolation
              * degree down by one.
              */
 
             if (--tdegree == 0) {
                 fprintf(cp_err, "ft_interpolate: Internal Error.\n");
-                return (FALSE);
+                goto fail;
             }
             if (!((degree - tdegree) & 1))
                 ++i;            // Drop left point after right.
         }
-        lastone = putinterval(result, tdegree, ndata, lastone,
+        lastone = putinterval(result, frame, tdegree, ndata, lastone,
                               nscale, nlen, xdata[middle], sign);
     }
-    lastone = putinterval(result, degree, ndata, lastone,
+    /* (Enhancement-890: with the degree of the last fit, which may have been
+     * lowered -- `degree` read coefficients that fit had not written) */
+    lastone = putinterval(result, frame, tdegree, ndata, lastone,
                           nscale, nlen, oscale[olen - 1], sign);
     if (lastone < nlen - 1) /* ??? */
 	ndata[nlen - 1] = data[olen - 1];
@@ -191,4 +194,11 @@ ft_interpolate(double *data, double *ndata, double *oscale, int olen,
     tfree(ydata);
     tfree(result);
     return (TRUE);
+
+fail:
+    tfree(scratch);
+    tfree(xdata);
+    tfree(ydata);
+    tfree(result);
+    return (FALSE);
 }

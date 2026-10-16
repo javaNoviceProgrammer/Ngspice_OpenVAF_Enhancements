@@ -27,7 +27,7 @@ A Newton iteration ends with two tests:
   step just solved. That change is the device's share of the KCL residual at the point it was
   loaded at, and that point is the one `NIiter` reports.
 
-Thirty devices have a device test. None of them ever decided anything, for two reasons:
+Thirty devices have a device test, and none of them ever decided anything:
 - **The count was thrown away.** `NIiter` assigns `NIconvTest`'s return value to `CKTnoncon`.
   `NIconvTest` returned `CKTconvTest`'s return code, which is `OK` after a device has counted
   itself unconverged, so the count was overwritten with 0. This holds for the MOSFETs of levels 1

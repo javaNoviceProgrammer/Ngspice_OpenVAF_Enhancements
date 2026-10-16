@@ -18,3 +18,12 @@ ft_peval(double x, double *coeffs, int degree)
 
 	return y;
 }
+
+
+/* Enhancement-890: evaluate a polynomial ft_polyfit fitted, whose
+ * coefficients are those of u = (x - frame[0]) / frame[1], at x */
+double
+ft_pevalf(double x, const double *frame, double *coeffs, int degree)
+{
+	return ft_peval((x - frame[0]) / frame[1], coeffs, degree);
+}

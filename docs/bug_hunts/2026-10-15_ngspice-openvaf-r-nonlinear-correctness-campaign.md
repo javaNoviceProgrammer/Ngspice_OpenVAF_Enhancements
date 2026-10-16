@@ -60,11 +60,11 @@ Nothing was fixed; this is the list.
 | | Finding | Severity |
 |---|---|---|
 | [F1](#f1) | *(fixed in [E-889](../../enhancements_doc/Enhancement-889.md): the device tests read the new solution and their count decides, and a Verilog-A device has one; the diode converges off at 100 V, the sweep's current is within reltol; the second face is within `vntol`)* **operating point:** the device convergence tests compare the point the device was loaded at with itself, so convergence rests on node-voltage changes alone. A diode across a resistor between two 100 V nodes converges 0.68 V forward with 2.47 mA of KCL error (the only solution is 0 V); at ordinary voltages a junction's current is reported up to 2 % off (20 × reltol); a nA current into a low-impedance node is missing from the solution. Built-in and Verilog-A devices alike. Stock | high |
-| [F2](#f2) | **analysis:** `ft_polyfit` fits each local polynomial in absolute time. `fourier` at `polydegree=3` adds a 1e-4 floor and shifts a harmonic's phase by 1°; `deriv()` at `dpolydegree=3` returns 3e20 times the derivative over a 500 ms run | medium |
-| [F3](#f3) | **statistics:** `setseed N` is not reproducible within a session: the first `setseed 11` and every later one give different `sgauss` sequences | medium |
-| [D1](#d1) | **analysis:** `fourier` refuses a window exactly `nperiods` long by one ulp; on the `.four` route it then says "No transient data available" | low |
-| [D2](#d2) | **output:** `wrdata` writes a vector longer than its plot's scale truncated to the scale's length, without a word: 1 000 values become one row | low |
-| [N1](#n1)–N4 | notes: the Meyer model loses charge on a closed path; a junction forward-biased by a source with no resistance carries 1e155 A without a word; MOS1's default flicker term uses AF as the frequency exponent; the truncation tolerance's charge term | — |
+| [F2](#f2) | *(fixed in [E-890](../../enhancements_doc/Enhancement-890.md): the fit is made over [−1, 1]; `deriv` at degree 3 is within 2.1e-8, `fourier` reads 1e-13 where it read 1e-4)* **analysis:** `ft_polyfit` fits each local polynomial in absolute time. `fourier` at `polydegree=3` adds a 1e-4 floor and shifts a harmonic's phase by 1°; `deriv()` at `dpolydegree=3` returns 3e20 times the derivative over a 500 ms run | medium |
+| [F3](#f3) | *(fixed in [E-891](../../enhancements_doc/Enhancement-891.md): `setseed` clears the seed `checkseed()` remembers; every `setseed 11` draws the first one's stream)* **statistics:** `setseed N` is not reproducible within a session: the first `setseed 11` and every later one give different `sgauss` sequences | medium |
+| [D1](#d1) | *(fixed in [E-892](../../enhancements_doc/Enhancement-892.md): the data is short of the window by up to a step, not an ulp; such a window is analysed, and `.four` no longer says there is no data)* **analysis:** `fourier` refuses a window exactly `nperiods` long by one ulp; on the `.four` route it then says "No transient data available" | low |
+| [D2](#d2) | *(fixed in [E-893](../../enhancements_doc/Enhancement-893.md): such a vector is written in full, its index in the scale's column, with a note)* **output:** `wrdata` writes a vector longer than its plot's scale truncated to the scale's length, without a word: 1 000 values become one row | low |
+| [N1](#n1)–N4 | *(N2 fixed in [E-894](../../enhancements_doc/Enhancement-894.md): an operating point past a megaampere names the branch; N1, N3 and N4 documented in the handbook and pinned in `nlnotes_examples`)* notes: the Meyer model loses charge on a closed path; a junction forward-biased by a source with no resistance carries 1e155 A without a word; MOS1's default flicker term uses AF as the frequency exponent; the truncation tolerance's charge term | — |
 
 <a id="f1"></a>
 ## F1 — the device convergence tests compare the linearisation point with itself
@@ -138,6 +138,13 @@ A working device test would have asked for one more iteration: the update moves 
 <a id="f2"></a>
 ## F2 — `ft_polyfit` fits in absolute time
 
+*Fixed in [E-890](../../enhancements_doc/Enhancement-890.md). The fit is made in u = (x − c)/w,
+c the centre of the points and w their half-width, and every caller evaluates in that coordinate.
+`deriv` at `dpolydegree=3` over 500 ms is within 2.1e-8, the method's own error, and at degree 4
+within 1e-10. `fourier` at `polydegree=3` reads the zero harmonics at 1.1e-13 and the 4th
+harmonic's phase within 2e-5°; at `polydegree=4`, where every harmonic read 3831, it is exact. The
+pure sine's THD reads about 3e-11 % at every degree.*
+
 `ft_interpolate` and the derivative code fit each local polynomial with `ft_polyfit`, whose
 Vandermonde matrix is built on the abscissa itself: 1, t, t², t³ with t around 1e-6 s and the
 points 2e-10 s apart. Its condition number grows as (t/h)^degree. The callers are `fourier`
@@ -162,6 +169,12 @@ points 2e-10 s apart. Its condition number grows as (t/h)^degree. The callers ar
 <a id="f3"></a>
 ## F3 — `setseed` is not reproducible within a session
 
+*Fixed in [E-891](../../enhancements_doc/Enhancement-891.md). `setseed` now clears the seed
+`checkseed()` remembers, so every `setseed N` is followed by the reseed the first one was. The
+first `setseed 11` draws what it always drew. `sunif`, `rnd`, `poisson` and `exponential` did not
+reproduce either, when drawn after a second `setseed`; the sentence below was written from a check
+that drew `sunif` first. The `.param` draws were reproducible and are unchanged.*
+
 ```
 setseed 11
 let g = sgauss(vector(3))     -> -0.8159, 0.6548, -0.4705
@@ -184,6 +197,14 @@ different results. `sunif` reproduces.
 <a id="d1"></a>
 ## D1 — `fourier` refuses an exact-fit window by one ulp
 
+*Fixed in [E-892](../../enhancements_doc/Enhancement-892.md). The diagnosis below was wrong: the
+data is not short of the window by an ulp. A run with `tstart` saves from its first accepted
+point after `tstart`, so its data is short of `tstop − tstart` by up to one step: 0.28 of a step,
+7e-5 of the window, in seed 1009. A window short by no more than the data's first interval is now
+analysed, and all 12 runs agree with the exact harmonics. A window really longer than the data is
+refused with the numbers, and the `.four` route says "No transient data available" only when
+there is none.*
+
 `fourier.c` refuses when `dp[1] - dp[0] < nperiods/fundfreq`, with no tolerance. Twelve of 800
 runs, all with `tstart` one period and `tstop` three periods at `nperiods=2`, were refused with
 "(2 * wavelength) longer than time span". On the `.four` route the run then prints "No transient
@@ -192,6 +213,9 @@ data available for fourier analysis", which is not what happened.
 <a id="d2"></a>
 ## D2 — `wrdata` truncates a vector to its plot's scale, without a word
 
+*Fixed in [E-893](../../enhancements_doc/Enhancement-893.md). A vector longer than its scale is
+written in full, its index in the scale's column, with a note; `wr_singlescale` writes it too.*
+
 `let g = vector(1000)` followed by `wrdata wg.txt g` writes one row, in the constants plot and after
 an `op` alike, and says nothing. With `set wr_singlescale` it refuses instead: "Vectors g and g have
 different lengths!"
@@ -199,20 +223,23 @@ different lengths!"
 ## Notes
 
 <a id="n1"></a>
-- **N1 — the Meyer model loses charge on a closed path.** Level-1 MOS with `tox`, drain on source,
+- **N1 — the Meyer model loses charge on a closed path.** *(Documented in the handbook, §4.6, and pinned in `nlnotes_examples`.)* Level-1 MOS with `tox`, drain on source,
   gate and bulk driven around a closed path: 1 % to 98 % of the moved charge per period is lost. The
   loss is the same at every step size (0.675 at T/200, T/1000 and T/5000). This is the known
   behaviour of the capacitance-based Meyer model of MOS levels 1 to 3. BSIM3 and BSIM4 conserve,
   `capmod=0` to first order in the step.
-- **N2 — a junction forward-biased by a source with no resistance.** In 93 of Family B's 400
+- **N2 — a junction forward-biased by a source with no resistance.** *(Fixed in
+  [E-894](../../enhancements_doc/Enhancement-894.md): when an operating point converges past a
+  megaampere, the warning names the branch. 174 of Family B's runs past a megaampere warn, and none
+  of the 615 others.)* In 93 of Family B's 400
   networks a random source forward-biased a junction directly. ngspice computed and reported
   currents from 2e3 to 4e155 A, without a word. The circuit is the user's; a warning would
   help.
-- **N3 — MOS1's default flicker term.** At `nlev=2`, the default, the term is
+- **N3 — MOS1's default flicker term.** *(Documented in the handbook, §4.6, and pinned in `nlnotes_examples`.)* At `nlev=2`, the default, the term is
   KF·gm²/(f^AF·W·Leff·Cox): AF is the FREQUENCY exponent there, not the current's. Giving `tox` adds
   the Meyer gate capacitances, which change ac and noise. Both are ngspice's documented behaviour;
   the reference first had them wrong.
-- **N4 — the truncation tolerance's charge term.** At reltol 1e-7 and trtol 1, nonlinear transients
+- **N4 — the truncation tolerance's charge term.** *(Documented in the handbook, §4.6, and pinned in `nlnotes_examples`.)* At reltol 1e-7 and trtol 1, nonlinear transients
   came within 5.7e-4 of their range. The charge term reltol·|q|/h is loose at small steps. At 1e-9
   they are within 3.3e-4 and converge with reltol. This is SPICE's definition.
 

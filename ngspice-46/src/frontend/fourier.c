@@ -176,11 +176,30 @@ fourier(wordlist *wl, struct plot *current_plot)
                 dp = ft_minmax(time, TRUE);
                 /* Now get the last fund freq... */
                 d = nperiods / fundfreq;   /* The wavelength... */
-                if (dp[1] - dp[0] < d) {
-                    fprintf(cp_err, "Error: (%d * wavelength) longer than time span\n", nperiods);
-                    goto done;
-                } else if (dp[1] - dp[0] > d) {
-                    dp[0] = dp[1] - d;
+                /* Enhancement-892 (nonlinear correctness campaign 2026-10-15,
+                 * D1): a window that the run spans exactly -- tstart one
+                 * period, tstop three, nperiods 2 -- was refused, and 12 of
+                 * the campaign's 800 runs read "longer than time span". A run
+                 * saves from its first accepted point AFTER tstart, not at
+                 * it, so its data is short of tstop - tstart by up to one
+                 * step (0.28 of one, 7e-5 of the window, in one of them). A
+                 * window short by no more than the data's first interval is
+                 * the window asked for: it starts before the first point by
+                 * less than a step, and the interpolation's first polynomial
+                 * reaches it as accurately as it reaches the points between. */
+                {
+                    double span = dp[1] - dp[0];
+                    double first_step = (time->v_length > 1)
+                        ? fabs(time->v_realdata[1] - time->v_realdata[0]) : 0.0;
+                    if (span < d && d - span > first_step) {
+                        fprintf(cp_err,
+                                "Error: %d period%s of %g Hz (%g s) %s longer than the time span of the data (%g s)\n",
+                                nperiods, nperiods == 1 ? "" : "s", fundfreq, d,
+                                nperiods == 1 ? "is" : "are", span);
+                        goto done;
+                    }
+                    if (span != d)
+                        dp[0] = dp[1] - d;
                 }
 
                 d = (dp[1] - dp[0]) / fourgridsize;

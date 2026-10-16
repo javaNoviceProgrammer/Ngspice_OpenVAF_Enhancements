@@ -114,6 +114,9 @@ int ng_rand(void)
 /* Enhancement-832: bumped at every seeding */
 static int seed_generation;
 
+/* the seed checkseed() last applied; 0 = none since the last `setseed` */
+static int checked_seed;
+
 int ng_seed_generation(void)
 {
    return seed_generation;
@@ -122,16 +125,15 @@ int ng_seed_generation(void)
 void checkseed(void)
 {
    int newseed;
-   static int oldseed;
 /*   printf("Enter checkseed()\n"); */
    if (cp_getvar("rndseed", CP_NUM, &newseed, 0)) {
-      if ((newseed > 0) && (oldseed != newseed)) {
+      if ((newseed > 0) && (checked_seed != newseed)) {
          ng_srand((unsigned int)newseed);
          TausSeed();
          seed_generation++;           /* Enhancement-832 */
-         if (oldseed > 0) /* no printout upon start-up */
+         if (checked_seed > 0) /* no printout upon start-up or after setseed */
              printf("Seed value for random number generator is set to %d\n", newseed);
-         oldseed = newseed;
+         checked_seed = newseed;
       }
    }
    
@@ -403,6 +405,21 @@ com_sseed(wordlist *wl)
 #endif
 
     seed_generation++;                  /* Enhancement-832 */
+
+    /* Enhancement-891 (nonlinear correctness campaign 2026-10-15, F3): the
+     * control-language draws (sgauss, sunif, poisson, exponential, rnd) start
+     * from this seed's first state after EVERY setseed, not only the first.
+     * checkseed() reseeds them when `rndseed` differs from the seed it last
+     * applied, and setseed never told it: the first `setseed 11` was followed
+     * by that reseed, while a second `setseed 11` found the seed already
+     * applied and left those draws where the pool refill above had taken the
+     * generator. `setseed 11; let g = sgauss(vector(3))` gave -0.8159,
+     * 0.6548, -0.4705 the first time and -1.0678, -1.3123, 1.5295 every time
+     * after, so a Monte Carlo repeated after `setseed 1` drew other numbers.
+     * Forgetting the applied seed here makes every setseed behave as the
+     * first; the draws that never went through checkseed (.param agauss and
+     * its kin, transient noise) already started from the state set above. */
+    checked_seed = 0;
 
     if (seedinfo)
         printf("\nSeed value for random number generator is set to %d\n", newseed);

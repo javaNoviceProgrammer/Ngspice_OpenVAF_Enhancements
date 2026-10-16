@@ -242,6 +242,18 @@ cx_interpolate(void *data, short int type, int length, int *newlength, short int
 }
 
 
+
+/* Enhancement-890: ft_polyfit's coefficients are those of
+ * u = (x - frame[0]) / frame[1]; after ft_polyderiv they are dp/du, and
+ * dp/dx is dp/du / frame[1] */
+static void
+polyderiv_unframe(double *coeffs, int degree, const double *frame)
+{
+    int k;
+    for (k = 0; k < degree; k++)
+        coeffs[k] /= frame[1];
+}
+
 void *
 cx_deriv(void *data, short int type, int length, int *newlength, short int *newtype, struct plot *pl, struct plot *newpl, int grouping)
 {
@@ -296,6 +308,7 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
         ngcomplex_t *c_outdata, *c_indata;
         double *r_coefs, *i_coefs;
         double *scale;
+        double r_frame[2] = {0.0, 1.0}, i_frame[2] = {0.0, 1.0};   /* Enhancement-890 */
 
         r_coefs = alloc_d(n);
         i_coefs = alloc_d(n);
@@ -330,11 +343,12 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
                 for (j = 0; j < n; j++)
                     spare[j] = c_indata[j + i - degree + base].cx_real;
                 if (!ft_polyfit(scale + i + base - degree,
-                  spare, r_coefs, degree, scratch))
+                  spare, r_coefs, degree, scratch, r_frame))
                 {
                     fprintf(stderr, "ft_polyfit @ %d failed\n", i);
                 }
                 ft_polyderiv(r_coefs, degree);
+                polyderiv_unframe(r_coefs, degree, r_frame);
 
                 /* for loop gets the beginning part */
                 /* Enhancement-277: `i + degree / 2` over-ran scale[]/c_outdata[]
@@ -344,25 +358,26 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
                 {
                     x = scale[j + base];
                     c_outdata[j + base].cx_real =
-                        ft_peval(x, r_coefs, degree - 1);
+                        ft_pevalf(x, r_frame, r_coefs, degree - 1);
                 }
 
                 /* imag */
                 for (j = 0; j < n; j++)                   /* Enhancement-277 */
                     spare[j] = c_indata[j + i - degree + base].cx_imag;
                 if (!ft_polyfit(scale + i - degree + base,
-                  spare, i_coefs, degree, scratch))
+                  spare, i_coefs, degree, scratch, i_frame))
                 {
                     fprintf(stderr, "ft_polyfit @ %d failed\n", i);
                 }
                 ft_polyderiv(i_coefs, degree);
+                polyderiv_unframe(i_coefs, degree, i_frame);
 
                 /* for loop gets the beginning part */
                 for (j = k; j <= i - degree / 2; j++)
                 {
                     x = scale[j + base];
                     c_outdata[j + base].cx_imag =
-                    ft_peval(x, i_coefs, degree - 1);
+                    ft_pevalf(x, i_frame, i_coefs, degree - 1);
                 }
                 k = j;
             }
@@ -376,9 +391,9 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
             {
                 x = scale[j];
                 /* real */
-                c_outdata[j].cx_real = ft_peval(x, r_coefs, degree - 1);
+                c_outdata[j].cx_real = ft_pevalf(x, r_frame, r_coefs, degree - 1);
                 /* imag */
-                c_outdata[j].cx_imag = ft_peval(x, i_coefs, degree - 1);
+                c_outdata[j].cx_imag = ft_pevalf(x, i_frame, i_coefs, degree - 1);
             }
         }
 
@@ -394,6 +409,7 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
     {
         /* all-real case */
         double *coefs;
+        double frame[2] = {0.0, 1.0};   /* Enhancement-890 */
 
         double *outdata, *indata;
         double *scale;
@@ -430,11 +446,12 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
             for (i = degree; i < grouping && i + base < length; i += 1)
             {
                 if (!ft_polyfit(scale + i - degree + base,
-                    indata + i - degree + base, coefs, degree, scratch))
+                    indata + i - degree + base, coefs, degree, scratch, frame))
                 {
                     fprintf(stderr, "ft_polyfit @ %d failed\n", i + base);
                 }
                 ft_polyderiv(coefs, degree);
+                polyderiv_unframe(coefs, degree, frame);
 
                 /* for loop gets the beginning part */
                 for (j = k; j <= i - degree / 2; j++)
@@ -450,7 +467,7 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
                     else
                         x = pl->pl_scale->v_realdata[j + base];           /* For real scale vector */
 
-                    outdata[j + base] = ft_peval(x, coefs, degree - 1);
+                    outdata[j + base] = ft_pevalf(x, frame, coefs, degree - 1);
                 }
                 k = j;
             }
@@ -463,7 +480,7 @@ cx_deriv(void *data, short int type, int length, int *newlength, short int *newt
                 else
                     x = pl->pl_scale->v_realdata[j];           /* For real scale vector */
 
-                outdata[j] = ft_peval(x, coefs, degree - 1);
+                outdata[j] = ft_pevalf(x, frame, coefs, degree - 1);
             }
         }
 
