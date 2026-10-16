@@ -13,7 +13,7 @@ ngspice:
 
 **Suites:**
 - [`convtest_examples`](../examples/convtest_examples/): checks [10] to [12] are new, 12 of 12 per
-  solver. On the E-894 binaries [10] fails under Sparse, and [10] and [11] under KLU.
+  solver. On the E-894 binaries [10] fails under both solvers.
 - `warmstart`, `failacct`, `linesearch`, `bsrcconv` and `oprobust` pass. These are the suites
   that move when Newton's phases or its guard change.
 - The full sweep: 591 of 591.
@@ -46,9 +46,17 @@ Three of its rows failed:
 - **The internal collector** is tied to two other nodes by 1000 S. A common step of 1e-10 V left
   1e-12 A of rounding in the differences, against a tolerance of 4.5e-13 A.
 
-Under KLU, E-894 found the operating point only through dynamic gmin stepping: 1,359 iterations,
-against E-888's 71 without an aid. Under Sparse every build needs the aid. E-888 takes 1,913
-iterations and E-894 2,758.
+On macOS under KLU, E-894 found the operating point only through dynamic gmin stepping: 1,359
+iterations, against E-888's 71 without an aid. Under Sparse every build needs the aid. E-888 takes
+1,913 iterations and E-894 2,758.
+
+Plain Newton on this deck is path-dependent, though, and the operating point is a poor test of the
+change:
+- With the deck's element values perturbed by 1e-15 to 1e-9 of themselves, E-888 itself needs
+  gmin stepping in 3 of 80 runs (40 decks, both solvers), even at `itl1=1000`.
+- With a `.nodeset` at the solution, E-894 converges without an aid too, in 8 to 348 iterations.
+- The first CI run of this change found linux-arm's E-895 taking the aid under KLU, where macOS
+  does not.
 
 ## The change
 
@@ -78,8 +86,9 @@ nodes.
 `convtest_examples`, new:
 - **[10]** The Gummel–Poon stage at `reltol=1e-9` runs its transient to the end. E-894: "Timestep
   too small" at 0.78 ps (KLU) or 0.057 ps (Sparse).
-- **[11]** The VBIC stage finds its operating point at E-888's value, 3.2037005189 V, and under KLU
-  without an aid, as E-888 does. E-894: through gmin stepping.
+- **[11]** The VBIC stage finds its operating point at E-888's value, 3.2037005189 V. Only the
+  value is asked, and the route is reported: whether plain Newton gets there depends on the
+  rounding (above). E-894 passes it, through gmin stepping.
 - **[12]** A control: [1]'s diode between two 100 V nodes still converges off at `reltol=1e-9`.
   A junction that moves by more than `vntol` is still a step to the device tests.
 
@@ -87,8 +96,9 @@ E-889's checks [1] to [9] pass unchanged.
 
 With the change:
 - Seed 2 runs to 209 ns in E-888's 53 008 points.
-- The VBIC converges in 71 iterations under KLU, E-888's count, to E-888's value. Under Sparse it
-  takes 1,913, E-888's count.
+- The VBIC converges in 71 iterations on macOS under KLU, E-888's count, to E-888's value. Under
+  Sparse it takes 1,913, E-888's count. Across the 80 perturbed runs E-895 matches E-888's route
+  in 79, and in the 80th both need gmin stepping.
 
 ## Cost
 

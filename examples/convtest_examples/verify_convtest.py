@@ -38,9 +38,12 @@ tight tolerance E-889's tests asked for less change than the solve resolves.
        Sparse -- the emitter's rounding at the circuit's volts, times the base
        current's capacitive conductance)
   [11] a VBIC 1.3 stage (the corpus model, compiled) finds its operating point
-       at reltol 1e-9 at E-888's value 3.2037005189 V, under KLU without a
-       convergence aid, as E-888 (E-894 needs gmin stepping; under Sparse E-888
-       needs it too)
+       at reltol 1e-9 at E-888's value 3.2037005189 V (E-894 on macOS under KLU:
+       through 1,359 iterations of gmin stepping, against 71 plain ones). Only
+       the value is asked: plain Newton on this deck is path-dependent. With
+       its element values perturbed by 1e-15 to 1e-9 of themselves, E-888 itself
+       needs the aid in 3 of 80 runs (40 decks, both solvers) even at
+       itl1=1000, and on linux-arm E-895 needs it under KLU where macOS does not
   [12] (control) [1]'s diode converges off at reltol 1e-9 too: what is no step
        to the node test is still a step to the device tests above vntol
 
@@ -298,13 +301,12 @@ print v(c)
 """
 out = run("vbic", VB)
 vc = num(out, "v(c)")
-# under Sparse this deck takes gmin stepping on E-888 too (1913 iterations, the
-# same value): the aid is asked of KLU only, where E-888 needs none
-solver = os.environ.get("_NG_SOLVER") or os.environ.get("NGSPICE_SOLVER") or "sparse"
-aided = "stepping" in out or "failed" in out
-check("[11] a VBIC 1.3 stage finds its operating point at reltol 1e-9, at E-888's value (KLU: without an aid)",
-      vc is not None and abs(vc - 3.2037005189) < 1e-9 and (solver != "klu" or not aided),
-      f"v(c) {vc}" + (", through an aid" if aided else "") + f", {solver}")
+# whether plain Newton gets there is path-dependent (see [11] above), so the
+# route is reported, not asked
+aided = "stepping" in out
+check("[11] a VBIC 1.3 stage finds its operating point at reltol 1e-9, at E-888's value",
+      vc is not None and abs(vc - 3.2037005189) < 1e-9,
+      f"v(c) {vc}" + (", through gmin stepping" if aided else ""))
 
 out = run("dio_tight", HIGH.replace(".control", ".option reltol=1e-9 abstol=1e-15 vntol=1e-12\n.control", 1)
           % ("a diode", "d1 4 3 dm\n.model dm d is=1e-14", ""))

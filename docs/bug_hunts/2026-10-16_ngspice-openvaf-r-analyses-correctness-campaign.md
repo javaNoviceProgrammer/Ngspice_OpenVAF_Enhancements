@@ -87,9 +87,11 @@ solve can resolve:
   - Newton never converged, the step shrank to 6e-24 s, and the run ended "Timestep too small" at
     t = 0.78 ps (KLU; 0.057 ps under Sparse).
   - E-888 ran it to the end (53 008 points).
-- **A compiled VBIC's operating point** at `reltol=1e-9` (seed 4). Under KLU, E-894 reached it only
-  through dynamic gmin stepping, in 1,359 iterations; E-888 converged in 71 without an aid. Under
-  Sparse every build takes the aid: E-888 1,913 iterations, E-894 2,758. Three rows failed:
+- **A compiled VBIC's operating point** at `reltol=1e-9` (seed 4). On macOS under KLU, E-894 reached
+  it only through dynamic gmin stepping, in 1,359 iterations; E-888 converged in 71 without an aid.
+  Under Sparse every build takes the aid: E-888 1,913 iterations, E-894 2,758. Plain Newton on this
+  deck is path-dependent, so the route varies with rounding: E-888 itself takes the aid in 3 of 80
+  runs with the element values perturbed by 1e-15 to 1e-9. Three rows failed:
   - an internal base node bouncing 6e-14 V through `rbx`'s 0.1 S;
   - the thermal row (watts), judged against the user's `abstol` of 1e-15, which is a current;
   - the internal collector, tied by 1000 S to two nodes. A common step of 1e-10 V left 1e-12 A of

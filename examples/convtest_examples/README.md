@@ -32,8 +32,9 @@ circuit's scale, as no step. A Verilog-A row is also granted the rounding of the
 
 - **[10]** A Gummel–Poon common-emitter stage at `reltol=1e-9` runs its transient to the end.
 - **[11]** A VBIC 1.3 stage (the corpus model, compiled) finds its operating point at `reltol=1e-9`,
-  at E-888's value. Under KLU it needs no convergence aid, as on E-888.
+  at E-888's value. Only the value is asked: whether plain Newton gets there, or gmin stepping,
+  depends on the rounding, on E-888 too.
 - **[12]** (control) [1]'s diode converges off at `reltol=1e-9` too.
 
 Run: `python3 verify_convtest.py` (12 checks per solver). On the E-888 binaries [1] to [6] and [8]
-fail. On the E-894 binaries [10] fails, and [11] too under KLU.
+fail. On the E-894 binaries [10] fails.
