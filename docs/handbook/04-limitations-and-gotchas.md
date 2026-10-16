@@ -525,6 +525,14 @@ scripting ngspice:
   oscillator takes 14 % more Newton iterations since
   [E-889](../../enhancements_doc/Enhancement-889.md), and 500 random diode, BJT
   and MOSFET networks 1 % more.
+- **A tight `reltol` needs a tight `vntol`.** The device tests count a step no
+  larger than `vntol` (or `abstol`), or than the rounding at the circuit's
+  largest voltage, as no step
+  ([E-895](../../enhancements_doc/Enhancement-895.md); at `reltol=1e-9`
+  E-889 asked for less than the solve resolves, and a Gummel–Poon stage's
+  transient ended "Timestep too small"). At `reltol=1e-9` with the default
+  `vntol` of 1 µV, a junction may still move 1 µV in the last step, 4e-5 of
+  its current: set `vntol=1e-12` with it.
 - **`polydegree` and `dpolydegree`** above 2 were unusable late in a long
   run: the local fit was made in the absolute time, and `deriv` at
   `dpolydegree=3` read 3e20 times the derivative after 500 ms. Since

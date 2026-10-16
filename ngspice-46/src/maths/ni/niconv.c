@@ -111,28 +111,66 @@ NIconvTest(CKTcircuit *ckt)
      * reason -- and MODEINITFLOAT always follows to confirm the point.
      *
      * What they see is the new solution with every unknown that moved by no
-     * more than its own rounding (64 eps of it) held at the load point: a
-     * step of that size is the solve's noise, not Newton's. Without it an
-     * npn whose base an ideal source forward-biased by 2 V -- its collector
-     * current the near-cancelling difference of two 1e13 A transport
-     * currents -- predicted a 0.013 A change from a one-ulp move of vbe
-     * against a tolerance of 1e-5 A, and never converged. 64 eps of a node
-     * voltage moves a junction's current by under 1e-10 of itself, so no
-     * real step is hidden. CKTrhsSpare is scratch between the solve and the
+     * more than its rounding held at the load point: a step of that size is
+     * the solve's noise, not Newton's. Without it an npn whose base an ideal
+     * source forward-biased by 2 V -- its collector current the
+     * near-cancelling difference of two 1e13 A transport currents --
+     * predicted a 0.013 A change from a one-ulp move of vbe against a
+     * tolerance of 1e-5 A, and never converged.
+     *
+     * An unknown has not moved when it moved by no more than the absolute
+     * tolerance the node test grants it (vntol, abstol, or its nature's) or
+     * 64 eps of the largest unknown of its kind (the E-869 guard's scale: the
+     * solve resolves every node voltage to the circuit's volts, not to the
+     * node's own). Measured on the node's own value alone (E-889), an
+     * emitter at 20 mV in a 5.8 V circuit moved 1.5e-15 V each iteration,
+     * 350 of its own ulps, and the base current's capacitive conductance at
+     * a 26 fs step made that 16 times its tolerance; a compiled VBIC's
+     * internal base node bounced 6e-14 V through its 10 ohm rbx. At reltol
+     * 1e-9 the one ended "Timestep too small", and the other reached its
+     * operating point through 1,359 iterations of dynamic gmin stepping
+     * instead of 71 plain ones. A step the node test calls no step cannot be
+     * asked to move a current by less, and what the device tests exist for
+     * -- a junction moving 26 mV between two 100 V nodes -- is many decades
+     * above both floors. CKTrhsSpare is scratch between the solve and the
      * swap. */
     if (ckt->CKTmode & MODEINITFIX)
         return(0);
     {
         double *loaded = ckt->CKTrhsOld, *solved = ckt->CKTrhs;
         double *seen = ckt->CKTrhsSpare ? ckt->CKTrhsSpare : solved;
-        for (i = 1; i <= size && seen != solved; i++) {
+        double vscale = 0.0, iscale = 0.0;   /* the largest unknown of each kind */
+        CKTnode *nd;
+        for (nd = ckt->CKTnodes->next, i = 1; nd && i <= size; nd = nd->next, i++) {
+            double m = MAX(fabs(solved[i]), fabs(loaded[i]));
+            if (nd->type == SP_VOLTAGE)
+                vscale = MAX(vscale, m);
+            else
+                iscale = MAX(iscale, m);
+        }
+        for (nd = ckt->CKTnodes->next, i = 1; i <= size && seen != solved; i++) {
             double d = solved[i] - loaded[i];
-            seen[i] = (fabs(d) <= 64.0 * DBL_EPSILON *
-                       MAX(fabs(solved[i]), fabs(loaded[i])))
+            double scale = MAX(fabs(solved[i]), fabs(loaded[i]));
+            double floor_abs = 0.0;
+            if (nd) {
+                if (nd->type == SP_VOLTAGE) {
+                    scale = MAX(scale, vscale);
+                    floor_abs = (nd->natabstol > 0.0 && !(ckt->CKTtolGiven & ERRP_VNTOL))
+                        ? nd->natabstol : ckt->CKTvoltTol;
+                } else {
+                    scale = MAX(scale, iscale);
+                    floor_abs = (nd->natabstol > 0.0 && !(ckt->CKTtolGiven & ERRP_ABSTOL))
+                        ? nd->natabstol : ckt->CKTabstol;
+                }
+                nd = nd->next;
+            }
+            seen[i] = (fabs(d) <= MAX(64.0 * DBL_EPSILON * scale, floor_abs))
                 ? loaded[i] : solved[i];
         }
         seen[0] = 0.0;
         ckt->CKTconvLoaded = loaded;    /* OSDIconvTest's load point */
+        ckt->CKTconvScale[0] = vscale;  /* and its rounding scales */
+        ckt->CKTconvScale[1] = iscale;
         ckt->CKTrhsOld = ckt->CKTrhs = seen;
         i = CKTconvTest(ckt);
         ckt->CKTrhsOld = loaded;

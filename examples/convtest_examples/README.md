@@ -1,4 +1,4 @@
-# convtest_examples — Enhancement-889
+# convtest_examples — Enhancements 889 and 895
 
 [E-889](../../enhancements_doc/Enhancement-889.md): F1 of the
 [nonlinear correctness campaign of 2026-10-15](../../docs/bug_hunts/2026-10-15_ngspice-openvaf-r-nonlinear-correctness-campaign.md).
@@ -24,5 +24,16 @@ The checks:
 - **[9]** A closed Verilog-A switch between two 100 V nodes (`ctsw.va`) converges in at most 10
   iterations.
 
-Run: `python3 verify_convtest.py` (9 checks per solver). On the E-888 binaries [1] to [6] and [8]
-fail.
+[E-895](../../enhancements_doc/Enhancement-895.md): F1 of the
+[analyses correctness campaign of 2026-10-16](../../docs/bug_hunts/2026-10-16_ngspice-openvaf-r-analyses-correctness-campaign.md).
+At tight tolerance E-889's tests asked a device for less change than the solve resolves. They now
+count a step no larger than the node test's absolute tolerance, or than the rounding at the
+circuit's scale, as no step. A Verilog-A row is also granted the rounding of the terms it sums.
+
+- **[10]** A Gummel–Poon common-emitter stage at `reltol=1e-9` runs its transient to the end.
+- **[11]** A VBIC 1.3 stage (the corpus model, compiled) finds its operating point at `reltol=1e-9`,
+  at E-888's value. Under KLU it needs no convergence aid, as on E-888.
+- **[12]** (control) [1]'s diode converges off at `reltol=1e-9` too.
+
+Run: `python3 verify_convtest.py` (12 checks per solver). On the E-888 binaries [1] to [6] and [8]
+fail. On the E-894 binaries [10] fails, and [11] too under KLU.

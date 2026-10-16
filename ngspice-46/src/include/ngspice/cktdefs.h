@@ -229,6 +229,9 @@ struct CKTcircuit {
                                    point the devices were loaded at (CKTrhsOld
                                    then points at the new solution); NULL
                                    otherwise */
+    double CKTconvScale[2];     /* and the largest voltage and the largest
+                                   current unknown of that solution
+                                   (Enhancement-895) */
     double *CKTirhs;            /* current rhs value - being loaded
                                    (imag) */
     double *CKTirhsOld;         /* previous rhs value (imaginary)*/

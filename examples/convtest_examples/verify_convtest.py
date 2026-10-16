@@ -31,6 +31,19 @@ node moved more than reltol of its voltage in a step -- 0.1 V at 100 V.
   [9] a closed Verilog-A switch between two 100 V nodes converges in at most
       10 iterations
 
+Enhancement-895 (F1 of the analyses correctness campaign of 2026-10-16): at
+tight tolerance E-889's tests asked for less change than the solve resolves.
+  [10] a Gummel-Poon common-emitter stage at reltol 1e-9 runs its transient to
+       the end (E-894: "Timestep too small" at 0.78 ps under KLU, 0.057 ps under
+       Sparse -- the emitter's rounding at the circuit's volts, times the base
+       current's capacitive conductance)
+  [11] a VBIC 1.3 stage (the corpus model, compiled) finds its operating point
+       at reltol 1e-9 at E-888's value 3.2037005189 V, under KLU without a
+       convergence aid, as E-888 (E-894 needs gmin stepping; under Sparse E-888
+       needs it too)
+  [12] (control) [1]'s diode converges off at reltol 1e-9 too: what is no step
+       to the node test is still a step to the device tests above vntol
+
 Exit code 0 = pass.
 """
 import os
@@ -235,6 +248,69 @@ out = run("sw", SW)
 vbc, it = num(out, "vbc"), iters(out)
 check("[9] a closed Verilog-A switch between two 100 V nodes converges in at most 10 iterations",
       vbc is not None and abs(vbc) < 1e-9 and it is not None and it <= 10, f"vbc {vbc}, {it} iterations")
+
+# ---- Enhancement-895 ---------------------------------------------------------
+ROOT = os.path.dirname(os.path.dirname(HERE))
+VBIC = os.path.join(ROOT, "VA_TEST", "VA-Models-main", "code", "vbic", "vacode", "vbic_1p3.va")
+
+GP = """* Family A seed 2: a Gummel-Poon common-emitter stage at reltol 1e-9
+vcc vcc 0 5.8434824611780485
+rc vcc c 2007.236999514315
+vin in 0 dc 0.7273516778044851 sin(0.7273516778044851 0.002 200518396.7312673)
+rb in b 14.78236734262338
+cl c 0 2.3843771233870133e-13
+re e 0 127.04424118374241
+q1 c b e qm
+.model qm npn is=2.0812690021095551e-16 bf=55.360166260455564 br=3.72498473997065 vaf=99.97750367562153 cje=4.3498205241086606e-13 cjc=2.0121921164692508e-13 tf=1.9514892088522343e-10 tr=3.22899559882535e-09 rb=43.485426597117886
+.option reltol=1e-9 abstol=1e-15 vntol=1e-12 chgtol=1e-20
+.control
+set numdgt=12
+tran 4.9870735867701445e-12 2.0945709064434607e-07 0 4.9870735867701445e-12
+let tend = time[length(time)-1]
+print tend
+.endc
+.end
+"""
+out = run("gp", GP)
+tend = num(out, "tend")
+check("[10] a Gummel-Poon stage at reltol 1e-9 runs its transient to the end",
+      tend is not None and abs(tend / 2.0945709064434607e-07 - 1) < 1e-9 and "too small" not in out,
+      f"ends at {tend}" + (", timestep too small" if "too small" in out else ""))
+
+vbic_osdi = os.path.join(WORK, "vbic.osdi")
+r = subprocess.run([OPENVAF, VBIC, "-o", vbic_osdi], capture_output=True, text=True, timeout=600)
+VB = """* Family A seed 4: a VBIC 1.3 common-emitter stage at reltol 1e-9
+vcc vcc 0 3.3094981026921473
+rc vcc c 239.782848347202
+vin in 0 dc 0.7714875715393885
+rb in b 20.41477236129325
+re e 0 40.0300858700502
+n1 c b e 0 qv
+.model qv vbic13_4t is=1e-16 ibei=1e-18 cje=1e-12 cjc=5e-13 tf=2e-11 re=1 rcx=10 rbx=10
+.option reltol=1e-9 abstol=1e-15 vntol=1e-12 chgtol=1e-20
+.control
+pre_osdi vbic.osdi
+set numdgt=12
+op
+print v(c)
+.endc
+.end
+"""
+out = run("vbic", VB)
+vc = num(out, "v(c)")
+# under Sparse this deck takes gmin stepping on E-888 too (1913 iterations, the
+# same value): the aid is asked of KLU only, where E-888 needs none
+solver = os.environ.get("_NG_SOLVER") or os.environ.get("NGSPICE_SOLVER") or "sparse"
+aided = "stepping" in out or "failed" in out
+check("[11] a VBIC 1.3 stage finds its operating point at reltol 1e-9, at E-888's value (KLU: without an aid)",
+      vc is not None and abs(vc - 3.2037005189) < 1e-9 and (solver != "klu" or not aided),
+      f"v(c) {vc}" + (", through an aid" if aided else "") + f", {solver}")
+
+out = run("dio_tight", HIGH.replace(".control", ".option reltol=1e-9 abstol=1e-15 vntol=1e-12\n.control", 1)
+          % ("a diode", "d1 4 3 dm\n.model dm d is=1e-14", ""))
+vd = num(out, "vd")
+check("[12] (control) the 100 V diode converges off at reltol 1e-9 too",
+      vd is not None and abs(vd) < 1e-6, f"vd {vd}")
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

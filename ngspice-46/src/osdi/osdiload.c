@@ -35,6 +35,7 @@ int CKTvaInitErrRaised = 0;
 #include "ngspice/randnumb.h"  /* Enhancement-832: ng_seed_generation */
 #include "ngspice/optdefs.h"   /* Enhancement-889: ERRP_ABSTOL */
 
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -2474,9 +2475,15 @@ int OSDIfinalStep(CKTcircuit *ckt) {
  * against the instance's largest terminal current, as the built-in diode
  * judges its junction behind the series resistance by the junction current.
  * x_new is the solution as NIconvTest shows it, with the unknowns that moved
- * by no more than their own rounding held at the load point -- a closed
- * switch between two 100 V nodes would otherwise predict picoamps from the
- * last bits of its voltages for ever. Rows whose device nodes merge into one
+ * by no more than their rounding or their absolute tolerance held at the
+ * load point. A row's predicted change is also granted the rounding of the
+ * terms it sums, 64 eps of sum_j |J_rj| s_j, s_j the largest unknown of j's
+ * kind (Enhancement-895): nodes that move together through large
+ * conductances leave the rounding of their DIFFERENCES behind, and a compiled
+ * VBIC's internal collector, tied to two others by 1000 S, predicted 1e-12 A
+ * from a common step of 1e-10 V against a tolerance of 4.5e-13 A, and
+ * reltol 1e-9 reached its operating point only through 1,359 iterations of
+ * dynamic gmin stepping. Rows whose device nodes merge into one
  * circuit node (a collapsed internal node) are judged as that one row. */
 int OSDIconvTest(GENmodel *inModel, CKTcircuit *ckt) {
   static double *jac;          /* the packed resistive Jacobian of one instance */
@@ -2487,7 +2494,7 @@ int OSDIconvTest(GENmodel *inModel, CKTcircuit *ckt) {
   static bool *node_nonlin;    /* per device node: its row has a non-constant entry */
   static uint32_t node_cap;
   static uint32_t *slot_row;
-  static double *slot_i, *slot_di, *slot_tol;
+  static double *slot_i, *slot_di, *slot_tol, *slot_round;
   static bool *slot_nonlin, *slot_term, *slot_nat;
 
   OsdiRegistryEntry *entry = osdi_reg_entry_model(inModel);
@@ -2516,6 +2523,7 @@ int OSDIconvTest(GENmodel *inModel, CKTcircuit *ckt) {
     slot_i = TREALLOC(double, slot_i, nn);
     slot_di = TREALLOC(double, slot_di, nn);
     slot_tol = TREALLOC(double, slot_tol, nn);
+    slot_round = TREALLOC(double, slot_round, nn);
     slot_nonlin = TREALLOC(bool, slot_nonlin, nn);
     slot_term = TREALLOC(bool, slot_term, nn);
     slot_nat = TREALLOC(bool, slot_nat, nn);
@@ -2542,18 +2550,21 @@ int OSDIconvTest(GENmodel *inModel, CKTcircuit *ckt) {
       return OK;
   }
 
-  /* per device node, once per call: the abstol of the residual's nature
-   * (the user's `abstol` wins, as NIconvTest lets `vntol` win over a
-   * nature's), and whether it is the nature the terminals balance */
+  /* per device node, once per call: whether its residual is of the nature
+   * the terminals balance, and that nature's abstol -- the user's `abstol`
+   * wins there, as NIconvTest lets `vntol` win over a nature's, but it is a
+   * current: a thermal row is a power and keeps its nature's (1e-9 W in the
+   * standard disciplines), not 1e-15 A read as watts */
   for (i = 0; i < nn; i++) {
-    double t = user_abstol ? 0.0 : osdi_residual_abstol(entry, i);
-    node_tol[i] = (t > 0.0) ? t : ckt->CKTabstol;
+    double t;
     node_term_nat[i] = true;
     if (descr->residual_nature && nt > 0) {
       const OsdiNatureRef *a = &descr->residual_nature[i];
       const OsdiNatureRef *b = &descr->residual_nature[0];
       node_term_nat[i] = a->ref_type == b->ref_type && a->index == b->index;
     }
+    t = (user_abstol && node_term_nat[i]) ? 0.0 : osdi_residual_abstol(entry, i);
+    node_tol[i] = (t > 0.0) ? t : ckt->CKTabstol;
   }
 
   for (GENmodel *gen_model = inModel; gen_model;
@@ -2585,7 +2596,7 @@ int OSDIconvTest(GENmodel *inModel, CKTcircuit *ckt) {
             break;
         if (k == nslot) {
           slot_row[k] = g;
-          slot_i[k] = slot_di[k] = 0.0;
+          slot_i[k] = slot_di[k] = slot_round[k] = 0.0;
           slot_tol[k] = node_tol[i];
           slot_nonlin[k] = slot_term[k] = false;
           slot_nat[k] = node_term_nat[i];
@@ -2619,8 +2630,13 @@ int OSDIconvTest(GENmodel *inModel, CKTcircuit *ckt) {
           continue;
         g2 = (descr->jacobian_entries[e].nodes.node_2 < nn)
                  ? nm[descr->jacobian_entries[e].nodes.node_2] : 0;
-        if (g2 != 0)
+        if (g2 != 0) {
+          uint32_t n2 = descr->jacobian_entries[e].nodes.node_2;
           slot_di[s] += v * (x_new[g2] - x_old[g2]);
+          slot_round[s] += fabs(v) * fmax(fmax(fabs(x_new[g2]), fabs(x_old[g2])),
+                                          descr->nodes[n2].is_flow ? ckt->CKTconvScale[1]
+                                                                   : ckt->CKTconvScale[0]);
+        }
       }
 
       for (k = 0; k < nslot; k++)
@@ -2635,7 +2651,7 @@ int OSDIconvTest(GENmodel *inModel, CKTcircuit *ckt) {
         scale = fmax(fabs(slot_i[k]), fabs(slot_i[k] + slot_di[k]));
         if (!slot_term[k] && slot_nat[k] && scale_term > scale)
           scale = scale_term;
-        tol = ckt->CKTreltol * scale + slot_tol[k];
+        tol = ckt->CKTreltol * scale + slot_tol[k] + 64.0 * DBL_EPSILON * slot_round[k];
         if (!(fabs(slot_di[k]) <= tol)) {   /* a NaN fails too */
           ckt->CKTnoncon++;
           ckt->CKTtroubleElt = gen_inst;
