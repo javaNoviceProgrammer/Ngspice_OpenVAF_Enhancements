@@ -88,7 +88,6 @@ SOI3bindCSC (GENmodel *inModel, CKTcircuit *ckt)
                     CREATE_KLU_BINDING_TABLE(SOI3TOUT4_tout3Ptr, SOI3TOUT4_tout3Binding, SOI3tout4Node, SOI3tout3Node);
                     CREATE_KLU_BINDING_TABLE(SOI3TOUT4_tout4Ptr, SOI3TOUT4_tout4Binding, SOI3tout4Node, SOI3tout4Node);
                 }
-                CREATE_KLU_BINDING_TABLE(SOI3TOUT_toutPtr, SOI3TOUT_toutBinding, SOI3toutNode, SOI3toutNode);
                 CREATE_KLU_BINDING_TABLE(SOI3TOUT_gfPtr, SOI3TOUT_gfBinding, SOI3toutNode, SOI3gfNode);
                 CREATE_KLU_BINDING_TABLE(SOI3TOUT_gbPtr, SOI3TOUT_gbBinding, SOI3toutNode, SOI3gbNode);
                 CREATE_KLU_BINDING_TABLE(SOI3TOUT_dpPtr, SOI3TOUT_dpBinding, SOI3toutNode, SOI3dNodePrime);
@@ -183,7 +182,6 @@ SOI3bindCSCComplex (GENmodel *inModel, CKTcircuit *ckt)
                     CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(SOI3TOUT4_tout3Ptr, SOI3TOUT4_tout3Binding, SOI3tout4Node, SOI3tout3Node);
                     CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(SOI3TOUT4_tout4Ptr, SOI3TOUT4_tout4Binding, SOI3tout4Node, SOI3tout4Node);
                 }
-                CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(SOI3TOUT_toutPtr, SOI3TOUT_toutBinding, SOI3toutNode, SOI3toutNode);
                 CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(SOI3TOUT_gfPtr, SOI3TOUT_gfBinding, SOI3toutNode, SOI3gfNode);
                 CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(SOI3TOUT_gbPtr, SOI3TOUT_gbBinding, SOI3toutNode, SOI3gbNode);
                 CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(SOI3TOUT_dpPtr, SOI3TOUT_dpBinding, SOI3toutNode, SOI3dNodePrime);
@@ -278,7 +276,6 @@ SOI3bindCSCComplexToReal (GENmodel *inModel, CKTcircuit *ckt)
                     CONVERT_KLU_BINDING_TABLE_TO_REAL(SOI3TOUT4_tout3Ptr, SOI3TOUT4_tout3Binding, SOI3tout4Node, SOI3tout3Node);
                     CONVERT_KLU_BINDING_TABLE_TO_REAL(SOI3TOUT4_tout4Ptr, SOI3TOUT4_tout4Binding, SOI3tout4Node, SOI3tout4Node);
                 }
-                CONVERT_KLU_BINDING_TABLE_TO_REAL(SOI3TOUT_toutPtr, SOI3TOUT_toutBinding, SOI3toutNode, SOI3toutNode);
                 CONVERT_KLU_BINDING_TABLE_TO_REAL(SOI3TOUT_gfPtr, SOI3TOUT_gfBinding, SOI3toutNode, SOI3gfNode);
                 CONVERT_KLU_BINDING_TABLE_TO_REAL(SOI3TOUT_gbPtr, SOI3TOUT_gbBinding, SOI3toutNode, SOI3gbNode);
                 CONVERT_KLU_BINDING_TABLE_TO_REAL(SOI3TOUT_dpPtr, SOI3TOUT_dpBinding, SOI3toutNode, SOI3dNodePrime);

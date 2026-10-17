@@ -74,12 +74,19 @@ HICUMconvTest(GENmodel *inModel, CKTcircuit *ckt)
             Vbbp  = model->HICUMtype*(
                    *(ckt->CKTrhsOld+here->HICUMbaseNode)-
                    *(ckt->CKTrhsOld+here->HICUMbaseBPNode));
+            /* Veie and Vrth as HICUMload forms and stores them. Veie read e - ei,
+             * the reverse of the stored ei - e, so with re given and flsh=2 every
+             * step predicted 4 Veie^2/re of power that was not there, and once
+             * E-889 made the tests decide no operating point converged
+             * (Enhancement-899, which also gives ibpbihat its own term and
+             * ibpcihat its own voltage); and a pnp's thermal node read as -Vrth
+             * (Enhancement-898). */
             Veie  = model->HICUMtype*(
-                   *(ckt->CKTrhsOld+here->HICUMemitNode)-
-                   *(ckt->CKTrhsOld+here->HICUMemitEINode));
+                   *(ckt->CKTrhsOld+here->HICUMemitEINode)-
+                   *(ckt->CKTrhsOld+here->HICUMemitNode));
             Vxf   = *(ckt->CKTrhsOld+here->HICUMxfNode);
  
-            Vrth  = model->HICUMtype*(*(ckt->CKTrhsOld+here->HICUMtempNode));
+            Vrth  = *(ckt->CKTrhsOld+here->HICUMtempNode);
 
             delvrth  = Vrth  - *(ckt->CKTstate0 + here->HICUMvrth);
             delvbiei = Vbiei - *(ckt->CKTstate0 + here->HICUMvbiei);
@@ -112,12 +119,13 @@ HICUMconvTest(GENmodel *inModel, CKTcircuit *ckt)
                        *(ckt->CKTstate0 + here->HICUMibpei_Vrth)*delvrth+
                        *(ckt->CKTstate0 + here->HICUMibpei_Vbpei)*delvbpei;
             ibpbihat = *(ckt->CKTstate0 + here->HICUMibpbi) +
+                       *(ckt->CKTstate0 + here->HICUMibpbi_Vbpbi)*delvbpbi +
                        *(ckt->CKTstate0 + here->HICUMibpbi_Vbiei)*delvbiei +
                        *(ckt->CKTstate0 + here->HICUMibpbi_Vrth)*delvrth +
                        *(ckt->CKTstate0 + here->HICUMibpbi_Vbici)*delvbici;
             ibpcihat = *(ckt->CKTstate0 + here->HICUMibpci) +
                        *(ckt->CKTstate0 + here->HICUMibpci_Vrth)*delvrth+
-                       *(ckt->CKTstate0 + here->HICUMibpci_Vbpci)*delvbici;
+                       *(ckt->CKTstate0 + here->HICUMibpci_Vbpci)*delvbpci;   /* was delvbici */
             ibpsihat = *(ckt->CKTstate0 + here->HICUMibpsi) +
                        *(ckt->CKTstate0 + here->HICUMibpsi_Vbpci)*delvbpci +
                        *(ckt->CKTstate0 + here->HICUMibpsi_Vrth)*delvrth +

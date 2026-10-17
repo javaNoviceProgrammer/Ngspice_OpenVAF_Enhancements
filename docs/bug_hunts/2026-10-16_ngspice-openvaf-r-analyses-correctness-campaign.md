@@ -54,7 +54,7 @@ with today's openvaf-r. The harnesses are throwaway scripts in the session scrat
 | | Finding | Severity |
 |---|---|---|
 | [F1](#f1) | **regression (E-889):** the device convergence tests demanded more than the solve can resolve. At `reltol=1e-9` a Gummel–Poon stage's transient ended "Timestep too small", and a compiled VBIC's operating point needed 1,359 iterations of gmin stepping under KLU; E-888 ran both, the VBIC in 71 plain iterations. *(fixed in [E-895](../../enhancements_doc/Enhancement-895.md))* | high |
-| [F2](#f2) | **small-signal:** the built-in HICUM's Jacobian disagrees with its own currents: `ac` at 1 Hz is 2.1 % off the dc finite difference when `t0` is 0 (its default), 0.1 % with `rbi0` > 0; `noise`, `pz` and `.sp` stamp the same matrix | high |
+| [F2](#f2) | **small-signal:** the built-in HICUM's Jacobian disagrees with its own currents: `ac` at 1 Hz is 2.1 % off the dc finite difference when `t0` is 0 (its default), 0.1 % with `rbi0` > 0; `noise`, `pz` and `.sp` stamp the same matrix. *(fixed in [E-896](../../enhancements_doc/Enhancement-896.md); the dig found E-897 to E-899: two value bugs, a pnp that never simulated, and self-heating crashes)* | high |
 | [F3](#f3) | **distortion:** `.disto` returns exact zeros for every device without a distortion routine (BSIM2 to 4, the SOI models, HiSIM, VBIC, HICUM, …), without a word: a BSIM4 stage reports no distortion at all | high |
 | [F4](#f4) | **distortion:** the built-in BJT's `.disto` is wrong with base resistance `rb` (2nd harmonic 45 % off, at 1 kHz too) and with reverse transit time `tr` (74 % at 10 MHz) | high |
 | [F5](#f5) | **transmission line:** TXL has no AC model and acts as one without saying so: its input sees the characteristic impedance to ground, and nothing reaches the output | high |
@@ -113,6 +113,25 @@ solve can resolve:
 
 <a id="f2"></a>
 ## F2 — the built-in HICUM's Jacobian disagrees with its currents
+
+*(fixed in [E-896](../../enhancements_doc/Enhancement-896.md): the low-injection `Q_0` derivative
+seed read `Q_0*Vbiei`, and `rbi`'s derivatives left out `Qjci` and `ibei`. Digging further, 200
+random cards over every feature group and a pnp mirror of each found more, in the same port:
+- [E-896](../../enhancements_doc/Enhancement-896.md) also covers the tunnelling derivatives, and
+  a matrix pointer bound twice for KLU, in HICUM and in SOI3.
+- [E-897](../../enhancements_doc/Enhancement-897.md): two currents, not derivatives. Lateral
+  spreading lost the `vcbar` drop, and the substrate current was 6.3 times low at the default
+  `flcomp`.
+- [E-898](../../enhancements_doc/Enhancement-898.md): a pnp never simulated. The device type
+  was applied twice to the voltages and the currents, and never to the thermal and NQS
+  couplings.
+- [E-899](../../enhancements_doc/Enhancement-899.md): a self-heating device ended ngspice at the
+  second analysis of a small circuit. The temperature clip overflowed to NaN below −99 °C. The
+  convergence test's `Veie` slip became, through E-889, a lost operating point. The junction
+  start put amperes through the device.
+
+Left open: two of the 200 cards keep a 4e-5 and 1e-4 gap between `ac` and the dc derivative,
+and one finds no operating point, as on E-888.)*
 
 At 1 Hz, `ac` should give the derivative of the dc solution. In Family A seed 5 (a common-emitter
 stage, built-in HICUM, `level=8`), the collector's `ac` gain is −41.2271. The finite difference of

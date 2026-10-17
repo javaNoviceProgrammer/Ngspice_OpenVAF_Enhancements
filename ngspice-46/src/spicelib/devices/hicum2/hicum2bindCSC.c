@@ -122,7 +122,6 @@ HICUMbindCSC (GENmodel *inModel, CKTcircuit *ckt)
                 CREATE_KLU_BINDING_TABLE(HICUMemitEItempPtr, HICUMemitEItempBinding, HICUMemitEINode, HICUMtempNode);
                 CREATE_KLU_BINDING_TABLE(HICUMsubsSItempPtr, HICUMsubsSItempBinding, HICUMsubsSINode, HICUMtempNode);
                 CREATE_KLU_BINDING_TABLE(HICUMsubsTempPtr, HICUMsubsTempBinding, HICUMsubsNode, HICUMtempNode);
-                CREATE_KLU_BINDING_TABLE(HICUMcollTempPtr, HICUMcollTempBinding, HICUMcollNode, HICUMtempNode);
 
                 CREATE_KLU_BINDING_TABLE(HICUMtempCollPtr, HICUMtempCollBinding, HICUMtempNode, HICUMcollNode);
                 CREATE_KLU_BINDING_TABLE(HICUMtempBasePtr, HICUMtempBaseBinding, HICUMtempNode, HICUMbaseNode);
@@ -259,7 +258,6 @@ HICUMbindCSCComplex (GENmodel *inModel, CKTcircuit *ckt)
                 CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(HICUMemitEItempPtr, HICUMemitEItempBinding, HICUMemitEINode, HICUMtempNode);
                 CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(HICUMsubsSItempPtr, HICUMsubsSItempBinding, HICUMsubsSINode, HICUMtempNode);
                 CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(HICUMsubsTempPtr, HICUMsubsTempBinding, HICUMsubsNode, HICUMtempNode);
-                CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(HICUMcollTempPtr, HICUMcollTempBinding, HICUMcollNode, HICUMtempNode);
 
                 CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(HICUMtempCollPtr, HICUMtempCollBinding, HICUMtempNode, HICUMcollNode);
                 CONVERT_KLU_BINDING_TABLE_TO_COMPLEX(HICUMtempBasePtr, HICUMtempBaseBinding, HICUMtempNode, HICUMbaseNode);
@@ -396,7 +394,6 @@ HICUMbindCSCComplexToReal (GENmodel *inModel, CKTcircuit *ckt)
                 CONVERT_KLU_BINDING_TABLE_TO_REAL(HICUMemitEItempPtr, HICUMemitEItempBinding, HICUMemitEINode, HICUMtempNode);
                 CONVERT_KLU_BINDING_TABLE_TO_REAL(HICUMsubsSItempPtr, HICUMsubsSItempBinding, HICUMsubsSINode, HICUMtempNode);
                 CONVERT_KLU_BINDING_TABLE_TO_REAL(HICUMsubsTempPtr, HICUMsubsTempBinding, HICUMsubsNode, HICUMtempNode);
-                CONVERT_KLU_BINDING_TABLE_TO_REAL(HICUMcollTempPtr, HICUMcollTempBinding, HICUMcollNode, HICUMtempNode);
 
                 CONVERT_KLU_BINDING_TABLE_TO_REAL(HICUMtempCollPtr, HICUMtempCollBinding, HICUMtempNode, HICUMcollNode);
                 CONVERT_KLU_BINDING_TABLE_TO_REAL(HICUMtempBasePtr, HICUMtempBaseBinding, HICUMtempNode, HICUMbaseNode);

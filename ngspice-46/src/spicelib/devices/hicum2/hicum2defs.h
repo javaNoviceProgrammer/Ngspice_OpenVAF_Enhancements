@@ -58,6 +58,8 @@ typedef struct sHICUMinstance {
     const int HICUMemitNode; /* number of emitter node of hicum */
     const int HICUMsubsNode; /* number of substrate node of hicum */
     int HICUMtempNode;       /* number of the temperature node of the hicum */
+    int HICUMtempNodeInternal; /* HICUMsetup made it, HICUMunsetup deletes it
+                                  (Enhancement-899) */
     int HICUMcollCINode; /* number of internal collector node of hicum */
     int HICUMbaseBINode; /* number of internal base node of hicum */
     int HICUMemitEINode; /* number of internal emitter node of hicum */

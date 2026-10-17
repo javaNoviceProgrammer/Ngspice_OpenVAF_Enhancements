@@ -42,7 +42,13 @@ duals::duald clip_temperature(duals::duald T){
     duals::duald Tdev;
     Tdev = T;
     if (T<(TMIN+CONSTCtoK+1.0)){
-        Tdev = TMIN+CONSTCtoK+exp(T-TMIN+CONSTCtoK-1.0);
+        /* Enhancement-899: exp(T-(TMIN+CONSTCtoK)-1), the mirror of the upper
+         * branch -- continuous with T, and with slope 1, at TMIN+1 K. This read
+         * exp(T-TMIN+CONSTCtoK-1) = exp(T+372 K), which overflows: a Newton
+         * iterate that cooled a self-heating device past -99 C made the device
+         * temperature 1e236 and then NaN ("The temperature limiting function
+         * received NaN"), and the operating point was lost. */
+        Tdev = TMIN+CONSTCtoK+exp(T-(TMIN+CONSTCtoK)-1.0);
     } else if (T>(TMAX+CONSTCtoK-1.0)) {
         Tdev = TMAX+CONSTCtoK-exp(TMAX+CONSTCtoK-T-1.0);
     };
@@ -256,7 +262,9 @@ void hicum_thermal_update(HICUMmodel *inModel, HICUMinstance *inInstance, double
         a = r_VgVT/model->HICUMmsf;
         a = model->HICUMitss*exp(a);
         here->HICUMitss_t.rpart = a.rpart();
-        here->HICUMitss_t.rpart = a.dpart();
+        here->HICUMitss_t.dpart = a.dpart();   /* Enhancement-897: this set .rpart a second time, to the
+                                                * derivative -- itss about 0.16x itself at 300 K -- and left
+                                                * .dpart unset, wherever flcomp < 2.3 (the default) */
         //Saturation current for c-s diode
         a = r_VgVT/model->HICUMmsc;
         a = model->HICUMiscs*exp(a);

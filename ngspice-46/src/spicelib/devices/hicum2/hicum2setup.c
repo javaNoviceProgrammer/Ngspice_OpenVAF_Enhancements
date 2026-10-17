@@ -635,7 +635,8 @@ HICUMsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt, int *states)
                 if (here->HICUMtempNode == 0) {                       // no external node for temperature
                     error = CKTmkVolt(ckt,&tmp,here->HICUMname,"dT"); // create internal node
                     if (error) return(error);
-                        here->HICUMtempNode = tmp->number;
+                    here->HICUMtempNode = tmp->number;
+                    here->HICUMtempNodeInternal = 1;
                 }
             } else {
                 if (here->HICUMtempNode > 0) { // external temp node is given, but no she parameter
@@ -830,11 +831,16 @@ HICUMunsetup(
                 CKTdltNNum(ckt, here->HICUMsubsSINode);
             here->HICUMsubsSINode = 0;
 
-            if (model->HICUMselfheat) {
-                if (here->HICUMtempNode > 6) { // it is an internal node
-                     CKTdltNNum(ckt, here->HICUMtempNode);
-                     here->HICUMtempNode = 0;
-                }
+            /* Enhancement-899: delete the node HICUMsetup made, whatever its
+             * number. This tested HICUMtempNode > 6 for "internal", so in a
+             * circuit of a few nodes the dT node outlived the unsetup and the
+             * next analysis ended ngspice with "incomplete CKTunsetup()" --
+             * and a thermal terminal numbered above 6 would have been
+             * deleted from the circuit. */
+            if (here->HICUMtempNodeInternal) {
+                CKTdltNNum(ckt, here->HICUMtempNode);
+                here->HICUMtempNode = 0;
+                here->HICUMtempNodeInternal = 0;
             }
 
             if (model->HICUMnqs) {

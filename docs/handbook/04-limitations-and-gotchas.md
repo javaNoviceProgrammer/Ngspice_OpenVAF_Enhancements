@@ -551,6 +551,21 @@ scripting ngspice:
   gate current over many cycles, use a charge-based model (BSIM3 or BSIM4
   `capmod` 1 to 3 conserve to 1e-6 per period under trap). Pinned in
   `nlnotes_examples` [9].
+- **The built-in HICUM (`level=8`) before E-896 to E-899** was a different
+  model in several places from the Verilog-A HICUM L2.4.0 it ports:
+  - Its small-signal matrix was off its own currents by up to 2 % at the
+    default `t0=0` (`ac`, `noise`, `pz`, `.sp`).
+  - A pnp did not simulate at all.
+  - At the default `flcomp`, the substrate transistor carried a sixth of its
+    current.
+  - A self-heating device ended ngspice at the second analysis of a small
+    circuit.
+
+  See [E-896](../../enhancements_doc/Enhancement-896.md) to
+  [E-899](../../enhancements_doc/Enhancement-899.md). Results from older builds
+  with any of these need re-running. Two of 200 random cards still keep a
+  1e-4 gap between `ac` and the dc derivative, and the compiled
+  `hicumL2V2p4p0.va` is the reference to check against.
 - **MOS1 flicker noise at the default `nlev=2`** is
   KF·gm²/(f^AF·W·Leff·Cox): AF is the exponent of the FREQUENCY, not of the
   current as in the SPICE2 form, so `af=0.5` makes a 1/√f spectrum. `nlev=0`
