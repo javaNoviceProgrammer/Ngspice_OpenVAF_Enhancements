@@ -134,8 +134,18 @@ check("[2] seed 111 at K = 48 converges, within 1e-4 of the settled transient",
       (re.search(r"HB: source stepping stalled[^\n]*", out) or [out[-120:]])[0])
 
 # [3] the final level: the trace lines of the last lambda
-lv = re.findall(r"HB  lambda=([\d.]+)\s+iter\s+\d+: \|F\| = ([\d.e+-]+)", out)
-last = [float(f) for l, f in lv if l == "1.0000"]
+lv = re.findall(r"HB  lambda=([\d.]+)\s+iter\s+\d+: \|F\| = (\S+)", out)
+
+
+def num(x):
+    """a printed residual; a diverged iterate prints nan, -nan or -nan(ind) depending on the C library"""
+    try:
+        return float(x)
+    except ValueError:
+        return float("nan")
+
+
+last = [num(f) for l, f in lv if l == "1.0000"]
 tail = last[-3:] if spec else []
 red = (tail[-2] / tail[-1]) if len(tail) >= 2 and tail[-1] > 0 else None
 check("[3] the last level ends quadratically: its last step cuts |F| at least 100 times",
