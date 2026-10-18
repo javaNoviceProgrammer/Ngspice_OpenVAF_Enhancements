@@ -60,7 +60,7 @@ with today's openvaf-r. The harnesses are throwaway scripts in the session scrat
 | [F5](#f5) | **transmission line:** TXL has no AC model and acts as one without saying so: its input sees the characteristic impedance to ground, and nothing reaches the output | high |
 | [F6](#f6) | **command:** `compose v values 1 -2 3` makes [−1, 3]: a negative value is subtracted from the one before it, without a word *(fixed in [E-900](../../enhancements_doc/Enhancement-900.md))* | medium |
 | [F7](#f7) | **RF:** `.sp` normalises NF, NFmin and Rn by the circuit's temperature instead of the standard 290 K: at 27 °C a passive two-port's NF reads 0.149 dB low *(fixed in [E-901](../../enhancements_doc/Enhancement-901.md))* | medium |
-| [F8](#f8) | **steady state:** `hb` gives up on 5 of 20 overdriven BJT stages, its source stepping stalled with the residual already at 1e-10; under Sparse it takes 450 s to give up, under KLU 3 s | medium |
+| [F8](#f8) | **steady state:** `hb` gives up on 5 of 20 overdriven BJT stages, its source stepping stalled with the residual already at 1e-10; it takes 450 s to give up *(fixed in [E-902](../../enhancements_doc/Enhancement-902.md) and [E-903](../../enhancements_doc/Enhancement-903.md); KLU is no faster, see below)* | medium |
 | [F9](#f9) | **transmission line:** TXL's and CPL's transients are up to 6 % off the exact lossy line, and a smaller step does not reduce it; LTRA is within 5e-4 on the same lines | medium |
 | [D1](#d1) | `ac` with a CPL line aborts with "ac simulation(s) aborted" and no reason | low |
 | [D2](#d2) | `.sp` prints NF = nan for a two-port with no transmission, where it is infinite | low |
@@ -239,6 +239,15 @@ F = 1 + (T/T₀)(1/G_a − 1). ngspice computes 1/G_a, which holds only at T = T
 
 <a id="f8"></a>
 ## F8 — `hb` gives up on overdriven BJT stages, slowly under Sparse
+
+*(fixed in [E-902](../../enhancements_doc/Enhancement-902.md): the Newton matrix was the
+frozen-C form, without the Ċ·δv term, and Newton converged linearly, ×0.84 an iteration; the
+two-tone `qpss … hb` also samples 8K+2 phase points per tone. And in
+[E-903](../../enhancements_doc/Enhancement-903.md): the part of the spectrum with
+V₋ₖ = −conj(Vₖ), invisible to the devices, drifted at 1e-10 A, the absolute tolerance. Family B
+now converges at K = 16 and 48 in all 240 runs (E-901: 232), in 132 s where E-901 took 2,043 s.
+The "under KLU, 3 s" below was wrong: on E-894 seed 111 takes 452 s under Sparse and 453 s
+under KLU, the same 13,518 iterations.)*
 
 Five of Family B's 20 overdriven common-emitter stages failed at K = 48, and some at K = 16:
 

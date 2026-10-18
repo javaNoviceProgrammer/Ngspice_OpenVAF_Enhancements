@@ -425,8 +425,9 @@ pac_free_harmonics(struct pac_harm *hd)
  *       H_{nm} = G_{n-m} + j*omega_m*C_{n-m}      (COLUMN = chain rule)
  *     The residual's reactive current is the exact d/dt Q(v(t)) = C(v(t))*vdot,
  *     whose n-th harmonic is sum_m C_{n-m} * (j*w_m*V_m) -- here the COLUMN
- *     frequency is the correct one (and the same form serves as the standard
- *     frozen-C quasi-Newton Jacobian). */
+ *     frequency is the correct one. Its derivative is NOT this matrix: it is
+ *     the ROW form above, d/dt[C dv] (Enhancement-902; the HB Newton loops
+ *     used this frozen-C form as their Jacobian and lost Cdot*dv). */
 static void
 pac_build_matrix(struct pac_harm *hd, double f0, double f_in, double *Ar, double *Ai,
                  int smallsig)
@@ -1696,6 +1697,31 @@ hb_extract(CKTcircuit *ckt, const double *vsamp, int N, int P, int K,
     return 0;
 }
 
+/* Enhancement-903: keep a harmonic-balance spectrum the spectrum of a real
+ * signal, V_{-k} = conj(V_k) and V_0 real. The Newton unknowns are the 2K+1
+ * (or (2K1+1)(2K2+1)) complex harmonics of every node, independent of one
+ * another, while the devices see only v(t) = Re sum V_k e^{jk w t}: a part of
+ * V with V_{-k} = -conj(V_k) is invisible to them, yet the reactive current
+ * (J - Jg) V does see it, and a Newton step maps it through J^-1 Jg instead of
+ * removing it. Seeded by rounding, it drifted at 1e-11 to 1e-10 A in a stage
+ * carrying milliamps -- a residual floor at the absolute tol of 1e-10, where
+ * the source stepping stalled. Harmonic h's mirror is Nh-1-h in both the
+ * one-tone (k+K) and the two-tone ((k1+K1)(2K2+1)+k2+K2) orderings. */
+static void
+hb_conj_symmetrize(double *Vr, double *Vi, int N, int Nh)
+{
+    int h, i;
+    for (h = 0; h < Nh / 2; h++)
+        for (i = 0; i < N; i++) {
+            size_t p = (size_t)h * (size_t)N + (size_t)i;
+            size_t m = (size_t)(Nh - 1 - h) * (size_t)N + (size_t)i;
+            double re = 0.5 * (Vr[p] + Vr[m]), im = 0.5 * (Vi[p] - Vi[m]);
+            Vr[p] = re; Vi[p] = im; Vr[m] = re; Vi[m] = -im;
+        }
+    for (i = 0; i < N; i++)
+        Vi[(size_t)(Nh / 2) * (size_t)N + (size_t)i] = 0.0;
+}
+
 int
 HBanalyze(CKTcircuit *ckt, double f0, int K, int Pin, int maxiter, double tol, int verbose, struct hbspectrum *out)
 {
@@ -1817,6 +1843,16 @@ HBanalyze(CKTcircuit *ckt, double f0, int K, int Pin, int maxiter, double tol, i
                 }
                 FREE(Jgr); FREE(Jgi);
             }
+            /* Enhancement-902: the Newton matrix is the residual's own
+             * derivative. I_C = C(v(t))*vdot (the column form above) varies
+             * as d/dt[C dv] = C*dvdot + Cdot*dv, whose n-th harmonic is
+             * j*w_n*C_{n-m} -- the ROW-frequency matrix (C_ij = dq_i/dv_j is
+             * symmetric in its derivatives). The column form left out
+             * Cdot*dv: with a diffusion capacitance swinging through
+             * saturation, Newton fell to linear convergence (|F| x0.84 per
+             * iteration), every level ran out of iterations, and the source
+             * stepping halved itself to a stall at |F| = 1e-10. */
+            pac_build_matrix(&hd, f0, 0.0, Jr, Ji, 1);
             pac_free_harmonics(&hd);            /* hd not needed past this point */
 
             /* residual F = I_R + I_C - lambda*Is */
@@ -1854,6 +1890,7 @@ HBanalyze(CKTcircuit *ckt, double f0, int K, int Pin, int maxiter, double tol, i
             if (pss_csolve(Ntot, Jr, Ji, Fr, Fi))   /* singular -> level fails */
                 break;
             for (i = 0; i < Ntot; i++) { Vr[i] += Fr[i]; Vi[i] += Fi[i]; }
+            hb_conj_symmetrize(Vr, Vi, N, 2 * K + 1);   /* Enhancement-903 */
 
             if (fnorm < tol) { conv = 1; break; }
         }
@@ -2194,8 +2231,14 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
     struct qp_harm hd;
 
     if (N <= 0 || K1 < 1 || K2 < 1) { fprintf(stderr, "QPSS-HB: bad size.\n"); return E_PARMVAL; }
-    if (P1 <= 0) P1 = 4*K1 + 2;
-    if (P2 <= 0) P2 = 4*K2 + 2;
+    /* Enhancement-902: 8K+2 phase points per tone, as one-tone hb takes 8K
+     * per period. 4K+2 is the least that holds the difference spectra up to
+     * 2K, enough only for a quadratic nonlinearity: a junction's C(theta)
+     * aliased, the Newton matrix was no longer the residual's derivative, and
+     * a saturating two-tone stage converged linearly (x0.85 an iteration,
+     * over ten minutes) where 8K+2 converges in 65 iterations. */
+    if (P1 <= 0) P1 = 8*K1 + 2;
+    if (P2 <= 0) P2 = 8*K2 + 2;
     P = P1 * P2;
     if (Ntot > 1600) {
         fprintf(stderr, "QPSS-HB: system %d too large for the dense solver "
@@ -2348,6 +2391,7 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
                 }
                 FREE(Jgr); FREE(Jgi);
             }
+            qp_build_matrix(&hd, 0.0, Jr, Ji, 1);   /* Enhancement-902: the exact Jacobian */
             qp_free(&hd);
 
             for (i = 0; i < Ntot; i++) {
@@ -2399,6 +2443,7 @@ QPSShb(CKTcircuit *ckt, double f1, double f2, int K1, int K2, int P1, int P2,
             for (i = 0; i < Ntot; i++) { Fr[i] = -Fr[i]; Fi[i] = -Fi[i]; }
             if (pss_csolve(Ntot, Jr, Ji, Fr, Fi)) break;
             for (i = 0; i < Ntot; i++) { Vr[i] += Fr[i]; Vi[i] += Fi[i]; }
+            hb_conj_symmetrize(Vr, Vi, N, Nh);           /* Enhancement-903 */
             if (fnorm < tol) { conv = 1; stall_accept = 0; break; }
             if (nstall >= QP_STALL_RUN) {
                 /* Accept only a residual that actually solved the problem:
@@ -3294,6 +3339,7 @@ HBOSCanalyze(CKTcircuit *ckt, int oscNode, int K, int Pin, double f0seed,
             }
             FREE(Jgr); FREE(Jgi);
         }
+        pac_build_matrix(&hd, f0, 0.0, Jr, Ji, 1);  /* Enhancement-902: the exact Jacobian */
         fnorm = 0.0;
         for (i = 0; i < Ntot; i++) {
             Fr[i] = IRr[i] + Kr[i]; Fi[i] = IRi[i] + Ki[i];
@@ -3329,6 +3375,7 @@ HBOSCanalyze(CKTcircuit *ckt, int oscNode, int K, int Pin, double f0seed,
             fprintf(stderr, "hbosc: singular augmented system.\n"); rc = E_SINGULAR; break;
         }
         for (i = 0; i < Ntot; i++) { Vr[i] += br[i]; Vi[i] += bi[i]; }
+        hb_conj_symmetrize(Vr, Vi, N, 2*K + 1);     /* Enhancement-903 */
         f0 += br[Ntot] / (2.0*M_PI);                /* dw0 = Re(x[Ntot]) */
     }
 

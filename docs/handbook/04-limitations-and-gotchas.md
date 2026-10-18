@@ -600,3 +600,16 @@ scripting ngspice:
   27 °C, 1.38 dB low at 125 °C, 0.95 dB high at −40 °C. Rn was 3.4 % low at
   27 °C. Noise figures from older builds, away from 16.85 °C, need re-running;
   `Cy` was right throughout.
+- **`hb`, `qpss … hb` and `hbosc` on a stage driven into saturation** gave
+  up before [E-902](../../enhancements_doc/Enhancement-902.md) and
+  [E-903](../../enhancements_doc/Enhancement-903.md). The Newton matrix left
+  out the swing of the nonlinear capacitances, and a drift in the part of the
+  spectrum the devices cannot see held the residual at the 1e-10 tolerance.
+  The source stepping then ran for minutes and reported "stalled … may be
+  singular", on circuits the transient settles. Both are fixed. Still true:
+  - HB has no junction limiting. A first full-strength Newton step often
+    diverges, and the source stepping takes over.
+  - `qpss … hb` now samples 8K+2 phase points per tone (4K+2 before). On a
+    saturating BJT stage its harmonics moved by up to 7e-4 of the
+    fundamental, the aliasing the sparser grid had. A nonlinearity up to
+    cubic is exact on either grid.
