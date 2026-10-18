@@ -613,3 +613,24 @@ scripting ngspice:
     saturating BJT stage its harmonics moved by up to 7e-4 of the
     fundamental, the aliasing the sparser grid had. A nonlinearity up to
     cubic is exact on either grid.
+- **TXL (`Y`) and CPL (`P`) are high-frequency models of a lossy line.**
+  - TXL's fits are within 2e-4 of the exact line above its RC corner
+    R/(2πL), 7 % off a decade below it, and its dc settles to 7/6 of
+    R·length.
+  - CPL keeps almost none of a line's resistance at low frequency.
+  - A TXL model with R/L above 1.6e9 is simulated as CPL. One with R/L below
+    5e5 drops its resistance.
+
+  Since [E-908](../../enhancements_doc/Enhancement-908.md) each says so at
+  setup. For a line whose loss matters below R/L, use LTRA (`O`).
+
+  Older builds also had four bugs, now fixed:
+  - A TXL or CPL carrying dc current started its transient with none
+    ([E-904](../../enhancements_doc/Enhancement-904.md)).
+  - A lossy TXL in its RC regime could grow without bound
+    ([E-906](../../enhancements_doc/Enhancement-906.md)).
+  - Both froze after 2.147 ms ([E-907](../../enhancements_doc/Enhancement-907.md)).
+  - [E-905](../../enhancements_doc/Enhancement-905.md) corrects their
+    history update.
+
+  Results from such runs need re-running.

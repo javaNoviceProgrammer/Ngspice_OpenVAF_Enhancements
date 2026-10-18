@@ -541,13 +541,14 @@ char *INPdomodel(CKTcircuit *ckt, struct card *image, INPtables * tab)
 			}
 		  if(lval)
 			  rval = rval/lval;
-		  if (rval > 1.6e10) {
-			  type = INPtypelook("TransLine");
-			  INPmakeMod(modname,type,image);
-		  }
+		  /* Enhancement-908: a TXL model with R/L above 1.6e9 is a CPL line,
+		   * and says so. The branch for R/L above 1.6e10 was overwritten by
+		   * the next one, after making the model a first time as a TXL. */
 		  if (rval > 1.6e9) {
 			  type = INPtypelook("CplLines");
 			  INPmakeMod(modname,type,image);
+			  fprintf(stdout, "Note: .model %s: a txl with R/L = %g above 1.6e9 is simulated "
+				  "as a single cpl line.\n", modname, rval);
 		  }
 		  else {
 			  type = INPtypelook("TransLine");

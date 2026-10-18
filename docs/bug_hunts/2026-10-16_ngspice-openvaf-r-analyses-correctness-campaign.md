@@ -61,7 +61,7 @@ with today's openvaf-r. The harnesses are throwaway scripts in the session scrat
 | [F6](#f6) | **command:** `compose v values 1 -2 3` makes [−1, 3]: a negative value is subtracted from the one before it, without a word *(fixed in [E-900](../../enhancements_doc/Enhancement-900.md))* | medium |
 | [F7](#f7) | **RF:** `.sp` normalises NF, NFmin and Rn by the circuit's temperature instead of the standard 290 K: at 27 °C a passive two-port's NF reads 0.149 dB low *(fixed in [E-901](../../enhancements_doc/Enhancement-901.md))* | medium |
 | [F8](#f8) | **steady state:** `hb` gives up on 5 of 20 overdriven BJT stages, its source stepping stalled with the residual already at 1e-10; it takes 450 s to give up *(fixed in [E-902](../../enhancements_doc/Enhancement-902.md) and [E-903](../../enhancements_doc/Enhancement-903.md); KLU is no faster, see below)* | medium |
-| [F9](#f9) | **transmission line:** TXL's and CPL's transients are up to 6 % off the exact lossy line, and a smaller step does not reduce it; LTRA is within 5e-4 on the same lines | medium |
+| [F9](#f9) | **transmission line:** TXL's and CPL's transients are up to 6 % off the exact lossy line, and a smaller step does not reduce it; LTRA is within 5e-4 on the same lines *(the limit stated in [E-908](../../enhancements_doc/Enhancement-908.md); the dig fixed E-904 to E-907: a startup dip, a history slip, an instability and a freeze at 2.147 ms)* | medium |
 | [D1](#d1) | `ac` with a CPL line aborts with "ac simulation(s) aborted" and no reason | low |
 | [D2](#d2) | `.sp` prints NF = nan for a two-port with no transmission, where it is infinite | low |
 | [D3](#d3) | `fft` prints the frequency resolution of the unpadded data, twice the spacing of the bins it returns | low |
@@ -262,6 +262,24 @@ converges, both take 0.2 s.
 
 <a id="f9"></a>
 ## F9 — TXL's and CPL's transients on a lossy line
+
+*(TXL's error is its three-pole fits, expanded about s = ∞: within 2e-4 of the exact line above
+R/L, 7 % off a decade below, and its dc settles to 7/6 of the line's resistance. Both lines now say
+so at setup ([E-908](../../enhancements_doc/Enhancement-908.md)), as does a TXL model above
+R/L = 1.6e9, which the parser makes a CPL line. The dig found four bugs and fixed them:
+- [E-904](../../enhancements_doc/Enhancement-904.md): a line carrying dc current started its
+  transient with none (its far end dipped from 0.496 V to 0.183 V under a constant source).
+- [E-905](../../enhancements_doc/Enhancement-905.md): the history update gave the second and third
+  terms the product of all earlier slopes. Family G's TXL median fell from 1.7e-4 to 4.5e-5.
+- [E-906](../../enhancements_doc/Enhancement-906.md): trapezoid load steps against an exact history
+  made a lossy TXL in its RC regime grow without bound.
+- [E-907](../../enhancements_doc/Enhancement-907.md): a 32-bit picosecond clock froze both lines at
+  2.147 ms.
+
+Left open: CPL keeps almost none of a line's resistance at low frequency. Its fitted poles appear
+to be in units of 1/√(LC) and used as rad/s, but a model built on that did not reproduce CPL's
+transient. Also, LTRA ended a 3 ms run of a 200 m lossy line with "Timestep too small" at
+1.02 ms.)*
 
 The fundamental of a sine transient against the exact line at that frequency:
 

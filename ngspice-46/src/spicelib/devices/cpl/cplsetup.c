@@ -518,6 +518,32 @@ ReadCpL(CPLinstance* here, CKTcircuit* ckt)
 	for (i = 0; i < noL; i++)
 		lines[i]->g = 1.0 / (R_m[i][i] * length);
 
+	/* Enhancement-908: say that a lossy line loses its resistance at low
+	 * frequency. Stepped from 0 and settled, single lines kept under 1 % of
+	 * R*length as their dc resistance, and two coupled ones none, where the
+	 * operating point has all of it. Said when R*length is at least 1 % of the conductor's
+	 * characteristic impedance (R is held at 1e-4 ohm/unit or more). */
+	{
+		double kmax = 0.0, rl = 0.0, rdl = 0.0;
+		for (i = 0; i < noL; i++)
+			if (L_m[i][i] > 0.0 && C_m[i][i] > 0.0 && R_m[i][i] > 1.0e-4) {
+				double k = R_m[i][i] * length / sqrt(L_m[i][i] / C_m[i][i]);
+				if (k > kmax) {
+					kmax = k;
+					rl = R_m[i][i] * length;
+					rdl = R_m[i][i] / L_m[i][i];
+				}
+			}
+		if (kmax >= 0.01 && !here->CPLnoted) {
+			here->CPLnoted = 1;
+			SPfrontEnd->IFerrorf(ERR_INFO,
+				"%s: cpl does not model a lossy line below its RC corner R/(2 pi L) = %g Hz: "
+				"there it loses most of the line's resistance, and a dc current sees almost "
+				"none of R*length = %g ohm. LTRA (an O element) is exact for a single line.",
+				here->CPLname, rdl / (2.0 * M_PI), rl);
+		}
+	}
+
 	coupled(noL);
 
 	for (i = 0; i < noL; i++) {

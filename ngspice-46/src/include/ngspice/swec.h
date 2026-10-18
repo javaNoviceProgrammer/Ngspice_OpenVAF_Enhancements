@@ -280,7 +280,7 @@ struct rline {
 typedef struct linked_lists_of_vi_txl{
    struct linked_lists_of_vi_txl *next;
    struct linked_lists_of_vi_txl *pool;
-   int time;
+   long long time;   /* Enhancement-907: picoseconds; an int overflowed at 2.147 ms */
    /* charles 2,2 
    float v_i, v_o;
    float i_i, i_o;  
@@ -292,7 +292,7 @@ typedef struct linked_lists_of_vi_txl{
 typedef struct linked_lists_of_vi{
    struct linked_lists_of_vi *next;
    struct linked_lists_of_vi *pool;
-   int time;
+   long long time;   /* Enhancement-907: picoseconds; an int overflowed at 2.147 ms */
    double v_i[MAX_CP_TX_LINES], v_o[MAX_CP_TX_LINES];
    double i_i[MAX_CP_TX_LINES], i_o[MAX_CP_TX_LINES];  
 } VI_list;
@@ -327,6 +327,8 @@ struct cpline {
    struct linked_lists_of_vi *vi_head;
    struct linked_lists_of_vi *vi_tail;
    double     dc1[MAX_CP_TX_LINES], dc2[MAX_CP_TX_LINES];
+   double     idc1[MAX_CP_TX_LINES], idc2[MAX_CP_TX_LINES]; /* Enhancement-904 */
+   double     hstep;   /* Enhancement-905: the step the load took, in seconds */
 };
 
 struct txline {
@@ -350,6 +352,8 @@ struct txline {
    struct linked_lists_of_vi_txl *vi_head;
    struct linked_lists_of_vi_txl *vi_tail;
    double    dc1, dc2;
+   double    idc1, idc2; /* Enhancement-904: the port currents at the operating point */
+   double    hstep;      /* Enhancement-905: the step the load took, in seconds */
    int	     newtp; /* flag indicating new time point */
 };
 

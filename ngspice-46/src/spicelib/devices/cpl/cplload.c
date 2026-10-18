@@ -15,7 +15,7 @@ VI_list	*pool_vi;
 static double ratio[MAX_CP_TX_LINES];
 static VI_list *new_vi(void);
 static void free_vi(VI_list*);
-static int get_pvs_vi(int t1, int t2,
+static int get_pvs_vi(long long t1, long long t2,
                       CPLine *cp,
                       double  v1_i[MAX_CP_TX_LINES][MAX_CP_TX_LINES],
                       double  v2_i[MAX_CP_TX_LINES][MAX_CP_TX_LINES],
@@ -26,8 +26,25 @@ static int get_pvs_vi(int t1, int t2,
                       double  i1_o[MAX_CP_TX_LINES][MAX_CP_TX_LINES],
                       double  i2_o[MAX_CP_TX_LINES][MAX_CP_TX_LINES]);
 static int update_cnv(CPLine*, double);
-static int add_new_vi(CPLinstance*, CKTcircuit*, int);
-static int right_consts(CPLinstance*, CPLine*, int, int, double, double, int*, int*, CKTcircuit*);
+
+/* Enhancement-905: the exact weights of one step of a convolution with the
+ * kernel c*exp(x*tau), its input linear over the step h from vold to vnew:
+ * the step adds (c/x)*(vnew*wn + vold*wo), z = x*h, wn = (e^z - 1 - z)/z,
+ * wo = (e^z - 1) - wn, with a series where z is small. */
+static void
+cpl_w(double x, double h, double *wn, double *wo)
+{
+   double z = x * h, em1 = expm1(z), w;
+
+   if (fabs(z) < 1e-3)
+      w = z * (0.5 + z * (1.0/6.0 + z * (1.0/24.0 + z / 120.0)));
+   else
+      w = (em1 - z) / z;
+   *wn = w;
+   *wo = em1 - w;
+}
+static int add_new_vi(CPLinstance*, CKTcircuit*, long long);
+static int right_consts(CPLinstance*, CPLine*, long long, long long, double, double, int*, int*, CKTcircuit*);
 static int update_delayed_cnv(CPLine*, double);
 static int multC(double, double, double, double, double*, double*);
 static int expC(double,	double,	double,	double*, double*);
@@ -43,7 +60,7 @@ CPLload(GENmodel *inModel, CKTcircuit *ckt)
 	CPLinstance *here;
 	CPLine *cp, *cp2;
 	int *k_p, *l_p;
-	int time, time2;
+	long long time, time2;   /* Enhancement-907: picoseconds; an int froze the line at 2.147 ms */
 	double h, h1, f;
 /*	int hint; never used */
 	double hf;
@@ -54,17 +71,17 @@ CPLload(GENmodel *inModel, CKTcircuit *ckt)
 	int noL, m, p, q;
 	CKTnode	*node;
 	VI_list	*vi, *vi_before;
-	int before, delta;
+	long long before, delta;
 	int resindex;
 
 	double gmin;	 /* dc solution	*/
 
 	h = ckt->CKTdelta;
 	h1 = 0.5 * h;
-	time2 =	(int) (ckt->CKTtime * 1e12);
+	time2 =	(long long) (ckt->CKTtime * 1e12);
 /*	hint = (int)(h * 1e12); never used */
 	hf = h * 1e12;
-	time = (int) ((ckt->CKTtime - ckt->CKTdelta) * 1e12);
+	time = (long long) ((ckt->CKTtime - ckt->CKTdelta) * 1e12);
 
 	cond1= ckt->CKTmode & MODEDC;
 
@@ -106,17 +123,17 @@ CPLload(GENmodel *inModel, CKTcircuit *ckt)
 					nd = cp->in_node[m];
 					v = vi_before->v_i[m];
 					v1 = nd->V = cp->vi_tail->v_i[m];
-					nd->dv = (v1 - v) / delta;
+					nd->dv = (v1 - v) / (double) delta;
 				}
 				for (m = 0; m <	noL; m++) {
 					nd = cp->out_node[m];
 					v = vi_before->v_o[m];
 					v1 = nd->V = cp->vi_tail->v_o[m];
-					nd->dv = (v1 - v) / delta;
+					nd->dv = (v1 - v) / (double) delta;
 				}
 
-				update_cnv(cp, delta);
-				if (cp->ext) update_delayed_cnv(cp, delta);
+				update_cnv(cp, (double) delta);
+				if (cp->ext) update_delayed_cnv(cp, (double) delta);
 			}
 		}
 	}
@@ -192,6 +209,16 @@ CPLload(GENmodel *inModel, CKTcircuit *ckt)
 				}
 				here->CPLdcGiven = 1;
 
+				/* Enhancement-904: the port currents the operating
+				 * point carries. The current history started at 0
+				 * while the voltages started at their dc values, so a
+				 * line carrying dc current began its transient by
+				 * dropping the far end to a third of its value. */
+				for (i = 0; i <	cp->noL; i++) {
+					cp->idc1[i] = cp2->idc1[i] = ckt->CKTrhsOld[here->CPLibr1[i]];
+					cp->idc2[i] = cp2->idc2[i] = ckt->CKTrhsOld[here->CPLibr2[i]];
+				}
+
 				vi = new_vi();
 				vi->time = 0;
 				{
@@ -230,10 +257,27 @@ CPLload(GENmodel *inModel, CKTcircuit *ckt)
 								fprintf(stderr, "\nError in CPL %s: Forbidden combination of model parameters!\n", here->gen.GENname);
 								controlled_exit(1);
 							}
-							for (k = 0; k <	3; k++)	{
-								tms->tm[k].cnv_i = 0.0;
-								tms->tm[k].cnv_o = 0.0;
-							}
+							/* Enhancement-904: the dc state of the
+							 * current convolutions, -I*c/x as for the
+							 * voltage ones (it was 0) */
+							if (tms->ifImg)	{
+								tms->tm[0].cnv_i = - cp->idc1[j] *
+									tms->tm[0].c / tms->tm[0].x;
+								tms->tm[0].cnv_o = - cp->idc2[j] *
+									tms->tm[0].c / tms->tm[0].x;
+								divC(tms->tm[1].c, tms->tm[2].c,
+									tms->tm[1].x, tms->tm[2].x, &a,	&b);
+								tms->tm[1].cnv_i = - cp->idc1[j] * a;
+								tms->tm[1].cnv_o = - cp->idc2[j] * a;
+								tms->tm[2].cnv_i = - cp->idc1[j] * b;
+								tms->tm[2].cnv_o = - cp->idc2[j] * b;
+							} else
+								for (k = 0; k <	3; k++)	{
+									tms->tm[k].cnv_i = - cp->idc1[j] *
+										tms->tm[k].c / tms->tm[k].x;
+									tms->tm[k].cnv_o = - cp->idc2[j] *
+										tms->tm[k].c / tms->tm[k].x;
+								}
 						}
 						for (l = 0; l <	cp->noL; l++) {
 							tms = cp->h3t[i][j][l];
@@ -263,7 +307,8 @@ CPLload(GENmodel *inModel, CKTcircuit *ckt)
 					}
 
 					for (j = 0; j <	cp->noL; j++) {
-						vi->i_i[j] = vi->i_o[j]	= 0.0;
+						vi->i_i[j] = cp->idc1[j];    /* Enhancement-904: were 0 */
+						vi->i_o[j] = cp->idc2[j];
 						vi->v_i[j] = cp->dc1[j];
 						vi->v_o[j] = cp->dc2[j];
 					}
@@ -343,6 +388,7 @@ copy_cp(CPLine *new, CPLine *old)
 	VI_list	*temp;
 
 	new->noL = m = old->noL;
+	new->hstep = old->hstep;        /* Enhancement-905 */
 	new->ext = old->ext;
 	for (i = 0; i <	m; i++)	{
 		new->ratio[i] =	old->ratio[i];
@@ -410,7 +456,7 @@ copy_cp(CPLine *new, CPLine *old)
 
 
 static int
-right_consts(CPLinstance *here,	CPLine *cp, int	t, int time, double h, double h1,
+right_consts(CPLinstance *here,	CPLine *cp, long long t, long long time, double h, double h1,
 	     int *l1, int *l2, CKTcircuit *ckt)
 {
    int i, j, k,	l;
@@ -428,6 +474,7 @@ right_consts(CPLinstance *here,	CPLine *cp, int	t, int time, double h, double h1
    int noL;
 
     NG_IGNORE(here);
+    cp->hstep = h;    /* Enhancement-905: for the history update once accepted */
 
    noL = cp->noL;
 
@@ -621,11 +668,14 @@ update_cnv(CPLine *cp, double h)
 	  e = cp->h1e[j][k][i];
 
 	  t = tm->c / tm->x;
-	  bi *=	t;
-	  bo *=	t;
-
-	  tm->cnv_i = (tm->cnv_i - bi*h) * e + (e - 1.0)*(ai*t + 1.0e+12*bi/tm->x);
-	  tm->cnv_o = (tm->cnv_o - bo*h) * e + (e - 1.0)*(ao*t + 1.0e+12*bo/tm->x);
+	  /* Enhancement-905: each term's own slope, in exact weights, as in TXL
+	   * (h in picoseconds, dv in volts per picosecond) */
+	  {
+	     double wn, wo;
+	     cpl_w(tm->x, cp->hstep, &wn, &wo);
+	     tm->cnv_i = tm->cnv_i * e + t * (ai * wn + (ai - bi * h) * wo);
+	     tm->cnv_o = tm->cnv_o * e + t * (ao * wn + (ao - bo * h) * wo);
+	  }
 	   }
      }
       }
@@ -658,7 +708,7 @@ free_vi(VI_list	*q)
 
 
 static int
-add_new_vi(CPLinstance *here, CKTcircuit *ckt, int time)
+add_new_vi(CPLinstance *here, CKTcircuit *ckt, long long time)
 {
    VI_list *vi;
    int i, noL;
@@ -691,7 +741,7 @@ add_new_vi(CPLinstance *here, CKTcircuit *ckt, int time)
 
 
 static int
-get_pvs_vi(int t1, int t2,
+get_pvs_vi(long long t1, long long t2,
    CPLine *cp,
    double v1_i[MAX_CP_TX_LINES][MAX_CP_TX_LINES],
    double v2_i[MAX_CP_TX_LINES][MAX_CP_TX_LINES],
@@ -714,8 +764,8 @@ get_pvs_vi(int t1, int t2,
    noL = cp->noL;
 
    for (i = 0; i < noL;	i++) {
-      ta[i] = t1 - cp->taul[i];
-      tb[i] = t2 - cp->taul[i];
+      ta[i] = (double) t1 - cp->taul[i];
+      tb[i] = (double) t2 - cp->taul[i];
       if (ta[i]	< minta) {
 		 minta = ta[i];
 		 mini =	i;
@@ -728,14 +778,16 @@ get_pvs_vi(int t1, int t2,
 
       if (tb[i]	<= 0) {
 		 for (j	= 0; j < noL; j++) {
-			i1_i[i][j] = i2_i[i][j]	= i1_o[i][j] = i2_o[i][j] = 0.0;
+			i1_i[i][j] = i2_i[i][j]	= cp->idc1[j];   /* Enhancement-904: were 0 */
+			i1_o[i][j] = i2_o[i][j]	= cp->idc2[j];
 			v1_i[i][j] = v2_i[i][j]	= cp->dc1[j];
 			v1_o[i][j] = v2_o[i][j]	= cp->dc2[j];
 		 }
       }	else {
 		 if (ta[i] <= 0) {
 			for (j = 0; j <	noL; j++) {
-			   i1_i[i][j] =	i1_o[i][j] = 0.0;
+			   i1_i[i][j] =	cp->idc1[j];   /* Enhancement-904: were 0 */
+			   i1_o[i][j] =	cp->idc2[j];
 			   v1_i[i][j] =	cp->dc1[j];
 			   v1_o[i][j] =	cp->dc2[j];
 			}
@@ -743,7 +795,7 @@ get_pvs_vi(int t1, int t2,
 			vi = vi1->next;
 		 } else	{
 			vi1 = cp->vi_head;
-			for (vi	= vi1->next; vi->time <	ta[i]; ) {
+			for (vi	= vi1->next; (double) vi->time <	ta[i]; ) {
 			   /* if (i == mini)
 					 free_vi(vi1); */
 			   vi1 = vi;
@@ -752,7 +804,7 @@ get_pvs_vi(int t1, int t2,
 			   vi =	vi->next;
 			   if (vi == NULL) goto	errordetect;
 			}
-			f = (ta[i] - vi1->time)	/ (vi->time - vi1->time);
+			f = (ta[i] - (double) vi1->time)	/ (double) (vi->time - vi1->time);
 			for (j = 0; j <	noL; j++) {
 			   v1_i[i][j] =	vi1->v_i[j] + f	* (vi->v_i[j] -	vi1->v_i[j]);
 			   v1_o[i][j] =	vi1->v_o[j] + f	* (vi->v_o[j] -	vi1->v_o[j]);
@@ -763,13 +815,13 @@ get_pvs_vi(int t1, int t2,
 			   cp->vi_head = vi1;
 		 }
 
-		 if (tb[i] > t1) {
+		 if (tb[i] > (double) t1) {
 			/*
-			fprintf(stderr,	"pvs: time = %d\n", t2);
+			fprintf(stderr,	"pvs: time = %lld\n", t2);
 			 */
 			ext = 1;
 
-			ratio[i] = f = (tb[i] -	t1) / (t2 - t1);
+			ratio[i] = f = (tb[i] -	(double) t1) / (double) (t2 - t1);
 
 			if (vi)
 			   for (; vi->next; vi = vi->next)
@@ -784,7 +836,7 @@ get_pvs_vi(int t1, int t2,
 		   i2_o[i][j] =	vi->i_o[j] * f;
 	    }
 	  } else {
-			for (; vi->time	< tb[i];) {
+			for (; (double) vi->time	< tb[i];) {
 			   vi1 = vi;
 
 			   /* new */
@@ -792,7 +844,7 @@ get_pvs_vi(int t1, int t2,
 			   if (vi == NULL) goto	errordetect;
 			}
 
-			f = (tb[i] - vi1->time)	/ (vi->time - vi1->time);
+			f = (tb[i] - (double) vi1->time)	/ (double) (vi->time - vi1->time);
 			for (j = 0; j <	noL; j++) {
 			   v2_i[i][j] =	vi1->v_i[j] + f	* (vi->v_i[j] -	vi1->v_i[j]);
 			   v2_o[i][j] =	vi1->v_o[j] + f	* (vi->v_o[j] -	vi1->v_o[j]);

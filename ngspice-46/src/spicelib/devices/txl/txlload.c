@@ -15,14 +15,83 @@ static double ratio[MAX_CP_TX_LINES];
 static int update_cnv_txl(TXLine*, double);
 static VI_list_txl *new_vi_txl(void);
 static void free_vi_txl(VI_list_txl*);
-static int add_new_vi_txl(TXLinstance*,	CKTcircuit*, int);
-static int get_pvs_vi_txl(int, int, TXLine*, double*, double*, double*,	double*, double*, 
+static int add_new_vi_txl(TXLinstance*,	CKTcircuit*, long long);
+static int get_pvs_vi_txl(long long, long long, TXLine*, double*, double*, double*,	double*, double*, 
 			  double*, double*, double*);
-static int right_consts_txl(TXLine*, int, int, double, double, int, int, CKTcircuit*);
+static int right_consts_txl(TXLine*, long long, long long, double, double, int, int, CKTcircuit*);
 static int update_delayed_cnv_txl(TXLine*, double);
-static int multC(double, double, double, double, double*, double*);
 static int expC(double,	double,	double, double*,	double*);
 static void copy_tx(TXLine *, TXLine *);
+
+/* Enhancement-906: the exact weights of one step of a convolution with the
+ * kernel c*exp(x*tau), its input linear over the step h from vold to vnew:
+ * the step adds (c/x)*(vnew*wn + vold*wo), with z = x*h,
+ * wn = (e^z - 1 - z)/z and wo = (e^z - 1) - wn. update_cnv_txl advances the
+ * characteristic admittance's history with exactly this integral once a
+ * point is accepted, while the load formed the same step, and the delayed
+ * h2/h3 steps, by the trapezoid rule. The two disagree by (x h)^2/12 a step,
+ * and on a lossy line driven in its RC regime the disagreement fed back: a
+ * 200 m line with R*length = 1.2 Zc, at a tenth of R/(2 pi L), grew from
+ * 0.19 V to -2.6 V on a 1 V source in 3 ms where the exact line is 0.25 V. */
+static void
+txl_w(double x, double h, double *wn, double *wo)
+{
+   double z = x * h, em1 = expm1(z), w;
+
+   if (fabs(z) < 1e-3)
+      w = z * (0.5 + z * (1.0/6.0 + z * (1.0/24.0 + z / 120.0)));
+   else
+      w = (em1 - z) / z;
+   *wn = w;
+   *wo = em1 - w;
+}
+
+/* the same for a complex pole pair, x = xr + j xi */
+static void
+txl_wc(double xr, double xi, double h, double *wnr, double *wni, double *wor, double *woi)
+{
+   double zr = xr * h, zi = xi * h, sh = sin(0.5 * zi);
+   double emr = expm1(zr) * cos(zi) - 2.0 * sh * sh;
+   double emi = exp(zr) * sin(zi);
+   double wr, wi;
+
+   if (hypot(zr, zi) < 1e-3) {
+      static const double coef[3] = {1.0/24.0, 1.0/6.0, 0.5};
+      double pr = 1.0/120.0, pi = 0.0, t;
+      int k;
+      for (k = 0; k < 3; k++) {
+         t = pr * zr - pi * zi; pi = pr * zi + pi * zr; pr = t + coef[k];
+      }
+      wr = pr * zr - pi * zi;
+      wi = pr * zi + pi * zr;
+   } else {
+      double nr = emr - zr, ni = emi - zi, d = zr * zr + zi * zi;
+      wr = (nr * zr + ni * zi) / d;
+      wi = (ni * zr - nr * zi) / d;
+   }
+   *wnr = wr; *wni = wi;
+   *wor = emr - wr; *woi = emi - wi;
+}
+
+/* one exact step of a complex term: cnv = cnv*e + (c/x)*(vnew*wn + vold*wo) */
+static void
+txl_cstep(double *cr, double *ci, double c_r, double c_i, double x_r, double x_i,
+          double h, double vnew, double vold)
+{
+   double er, ei, wnr, wni, wor, woi, d, tr, ti, ur, ui, a, b;
+
+   expC(x_r, x_i, h, &er, &ei);
+   txl_wc(x_r, x_i, h, &wnr, &wni, &wor, &woi);
+   d = x_r * x_r + x_i * x_i;
+   tr = (c_r * x_r + c_i * x_i) / d;
+   ti = (c_i * x_r - c_r * x_i) / d;
+   ur = vnew * wnr + vold * wor;
+   ui = vnew * wni + vold * woi;
+   a = *cr * er - *ci * ei;
+   b = *cr * ei + *ci * er;
+   *cr = a + tr * ur - ti * ui;
+   *ci = b + tr * ui + ti * ur;
+}
 
 /*ARGSUSED*/
 int
@@ -32,16 +101,17 @@ TXLload(GENmodel *inModel, CKTcircuit *ckt)
 	TXLinstance *here;
 	TXLine *tx, *tx2;
 	int k, l;
-	int time, time2;
+	long long time, time2;   /* Enhancement-907: picoseconds; an int froze the line at 2.147 ms */
 	double h, h1, f;
-	int hint;
+	long long hint;
 	double hf;
 	NODE *nd;
 	double v, v1, g;
 	int cond1;
 	CKTnode	*node;
 	VI_list_txl *vi, *vi_before;
-	int i, before, delta;
+	int i;
+	long long before, delta;
 
 	double gmin;	 /* dc solution	*/
 
@@ -52,10 +122,10 @@ TXLload(GENmodel *inModel, CKTcircuit *ckt)
 
 	h = ckt->CKTdelta;
 	h1 = 0.5 * h;
-	time2 =	(int) (ckt->CKTtime * 1e12);
-	hint = (int)(h * 1e12);
+	time2 =	(long long) (ckt->CKTtime * 1e12);
+	hint = (long long)(h * 1e12);
 	hf = h * 1e12;
-	time = (int) ((ckt->CKTtime - ckt->CKTdelta) * 1e12);
+	time = (long long) ((ckt->CKTtime - ckt->CKTdelta) * 1e12);
 
 	cond1= ckt->CKTmode & MODEDC;
 
@@ -93,16 +163,16 @@ TXLload(GENmodel *inModel, CKTcircuit *ckt)
 				v = vi_before->v_i;
 				nd->V =	tx->vi_tail->v_i;
 				v1 = nd->V;
-				nd->dv = (v1 - v) / delta;
+				nd->dv = (v1 - v) / (double) delta;
 
 				nd = tx->out_node;
 				v = vi_before->v_o;
 				v1 = nd->V = tx->vi_tail->v_o;
-				nd->dv = (v1 - v) / delta;
+				nd->dv = (v1 - v) / (double) delta;
 
 				if (tx->lsl) continue;
-				update_cnv_txl(tx, delta);
-				if (tx->ext) update_delayed_cnv_txl(tx,	delta);
+				update_cnv_txl(tx, (double) delta);
+				if (tx->ext) update_delayed_cnv_txl(tx,	(double) delta);
 			}
 		}
 	}
@@ -180,15 +250,44 @@ TXLload(GENmodel *inModel, CKTcircuit *ckt)
 					tx->h1_term[i].cnv_o = 
 					   - tx->dc2 * tx->h1_term[i].c	/ tx->h1_term[i].x;
 				}
+				/* Enhancement-904: the currents the operating point
+				 * carries. The current history started at 0 while
+				 * the voltages started at their dc values, so a line
+				 * carrying dc current began its transient by
+				 * dropping the far end to a third of its value. */
+				tx->idc1 = tx2->idc1 = vi->i_i;
+				tx->idc2 = tx2->idc2 = vi->i_o;
 				for (i = 0; i <	3; i++)	{
-					tx->h2_term[i].cnv_i = 0.0;
-					tx->h2_term[i].cnv_o = 0.0;
+					tx->h2_term[i].cnv_i =
+				    - tx->idc1 * tx->h2_term[i].c / tx->h2_term[i].x;
+					tx->h2_term[i].cnv_o =
+				    - tx->idc2 * tx->h2_term[i].c / tx->h2_term[i].x;
 				}
 				for (i = 0; i <	6; i++)	{
 					tx->h3_term[i].cnv_i = 
 				    - tx->dc1 *	tx->h3_term[i].c / tx->h3_term[i].x;
 					tx->h3_term[i].cnv_o = 
 				    - tx->dc2 *	tx->h3_term[i].c / tx->h3_term[i].x;
+				}
+				if (tx->ifImg) {
+				    /* Enhancement-904: a complex pair's dc state is
+				     * -v*c/x in complex arithmetic, its real and
+				     * imaginary parts in the two terms */
+				    double d, a, b;
+				    d = tx->h3_term[4].x * tx->h3_term[4].x + tx->h3_term[5].x * tx->h3_term[5].x;
+				    a = (tx->h3_term[4].c * tx->h3_term[4].x + tx->h3_term[5].c * tx->h3_term[5].x) / d;
+				    b = (tx->h3_term[5].c * tx->h3_term[4].x - tx->h3_term[4].c * tx->h3_term[5].x) / d;
+				    tx->h3_term[4].cnv_i = - tx->dc1 * a;
+				    tx->h3_term[5].cnv_i = - tx->dc1 * b;
+				    tx->h3_term[4].cnv_o = - tx->dc2 * a;
+				    tx->h3_term[5].cnv_o = - tx->dc2 * b;
+				    d = tx->h2_term[1].x * tx->h2_term[1].x + tx->h2_term[2].x * tx->h2_term[2].x;
+				    a = (tx->h2_term[1].c * tx->h2_term[1].x + tx->h2_term[2].c * tx->h2_term[2].x) / d;
+				    b = (tx->h2_term[2].c * tx->h2_term[1].x - tx->h2_term[1].c * tx->h2_term[2].x) / d;
+				    tx->h2_term[1].cnv_i = - tx->idc1 * a;
+				    tx->h2_term[2].cnv_i = - tx->idc1 * b;
+				    tx->h2_term[1].cnv_o = - tx->idc2 * a;
+				    tx->h2_term[2].cnv_o = - tx->idc2 * b;
 				}
 				vi->next = NULL;
 				tx->vi_tail = vi;
@@ -210,8 +309,16 @@ TXLload(GENmodel *inModel, CKTcircuit *ckt)
 			*(here->TXLibr2Ibr2Ptr)	= -1.0;
 	    *(here->TXLposIbr1Ptr) = 1.0;
 	    *(here->TXLnegIbr2Ptr) = 1.0;
-	    *(here->TXLibr1PosPtr) = tx->sqtCdL	+ h1 * tx->h1C;
-			*(here->TXLibr2NegPtr) = tx->sqtCdL + h1 * tx->h1C;
+	    {
+		double yn = 0.0, wn, wo;
+		if (!tx->lsl)
+		    for (i = 0; i < 3; i++) {
+			txl_w(tx->h1_term[i].x, h, &wn, &wo);
+			yn += tx->h1_term[i].c / tx->h1_term[i].x * wn;
+		    }
+		*(here->TXLibr1PosPtr) = tx->sqtCdL + yn;
+		*(here->TXLibr2NegPtr) = tx->sqtCdL + yn;
+	    }
 
 			k = here->TXLibr1;
 			l = here->TXLibr2;
@@ -294,6 +401,7 @@ copy_tx(TXLine *new, TXLine *old)
 	}
 
 	new->ifImg = old->ifImg;
+	new->hstep = old->hstep;        /* Enhancement-905 */
 	if (new->vi_tail != old->vi_tail) {
 		/* someting wrong */
 		fprintf(stderr, "Error during evaluating TXL line\n");
@@ -329,11 +437,18 @@ update_cnv_txl(TXLine *tx, double h)
       e	= tx->h1e[i];
     
       t	= tm->c	/ tm->x;
-      bi *= t;
-      bo *= t;
-
-      tm->cnv_i	= (tm->cnv_i - bi*h) * e + (e -	1.0)*(ai*t + 1.0e+12*bi/tm->x);
-      tm->cnv_o	= (tm->cnv_o - bo*h) * e + (e -	1.0)*(ao*t + 1.0e+12*bo/tm->x);
+      /* Enhancement-905: each term's own slope, in the weights the load used
+       * for this step. `bi *= t` multiplied the running product into the next
+       * term: the second and third terms took dv*t0*t1 and dv*t0*t1*t2. The
+       * slope term was also a difference of two near-equal quantities when
+       * the step is short against the pole, and lost digits at high
+       * frequency. h is the step in picoseconds, dv in volts per picosecond. */
+      {
+	 double wn, wo;
+	 txl_w(tm->x, tx->hstep, &wn, &wo);
+	 tm->cnv_i = tm->cnv_i * e + t * (ai * wn + (ai - bi * h) * wo);
+	 tm->cnv_o = tm->cnv_o * e + t * (ao * wn + (ao - bo * h) * wo);
+      }
    }
    return (1);
 }
@@ -361,7 +476,7 @@ free_vi_txl(VI_list_txl	*q)
 
 
 static int 
-add_new_vi_txl(TXLinstance *here, CKTcircuit *ckt, int time)
+add_new_vi_txl(TXLinstance *here, CKTcircuit *ckt, long long time)
 {
    VI_list_txl *vi;
    TXLine *tx, *tx2;
@@ -386,7 +501,7 @@ add_new_vi_txl(TXLinstance *here, CKTcircuit *ckt, int time)
 
 
 static int 
-get_pvs_vi_txl(int t1, int t2, TXLine *tx, double *v1_i, double	*v2_i, double *i1_i, double *i2_i, 
+get_pvs_vi_txl(long long t1, long long t2, TXLine *tx, double *v1_i, double	*v2_i, double *i1_i, double *i2_i, 
 	       double *v1_o, double *v2_o, double *i1_o, double	*i2_o)
 {
    double ta, tb; 
@@ -394,28 +509,30 @@ get_pvs_vi_txl(int t1, int t2, TXLine *tx, double *v1_i, double	*v2_i, double *i
    double f;
    int ext = 0;
 
-   ta =	t1 - tx->taul;
-   tb =	t2 - tx->taul;
+   ta =	(double) t1 - tx->taul;
+   tb =	(double) t2 - tx->taul;
    if (tb <= 0)	{
       *v1_i = *v2_i = tx->dc1; 
       *v2_o = *v1_o = tx->dc2;
-      *i1_i = *i2_i = *i1_o = *i2_o = 0;
+      *i1_i = *i2_i = tx->idc1;      /* Enhancement-904: were 0 */
+      *i1_o = *i2_o = tx->idc2;
       return(ext);
    }
 
    if (ta <= 0)	{
-      *i1_i = *i1_o = 0.0; 
+      *i1_i = tx->idc1;              /* Enhancement-904: were 0 */
+      *i1_o = tx->idc2;
       *v1_i = tx->dc1;
       *v1_o = tx->dc2; 
       vi1 = tx->vi_head;
       vi = vi1->next;
    } else {
       vi1 = tx->vi_head;
-      for (vi =	vi1->next; vi->time < ta; vi = vi->next) {
+      for (vi =	vi1->next; (double) vi->time < ta; vi = vi->next) {
 	 /* free_vi_txl(vi1); */
 	 vi1 = vi;
       }
-      f	= (ta -	vi1->time) / (vi->time - vi1->time);
+      f	= (ta -	(double) vi1->time) / (double) (vi->time - vi1->time);
       *v1_i = vi1->v_i + f * (vi->v_i -	vi1->v_i);
       *v1_o = vi1->v_o + f * (vi->v_o -	vi1->v_o);
       *i1_i = vi1->i_i + f * (vi->i_i -	vi1->i_i);
@@ -423,7 +540,7 @@ get_pvs_vi_txl(int t1, int t2, TXLine *tx, double *v1_i, double	*v2_i, double *i
       tx->vi_head = vi1;
    }
 
-   if (tb > t1)	{
+   if (tb > (double) t1)	{
      
       /* fprintf(stderr, "pvs: time = %d\n", t2); */
       ext = 1;
@@ -444,7 +561,7 @@ get_pvs_vi_txl(int t1, int t2, TXLine *tx, double *v1_i, double	*v2_i, double *i
 	 *i2_o = vi1->i_o;
       }
        */
-      ratio[0] = f = (tb - t1) / (t2 - t1);
+      ratio[0] = f = (tb - (double) t1) / (double) (t2 - t1);
       if (vi)
 	 for (;	vi->time != t1;	vi = vi->next)
 	    ;
@@ -456,10 +573,10 @@ get_pvs_vi_txl(int t1, int t2, TXLine *tx, double *v1_i, double	*v2_i, double *i
       *i2_i = vi->i_i *	f;
       *i2_o = vi->i_o *	f;
    } else {
-      for (; vi->time <	tb; vi = vi->next) 
+      for (; (double) vi->time <	tb; vi = vi->next) 
 	 vi1 = vi;
       
-      f	= (tb -	vi1->time) / (vi->time - vi1->time);
+      f	= (tb -	(double) vi1->time) / (double) (vi->time - vi1->time);
       *v2_i = vi1->v_i + f * (vi->v_i -	vi1->v_i);
       *v2_o = vi1->v_o + f * (vi->v_o -	vi1->v_o);
       *i2_i = vi1->i_i + f * (vi->i_i -	vi1->i_i);
@@ -471,7 +588,7 @@ get_pvs_vi_txl(int t1, int t2, TXLine *tx, double *v1_i, double	*v2_i, double *i
 
 
 static int
-right_consts_txl(TXLine	*tx, int t, int	time, double h,	double h1, int l1, int l2, CKTcircuit *ckt)
+right_consts_txl(TXLine	*tx, long long t, long long time, double h,	double h1, int l1, int l2, CKTcircuit *ckt)
 /***  h1 = 0.5 * h  ***/
 {
    int i;
@@ -480,16 +597,17 @@ right_consts_txl(TXLine	*tx, int t, int	time, double h,	double h1, int l1, int l
    double v1_o,	v2_o, i1_o, i2_o;
    int ext;
 
+   NG_IGNORE(h1);    /* Enhancement-906: the exact weights replaced h/2 */
+   tx->hstep = h;    /* Enhancement-905: for the history update once accepted */
+
    if (! tx->lsl) {
-   double ff1=0.0;
    for (i = 0; i < 3; i++) {
+      double wn, wo, t = tx->h1_term[i].c / tx->h1_term[i].x;
       tx->h1e[i] = e = exp(tx->h1_term[i].x * h);
-      ff1 -= tx->h1_term[i].c *	e;
-      ff  -= tx->h1_term[i].cnv_i * e;
-      gg  -= tx->h1_term[i].cnv_o * e;
+      txl_w(tx->h1_term[i].x, h, &wn, &wo);
+      ff  -= tx->h1_term[i].cnv_i * e + t * wo * tx->in_node->V;
+      gg  -= tx->h1_term[i].cnv_o * e + t * wo * tx->out_node->V;
    }
-   ff += ff1 * h1 * tx->in_node->V;
-   gg += ff1 * h1 * tx->out_node->V;
    }
 
    ext = get_pvs_vi_txl(t, time, tx, &v1_i, &v2_i, &i1_i, &i2_i, &v1_o,	&v2_o, &i1_o, &i2_o);
@@ -499,32 +617,20 @@ right_consts_txl(TXLine	*tx, int t, int	time, double h,	double h1, int l1, int l
 	   gg =	tx->h3_aten * v2_i + tx->h2_aten * i2_i;
   } else {
    if (tx->ifImg) {
-      double a,	b, er, ei, a1, b1, a2, b2;
-
       for (i = 0; i < 4; i++) {
      TERM *tm;
+     double wn, wo, t;
      tm	= &(tx->h3_term[i]);
      e =  exp(tm->x * h);
-     tm->cnv_i = tm->cnv_i * e + h1 * tm->c * (v1_i * e	+ v2_i);
-     tm->cnv_o = tm->cnv_o * e + h1 * tm->c * (v1_o * e	+ v2_o);
+     txl_w(tm->x, h, &wn, &wo);
+     t = tm->c / tm->x;
+     tm->cnv_i = tm->cnv_i * e + t * (v2_i * wn + v1_i * wo);
+     tm->cnv_o = tm->cnv_o * e + t * (v2_o * wn + v1_o * wo);
       }
-      expC(tx->h3_term[4].x, tx->h3_term[5].x, h, &er, &ei);
-      a2 = h1 *	tx->h3_term[4].c;
-      b2 = h1 *	tx->h3_term[5].c;
-
-      a	= tx->h3_term[4].cnv_i;
-      b	= tx->h3_term[5].cnv_i;
-      multC(a, b, er, ei, &a, &b);
-      multC(a2,	b2, v1_i * er +	v2_i, v1_i * ei, &a1, &b1);
-      tx->h3_term[4].cnv_i = a + a1;
-      tx->h3_term[5].cnv_i = b + b1;
-
-      a	= tx->h3_term[4].cnv_o;
-      b	= tx->h3_term[5].cnv_o;
-      multC(a, b, er, ei, &a, &b);
-      multC(a2,	b2, v1_o * er +	v2_o, v1_o * ei, &a1, &b1);
-      tx->h3_term[4].cnv_o = a + a1;
-      tx->h3_term[5].cnv_o = b + b1;
+      txl_cstep(&tx->h3_term[4].cnv_i, &tx->h3_term[5].cnv_i, tx->h3_term[4].c, tx->h3_term[5].c,
+                tx->h3_term[4].x, tx->h3_term[5].x, h, v2_i, v1_i);
+      txl_cstep(&tx->h3_term[4].cnv_o, &tx->h3_term[5].cnv_o, tx->h3_term[4].c, tx->h3_term[5].c,
+                tx->h3_term[4].x, tx->h3_term[5].x, h, v2_o, v1_o);
 
       ff += tx->h3_aten	* v2_o;
       gg += tx->h3_aten	* v2_i;
@@ -538,29 +644,19 @@ right_consts_txl(TXLine	*tx, int t, int	time, double h,	double h1, int l1, int l
 
       {
      TERM *tm;
+     double wn, wo, t;
      tm	= &(tx->h2_term[0]);
 
      e =  exp(tm->x * h);
-     tm->cnv_i = tm->cnv_i * e + h1 * tm->c * (i1_i * e	+ i2_i);
-     tm->cnv_o = tm->cnv_o * e + h1 * tm->c * (i1_o * e	+ i2_o);
+     txl_w(tm->x, h, &wn, &wo);
+     t = tm->c / tm->x;
+     tm->cnv_i = tm->cnv_i * e + t * (i2_i * wn + i1_i * wo);
+     tm->cnv_o = tm->cnv_o * e + t * (i2_o * wn + i1_o * wo);
       }
-      expC(tx->h2_term[1].x, tx->h2_term[2].x, h, &er, &ei);
-      a2 = h1 *	tx->h2_term[1].c;
-      b2 = h1 *	tx->h2_term[2].c;
-
-      a	= tx->h2_term[1].cnv_i;
-      b	= tx->h2_term[2].cnv_i;
-      multC(a, b, er, ei, &a, &b);
-      multC(a2,	b2, i1_i * er +	i2_i, i1_i * ei, &a1, &b1);
-      tx->h2_term[1].cnv_i = a + a1;
-      tx->h2_term[2].cnv_i = b + b1;
-
-      a	= tx->h2_term[1].cnv_o;
-      b	= tx->h2_term[2].cnv_o;
-      multC(a, b, er, ei, &a, &b);
-      multC(a2,	b2, i1_o * er +	i2_o, i1_o * ei, &a1, &b1);
-      tx->h2_term[1].cnv_o = a + a1;
-      tx->h2_term[2].cnv_o = b + b1;
+      txl_cstep(&tx->h2_term[1].cnv_i, &tx->h2_term[2].cnv_i, tx->h2_term[1].c, tx->h2_term[2].c,
+                tx->h2_term[1].x, tx->h2_term[2].x, h, i2_i, i1_i);
+      txl_cstep(&tx->h2_term[1].cnv_o, &tx->h2_term[2].cnv_o, tx->h2_term[1].c, tx->h2_term[2].c,
+                tx->h2_term[1].x, tx->h2_term[2].x, h, i2_o, i1_o);
 
       ff += tx->h2_aten	* i2_o + tx->h2_term[0].cnv_o +
 	  2.0 *	tx->h2_term[1].cnv_o;
@@ -569,11 +665,14 @@ right_consts_txl(TXLine	*tx, int t, int	time, double h,	double h1, int l1, int l
    } else {
       for (i = 0; i < 6; i++) {
      TERM *tm;
+     double wn, wo, t;
      tm	= &(tx->h3_term[i]);
 
      e =  exp(tm->x * h);
-     tm->cnv_i = tm->cnv_i * e + h1 * tm->c * (v1_i * e	+ v2_i);
-     tm->cnv_o = tm->cnv_o * e + h1 * tm->c * (v1_o * e	+ v2_o);
+     txl_w(tm->x, h, &wn, &wo);
+     t = tm->c / tm->x;
+     tm->cnv_i = tm->cnv_i * e + t * (v2_i * wn + v1_i * wo);
+     tm->cnv_o = tm->cnv_o * e + t * (v2_o * wn + v1_o * wo);
       }
 
       ff += tx->h3_aten	* v2_o;
@@ -586,11 +685,14 @@ right_consts_txl(TXLine	*tx, int t, int	time, double h,	double h1, int l1, int l
 
       for (i = 0; i < 3; i++) {
      TERM *tm;
+     double wn, wo, t;
      tm	= &(tx->h2_term[i]);
 
      e =  exp(tm->x * h);
-     tm->cnv_i = tm->cnv_i * e + h1 * tm->c * (i1_i * e	+ i2_i);
-     tm->cnv_o = tm->cnv_o * e + h1 * tm->c * (i1_o * e	+ i2_o);
+     txl_w(tm->x, h, &wn, &wo);
+     t = tm->c / tm->x;
+     tm->cnv_i = tm->cnv_i * e + t * (i2_i * wn + i1_i * wo);
+     tm->cnv_o = tm->cnv_o * e + t * (i2_o * wn + i1_o * wo);
       }
 
       ff += tx->h2_aten	* i2_o;
@@ -666,18 +768,5 @@ expC(double ar,	double ai, double h, double *cr, double *ci)
    *ci = e * si;
 
    return(1);
-}
-
-static int 
-multC(double ar, double	ai, double br, double bi, double *cr, double *ci)
-{
-	double	tp;
-
-	tp = ar*br - ai*bi;
-	*ci = ar*bi + ai*br;
-	*cr = tp;
-
-	return (1);
-
 }
 

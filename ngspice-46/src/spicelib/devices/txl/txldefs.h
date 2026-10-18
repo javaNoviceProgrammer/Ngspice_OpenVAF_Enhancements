@@ -49,6 +49,7 @@ typedef struct sTXLinstance {
 	unsigned TXLibr2Given : 1;
 	unsigned TXLdcGiven : 1;
 	unsigned TXLlengthgiven : 1;   /* flag to indicate that instance parameter len is specified */
+	unsigned TXLnoted : 1;         /* Enhancement-908: its accuracy note was printed */
 
 #ifdef KLU
     BindElement *TXLposPosBinding ;

@@ -285,6 +285,26 @@ ReadTxL(TXLinstance *tx, CKTcircuit *ckt)
 		else line->g = 1.0 / (R * l);
 	}
 
+   /* Enhancement-908: say where the line's fits hold. Its three-pole Pade
+    * fits are expanded about s = infinity: above the RC corner R/L they are
+    * within 2e-4 of the exact line, a decade below it 7 % off, and at dc 14 %:
+    * the transient settles to 7/6 of the line's resistance. Said when
+    * R*length is at least 1 % of the characteristic impedance. */
+   if (!tx->TXLnoted && G == 0.0 && R > 0.0 && R * l >= 0.01 * sqrt(L / C)) {
+      tx->TXLnoted = 1;
+      if (t->lsl)
+         SPfrontEnd->IFerrorf(ERR_INFO,
+             "%s: R/L = %g is below 5e5, and txl simulates the line lossless: its "
+             "resistance R*length = %g ohm is dropped. LTRA (an O element) keeps it.",
+             tx->TXLname, R / L, R * l);
+      else
+         SPfrontEnd->IFerrorf(ERR_INFO,
+             "%s: txl's lossy-line fits hold above the line's RC corner R/(2 pi L) = %g Hz; "
+             "a decade below it they are 7 %% off, and the dc resistance the transient "
+             "settles to is 7/6 of R*length = %g ohm. LTRA (an O element) is exact at any frequency.",
+             tx->TXLname, R / L / (2.0 * M_PI), R * l);
+   }
+
    if (! t->lsl)
    		main_pade(R, L, G, C, l, t);
 

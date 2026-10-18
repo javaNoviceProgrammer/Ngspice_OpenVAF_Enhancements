@@ -57,6 +57,7 @@ typedef struct sCPLinstance {
 	unsigned CPLibr2Given   : 1;
 	unsigned CPLdcGiven     : 1;
 	unsigned CPLlengthGiven : 1;
+	unsigned CPLnoted       : 1;   /* Enhancement-908: its accuracy note was printed */
 
 #ifdef KLU
 	BindElement **CPLibr1Ibr1Binding;
