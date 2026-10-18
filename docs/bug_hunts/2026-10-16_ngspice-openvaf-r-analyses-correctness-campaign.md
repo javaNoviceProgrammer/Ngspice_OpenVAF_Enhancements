@@ -58,8 +58,8 @@ with today's openvaf-r. The harnesses are throwaway scripts in the session scrat
 | [F3](#f3) | **distortion:** `.disto` returns exact zeros for every device without a distortion routine (BSIM2 to 4, the SOI models, HiSIM, VBIC, HICUM, …), without a word: a BSIM4 stage reports no distortion at all | high |
 | [F4](#f4) | **distortion:** the built-in BJT's `.disto` is wrong with base resistance `rb` (2nd harmonic 45 % off, at 1 kHz too) and with reverse transit time `tr` (74 % at 10 MHz) | high |
 | [F5](#f5) | **transmission line:** TXL has no AC model and acts as one without saying so: its input sees the characteristic impedance to ground, and nothing reaches the output | high |
-| [F6](#f6) | **command:** `compose v values 1 -2 3` makes [−1, 3]: a negative value is subtracted from the one before it, without a word | medium |
-| [F7](#f7) | **RF:** `.sp` normalises NF, NFmin and Rn by the circuit's temperature instead of the standard 290 K: at 27 °C a passive two-port's NF reads 0.149 dB low | medium |
+| [F6](#f6) | **command:** `compose v values 1 -2 3` makes [−1, 3]: a negative value is subtracted from the one before it, without a word *(fixed in [E-900](../../enhancements_doc/Enhancement-900.md))* | medium |
+| [F7](#f7) | **RF:** `.sp` normalises NF, NFmin and Rn by the circuit's temperature instead of the standard 290 K: at 27 °C a passive two-port's NF reads 0.149 dB low *(fixed in [E-901](../../enhancements_doc/Enhancement-901.md))* | medium |
 | [F8](#f8) | **steady state:** `hb` gives up on 5 of 20 overdriven BJT stages, its source stepping stalled with the residual already at 1e-10; under Sparse it takes 450 s to give up, under KLU 3 s | medium |
 | [F9](#f9) | **transmission line:** TXL's and CPL's transients are up to 6 % off the exact lossy line, and a smaller step does not reduce it; LTRA is within 5e-4 on the same lines | medium |
 | [D1](#d1) | `ac` with a CPL line aborts with "ac simulation(s) aborted" and no reason | low |
@@ -204,6 +204,10 @@ F9). Nothing says the AC model is a stub.
 <a id="f6"></a>
 ## F6 — `compose … values` subtracts a negative value from the one before it
 
+*(fixed in [E-900](../../enhancements_doc/Enhancement-900.md): a word that starts with a sign,
+follows a complete value and sits outside parentheses starts a new value, as in a MATLAB row;
+`1 - 2 3` and `(1 -2) 3` keep their meaning; composevalues [1] to [8])*
+
 ```
 compose a1 values 1 -2 3        -> [-1, 3]
 compose a3 values 1, -2, 3      -> [-1, 3]
@@ -217,14 +221,19 @@ Nothing is printed.
 <a id="f7"></a>
 ## F7 — `.sp`'s noise figure uses the circuit's temperature as the reference
 
+*(fixed in [E-901](../../enhancements_doc/Enhancement-901.md): the noise parameters are
+normalised by 4kT₀ with T₀ = 290 K. Against a reference built from the resistors' own 4kT/R, 200
+random two-ports, active and passive, at −50 °C to 150 °C, now agree to 1.7e-12 dB, where E-899
+was up to 1.6 dB off away from 290 K; spnoisetemp [1] to [7])*
+
 `span.c` normalises the noise correlation matrix by 4k·`CKTtemp`. The IEEE noise figure is defined
 with the source at T₀ = 290 K. A passive two-port at physical temperature T has
 F = 1 + (T/T₀)(1/G_a − 1). ngspice computes 1/G_a, which holds only at T = T₀.
 
-- A 100 Ω/100 Ω attenuator between 50 Ω ports: NF 8.7506 dB, against 8.8805 dB.
+- A 100 Ω/100 Ω attenuator between 50 Ω ports: NF 8.7506 dB, against 8.8804 dB.
 - 110 passive two-ports: 0.149 dB low where their own noise dominates, the asymptote being
   10·log₁₀(300.15/290), and 0.009 dB at the smallest.
-- Rn reads 3.5 % low.
+- Rn reads 3.4 % low.
 
 `Cy` itself is right: within 2.5e-12 of 2kT(Y + Yᴴ) in 420 passive runs.
 

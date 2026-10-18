@@ -583,3 +583,20 @@ scripting ngspice:
   models"** ([E-894](../../enhancements_doc/Enhancement-894.md)) names a branch
   past a megaampere: almost always a source that forward-biases a junction
   directly. Add the junction's series resistance, or the source's.
+- **`compose name values 1 -2 3`** is [1, −2, 3] since
+  [E-900](../../enhancements_doc/Enhancement-900.md). Before it, the values
+  were one expression list, `1 -2` was 1 − 2, and the vector was [−1, 3]
+  without a word. A comma did not help, since the shell turns it into a space.
+  Vectors that older builds composed from unbracketed negative values need
+  re-making. `print`, `plot` and the other commands that take a list still
+  read `1 -2`, `1, -2` and `v(a) -v(b)` as one difference, and label it so
+  (`1 -2 = -1`). To list a negative expression there, put it in parentheses:
+  `print v(a) (-v(b))`.
+- **`.sp`'s NF, NFmin and Rn** are the IEEE values, referred to T₀ = 290 K,
+  since [E-901](../../enhancements_doc/Enhancement-901.md). Older builds
+  normalised them by the circuit's temperature T, which made F − 1 and Rn T₀/T
+  of their values, for any network. NF was off by up to 10·log₁₀(T/T₀), the
+  bound reached where the network's own noise dominates: 0.149 dB low at
+  27 °C, 1.38 dB low at 125 °C, 0.95 dB high at −40 °C. Rn was 3.4 % low at
+  27 °C. Noise figures from older builds, away from 16.85 °C, need re-running;
+  `Cy` was right throughout.

@@ -16,9 +16,11 @@ Round 2 of the Enhancement-62 analysis-coverage probe:
     Only the donoise noise-parameter block (NF/SOpt/Rn -- inherently
     two-port concepts) is restricted to exactly 2 ports.
   * `.sp ... 1` (donoise): the OSDI noise pipeline reaches S-parameter
-    noise figures -- NF = 10*log10(1 + R/Z0) = 4.7712 dB exactly for the
-    series noisy resistor. THE FIX: the same topology with a BUILT-IN
-    resistor returned NaN -- span.c's noise-parameter extraction takes
+    noise figures -- NF = 10*log10(1 + (T/T0)*R/Z0) = 4.8714 dB exactly for
+    the series noisy resistor at T = 300.15 K, the IEEE T0 = 290 K
+    (Enhancement-901; before it, NF was normalised by T and read 4.7712).
+    THE FIX: the same topology with a BUILT-IN resistor returned NaN --
+    span.c's noise-parameter extraction takes
     sqrt(Ycor.re^2 + Gu/Rn) where Gu (the uncorrelated noise conductance)
     is analytically ZERO for a fully-correlated single-source topology,
     and floating-point rounding could land the argument at -1e-18. Found
@@ -266,8 +268,11 @@ print NF SOpt
 """)
     m = re.search(r"nf = ([0-9.eEnan+-]+)", log)
     nf[tag] = m.group(1) if m else "?"
-want_nf = 10.0 * math.log10(1.0 + 100.0 / 50.0)   # 4.7712125...
-check("OSDI noisy resistor: NF == 10*log10(1+R/Z0) == 4.7712 dB",
+# Enhancement-901: the IEEE noise figure, source at T0 = 290 K, of a resistor at
+# T = 300.15 K: F = 1 + (T/T0)(1/Ga - 1), 1/Ga = 1 + R/Z0.
+T_CKT, T0 = 300.15, 290.0
+want_nf = 10.0 * math.log10(1.0 + T_CKT / T0 * 100.0 / 50.0)   # 4.8713837...
+check("OSDI noisy resistor: NF == 10*log10(1+(T/T0)R/Z0) == 4.8714 dB",
       nf["osdi"] != "?" and "nan" not in nf["osdi"]
       and abs(float(nf["osdi"]) - want_nf) < 1e-4, f"(NF={nf['osdi']})")
 check("built-in resistor: NF finite and analytic (was NaN before the fix)",
@@ -287,8 +292,8 @@ print NF
 .end
 """)
 m = re.search(r"nf = ([0-9.eE+-]+)", log)
-check("two-resistor NF unchanged by the clamp (7.2016 dB)",
-      m and abs(float(m.group(1)) - 7.201593) < 1e-4)
+check("two-resistor NF unchanged by the clamp (7.3229 dB: 1/Ga = 5.25, at T/T0)",
+      m and abs(float(m.group(1)) - 10.0 * math.log10(1.0 + T_CKT / T0 * 4.25)) < 1e-4)
 
 print("[4] transient noise propagates through OSDI devices")
 log = run_deck("_trno.cir", """* trnoise through osdi divider

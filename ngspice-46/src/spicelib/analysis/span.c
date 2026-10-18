@@ -21,6 +21,9 @@
 
 #define SQR(x) ((x) * (x))
 
+/* Enhancement-901: the IEEE reference temperature of the noise figure */
+#define SPNOISE_T0 290.0
+
 
 #ifdef RFSPICE
 #include "vsrc/vsrcdefs.h"
@@ -117,7 +120,14 @@ CKTspnoise(CKTcircuit* ckt, int mode, int operation, Ndata* data, NOISEAN* noise
         // We have the Cy noise matrix,
 
         // Equations from Stephen Maas 'Noise'
-        double knorm = 4.0 * CONSTboltz * (ckt->CKTtemp);
+        /* Enhancement-901: the noise parameters are normalised by 4kT0 with
+         * the IEEE standard temperature T0 = 290 K, not by the circuit's
+         * temperature. The devices' noise in Cy is already at their own
+         * temperature; NF is defined with the source at T0. Dividing by
+         * 4k*CKTtemp made a passive two-port at 27 C read 1/Ga, which holds
+         * only at T = T0: NF up to 10*log10(300.15/290) = 0.149 dB low,
+         * NFmin as much, and Rn 3.4 % low. */
+        double knorm = 4.0 * CONSTboltz * SPNOISE_T0;
         CMat* tempCy = cscalarmultiply(ckt->CKTNoiseCYmat, 1.0 / knorm); // cmultiply(, YConj);
 #ifdef TRACE
         printf("spnoise: CKTNoiseCYmat / (4*k*T)\n");

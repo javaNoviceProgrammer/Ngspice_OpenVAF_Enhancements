@@ -65,6 +65,85 @@ dimxpand(struct dvec *v, int *newdims, double *data)
 }
 
 
+/* Enhancement-900: does the word `w` end an operand, so that a signed word
+ * after it starts a new value rather than continuing an expression? */
+static bool
+ends_operand(const char *w)
+{
+    static const char *const wordops[] = {
+        "gt", "lt", "ge", "le", "ne", "eq", "or", "and", "not", NULL
+    };
+    size_t n = strlen(w);
+    int k;
+
+    if (n == 0 || strchr("+-*/^%,(=<>&|~?:[", w[n - 1]))
+        return FALSE;
+    for (k = 0; wordops[k]; k++)
+        if (eq(w, wordops[k]))
+            return FALSE;
+    return TRUE;
+}
+
+
+/* Enhancement-900: parse the values of `compose name values ...`. The
+ * expression parser reads `1 -2 3` as the list [1-2, 3], so a negative value
+ * was subtracted from the one before it: [-1, 3], silently. A word that
+ * starts with a sign, follows a word ending an operand, and sits outside
+ * parentheses and brackets starts a new value, as in a MATLAB row: `1 -2 3`
+ * is [1, -2, 3], `1 - 2 3` stays [-1, 3], `(1 -2)` stays -1. The shell's
+ * lexer turns a comma after a word into a word break, so `1, -2, 3` is the
+ * same list. Each run of words is parsed alone and the lists are joined. */
+static struct pnode *
+compose_values_parse(wordlist *wl)
+{
+    struct pnode *names = NULL, *last = NULL;
+    int depth = 0;
+
+    if (!wl)
+        return ft_getpnames(wl, TRUE);  /* its warning for an empty list */
+
+    while (wl) {
+        wordlist *first = wl, *end = wl, *after;
+        struct pnode *pn;
+        const char *s;
+
+        for (;;) {
+            for (s = end->wl_word; *s; s++)
+                if (*s == '(' || *s == '[')
+                    depth++;
+                else if (*s == ')' || *s == ']')
+                    depth--;
+            after = end->wl_next;
+            if (!after)
+                break;
+            if (depth <= 0 && (after->wl_word[0] == '-' || after->wl_word[0] == '+') &&
+                after->wl_word[1] != '\0' && ends_operand(end->wl_word))
+                break;
+            end = after;
+        }
+
+        end->wl_next = NULL;
+        pn = ft_getpnames(first, TRUE);
+        end->wl_next = after;
+        if (!pn) {
+            free_pnode(names);
+            return NULL;
+        }
+        if (last) {
+            last->pn_next = pn;
+            pn->pn_use++;
+        } else {
+            names = pn;
+        }
+        for (last = pn; last->pn_next; last = last->pn_next)
+            ;
+        wl = after;
+    }
+
+    return names;
+}
+
+
 /* The general syntax is 'compose name parm = val ...'
  * The possible parms are:
  *  start       The value at which the vector should start.
@@ -82,8 +161,9 @@ dimxpand(struct dvec *v, int *newdims, double *data)
  *  unif        The number of points in the uniform distribution.
  *
  * The case 'compose name values val val ...' takes the values and creates a
- * new vector -- the vals may be arbitrary expressions. Negative vals have to
- * be put into brackets, like (-1.6).
+ * new vector -- the vals may be arbitrary expressions. A signed word after a
+ * complete value starts a new one: `1 -2 3` is [1, -2, 3] (Enhancement-900;
+ * before, negative vals had to be put into brackets, like (-1.6)).
  */
 
 void
@@ -127,7 +207,7 @@ com_compose(wordlist *wl)
         /* Build up the vector from the rest of the line... */
         wl = wl->wl_next;
 
-        names = ft_getpnames(wl, TRUE);
+        names = compose_values_parse(wl);    /* Enhancement-900 */
         if (!names)
             goto done;
 
