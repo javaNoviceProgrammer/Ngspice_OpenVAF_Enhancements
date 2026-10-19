@@ -150,8 +150,52 @@ jobs:
           # default, kept explicit now that the image is macos-15.
           echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
           export MACOSX_DEPLOYMENT_TARGET=14.0
+          # Intel macOS is Homebrew Tier 3 since 2026-09: a formula updated
+          # after that has no Intel bottle and builds from source. Two of them
+          # cost the macos-intel leg five hours of this step, so its job hit
+          # the 6 h limit (runs 39127544982 and 39259349596):
+          # - llvm@18. Its 2026-10-16 rebottle (the move to python@3.15) has no
+          #   Intel bottle, so brew compiled LLVM, clang, lld, mlir and polly
+          #   (4 h 11 min), after building the cmake and python@3.15 it needs.
+          #   Instead the leg installs the formula as of homebrew-core
+          #   93964627 (2026-09-14: 18.1.8, bottle rebuild 2, the macOS 27
+          #   backports included) from a local tap. Its `sonoma` bottle is still
+          #   on ghcr.io and pours in a minute: the same keg at the same
+          #   /usr/local/opt/llvm@18 that the committed binary links against.
+          # - azure-cli. `brew update` migrates the image's formula to a cask,
+          #   and that built openssl@4 from source (8 min). Nothing here uses it.
+          INTEL=; [ "$(uname -m)" = x86_64 ] && INTEL=1
+          if [ -n "$INTEL" ]; then
+            brew uninstall --formula --ignore-dependencies azure-cli 2>/dev/null || true
+          fi
           brew update
-          brew install llvm@18 automake autoconf libtool bison flex readline ncurses
+          LLVM_FORMULA=llvm@18
+          if [ -n "$INTEL" ]; then
+            PIN=93964627eba40fe2f5b157aba82ef84e8d413e3a
+            PIN_FORMULA_SHA=116523aa4d0f46ab8b165c0b00b1261a750274cc517ccee917b8b4329c1f6375
+            PIN_BOTTLE_SHA=56bb12c01aa3f619f88d4f06220fa2ddd6e7d4dcc87860e3f3087ec211e1bf41   # its sonoma bottle
+            brew tap-new --no-git local/pinned >/dev/null
+            TAP="$(brew --repository)/Library/Taps/local/homebrew-pinned"
+            curl -fsSL --retry 3 -o "$TAP/Formula/llvm@18.rb" \
+              "https://raw.githubusercontent.com/Homebrew/homebrew-core/$PIN/Formula/l/llvm@18.rb"
+            echo "$PIN_FORMULA_SHA  $TAP/Formula/llvm@18.rb" | shasum -a 256 -c -
+            # A tap's bottles are looked up under the tap's own name; point this
+            # one at homebrew-core's, where the pinned bottle lives.
+            perl -pi -e 's|^  bottle do$|  bottle do\n    root_url "https://ghcr.io/v2/homebrew/core"|' "$TAP/Formula/llvm@18.rb"
+            grep -q 'root_url "https://ghcr.io/v2/homebrew/core"' "$TAP/Formula/llvm@18.rb"
+            # Without the bottle brew would quietly build from source again;
+            # stop here instead, saying why.
+            if ! curl -fsIL --retry 3 -o /dev/null -H "Authorization: Bearer QQ==" \
+                 "https://ghcr.io/v2/homebrew/core/llvm/18/blobs/sha256:$PIN_BOTTLE_SHA"; then
+              echo "::error::the pinned llvm@18 Intel bottle (sha256 $PIN_BOTTLE_SHA) is no longer on ghcr.io; installing it would build LLVM from source for hours"
+              exit 1
+            fi
+            LLVM_FORMULA=local/pinned/llvm@18
+          fi
+          brew install "$LLVM_FORMULA" automake autoconf libtool bison flex readline ncurses
+          if [ -n "$INTEL" ]; then
+            brew info --json=v2 llvm@18 | python3 -c 'import json, sys; f = json.load(sys.stdin)["formulae"][0]; i = f["installed"][0]; print("llvm@18:", f["tap"], i["version"], "poured from a bottle" if i["poured_from_bottle"] else "BUILT FROM SOURCE")'
+          fi
           # belt-and-braces: make llvm@18 the linked default too (the build
           # does not depend on the link, but this keeps any brew-installed
           # tool that looks for a linked llvm consistent with what we use)

@@ -102,6 +102,14 @@ jobs:
           export HOMEBREW_NO_INSTALL_UPGRADE=1
           echo "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1" >> "$GITHUB_ENV"
           echo "HOMEBREW_NO_INSTALL_UPGRADE=1" >> "$GITHUB_ENV"
+          # Intel macOS is Homebrew Tier 3 since 2026-09 (no new Intel bottles).
+          # There `brew update` migrates the image's azure-cli formula to a cask,
+          # and that built openssl@4 from source; nothing here uses azure-cli.
+          # (The 2026-10-19 Intel run lost its runner 45 min into this step,
+          # where it usually takes 20; no log survived to say why.)
+          if [ "$(uname -m)" = x86_64 ]; then
+            brew uninstall --formula --ignore-dependencies azure-cli 2>/dev/null || true
+          fi
           brew update
           brew install automake autoconf libtool bison flex
           echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
