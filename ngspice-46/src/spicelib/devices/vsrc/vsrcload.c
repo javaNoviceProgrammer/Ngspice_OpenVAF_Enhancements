@@ -273,13 +273,23 @@ VSRCload(GENmodel *inModel, CKTcircuit *ckt)
 
                         VO = here->VSRCcoeffs[0];
                         VA = here->VSRCcoeffs[1];
+                        /* Enhancement-913 (correctness campaign of 2026-10-19,
+                           F4): the manual's table -- a carrier of 500/TSTOP
+                           and a modulation of 5/TSTOP, so that MDI's default
+                           of 90 is 0.9*FC/FM, as the comment below has it.
+                           The two were swapped: SFFM(0 1) was a 5 kHz carrier
+                           modulated at 500 kHz over a 1 ms run, and MDI was
+                           clamped to FC/FM = 0.01 with a warning. The order of
+                           the arguments is unchanged (VO VA FC MDI FM, SPICE3's
+                           and the table's; the manual's general-form line
+                           gives FM MDI FC). */
                         FC = here->VSRCfunctionOrder > 2
-                           ? here->VSRCcoeffs[2] : (5./ckt->CKTfinalTime);
+                           ? here->VSRCcoeffs[2] : (500./ckt->CKTfinalTime);
                         MDI = here->VSRCfunctionOrder > 3
                            ? here->VSRCcoeffs[3] : 90.0; /* 0.9 * FC / FM */
                         FM  = here->VSRCfunctionOrder > 4
                            && here->VSRCcoeffs[4] /* test if not 0 */
-                           ? here->VSRCcoeffs[4] : (500./ckt->CKTfinalTime);
+                           ? here->VSRCcoeffs[4] : (5./ckt->CKTfinalTime);
                         TD  = here->VSRCfunctionOrder > 5
                            ? here->VSRCcoeffs[5] : 0;
                         PHASEM = here->VSRCfunctionOrder > 6
@@ -295,7 +305,14 @@ VSRCload(GENmodel *inModel, CKTcircuit *ckt)
                         if (MDI > FC / FM) {
                             MDI = FC / FM;
                             if (!warn1){
-                                fprintf(stderr, "Warning: MDI in %s limited to FC/FM\n", here->gen.GENname);
+                                /* Enhancement-913: a carrier below its modulation is
+                                   most often the manual's general-form order, FM MDI
+                                   FC, written for the code's FC MDI FM */
+                                if (FC < FM)
+                                    fprintf(stderr, "Warning: MDI in %s limited to FC/FM = %g: the carrier FC = %g Hz is below the modulation FM = %g Hz (SFFM reads VO VA FC MDI FM; the manual's general form shows FM MDI FC)\n",
+                                            here->gen.GENname, FC / FM, FC, FM);
+                                else
+                                    fprintf(stderr, "Warning: MDI in %s limited to FC/FM\n", here->gen.GENname);
                                 warn1 = TRUE;
                             }
                         }

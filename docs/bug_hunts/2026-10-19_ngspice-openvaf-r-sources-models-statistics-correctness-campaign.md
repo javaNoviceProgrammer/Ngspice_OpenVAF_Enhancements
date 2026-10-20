@@ -50,7 +50,7 @@ numpy's solve. The harnesses are throwaway scripts in the session scratchpad (`r
 | [F1](#f1) | **Verilog-A event:** `@(cross(...))` with the default time tolerance runs its body twice for one crossing — on the step that overshoots it and again on the retry that lands on it — and keeps both side effects: a crossing counter on a 1 MHz sine reads 30 after 20 crossings *(fixed in [E-909](../../enhancements_doc/Enhancement-909.md))* | high |
 | [F2](#f2) | **source:** a voltage source's PULSE with `PER` left out repeats back to back (period TR+TF+PW), and with `PW` left out too it is a triangle; the manual gives both a default of TSTOP, and a current source with the same line gives the single pulse *(fixed in [E-910](../../enhancements_doc/Enhancement-910.md))* | high |
 | [F3](#f3) | **source:** a current source's SFFM never applies its delay — `TD` is read as the modulation phase and `PHASEM` as the carrier phase — and a current source's AM is 0 before its delay and at the operating point; E-318 fixed both only on the voltage source *(fixed in [E-912](../../enhancements_doc/Enhancement-912.md))* | medium |
-| [F4](#f4) | **source:** SFFM's default frequencies are the manual's swapped (carrier 5/TSTOP, modulation 500/TSTOP), so `SFFM(0 1)` is a 5 kHz carrier with its modulation index clamped to 0.01; the manual's general-form line orders the arguments FM MDI FC, against its own table and the code | low |
+| [F4](#f4) | **source:** SFFM's default frequencies are the manual's swapped (carrier 5/TSTOP, modulation 500/TSTOP), so `SFFM(0 1)` is a 5 kHz carrier with its modulation index clamped to 0.01; the manual's general-form line orders the arguments FM MDI FC, against its own table and the code *(fixed in [E-913](../../enhancements_doc/Enhancement-913.md))* | low |
 | [F5](#f5) | **source:** EXP with `TD1` left out starts one TSTEP late (the manual: at 0), so its waveform moves with the step — the case E-446 fixed only for an explicit 0 | low |
 | [F6](#f6) | **controlled source:** a POLY(1) source with a single coefficient is refused as "Too few values for parameter 'coef'", where the manual's general form allows `P0` alone; the hint about missing node pairs does not apply | low |
 | [D1](#d1) | an E or G `TABLE` source run without the code models loaded fails as "the controlling node 'e1_int1' does not exist … This is a typo": the internal node of its translation is named, the missing `pwl` code model is not | low |
@@ -153,6 +153,10 @@ random sources, 45 current-source SFFM and 66 current-source AM cases differed t
 
 <a id="f4"></a>
 ## F4 — SFFM's default frequencies are swapped
+
+*(fixed in [E-913](../../enhancements_doc/Enhancement-913.md): FC defaults to 500/TSTOP and FM to
+5/TSTOP; the argument order stays VO VA FC MDI FM, and a carrier clamped below its modulation is
+named in the warning; sffmdefault [1] to [5])*
 
 `V1 a 0 SFFM(0 1)` with `tran 1u 1m` crosses zero rising at 0.2 ms and 0.4 ms — a 5 kHz carrier —
 and prints `Warning: MDI in v1 limited to FC/FM`. The manual's table gives FC 500/TSTOP and FM
