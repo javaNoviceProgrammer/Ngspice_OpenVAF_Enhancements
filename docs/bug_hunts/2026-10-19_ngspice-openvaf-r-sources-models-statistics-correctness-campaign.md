@@ -49,7 +49,7 @@ numpy's solve. The harnesses are throwaway scripts in the session scratchpad (`r
 |---|---|---|
 | [F1](#f1) | **Verilog-A event:** `@(cross(...))` with the default time tolerance runs its body twice for one crossing — on the step that overshoots it and again on the retry that lands on it — and keeps both side effects: a crossing counter on a 1 MHz sine reads 30 after 20 crossings *(fixed in [E-909](../../enhancements_doc/Enhancement-909.md))* | high |
 | [F2](#f2) | **source:** a voltage source's PULSE with `PER` left out repeats back to back (period TR+TF+PW), and with `PW` left out too it is a triangle; the manual gives both a default of TSTOP, and a current source with the same line gives the single pulse *(fixed in [E-910](../../enhancements_doc/Enhancement-910.md))* | high |
-| [F3](#f3) | **source:** a current source's SFFM never applies its delay — `TD` is read as the modulation phase and `PHASEM` as the carrier phase — and a current source's AM is 0 before its delay and at the operating point; E-318 fixed both only on the voltage source | medium |
+| [F3](#f3) | **source:** a current source's SFFM never applies its delay — `TD` is read as the modulation phase and `PHASEM` as the carrier phase — and a current source's AM is 0 before its delay and at the operating point; E-318 fixed both only on the voltage source *(fixed in [E-912](../../enhancements_doc/Enhancement-912.md))* | medium |
 | [F4](#f4) | **source:** SFFM's default frequencies are the manual's swapped (carrier 5/TSTOP, modulation 500/TSTOP), so `SFFM(0 1)` is a 5 kHz carrier with its modulation index clamped to 0.01; the manual's general-form line orders the arguments FM MDI FC, against its own table and the code | low |
 | [F5](#f5) | **source:** EXP with `TD1` left out starts one TSTEP late (the manual: at 0), so its waveform moves with the step — the case E-446 fixed only for an explicit 0 | low |
 | [F6](#f6) | **controlled source:** a POLY(1) source with a single coefficient is refused as "Too few values for parameter 'coef'", where the manual's general form allows `P0` alone; the hint about missing node pairs does not apply | low |
@@ -126,6 +126,10 @@ PW or PER left out. SPICE3's and LTspice's PULSE without a period is one pulse.
 
 <a id="f3"></a>
 ## F3 — a current source's SFFM ignores its delay, and its AM drops its offset
+
+*(fixed in [E-912](../../enhancements_doc/Enhancement-912.md): the current source's SFFM and AM
+are the voltage source's, line for line, with the arguments in their slots and the start value
+held until TD; isrcmod [1] to [7])*
 
 ```
 V1 a 0 SFFM(0 1 1meg 2 100k 5u 30 60)

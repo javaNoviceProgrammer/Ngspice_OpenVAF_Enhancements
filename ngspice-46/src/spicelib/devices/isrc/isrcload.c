@@ -247,12 +247,20 @@ ISRCload(GENmodel *inModel, CKTcircuit *ckt)
                         FM  = here->ISRCfunctionOrder > 4
                            && here->ISRCcoeffs[4]
                            ? here->ISRCcoeffs[4] : (500./ckt->CKTfinalTime);
+                        /* Enhancement-912 (correctness campaign of 2026-10-19,
+                           F3): the arguments as the voltage source and the
+                           manual read them, VO VA FC MDI FM TD PHASEM PHASEC.
+                           PHASEM was read from the TD slot and PHASEC from
+                           PHASEM's, the last argument was dropped, and TD was
+                           never applied: SFFM(0 1 1meg 2 100k 5u 30 60) took
+                           a modulation phase of 5e-6 degrees and a carrier
+                           phase of 30, and ran from t = 0 instead of 5 us. */
                         TD = here->ISRCfunctionOrder > 5
                             ? here->ISRCcoeffs[5] : 0;
-                        PHASEM = here->ISRCfunctionOrder > 5
-                            ? here->ISRCcoeffs[5] : 0.0;
-                        PHASEC = here->ISRCfunctionOrder > 6
+                        PHASEM = here->ISRCfunctionOrder > 6
                             ? here->ISRCcoeffs[6] : 0.0;
+                        PHASEC = here->ISRCfunctionOrder > 7
+                            ? here->ISRCcoeffs[7] : 0.0;
 
                         /* limit the modulation index */
                         if (MDI > FC / FM) {
@@ -274,10 +282,18 @@ ISRCload(GENmodel *inModel, CKTcircuit *ckt)
                         phasec = PHASEC * M_PI / 180.0;
                         phasem = PHASEM * M_PI / 180.0;
 
-                        /* compute waveform value */
-                        value = VO + VA *
-                            sin((2.0 * M_PI * FC * time + phasec) +
-                            MDI * sin(2.0 * M_PI * FM * time + phasem));
+                        /* Enhancement-912: before the delay, the waveform's value
+                           at its start, as vsrcload.c (E-318) */
+                        time -= TD;
+                        if (time <= 0) {
+                            value = VO + VA * sin(phasec + MDI * sin(phasem));
+                        }
+                        else {
+                            /* compute waveform value */
+                            value = VO + VA *
+                                sin((2.0 * M_PI * FC * time + phasec) +
+                                MDI * sin(2.0 * M_PI * FM * time + phasem));
+                        }
                     }
                     break;
 
@@ -307,7 +323,10 @@ ISRCload(GENmodel *inModel, CKTcircuit *ckt)
 
                         time -= TD;
                         if (time <= 0) {
-                            value = 0;
+                            /* Enhancement-912: the waveform's value at its start,
+                               as vsrcload.c (E-318); it was 0, so the operating
+                               point and the interval before the delay lost VO */
+                            value = VO + (VMO + VMA * sin(phasem)) * sin(phasec);
                         } else {
                             /* compute waveform value */
                             value = VO + (VMO + VMA * sin(2.0 * M_PI * FM * time + phasem)) *

@@ -311,8 +311,8 @@ VSRCload(GENmodel *inModel, CKTcircuit *ckt)
                         if (time <= 0) {
                             /* Enhancement-318: before the delay, hold the quiescent value
                                (the waveform at time=0) -- VO + VA*sin(phasec + MDI*sin(phasem))
-                               -- exactly as the SIN case above does, and as the current-source
-                               SFFM (isrcload.c) already does. It previously returned 0, dropping
+                               -- exactly as the SIN case above does (and, since E-912, the
+                               current-source SFFM). It previously returned 0, dropping
                                the DC offset VO at the operating point and over the whole pre-delay
                                interval and injecting a spurious startup transient. */
                             value = VO + VA * sin(phasec + MDI * sin(phasem));
