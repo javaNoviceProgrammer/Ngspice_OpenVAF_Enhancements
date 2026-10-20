@@ -1,0 +1,92 @@
+`include "disciplines.vams"
+
+// Enhancement-909: what an event body did in a rejected transient attempt is
+// undone at the retry, and the messages it printed are dropped with it.
+
+// a crossing counter with an integer and a real piece of state
+module cnt(in, o_n, o_s);
+  inout in, o_n, o_s;
+  electrical in, o_n, o_s;
+  parameter real thr = 0.3;
+  parameter integer dir = 0;
+  parameter integer talk = 0;
+  integer n;
+  real s;
+  analog begin
+    @(initial_step) begin
+      n = 0;
+      s = 0.0;
+    end
+    @(cross(V(in) - thr, dir)) begin
+      n = n + 1;
+      s = s + 0.5;
+      if (talk) $strobe("XC %d %.15e", n, $abstime);
+    end
+    @(final_step) if (talk) $strobe("FIN %d", n);
+    V(o_n) <+ n;
+    V(o_s) <+ s;
+  end
+endmodule
+
+// the same counter with a time tolerance, which lands within it
+module cntt(in, o_n, o_s);
+  inout in, o_n, o_s;
+  electrical in, o_n, o_s;
+  parameter real thr = 0.3;
+  parameter integer dir = 0;
+  integer n;
+  real s;
+  analog begin
+    @(initial_step) begin
+      n = 0;
+      s = 0.0;
+    end
+    @(cross(V(in) - thr, dir, 1e-12)) begin
+      n = n + 1;
+      s = s + 0.5;
+    end
+    V(o_n) <+ n;
+    V(o_s) <+ s;
+  end
+endmodule
+
+// a crossing and a timer in one module: a landing on the crossing rejects the
+// attempt the timer fired in
+module tmx(in, o_n, o_m);
+  inout in, o_n, o_m;
+  electrical in, o_n, o_m;
+  parameter real thr = 0.0;
+  parameter integer dir = 0;
+  parameter real tstart = 1e-6;
+  parameter real tper = 1e-6;
+  integer n, m;
+  analog begin
+    @(initial_step) begin
+      n = 0;
+      m = 0;
+    end
+    @(cross(V(in) - thr, dir)) begin
+      n = n + 1;
+      $strobe("XC %d %.15e", n, $abstime);
+    end
+    @(timer(tstart, tper)) begin
+      m = m + 1;
+      $strobe("TM %d %.15e", m, $abstime);
+    end
+    V(o_n) <+ n;
+    V(o_m) <+ m;
+  end
+endmodule
+
+// a variable set at the initial step, read at the final one: under harmonic
+// balance (sample times, no accepted points) nothing is rolled back
+module ini(a, b);
+  inout a, b;
+  electrical a, b;
+  integer ninit;
+  analog begin
+    @(initial_step) ninit = ninit + 1;
+    I(a, b) <+ V(a, b) / 1k + 1e-4 * V(a, b) * V(a, b);
+    @(final_step) $strobe("INI %0d", ninit);
+  end
+endmodule

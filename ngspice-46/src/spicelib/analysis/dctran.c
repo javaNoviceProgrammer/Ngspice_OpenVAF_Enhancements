@@ -507,6 +507,7 @@ DCtran(CKTcircuit *ckt,
         ckt->CKTlandStep = 0.0;   /* Enhancement-884 */
         ckt->CKTlandBreak = 0;
         ckt->CKTlandedBreak = 0;
+        ckt->CKTmodelBound = HUGE_VAL;   /* Enhancement-909 */
 
         /* Enhancement-853 (second robustness campaign 2026-10-10, F9): the
          * stock order control only toggles Gear between orders 1 and 2, and
@@ -1463,6 +1464,7 @@ resume:
             /* Scan through all devices, estimate the truncation error,
                and reduce the time step, if necessary.*/
             ckt->CKTforceReject = 0;   /* Enhancement-759: set by a device's landing request */
+            ckt->CKTmodelBound = HUGE_VAL;   /* Enhancement-909: OSDItrunc lowers it */
             error = CKTtrunc(ckt,&newdelta);
             if(error) {
                 UPDATE_STATS(DOING_TRAN);
@@ -1648,6 +1650,12 @@ resume:
                 } else if (ckt->CKTlanding) {
                     if (newdelta < ckt->CKTdelta / 8.0)
                         newdelta = ckt->CKTdelta / 8.0;
+                    /* Enhancement-909: the floor is against the truncation
+                     * estimate, not a bound a device asked for -- a timer
+                     * due just after a crossing was stepped over (its event
+                     * 5e-3 of a period late) */
+                    if (newdelta > ckt->CKTmodelBound)
+                        newdelta = ckt->CKTmodelBound;
                     ckt->CKTlanding = 0;
                 }
                 ckt->CKTdelta = newdelta;

@@ -47,8 +47,8 @@ numpy's solve. The harnesses are throwaway scripts in the session scratchpad (`r
 
 | | Finding | Severity |
 |---|---|---|
-| [F1](#f1) | **Verilog-A event:** `@(cross(...))` with the default time tolerance runs its body twice for one crossing — on the step that overshoots it and again on the retry that lands on it — and keeps both side effects: a crossing counter on a 1 MHz sine reads 30 after 20 crossings | high |
-| [F2](#f2) | **source:** a voltage source's PULSE with `PER` left out repeats back to back (period TR+TF+PW), and with `PW` left out too it is a triangle; the manual gives both a default of TSTOP, and a current source with the same line gives the single pulse | high |
+| [F1](#f1) | **Verilog-A event:** `@(cross(...))` with the default time tolerance runs its body twice for one crossing — on the step that overshoots it and again on the retry that lands on it — and keeps both side effects: a crossing counter on a 1 MHz sine reads 30 after 20 crossings *(fixed in [E-909](../../enhancements_doc/Enhancement-909.md))* | high |
+| [F2](#f2) | **source:** a voltage source's PULSE with `PER` left out repeats back to back (period TR+TF+PW), and with `PW` left out too it is a triangle; the manual gives both a default of TSTOP, and a current source with the same line gives the single pulse *(fixed in [E-910](../../enhancements_doc/Enhancement-910.md))* | high |
 | [F3](#f3) | **source:** a current source's SFFM never applies its delay — `TD` is read as the modulation phase and `PHASEM` as the carrier phase — and a current source's AM is 0 before its delay and at the operating point; E-318 fixed both only on the voltage source | medium |
 | [F4](#f4) | **source:** SFFM's default frequencies are the manual's swapped (carrier 5/TSTOP, modulation 500/TSTOP), so `SFFM(0 1)` is a 5 kHz carrier with its modulation index clamped to 0.01; the manual's general-form line orders the arguments FM MDI FC, against its own table and the code | low |
 | [F5](#f5) | **source:** EXP with `TD1` left out starts one TSTEP late (the manual: at 0), so its waveform moves with the step — the case E-446 fixed only for an explicit 0 | low |
@@ -58,6 +58,11 @@ numpy's solve. The harnesses are throwaway scripts in the session scratchpad (`r
 
 <a id="f1"></a>
 ## F1 — `cross` with the default tolerance runs its body twice
+
+*(fixed in [E-909](../../enhancements_doc/Enhancement-909.md): a retry starts from the variables
+and timer schedules of the last accepted point, and an event body's messages wait for the attempt
+to be accepted. A short landing is chased once, and the step after a landing keeps a device's
+bound. evtretry [1] to [4])*
 
 ```verilog
 module cnt(in, out);
@@ -98,6 +103,9 @@ recorded `$abstime`.
 
 <a id="f2"></a>
 ## F2 — a voltage source's PULSE without `PER` repeats
+
+*(fixed in [E-910](../../enhancements_doc/Enhancement-910.md): an omitted PW and PER are TSTOP
+in the load and in the breakpoints, as for the current source; pulsedefault [1] to [4])*
 
 ```
 V1 a 0 PULSE(0 1 1u 1u 1u 5u)      * PER left out

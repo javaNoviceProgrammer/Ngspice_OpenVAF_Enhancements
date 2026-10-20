@@ -115,7 +115,7 @@ int OSDItrunc(GENmodel *in_model, CKTcircuit *ckt, double *timestep) {
           if (last > 0.0 && last < *timestep) {
             *timestep = last;
           }
-        } else if (*del < *timestep) {
+        } else if (*del < *timestep || *del < ckt->CKTmodelBound) {
           /* Enhancement-504: honour the model's bound, but not to the point
              of an unbounded run.
 
@@ -138,7 +138,7 @@ int OSDItrunc(GENmodel *in_model, CKTcircuit *ckt, double *timestep) {
           double span = ckt->CKTfinalTime - ckt->CKTinitTime;
           double floor_step = (span > 0.0) ? span / E504_MAX_MODEL_STEPS : 0.0;
           if (floor_step > 0.0 && req < floor_step) {
-            if (!extra_inst_data->boundstep_floored) {
+            if (*del < *timestep && !extra_inst_data->boundstep_floored) {
               extra_inst_data->boundstep_floored = true;
               fprintf(stderr,
                       "Warning: %s: $bound_step(%g) would need %.3g steps to "
@@ -148,6 +148,11 @@ int OSDItrunc(GENmodel *in_model, CKTcircuit *ckt, double *timestep) {
                       E504_MAX_MODEL_STEPS);
             }
             req = floor_step;
+          }
+          /* Enhancement-909: what dctran does not floor the step after a
+           * landing past, whether or not it rules this estimate */
+          if (req < ckt->CKTmodelBound) {
+            ckt->CKTmodelBound = req;
           }
           if (req < *timestep) {
             *timestep = req;

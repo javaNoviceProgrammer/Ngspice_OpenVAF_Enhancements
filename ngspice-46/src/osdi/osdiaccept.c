@@ -425,7 +425,22 @@ static double osdi_point_seq = 0.0;
 static double osdi_point_last_time = -1.0;
 static long osdi_point_last_mode = -1;
 
-extern double OSDIpointSeq(void) { return osdi_point_seq; }
+/* Enhancement-909: the count is served only while the circuit steps the way
+ * DCtran, DCpss and optran do -- in MODETRAN since a point was accepted. A
+ * model reads "the time moved and the count did not" as a rejected attempt
+ * and starts the next one from the accepted point's variables, and harmonic
+ * balance, the envelope and the shooting engines evaluate MODETRAN sample
+ * times with no accept between them: a counter bumped by @(initial_step)
+ * read 0 at hb's final step. Any evaluation outside MODETRAN (their own
+ * operating point, an op, a sweep) withdraws the count until the next
+ * accept, and the model keeps E-587's evaluation-to-evaluation rules. */
+static bool osdi_point_live;
+
+extern double OSDIpointSeq(const CKTcircuit *ckt) {
+  if (!(ckt->CKTmode & MODETRAN))
+    osdi_point_live = false;
+  return osdi_point_live ? osdi_point_seq : -1.0;
+}
 
 int OSDIaccept(CKTcircuit *ckt, GENmodel *inModel) {
   OsdiRegistryEntry *entry = osdi_reg_entry_model(inModel);
@@ -436,6 +451,7 @@ int OSDIaccept(CKTcircuit *ckt, GENmodel *inModel) {
     osdi_point_last_time = ckt->CKTtime;
     osdi_point_last_mode = (long)ckt->CKTmode;
   }
+  osdi_point_live = true;   /* Enhancement-909 */
 
   /* LRM 9.4.6/9.5.9: the timepoint was accepted -- flush the deferred display
    * and file output of its converged iteration. Runs once per accept in

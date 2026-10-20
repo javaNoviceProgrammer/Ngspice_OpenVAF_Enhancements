@@ -441,8 +441,9 @@ extern void *osdi_model_data(GENmodel *model);
 extern void *osdi_model_data_from_inst(GENinstance *inst);
 extern OsdiRegistryEntry *osdi_reg_entry_model(const GENmodel *model);
 /* Enhancement-759: the count of accepted points (osdiaccept.c), the
- * `$osdi$point` simparam. */
-extern double OSDIpointSeq(void);
+ * `$osdi$point` simparam; Enhancement-909: -1 (not served) unless the
+ * circuit has been in MODETRAN since a point was accepted. */
+extern double OSDIpointSeq(const CKTcircuit *ckt);
 extern OsdiRegistryEntry *osdi_reg_entry_inst(const GENinstance *inst);
 
 /* `.option osdimc` automatic Monte-Carlo (osdisetup.c). capture_chain records
@@ -526,6 +527,8 @@ void osdi_display_setup_phase(void);  /* Enhancement-535: per-ANALYSIS reset */
 void osdi_display_reenter_setup(void); /* per-setup reset, monitor history kept */
 void osdi_display_setup_failed(void);  /* Enhancement-660: release the held setup-pass output */
 void osdi_display_flush(void);
+/* Enhancement-909: an evaluation at a new transient time opens an attempt */
+void osdi_display_attempt_begin(const CKTcircuit *ckt);
 void osdi_display_repeat_summary(void);   /* F4: end a run of repeats */
 void osdi_register_io_hooks(void *lib_handle, void *(*get_sym)(void *, const char *));
 void osdi_io_hooks_iter_begin(void);

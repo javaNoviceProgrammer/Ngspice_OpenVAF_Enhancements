@@ -43,8 +43,11 @@ struct LandingCtx {
     /// this attempt is a landing this event asked for
     landing_att: Value,
     /// what a request made at this iterate writes to the pending slot: 1,
-    /// or 2 for a refinement asked from a landing attempt
+    /// or 2 for a refinement asked from a landing attempt (or, E-909, from
+    /// the attempt after a landing that fell short)
     request_gen: Value,
+    /// this attempt is a refinement's landing (the pending generation 2)
+    refinement: Value,
     first_iter: Value,
     pend_idx: u32,
     /// the margin the last request used
@@ -721,12 +724,22 @@ impl BodyLoweringCtx<'_, '_, '_> {
     ///   or the step is already at its minimum) -- has passed the crossing
     ///   without the body: it runs at the next point's first iterate, on the
     ///   accepted solution (`fire_declined`), as E-587's rule would have run
-    ///   it one point earlier;
+    ///   it one point earlier -- and again at every retry of that attempt
+    ///   (Enhancement-909: the retry starts from the variables of the accepted
+    ///   point, which the body has not changed; `owed_idx` holds 1 through an
+    ///   attempt whose first iterate ran it);
     /// * a landing that fell SHORT of its crossing (the expression is not
-    ///   linear over the step: an exponential reset) is not chased -- the
-    ///   next attempt makes no request and the crossing fires where it
-    ///   appears (`short_idx`: 2 written by the short landing, 1 while the
-    ///   attempt after it runs, 0 again after that).
+    ///   linear over the step: a sine's chord, an exponential reset) is
+    ///   chased ONCE (Enhancement-909): the next attempt may ask again, as a
+    ///   refinement, whose landing asks nothing -- the interpolation from a
+    ///   sample just short of the crossing is close, a full step's was not.
+    ///   E-759 did not chase it and the crossing fired where the next attempt
+    ///   ended, a step late (0.997 of the step for the median `cross(x, 0)`
+    ///   of the 2026-10-19 campaign). A refinement that falls short too is
+    ///   not chased: the next attempt makes no request and the crossing fires
+    ///   where it appears. `short_idx`: 2 written by a short landing, 4 while
+    ///   the attempt after it runs; 3 by a short refinement, 1 while the
+    ///   attempt after it runs; 0 otherwise.
     ///
     /// Everything else (the operating point, dc sweeps, a simulator without
     /// the count) is as before.
@@ -736,6 +749,7 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let (raw_landing, land_idx) = self.new_event_state();
         let (raw_short, short_idx) = self.new_event_state();
         let (_, margin_idx) = self.new_event_state();
+        let (raw_owed, owed_idx) = self.new_event_state();
         let (fired_idx, req_idx, stamp_idx) = self.event_attempt_flags();
         let zero = self.ctx.fconst(0.0);
         let one = self.ctx.fconst(1.0);
@@ -752,9 +766,22 @@ impl BodyLoweringCtx<'_, '_, '_> {
         // a declined request: the point was accepted with the request standing
         let declined = and(self.ctx, smp.new_point, pending);
         let declined = and(self.ctx, declined, smp.accepted_rule);
-        // a landing that fell short holds the next attempt back
-        let short_first = self.ctx.ins().feq(raw_short, two);
-        let short_later = self.ctx.ins().fgt(raw_short, zero);
+        // Enhancement-909: a retry of the attempt that ran it runs it again
+        let owed = self.ctx.ins().fgt(raw_owed, zero);
+        let refire = and(self.ctx, retry, owed);
+        let fire_declined = self.ctx.ins().select(declined, TRUE, refire);
+        let owed_first = self.ctx.ins().select(fire_declined, one, zero);
+        let owed_next = self.ctx.ins().select(smp.first_iter, owed_first, raw_owed);
+        self.ctx.def_place(PlaceKind::EventState(owed_idx), owed_next);
+        // a landing that fell short is chased once (E-909), and a refinement
+        // that fell short holds the next attempt back
+        let three = self.ctx.fconst(3.0);
+        let four = self.ctx.fconst(4.0);
+        let chase_first = self.ctx.ins().feq(raw_short, two);
+        let chase_later = self.ctx.ins().feq(raw_short, four);
+        let chase = self.ctx.ins().select(smp.first_iter, chase_first, chase_later);
+        let short_first = self.ctx.ins().feq(raw_short, three);
+        let short_later = self.ctx.ins().feq(raw_short, one);
         let short_hold = self.ctx.ins().select(smp.first_iter, short_first, short_later);
         let landing_att = self.ctx.ins().fgt(gen_att, zero);
         self.ctx.def_place(PlaceKind::EventState(land_idx), gen_att);
@@ -781,16 +808,20 @@ impl BodyLoweringCtx<'_, '_, '_> {
         let may_request = and(self.ctx, may_request, not_short);
         let not_req_any = self.ctx.ins().select(req_any, FALSE, TRUE);
         let may_fire = and(self.ctx, not_retry, not_req_any);
-        // the short-landing memory: 1 while the attempt after a short landing
-        // runs (a landing attempt itself rewrites it, see `event_landing_record`)
+        // the short-landing memory: 4 or 1 while the attempt after a short
+        // landing runs (a landing attempt itself rewrites it, see
+        // `event_landing_record`)
         let hold_next = self.ctx.ins().select(short_hold, one, zero);
+        let hold_next = self.ctx.ins().select(chase, four, hold_next);
         self.ctx.def_place(PlaceKind::EventState(short_idx), hold_next);
+        let gen_two = self.ctx.ins().select(landing_att, TRUE, chase);
         LandingCtx {
             may_request,
             may_fire,
-            fire_declined: declined,
+            fire_declined,
             landing_att,
-            request_gen: self.ctx.ins().select(landing_att, two, one),
+            request_gen: self.ctx.ins().select(gen_two, two, one),
+            refinement,
             first_iter: smp.first_iter,
             pend_idx,
             margin_idx,
@@ -821,7 +852,9 @@ impl BodyLoweringCtx<'_, '_, '_> {
         self.ctx.def_place(PlaceKind::EventState(lc.pend_idx), pend_next);
         let not_first = self.ctx.ins().select(lc.first_iter, FALSE, TRUE);
         let judge = self.ctx.ins().select(lc.landing_att, not_first, FALSE);
-        let short_now = self.ctx.ins().select(present, zero, two);
+        let three = self.ctx.fconst(3.0);
+        let missed = self.ctx.ins().select(lc.refinement, three, two);
+        let short_now = self.ctx.ins().select(present, zero, missed);
         let cur_short = self.ctx.use_place(PlaceKind::EventState(lc.short_idx));
         let short_next = self.ctx.ins().select(judge, short_now, cur_short);
         self.ctx.def_place(PlaceKind::EventState(lc.short_idx), short_next);
@@ -911,6 +944,8 @@ impl BodyLoweringCtx<'_, '_, '_> {
     fn lower_timer(&mut self, t0: ExprId, period: Option<ExprId>) -> Value {
         let t0 = self.lower_expr(t0);
         let (raw_next, idx) = self.new_event_state();
+        // Enhancement-909: the schedule is rolled back with the variables
+        self.ctx.intern.rollback_event_slots.push(idx);
         let is_initial = self.ctx.use_param(ParamKind::IsInitialStep);
         let next = self.ctx.make_select(is_initial, |_, branch| if branch { t0 } else { raw_next });
 

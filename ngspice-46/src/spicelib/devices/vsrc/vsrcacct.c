@@ -58,8 +58,11 @@ VSRCaccept(CKTcircuit *ckt, GENmodel *inModel)
 
                         /* TR negative or 0 --> TR = ckt->CKTstep
                            TF negative or 0 --> TF = ckt->CKTstep
-                           PW < 0 --> PW = 0
-                           PER <= 0 --> PER = TR + TF + PW */
+                           PW < 0 --> PW = 0, omitted --> TSTOP
+                           PER <= 0 or omitted --> TSTOP
+                           (Enhancement-910: as vsrcload.c; the breakpoints
+                           were those of a pulse repeating every TR+TF+PW,
+                           and of one with PER=0 since E-446) */
                         TD = here->VSRCfunctionOrder > 2
                             ? here->VSRCcoeffs[2] : 0.0;
                         TR = here->VSRCfunctionOrder > 3
@@ -69,11 +72,12 @@ VSRCaccept(CKTcircuit *ckt, GENmodel *inModel)
                             && here->VSRCcoeffs[4] > 0.0
                             ? here->VSRCcoeffs[4] : ckt->CKTstep;
                         PW = here->VSRCfunctionOrder > 5
-                            && here->VSRCcoeffs[5] >= 0.0
-                            ? here->VSRCcoeffs[5] : 0.0;
+                            ? (here->VSRCcoeffs[5] >= 0.0
+                               ? here->VSRCcoeffs[5] : 0.0)
+                            : ckt->CKTfinalTime;
                         PER = here->VSRCfunctionOrder > 6
                             && here->VSRCcoeffs[6] > 0.0
-                            ? here->VSRCcoeffs[6] : TR + TF + PW;
+                            ? here->VSRCcoeffs[6] : ckt->CKTfinalTime;
                         PHASE = here->VSRCfunctionOrder > 7
                             ? here->VSRCcoeffs[7] : 0.0;
 

@@ -326,6 +326,56 @@ static void osdi_severity_when(char *buf, size_t n, uint32_t lvl) {
 static OsdiPendingMsg *pending;
 static int pending_len, pending_cap;
 
+/* Enhancement-909 (correctness campaign of 2026-10-19, F1): a message from an
+ * event body (LOG_FLAG_IMMEDIATE) prints for the ATTEMPT it fired in, not for
+ * one Newton iteration. A body runs once per transient attempt, on the
+ * attempt's first iterate (E-759), so it cannot wait for the iteration the
+ * point converges on -- but it can wait for the attempt to be accepted. It
+ * printed at once, so when another event or instance rejected the attempt
+ * and the retry fired the body again, the message printed twice: a crossing
+ * counter's `$strobe("XC %d", n)` listed 22 crossings for 20. The compiler
+ * puts the body's variables back at the retry (state.rs); here its messages
+ * are held through the attempt, printed when OSDIaccept flushes (ahead of
+ * the converged iteration's deferred output, the order they always had),
+ * and dropped when an evaluation at a new time starts before an accept --
+ * the attempt was rejected. Only in a transient past t = 0, the attempts the
+ * compiler rolls back; an operating point, a sweep, a final step and the
+ * `analog initial` block print at once as before, and so do $debug and
+ * $fatal. A file written from an event body is the documented limit. */
+static OsdiPendingMsg *attempt;
+static int attempt_len, attempt_cap;
+static bool attempt_live;          /* evaluating a transient attempt past t = 0 */
+static double attempt_time = -1.0; /* the time of the attempt being held */
+
+static void osdi_attempt_hold(char *text, int head_len, uint32_t sev, bool to_err) {
+  if (attempt_len >= attempt_cap) {
+    attempt_cap = attempt_cap ? 2 * attempt_cap : 16;
+    attempt = TREALLOC(OsdiPendingMsg, attempt, attempt_cap);
+  }
+  attempt[attempt_len++] = (OsdiPendingMsg){
+      .text = text, .head_len = head_len, .sev = sev, .to_err = to_err, .monitor = false};
+}
+
+static void osdi_attempt_release(bool emit) {
+  for (int i = 0; i < attempt_len; i++) {
+    if (emit)
+      osdi_emit(attempt[i].text, attempt[i].head_len, attempt[i].to_err, attempt[i].sev);
+    tfree(attempt[i].text);
+  }
+  attempt_len = 0;
+}
+
+/* OSDIload, at each new Newton iteration: an evaluation at a new time opens a
+ * new attempt, and what the previous one held was not accepted (an accept
+ * empties the buffer) */
+void osdi_display_attempt_begin(const CKTcircuit *ckt) {
+  attempt_live = (ckt->CKTmode & MODETRAN) && ckt->CKTtime > 0.0;
+  if (!attempt_live || ckt->CKTtime != attempt_time) {
+    osdi_attempt_release(false);
+    attempt_time = attempt_live ? ckt->CKTtime : -1.0;
+  }
+}
+
 /* Enhancement-660 (hunt F16): the SETUP pass's messages are held and
  * superseded by the temperature pass. ngspice runs every OSDI model's
  * init-resident code twice per analysis -- OSDIsetup's own setup loops and
@@ -404,6 +454,9 @@ static void osdi_display_reenter_common(void) {
     tfree(pending[i].text);
   }
   pending_len = 0;
+  osdi_attempt_release(false);   /* Enhancement-909: an attempt never accepted */
+  attempt_live = false;
+  attempt_time = -1.0;
 }
 
 /* OSDItemp: the temperature pass re-evaluates what the setup pass evaluated,
@@ -441,6 +494,11 @@ void osdi_display_setup_phase(void) {
 
 void osdi_display_flush(void) {
   int mon_seq = 0;
+  /* Enhancement-909: the accepted attempt's event-body messages, and what
+   * runs before the next iteration (a final step) is not an attempt */
+  osdi_attempt_release(true);
+  attempt_live = false;
+  attempt_time = -1.0;
   for (int i = 0; i < pending_len; i++) {
     OsdiPendingMsg *m = &pending[i];
     if (m->monitor) {
@@ -771,6 +829,11 @@ void osdi_log(void *handle_, char *msg, uint32_t lvl) {
     }
     if (display_managed && defers && !(lvl & LOG_FLAG_IMMEDIATE)) {
       osdi_log_defer(text, head_len, sev, to_err, level == LOG_LVL_MONITOR);
+      return;
+    }
+    /* Enhancement-909: an event body's message waits for its attempt */
+    if (attempt_live && defers && (lvl & LOG_FLAG_IMMEDIATE) && !(lvl & LOG_FLAG_INIT)) {
+      osdi_attempt_hold(text, head_len, sev, to_err);
       return;
     }
     osdi_emit(text, head_len, to_err, sev);

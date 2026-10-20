@@ -908,8 +908,8 @@ OsdiSimParas get_simparams(const CKTcircuit *ckt) {
        * declaration); 0 outside a transient */
       (ckt->CKTmode & (MODETRAN | MODETRANOP)) ? ckt->CKTstep : 0.0,
       (ckt->CKTmode & MODETRAN) ? ckt->CKTdelta : 0.0,
-      /* Enhancement-759: the accepted-point count */
-      OSDIpointSeq(),
+      /* Enhancement-759: the accepted-point count (E-909: while stepping) */
+      OSDIpointSeq(ckt),
       /* Enhancement-832: the unseeded draws' seed */
       osdi_rng_seed_val };
   memcpy(&sim_param_vals, &sim_param_vals_, sizeof(double) * NUM_SIM_PARAMS);
@@ -1504,6 +1504,7 @@ static void osdi_note_iteration(CKTcircuit *ckt) {
     last_time = ckt->CKTtime;
     last_mode = (long)ckt->CKTmode;
     osdi_display_iter_begin();
+    osdi_display_attempt_begin(ckt);   /* Enhancement-909 */
     osdi_io_hooks_iter_begin();
   }
   /* Round-3 audit: refresh unconditionally -- the severity context (LRM 9.7.3)

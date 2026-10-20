@@ -365,6 +365,11 @@ pub struct HirInterner {
     /// they were stamped with), allocated by the first event that needs them
     /// (`hir_lower::stmt::event_attempt_flags`).
     pub event_attempt_flags: Option<(u32, u32, u32)>,
+    /// Enhancement-909: the `EventState` slots that hold each `timer`'s next
+    /// event time. Like a variable, the schedule a rejected attempt advanced is
+    /// rolled back at the retry (`state::insert_var_init`), so a timer that
+    /// fired in a discarded attempt fires again in the one that is kept.
+    pub rollback_event_slots: Vec<u32>,
 }
 
 pub type LiveParams<'a> = FilterMap<
@@ -390,6 +395,7 @@ impl Default for HirInterner {
             event_state_count: 0,
             table_capture_flags: Vec::default(),
             event_attempt_flags: None,
+            rollback_event_slots: Vec::default(),
         }
     }
 }

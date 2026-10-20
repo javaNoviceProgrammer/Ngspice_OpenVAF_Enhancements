@@ -97,8 +97,8 @@ VSRCload(GENmodel *inModel, CKTcircuit *ckt)
                  /* Parameter limits :
                    TR negative or 0 --> TR = ckt->CKTstep
                    TF negative or 0 --> TF = ckt->CKTstep
-                   PW < 0 --> PW = 0
-                   PER <= 0 --> PER = TR + TF + PW
+                   PW < 0 --> PW = 0, omitted --> TSTOP
+                   PER <= 0 or omitted --> TSTOP (a single pulse)
                  */
                         double V1, V2, TD, TR, TF, PW, PER;
                         double basetime = 0;
@@ -117,19 +117,26 @@ VSRCload(GENmodel *inModel, CKTcircuit *ckt)
                         TF = here->VSRCfunctionOrder > 4
                            && here->VSRCcoeffs[4] > 0.0
                            ? here->VSRCcoeffs[4] : ckt->CKTstep;
+                        /* Enhancement-910 (correctness campaign of 2026-10-19,
+                           F2): an OMITTED width and period are TSTOP, the
+                           manual's defaults (4.1.1) and what the current source
+                           and SPICE3 do. An omitted PER was TR+TF+PW and an
+                           omitted PW 0, so `PULSE(0 1 1u 1u 1u 5u)` repeated
+                           every 7 us where the I source with the same line gave
+                           one pulse, and `PULSE(0 1 1u 1u 1u)` was a 2 us
+                           triangle wave. A written negative PW is still 0. */
                         PW = here->VSRCfunctionOrder > 5
-                           && here->VSRCcoeffs[5] >= 0.0
-                           ? here->VSRCcoeffs[5] : 0.0;
+                           ? (here->VSRCcoeffs[5] >= 0.0
+                              ? here->VSRCcoeffs[5] : 0.0)
+                           : ckt->CKTfinalTime;
                         /* Enhancement-446: an explicitly written PER=0 cannot mean
                            "repeat every 0 seconds". It used to fall through to
                            TR+TF+PW, i.e. repeat back-to-back with no gap, while the
                            current source read the same spec as a single pulse. Take
-                           it as "do not repeat", matching isrcload.c. An OMITTED
-                           period keeps TR+TF+PW so no existing deck changes. */
+                           it as "do not repeat", matching isrcload.c. */
                         PER = here->VSRCfunctionOrder > 6
-                           ? (here->VSRCcoeffs[6] > 0.0
-                              ? here->VSRCcoeffs[6] : ckt->CKTfinalTime)
-                           : TR + TF + PW;
+                           && here->VSRCcoeffs[6] > 0.0
+                           ? here->VSRCcoeffs[6] : ckt->CKTfinalTime;
 
                         /* shift time by delay time TD */
                         time -=  TD;

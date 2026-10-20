@@ -489,6 +489,10 @@ struct CKTcircuit {
     /* Enhancement-884: the last accepted point is a switch's landing; the
        switch turns over in the step that follows, which asks for none */
     int CKTlandedBreak;
+    /* Enhancement-909: the smallest step bound a device asked for at the
+       point under way ($bound_step, a timer's next event; OSDItrunc), which
+       the step after a landing is not floored past */
+    double CKTmodelBound;
     int CKTorderCnt;               /* E-128: accepted steps since the last order reset (history depth) */
     int CKTorderMaxUsed;           /* E-128: highest integration order actually selected (diagnostic) */
     int CKTorderHold;              /* E-128: steps to hold the order after a change (settling) */
