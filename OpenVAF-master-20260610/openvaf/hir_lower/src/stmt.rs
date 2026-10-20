@@ -591,19 +591,36 @@ impl BodyLoweringCtx<'_, '_, '_> {
     /// this iterate asked for it. `present` says the crossing lies between
     /// the last accepted sample `acc` and `current`; the crossing sits
     /// `delta * acc / (acc - current)` after the last accepted point, `delta`
-    /// the step under way. When this attempt overshoots that by more than
-    /// half the margin -- the event's `time_tol`, else a thousandth of the
-    /// step -- a LANDING REQUEST is written into the bound-step slot as
-    /// `-(2 + t)`, `t` the offset to land at (the crossing plus the margin), a
-    /// value no bound can be (a bound is positive, E-24's discontinuity
-    /// sentinel is -1). ngspice's OSDItrunc turns it into a forced rejection
-    /// of this attempt and a retry of exactly that size, however close to the
-    /// step it is. The earliest of several requests in one evaluation wins.
-    /// `present` is already gated by `event_landing_context`'s rules (no
-    /// request from a retry's first iterate, a landing attempt, or an attempt
-    /// a body fired in); none either when `|current|` is within `expr_tol`.
-    /// LRM 5.10.3: the simulator shall place a timepoint at the crossing,
-    /// within the tolerances; it used to resolve it to the step grid.
+    /// the step under way. When this iterate lies outside the box the event
+    /// belongs in, a LANDING REQUEST is written into the bound-step slot as
+    /// `-(2 + t)`, `t` the offset to land at, a value no bound can be (a bound
+    /// is positive, E-24's discontinuity sentinel is -1). ngspice's OSDItrunc
+    /// turns it into a forced rejection of this attempt and a retry of
+    /// exactly that size, however close to the step it is. The earliest of
+    /// several requests in one evaluation wins. `present` is already gated by
+    /// `event_landing_context`'s rules (no request from a retry's first
+    /// iterate, a landing attempt, or an attempt a body fired in). LRM
+    /// 5.10.3: the simulator shall place a timepoint at the crossing, within
+    /// the tolerances; it used to resolve it to the step grid.
+    ///
+    /// Enhancement-911: the box is LRM 5.10.3.1's (Figure 5-6). "The event
+    /// shall occur after the threshold crossing, and while the signal remains
+    /// in the box defined by actual crossing and expr_tol and time_tol", and
+    /// with `expr_tol` given "both tolerances shall be satisfied". Its width
+    /// in time is `time_tol` -- when not given or 0.0, "the simulator shall
+    /// apply a suitable value": two thousandths of the step, so a request
+    /// aims a thousandth past the crossing, where E-759 aimed (a request
+    /// aimed closer lands short of a curved crossing more often, and the
+    /// chase is held to E-504's step floor) -- and, with `expr_tol`, at most
+    /// the time the expression takes to move `expr_tol` along the chord. A
+    /// request lands in its middle, and an
+    /// iterate is outside it when it is past its end or, with `expr_tol`,
+    /// more than `expr_tol` past the threshold. E-759 landed on the box's
+    /// end and accepted an iterate up to half a width (a landing a whole
+    /// width) beyond it, and took `expr_tol` only as a reason NOT to land: a
+    /// slow ramp with `time_tol` = 1 ms and `expr_tol` = 0.2 fired 5.6 ms
+    /// late, and a 1 MHz sine with `expr_tol` = 1 mV fired 67 mV past its
+    /// threshold.
     fn localise_crossing(
         &mut self,
         present: Value,
@@ -614,6 +631,12 @@ impl BodyLoweringCtx<'_, '_, '_> {
         lc: &LandingCtx,
     ) -> Value {
         let and = |ctx: &mut LoweringCtx, a: Value, b: Value| ctx.ins().select(a, b, FALSE);
+        let or = |ctx: &mut LoweringCtx, a: Value, b: Value| ctx.ins().select(a, TRUE, b);
+        let abs = |ctx: &mut LoweringCtx, a: Value| {
+            let neg = ctx.ins().fneg(a);
+            let is_neg = ctx.ins().flt(a, F_ZERO);
+            ctx.ins().select(is_neg, neg, a)
+        };
         let zero = self.ctx.fconst(0.0);
         let key = self.ctx.sconst("$osdi$delta");
         let delta = self.ctx.call1(CallBackKind::SimParamOpt, &[key, F_ZERO]);
@@ -625,38 +648,45 @@ impl BodyLoweringCtx<'_, '_, '_> {
             Some(e) => self.lower_expr(e),
             None => zero,
         };
-        // the margin: time_tol when given, else a thousandth of the step; never
-        // below a billionth of it
-        let rel = self.ctx.fconst(1.0e-3);
-        let m_rel = self.ctx.ins().fmul(delta, rel);
-        let tol_given = self.ctx.ins().fgt(ttol, zero);
-        let margin = self.ctx.ins().select(tol_given, ttol, m_rel);
-        let rel_floor = self.ctx.fconst(1.0e-9);
-        let m_floor = self.ctx.ins().fmul(delta, rel_floor);
-        let below_floor = self.ctx.ins().flt(margin, m_floor);
-        let margin = self.ctx.ins().select(below_floor, m_floor, margin);
-        let target = self.ctx.ins().fadd(off, margin);
-        let over = self.ctx.ins().fsub(delta, target);
-        let half = self.ctx.fconst(0.5);
-        let half_margin = self.ctx.ins().fmul(margin, half);
-        // a landing attempt is judged against the margin its request used (a
-        // whole one, not half): the margin follows the step, and the landing
-        // step is shorter than the step that asked, so an exact landing --
-        // the requested margin past the crossing -- would look overshot by
-        // the shorter margin and be refined for nothing
-        let stored = self.ctx.use_param(ParamKind::EventState(lc.margin_idx));
-        let threshold = self.ctx.ins().select(lc.landing_att, stored, half_margin);
-        let overshot = self.ctx.ins().fgt(over, threshold);
         let etol = match expr_tol {
             Some(e) => self.lower_expr(e),
             None => zero,
         };
-        let neg_cur = self.ctx.ins().fneg(current);
-        let cur_neg = self.ctx.ins().flt(current, zero);
-        let acur = self.ctx.ins().select(cur_neg, neg_cur, current);
-        let outside = self.ctx.ins().fgt(acur, etol);
+        // the box's width (the margin): time_tol when given, else two
+        // thousandths of the step; with expr_tol, no wider than the time the
+        // chord takes to move expr_tol; never below a billionth of the step
+        let rel = self.ctx.fconst(2.0e-3);
+        let m_rel = self.ctx.ins().fmul(delta, rel);
+        let tol_given = self.ctx.ins().fgt(ttol, zero);
+        let margin = self.ctx.ins().select(tol_given, ttol, m_rel);
+        let etol_given = self.ctx.ins().fgt(etol, zero);
+        let adiff = abs(self.ctx, diff);
+        let per_unit = self.ctx.ins().fdiv(delta, adiff);
+        let m_expr = self.ctx.ins().fmul(etol, per_unit);
+        let narrower = self.ctx.ins().flt(m_expr, margin);
+        let use_expr = and(self.ctx, etol_given, narrower);
+        let margin = self.ctx.ins().select(use_expr, m_expr, margin);
+        let rel_floor = self.ctx.fconst(1.0e-9);
+        let m_floor = self.ctx.ins().fmul(delta, rel_floor);
+        let below_floor = self.ctx.ins().flt(margin, m_floor);
+        let margin = self.ctx.ins().select(below_floor, m_floor, margin);
+        // a request lands in the middle of the box
+        let half = self.ctx.fconst(0.5);
+        let half_margin = self.ctx.ins().fmul(margin, half);
+        let target = self.ctx.ins().fadd(off, half_margin);
+        // a landing attempt is judged against the box its request was made for:
+        // the margin follows the step, and the landing step is shorter than the
+        // step that asked, so a box of the landing's own width would be
+        // narrower than the one it was aimed at
+        let stored = self.ctx.use_param(ParamKind::EventState(lc.margin_idx));
+        let width = self.ctx.ins().select(lc.landing_att, stored, margin);
+        let box_end = self.ctx.ins().fadd(off, width);
+        let late = self.ctx.ins().fgt(delta, box_end);
+        let acur = abs(self.ctx, current);
+        let beyond = self.ctx.ins().fgt(acur, etol);
+        let beyond = and(self.ctx, etol_given, beyond);
+        let outside = or(self.ctx, late, beyond);
         let refine = and(self.ctx, present, have_delta);
-        let refine = and(self.ctx, refine, overshot);
         let refine = and(self.ctx, refine, outside);
         let two = self.ctx.fconst(2.0);
         let enc = self.ctx.ins().fadd(two, target);

@@ -443,13 +443,14 @@ pub enum BodyValidationDiagnostic {
         stmt: StmtId,
         name: Option<Box<str>>,
     },
-    /// LRM 5.10.3.1/.2 (events audit, documented deviation): a nonzero
-    /// cross/above tolerance is accepted but not honored.
-    EventTolIgnored {
+    /// LRM 5.10.3.1: "If expr_tol is specified, time_tol shall also be
+    /// specified". Enhancement-911: the tolerances are honored (E-759 lands
+    /// the step, E-911 in the LRM's box), so this replaces the events audit's
+    /// "accepted but not honored" warning.
+    EventExprTolAlone {
         stmt: StmtId,
         expr: ExprId,
         form: &'static str,
-        what: &'static str,
     },
     /// LRM 4.5.14 / Table 4-20 (filter-operators audit): a solution-dependent
     /// expression in a laplace_* coefficient vector -- constant-class per the
@@ -1142,7 +1143,7 @@ impl BodyValidator<'_> {
                 if let Some(t) = expr_tol {
                     v.require_non_negative("@(above)", "the expression tolerance", t);
                 }
-                v.warn_event_tol_ignored("@(above)", time_tol, expr_tol);
+                v.warn_expr_tol_alone("@(above)", time_tol, expr_tol);
                 // Nothing to constrain: LRM 5.10.3.2's `enable` argument enables
                 // the event for ANY non-zero value, so no range applies. Inference
                 // types it as a condition and the lowering gates the event on it;
@@ -1166,7 +1167,7 @@ impl BodyValidator<'_> {
                 if let Some(t) = expr_tol {
                     v.require_non_negative("@(cross)", "the expression tolerance", t);
                 }
-                v.warn_event_tol_ignored("@(cross)", time_tol, expr_tol);
+                v.warn_expr_tol_alone("@(cross)", time_tol, expr_tol);
                 // Nothing to constrain: LRM 5.10.3.1's `enable` argument enables
                 // the event for ANY non-zero value, so no range applies. Inference
                 // types it as a condition and the lowering gates the event on it;
@@ -4335,31 +4336,24 @@ impl ExprValidator<'_, '_> {
         }
     }
 
-    /// LRM audit (events, documented deviation made audible): cross/above
-    /// tolerances are parsed and range-checked but the LOWERING DISCARDS
-    /// them -- detection is evaluation-granular and nothing bounds the
-    /// timestep, so the event fires at the first solver evaluation past the
-    /// crossing regardless of what was requested (measured 5.6 us late
-    /// against a 1 ns time_tol). A tolerance written as 0.0 means "the
-    /// simulator shall apply a suitable value" (5.10.3.1), which is exactly
-    /// what happens, so only a request that is not provably zero warns.
-    fn warn_event_tol_ignored(
+    /// Enhancement-911: the events audit warned that every nonzero
+    /// cross/above tolerance was accepted but not honored. E-759 made the
+    /// event land the step within `time_tol` and E-911 in the LRM's box of
+    /// both tolerances, so that warning was false. What remains is LRM
+    /// 5.10.3.1's rule on the model: "If expr_tol is specified, time_tol
+    /// shall also be specified" -- an `expr_tol` that is not provably 0.0
+    /// with the time tolerance left out (or null). The simulator's own time
+    /// tolerance is used with it.
+    fn warn_expr_tol_alone(
         &mut self,
         form: &'static str,
         time_tol: Option<ExprId>,
         expr_tol: Option<ExprId>,
     ) {
-        for (what, tol) in [("time", time_tol), ("expression", expr_tol)] {
-            if let Some(t) = tol {
-                if self.const_num(t) != Some(0.0) {
-                    let stmt = self.stmt;
-                    self.report(BodyValidationDiagnostic::EventTolIgnored {
-                        stmt,
-                        expr: t,
-                        form,
-                        what,
-                    });
-                }
+        if let (None, Some(t)) = (time_tol, expr_tol) {
+            if self.const_num(t) != Some(0.0) {
+                let stmt = self.stmt;
+                self.report(BodyValidationDiagnostic::EventExprTolAlone { stmt, expr: t, form });
             }
         }
     }

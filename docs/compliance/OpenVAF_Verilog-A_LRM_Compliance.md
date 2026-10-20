@@ -1170,20 +1170,26 @@ was. An **unrecognized event expression is a targeted error** —
 the analog subset), and plain typos used to silently DROP the event and
 run the guarded body on *every* evaluation.
 
-Two deviations, documented: ⚠️ **`cross`/`above` tolerances are accepted
-but not honored** — detection is evaluation-granular and does not bound
-the timestep, so the event fires at the first solver evaluation past the
-crossing; a nonzero tolerance now draws a compile-time warning (a 0.0
-tolerance means "the simulator shall apply a suitable value", which is
-exactly what happens — `timer`'s placement, by contrast, is exact via
-its bound-step channel). ⚠️ An **out-of-range `cross`/`last_crossing`
+**`cross`/`above` tolerances are honored** (E-759, E-911): the event lands
+the step in LRM 5.10.3.1's box (Figure 5-6), at most `time_tol` after the
+crossing and, with `expr_tol`, at most `expr_tol` past the threshold; a
+request aims at the middle of the box, and an iterate outside it asks
+again. Without a tolerance (or with 0.0, "the simulator shall apply a
+suitable value") the box is two thousandths of the step wide. An
+`expr_tol` written without a `time_tol` warns, per "time_tol shall also be
+specified". The events audit's "accepted but not honored" warning is
+retired. A request under E-504's step floor (the span over 10⁶) is
+declined, and the crossing fires at the next point. `timer`'s placement is
+exact via its bound-step channel. One deviation, documented: ⚠️ An
+**out-of-range `cross`/`last_crossing`
 direction is refused** (compile error for a literal, runtime fatal from
 the deck) where LRM 5.10.3.1 defines any other value as a disabled
 event — E-506's deliberate strictness, kept because a computed
-direction of 7 is a bug far more often than a disable idiom. Event
-detection advances once per model *evaluation* (Newton iteration), not
-per accepted timepoint — the E-7/E-8 granularity design, shared with
-variable persistence.
+direction of 7 is a bug far more often than a disable idiom. In a
+transient an event is judged against the last *accepted* point (E-759),
+its body runs once per attempt, and what a rejected attempt's body did is
+undone at the retry (E-909); elsewhere detection advances once per model
+evaluation, the E-7/E-8 granularity shared with variable persistence.
 
 ### 5.6 Analog functions (LRM 4.7) — ✅
 
@@ -1682,7 +1688,7 @@ connected port.)*
 | 5.6 Contributions, indirect assignment (placement rules and the 5.6.7.2 direct/indirect incompatibility enforced; generalized equality LHS ⚠️ extension), hierarchical-contribution branch identity (5.6.8.1), parameter vector indices (5.5.2), port flow (incl. named port branches), **5.6.1's warning on a contribution to an `input` port** (L031, [E-639](../../enhancements_doc/Enhancement-639.md)) | ✅ | `indirect_assignment`, `portflow`, `signalflow`, `lrm`, `inputport` |
 | 5.7–5.9, 5.11 Procedural statements, loops, disable, jump statements (`break`/`continue`/`return`, contextual keywords, genvar-for exclusion enforced) | ✅ (contributions in runtime loops ⚠️ and `do…while` ⚠️ are documented non-LRM extensions) | `analogloop`, `dowhile`, `repeat`, `disable`, `arraycase` |
 | casex/casez | ⚠️ extension beyond Annex C (C.7 excludes them from Verilog-A) | `casexz` |
-| 5.10 Events (steps with Table 5-1 exact per analysis, cross/above/timer, cross DC/t=0 gating, above init event, OR lists incl. comma, phase lists, placement rules enforced, invalid events rejected) | ✅ (cross/above tolerances ⚠️ warned not honored; strict out-of-range dir ⚠️ documented); any event under a non-constant if/case refused per 5.8 (E-648) | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
+| 5.10 Events (steps with Table 5-1 exact per analysis, cross/above/timer, cross DC/t=0 gating, above init event, OR lists incl. comma, phase lists, placement rules enforced, invalid events rejected) | ✅ (cross/above tolerances honored in the LRM's box, E-911; strict out-of-range dir ⚠️ documented); any event under a non-constant if/case refused per 5.8 (E-648) | `initial_step`, `finalstep`, `cross`, `timer`, `lrmcorner` |
 | 4.7 Analog functions (arrays in/out/return incl. the LRM's Example 3 spelling and a parameter array as the argument (E-645; a size mismatch and an output formal fed a parameter are refused by name); VAMS-2023 string return & args; function-local `parameter`s with shadowing; output-array zero-init; locals fresh per call (E-646); a real actual into an integer input rounds (E-647); `return` statement) | ✅ (named blocks in bodies ⚠️ and const-context calls ⚠️ documented relaxations) | `funcarray`, `arrayout`, `arrayret` |
 | 6 Hierarchy (**9.18 Table 9-29 exact: `$angle` modulo 360 and the allowed-value bounds enforced on every route**, [E-541](../../enhancements_doc/Enhancement-541.md); instantiation, generate incl. the legacy analog-block form — obsolete per G.2.3/C.20, kept as a compat extension ⚠️ — defparam incl. inside/beside generate, `#(.$mfactor(n))`-family child overrides with the full multiplicity transform, `$param_given` through hierarchy overrides, connection-size and mixed-override checking, $root, part-select connections, hierarchical branch probes; **paramsets per 6.4** — the module's names reused, chains, `aliasparam`, 6.4.1 statements and 6.4.3 output variables, out-of-module `localparam` references, instantiation inside a module, [E-563](../../enhancements_doc/Enhancement-563.md); **overloading per 6.4.2** on both routes, [E-565](../../enhancements_doc/Enhancement-565.md); **hierarchical names into generate blocks** per 6.6.3/6.7 — `blk.x`, `g1[0].z`, `g1[0].genblk1.w`, `two.q`, `g1[0].r1.mid`, implicit `genblk<n>` with the leading-zero rule, single-item generate branches — [E-564](../../enhancements_doc/Enhancement-564.md)) | ✅ (param-shaped structure ⚠️ explained) | `instantiation`, `generate`, `legacygen`, `defparam`, `hiername`, `implicitnet`, `partselect`, `hierbranch` |
 | 9.4–9.8 Display, file/string I/O (incl. 9.4.6/9.5.9 accepted-iteration deferral, `$monitor` change detection, `%r`, 9.5.1.1 append, pre-opened fds; **`$write` composes one line, multichannel allocation stops at the reserved bit 31, and a mode-changing reopen really reopens** — [E-541](../../enhancements_doc/Enhancement-541.md)) | ✅ ([E-516](../../enhancements_doc/Enhancement-516.md) audit; one-hot MCDs, instance-naming `%m` and the `$fscanf`/reopen read rules from [E-539](../../enhancements_doc/Enhancement-539.md); `$fmonitor` change detection ⚠️, `%l`/`%L` ✖ not implemented — and, unlike the other ✖ entries, it emits the placeholder `__.__` rather than a diagnostic) | `display`, `fileio`, `stringio`, `fgetc`, `ungetc`, `sscanf`, `scanfmt`, `lrmsysio` |

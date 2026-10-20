@@ -1611,24 +1611,24 @@ impl Diagnostic for BodyValidationDiagnosticWrapped<'_> {
                             .to_owned(),
                     ])
             }
-            BodyValidationDiagnostic::EventTolIgnored { expr, form, what, .. } => {
+            // Enhancement-911
+            BodyValidationDiagnostic::EventExprTolAlone { expr, form, .. } => {
                 let FileSpan { range, file } = self.expr_src(expr);
                 Report::warning()
                     .with_message(format!(
-                        "{form}: the {what} tolerance is accepted but not honored"
+                        "{form}: an expression tolerance needs a time tolerance beside it"
                     ))
                     .with_labels(vec![Label {
                         style: LabelStyle::Primary,
                         file_id: file,
                         range: range.into(),
-                        message: "this tolerance has no effect".to_owned(),
+                        message: "expr_tol without time_tol".to_owned(),
                     }])
                     .with_notes(vec![
-                        "help: event detection is evaluation-granular and does not bound \
-                         the timestep, so the event fires at the first solver evaluation \
-                         past the crossing regardless of the requested tolerance; write \
-                         0.0 (LRM: 'the simulator shall apply a suitable value') to \
-                         accept that without this warning"
+                        "help: LRM 5.10.3.1: 'If expr_tol is specified, time_tol shall also \
+                         be specified and both tolerances shall be satisfied at the \
+                         crossing'; the simulator's own time tolerance is used with it. \
+                         Write the time tolerance, or 0.0 to let the simulator choose it"
                             .to_owned(),
                     ])
             }

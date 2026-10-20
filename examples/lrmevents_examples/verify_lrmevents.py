@@ -34,10 +34,12 @@ What this suite pins, each against the quoted clause:
     event control and run the guarded body on EVERY model evaluation.
   * 5.10.1 -- "A comma (,) can be used interchangeably with the keyword
     or" -- it was a parse error.
-  * 5.10.3.1 (documented deviation, made audible) -- a NONZERO cross/above
-    tolerance is accepted but not honored (detection is
-    evaluation-granular); it draws a warning now. 0.0 means "the simulator
-    shall apply a suitable value" and stays silent.
+  * 5.10.3.1 -- a NONZERO cross/above tolerance drew an "accepted but not
+    honored" warning (detection was evaluation-granular). Enhancement-759
+    landed the step and Enhancement-911 lands it in the LRM's box of both
+    tolerances, so no tolerance warns now ([17], [18], [20]); what warns is
+    the LRM's rule "If expr_tol is specified, time_tol shall also be
+    specified" ([23], [24]).
 """
 
 import atexit
@@ -253,8 +255,9 @@ endmodule
 check("[16] a typo'd event name errors instead of running always",
       rc != 0 and "cros" in out)
 
-# ---- the tolerance warning -------------------------------------------------
-print("\ncross/above tolerances warn when not honored:")
+# ---- the tolerances (Enhancement-911: honored, no warning) ------------------
+TOLWARN = ("not honored", "needs a time tolerance")
+print("\ncross/above tolerances are honored and draw no warning (E-911):")
 rc, out, _ = compile_src(HDR + """
 module e8(p,n); inout p,n; electrical p,n; integer x;
 analog begin
@@ -263,8 +266,8 @@ analog begin
 end
 endmodule
 """, "tolw")
-check("[17] a nonzero time_tol draws the accepted-but-not-honored warning",
-      rc == 0 and "not honored" in out)
+check("[17] a nonzero time_tol draws no warning (it was 'accepted but not honored' until E-911)",
+      rc == 0 and not any(w in out for w in TOLWARN))
 
 rc, out, _ = compile_src(HDR + """
 module e9(p,n); inout p,n; electrical p,n; integer x;
@@ -275,7 +278,7 @@ end
 endmodule
 """, "tolz")
 check("[18] a 0.0 tolerance (LRM: simulator picks) stays silent",
-      rc == 0 and "not honored" not in out)
+      rc == 0 and not any(w in out for w in TOLWARN))
 
 # ---- null arguments (round-4 audit, LRM 5.10.3.1-5.10.3.3) -----------------
 print("\nnull arguments mean 'not specified' (round-4 audit):")
@@ -306,8 +309,8 @@ endmodule
 """, "nullargs")
 check("[19] null event arguments compile (LRM sample-and-hold shape)",
       rc == 0, out.strip().splitlines()[-1] if rc else "")
-check("[20] null tolerances draw no bogus not-honored warning",
-      rc == 0 and "not honored" not in out)
+check("[20] null tolerances draw no tolerance warning",
+      rc == 0 and not any(w in out for w in TOLWARN))
 if rc == 0:
     sim = run("V1 a 0 DC 0 PULSE(0 1 2u 1u 1u 4u 10u)\nVen en 0 DC 1\nN1 a b a en mm\n.model mm na",
               "tran 0.2u 8u", "nullargs", osdi)
@@ -317,6 +320,31 @@ if rc == 0:
           m.group(0) if m else "no line")
     check("[22] a null timer period is the one-shot form",
           m and m.group(3) == "1" and m.group(4) == "1", m.group(0) if m else "no line")
+
+# ---- expr_tol needs time_tol (LRM 5.10.3.1, Enhancement-911) ---------------
+print("\nexpr_tol without time_tol (LRM 5.10.3.1: 'time_tol shall also be specified'):")
+rc, out, _ = compile_src(HDR + """
+module e10(p,n); inout p,n; electrical p,n; integer x, y;
+analog begin
+  @(cross(V(p,n)-0.5, +1, , 1m)) x = x + 1;
+  @(above(V(p,n)-0.5, , 1m)) y = y + 1;
+  I(p,n) <+ 1e-9*V(p,n);
+end
+endmodule
+""", "xtolalone")
+check("[23] an expr_tol with the time tolerance left out warns, for cross and above",
+      rc == 0 and out.count("an expression tolerance needs a time tolerance beside it") == 2, out[-300:])
+rc, out, _ = compile_src(HDR + """
+module e11(p,n); inout p,n; electrical p,n; integer x, y;
+analog begin
+  @(cross(V(p,n)-0.5, +1, 1n, 1m)) x = x + 1;
+  @(above(V(p,n)-0.5, 0.0, 1m)) y = y + 1;
+  I(p,n) <+ 1e-9*V(p,n);
+end
+endmodule
+""", "xtolboth")
+check("[24] with a time tolerance beside it (1n, or 0.0 for the simulator's), no warning",
+      rc == 0 and not any(w in out for w in TOLWARN), out[-300:])
 
 print(f"\n{passed}/{checks} checks passed")
 sys.exit(0 if passed == checks else 1)

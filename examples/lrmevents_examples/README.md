@@ -21,7 +21,10 @@ both halves of the toolchain. This suite pins the fixes end-to-end:
 - **Comma OR-lists** (5.10.1): `@(initial_step, timer(2.5u))` — the
   first cut of this very fix parsed the comma but dropped the second
   member in the unit splitter; check [8] exists because it caught that.
-- **Tolerance honesty**: a nonzero `cross`/`above` tolerance warns that
-  it is accepted but not honored; `0.0` stays silent.
+- **Tolerances**: a nonzero `cross`/`above` tolerance used to warn that it
+  was accepted but not honored. E-759 lands the step on the crossing and
+  E-911 lands it in the LRM's box of both tolerances, so no tolerance warns
+  now. An `expr_tol` written without a `time_tol` warns, per LRM 5.10.3.1's
+  "time_tol shall also be specified".
 
-Run `python3 verify_lrmevents.py` — 22 checks, both solvers.
+Run `python3 verify_lrmevents.py` — 28 checks, both solvers.
