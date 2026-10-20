@@ -88,7 +88,12 @@ jobs:
 
       - name: Install build deps (macOS)
         if: runner.os == 'macOS'
+        # Normally 7 min (two small source builds on Intel, below). Bounded so
+        # that a step that runs away ends as a timeout WITH its log, not as a
+        # lost runner without one (see the Intel note below).
+        timeout-minutes: 20
         run: |
+          echo "disk: $(df -h / | tail -1)"; echo "memory: $(( $(sysctl -n hw.memsize) / 1073741824 )) GB, $(sysctl -n hw.ncpu) cores"
           brew untap aws/tap 2>/dev/null || true
           # Never touch what we did not ask for. On the Tier 3 macos-14 image a
           # `brew install` of the Build binaries workflow's dependencies rebuilt
@@ -105,13 +110,22 @@ jobs:
           # Intel macOS is Homebrew Tier 3 since 2026-09 (no new Intel bottles).
           # There `brew update` migrates the image's azure-cli formula to a cask,
           # and that built openssl@4 from source; nothing here uses azure-cli.
-          # (The 2026-10-19 Intel run lost its runner 45 min into this step,
-          # where it usually takes 20; no log survived to say why.)
+          # Three Intel runs (2026-10-19 13:20, 2026-10-20 01:00 and 02:00 UTC)
+          # lost their runner in this step, 47 min after the job started, with
+          # no log left; the step takes 7 min when it works. Build binaries'
+          # Intel leg ran the same brew commands beside the last two on the
+          # same image without trouble, and differs from this step in one thing
+          # only: it removes the image's other LLVMs (llvm@20, 1.5 GB) first.
+          # So this leg removes them too; the build uses Apple's clang.
           if [ "$(uname -m)" = x86_64 ]; then
             brew uninstall --formula --ignore-dependencies azure-cli 2>/dev/null || true
+            for f in $(brew list --formula 2>/dev/null | grep '^llvm'); do
+              brew uninstall --ignore-dependencies "$f" 2>/dev/null || true
+            done
           fi
           brew update
           brew install automake autoconf libtool bison flex
+          echo "disk: $(df -h / | tail -1)"
           echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
           # Apple's clang, as the local shared build uses (full SDK, system
@@ -123,6 +137,7 @@ jobs:
 
       - name: Build libngspice
         working-directory: ${{ env.NGSPICE_DIR }}
+        timeout-minutes: 30     # 5 min normally; see the deps step's bound
         run: |
           ./autogen.sh
           mkdir -p ci-build-shared && cd ci-build-shared
