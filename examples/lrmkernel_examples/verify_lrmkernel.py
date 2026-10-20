@@ -359,8 +359,14 @@ if rc == 0:
     # The ratio only: an absolute cap held on one machine (1.5 us/iter on the
     # Linux CI runner, against a built-in resistor's 0.57 there); the E-759
     # binary measured 5x here.
-    check("[speed] one compiled instance's load per Newton iteration is under 4x a built-in resistor's, best of three runs each (was 8x: ~0.6 us of bookkeeping against 0.08 us)",
-          c_it is not None and b_it is not None and b_it > 0 and c_it < 4.0 * b_it,
+    # Windows gets 6x: the windows-intel runner measures 3.1-4.8x for code
+    # that is 1.5x on macOS (run 39391270522: compiled 0.86-0.93 us/iter, the
+    # resistor 0.19-0.28), and failed the sweep once at 4.8x when the
+    # resistor's best of three came out low. 6x still fails the 8x the check
+    # was written against.
+    limit = 6.0 if sys.platform.startswith("win") else 4.0
+    check(f"[speed] one compiled instance's load per Newton iteration is under {limit:g}x a built-in resistor's, best of three runs each (was 8x: ~0.6 us of bookkeeping against 0.08 us)",
+          c_it is not None and b_it is not None and b_it > 0 and c_it < limit * b_it,
           f"compiled {c_it * 1e6:.3f} us/iter over {c_n}, built-in {b_it * 1e6:.3f} us/iter over {b_n}" if (c_it and b_it) else "no timing")
 
 print(f"\n{'ALL PASS' if checks == passed else 'FAILURES'}: {passed}/{checks} passed")
