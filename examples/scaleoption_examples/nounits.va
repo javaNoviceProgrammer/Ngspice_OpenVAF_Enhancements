@@ -1,0 +1,7 @@
+// A w that says nothing about itself.
+`include "disciplines.vams"
+module nounits(p, n);
+    inout p, n; electrical p, n;
+    (* type = "instance" *) parameter real w = 1e-6;
+    analog I(p, n) <+ V(p, n) * w * 1e3;
+endmodule

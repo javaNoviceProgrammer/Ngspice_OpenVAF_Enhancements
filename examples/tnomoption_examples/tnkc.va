@@ -1,0 +1,10 @@
+// The HiSIM-HV pattern: TNOM = 27.0 declared with units "K", used in Celsius.
+`include "disciplines.vams"
+module tnkc(p, n);
+    inout p, n; electrical p, n;
+    parameter real r = 1k;
+    parameter real tc = 0.01;
+    (* desc = "Nominal temperature", units = "K" *)
+    parameter real TNOM = 27.0 from (-273.15:inf);
+    analog I(p, n) <+ V(p, n) / (r * (1 + tc * ($temperature - 273.15 - TNOM)));
+endmodule

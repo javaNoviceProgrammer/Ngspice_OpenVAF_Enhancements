@@ -248,6 +248,7 @@ CKTdoJob(CKTcircuit* ckt, int reset, TSKtask* task)
 
     ckt->CKTtemp = task->TSKtemp;
     ckt->CKTnomTemp = task->TSKnomTemp;
+    ckt->CKTnomTempGiven = task->TSKnomTempGiven; /* Enhancement-914 */
     ckt->CKTmaxOrder = task->TSKmaxOrder;
     ckt->CKTintegrateMethod = task->TSKintegrateMethod;
     ckt->CKTindverbosity = task->TSKindverbosity;

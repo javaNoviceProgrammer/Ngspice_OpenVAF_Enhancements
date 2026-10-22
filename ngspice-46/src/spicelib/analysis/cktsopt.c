@@ -280,6 +280,7 @@ CKTsetOpt(CKTcircuit *ckt, JOB *anal, int opt, IFvalue *val)
             break;
         ckt_temp_sanity("tnom", val->rValue);   /* Enhancement-440 */
         task->TSKnomTemp = val->rValue + CONSTCtoK; /* Centegrade to Kelvin */
+        task->TSKnomTempGiven = 1;  /* Enhancement-914: reaches compiled models */
         break;
     case OPT_TEMP:
         /* the funnel for .options temp=, the .temp card, `option temp=` and

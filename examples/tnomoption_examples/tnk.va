@@ -1,0 +1,10 @@
+// The OpenVAF test diode's pattern: tnom in Kelvin, 300 K by default.
+`include "disciplines.vams"
+module tnk(p, n);
+    inout p, n; electrical p, n;
+    parameter real r = 1k;
+    parameter real tc = 0.01;
+    (* desc = "Reference temperature", units = "Kelvin" *)
+    parameter real tnom = 300.0 from [0:inf];
+    analog I(p, n) <+ V(p, n) / (r * (1 + tc * ($temperature - tnom)));
+endmodule

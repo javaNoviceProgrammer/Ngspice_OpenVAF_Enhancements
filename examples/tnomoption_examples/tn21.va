@@ -1,0 +1,10 @@
+// The DIODE_CMC pattern: its own reference temperature, 21 C, as default.
+`include "disciplines.vams"
+module tn21(p, n);
+    inout p, n; electrical p, n;
+    parameter real r = 1k;
+    parameter real tc = 0.01;
+    (* desc = "Alias reference temperature", units = "C" *)
+    parameter real TNOM = 21.0;
+    analog I(p, n) <+ V(p, n) / (r * (1 + tc * ($temperature - 273.15 - TNOM)));
+endmodule

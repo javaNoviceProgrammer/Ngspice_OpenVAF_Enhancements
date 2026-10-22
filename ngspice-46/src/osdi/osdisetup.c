@@ -67,6 +67,125 @@ int osdi_dc_sweep_phase(void)
   return osdi_dc_sweep;
 }
 
+/* Enhancement-914 (hunt 2026-09-26 F1): the circuit's nominal temperature
+ * on a compiled model, as every built-in takes it into its tnom.
+ *
+ * A built-in model whose card gives no `tnom` measures its parameters at
+ * CKTnomTemp, which `.option tnom` sets (27 C otherwise). The OSDI layer only
+ * served it as $simparam("tnom"), which the industry models do not read:
+ * their `tnom` is an ordinary parameter. `.option tnom=50` therefore moved
+ * every built-in and no compiled model, while the banner read TNOM = 50, and
+ * the VA-Models BSIM4, which falls back to 25 C when its tnom is not given
+ * ("Verilog-A does not support access to the modelcard default Tnom value",
+ * bsim4.va), ran 1.5 % off its built-in twin by default.
+ *
+ * Run before every setup_model. The parameter is the registry's tnom_param;
+ * a value a card, `altermod` or a sweep wrote is the user's and is left
+ * alone. Otherwise the circuit's nominal temperature is written, in the
+ * parameter's unit, when
+ *   - `.option tnom` was given: it reaches every compiled model, as it does
+ *     every built-in; or
+ *   - the model's own default is the SPICE nominal temperature (27 C,
+ *     300.15 K) or a "not given" sentinel that is no temperature at all
+ *     (BSIM4's -12345789, EKV's +1e21): its author asked for the
+ *     simulator's value and could not have it.
+ * A model that declares another default (DIODE_CMC's 21 C, fbh_hbt's 20 C,
+ * angelov's 25 C) keeps it until `.option tnom` is written.
+ *
+ * The default is the object's literal one when it exports the table, and
+ * otherwise the value the model's own setup left in the slot -- so the first
+ * judgement waits for OSDItemp (after_setup), which CKTdoJob runs right after
+ * OSDIsetup. It decides the unit, read from the default before the `units`
+ * attribute: HiSIM-HV and ASM-HEMT 101 declare `TNOM = 27.0` with units "K",
+ * the OpenVAF test diode and resistor `tnom = 300` with units "Kelvin",
+ * EPFL-HEMT `TNOM = 300` with none. It is made once per model and kept in its
+ * flags.
+ *
+ * A value outside the parameter's declared range is not written: a warning
+ * says so once and the model keeps its default. A model without a `tnom`
+ * gets a note, once, when `.option tnom` is given, naming the parameter its
+ * description calls its reference temperature (PSP's tr, MEXTRAM's tref). */
+static void osdi_model_nominal_temp(CKTcircuit *ckt, const OsdiRegistryEntry *entry,
+                                    GENmodel *gen_model, bool after_setup) {
+  const OsdiDescriptor *descr = entry->descriptor;
+  uint32_t *flags = osdi_model_flags(gen_model);
+  void *model = osdi_model_data(gen_model);
+  uint32_t id = entry->tnom_param;
+  const char *mname = gen_model->GENmodName ? gen_model->GENmodName : "?";
+
+  if (id == UINT32_MAX) {
+    if (ckt->CKTnomTempGiven && !(*flags & OSDI_MODEL_TNOM_NOTED)) {
+      *flags |= OSDI_MODEL_TNOM_NOTED;
+      if (entry->tref_hint != UINT32_MAX)
+        fprintf(stderr,
+                "Note: model %s: .option tnom does not reach it -- the model "
+                "has no 'tnom' parameter; its reference temperature is '%s' "
+                "(\"%s\"), set on the .model card.\n",
+                mname, descr->param_opvar[entry->tref_hint].name[0],
+                descr->param_opvar[entry->tref_hint].description);
+      else
+        fprintf(stderr,
+                "Note: model %s: .option tnom does not reach it -- the model "
+                "has no 'tnom' parameter.\n", mname);
+    }
+    return;
+  }
+
+  OsdiParamGivenFn fn = (OsdiParamGivenFn)entry->param_given_fn;
+  uint32_t g = fn ? fn(NULL, model, id, 0) : UINT32_MAX;
+  bool user = (g == UINT32_MAX) ? (*flags & OSDI_MODEL_TNOM_USER) != 0
+                                : (g == 1 && !(*flags & OSDI_MODEL_TNOM_AUTO));
+  if (user)
+    return;
+
+  if (!(*flags & OSDI_MODEL_TNOM_CLASSED)) {
+    double dv = entry->param_defaults ? entry->param_defaults[id] : NAN;
+    if (isnan(dv)) {
+      if (!after_setup)
+        return;                             /* the default is not known yet */
+      const double *cur = (const double *)descr->access(NULL, model, id,
+                                                        ACCESS_FLAG_READ);
+      dv = cur ? *cur : NAN;
+    }
+    bool physical = !isnan(dv) && dv > -273.15 && dv <= 1000.0;
+    const char *u = descr->param_opvar[id].units ? descr->param_opvar[id].units : "";
+    bool kelvin = physical ? dv > 150.0
+                           : (!strcmp(u, "K") || cieq(u, "kelvin") || cieq(u, "degK"));
+    bool ask = physical ? fabs(dv - (kelvin ? REFTEMP : REFTEMP - CONSTCtoK)) < 1e-9
+                        : !isnan(dv);
+    *flags |= OSDI_MODEL_TNOM_CLASSED | (kelvin ? OSDI_MODEL_TNOM_KELVIN : 0) |
+              (ask ? OSDI_MODEL_TNOM_ASKS : 0);
+  }
+  if (!ckt->CKTnomTempGiven && !(*flags & OSDI_MODEL_TNOM_ASKS))
+    return;
+
+  bool kelvin = (*flags & OSDI_MODEL_TNOM_KELVIN) != 0;
+  double v = kelvin ? ckt->CKTnomTemp : ckt->CKTnomTemp - CONSTCtoK;
+  const char *pname = descr->param_opvar[id].name[0];
+  if (osdi_member_accepts(gen_model->GENmodType, pname, v) == 0) {
+    if (!(*flags & OSDI_MODEL_TNOM_RANGED)) {
+      *flags |= OSDI_MODEL_TNOM_RANGED;
+      fprintf(stderr,
+              "Warning: model %s: the nominal temperature %g %s is outside the "
+              "range of its '%s' (%s); the model keeps its own default.\n",
+              mname, v, kelvin ? "K" : "C", pname,
+              entry->param_ranges ? entry->param_ranges[id] : "");
+    }
+    if (*flags & OSDI_MODEL_TNOM_AUTO) {    /* an earlier run's value */
+      if (fn)
+        (void)fn(NULL, model, id, 2);
+      *flags &= ~OSDI_MODEL_TNOM_AUTO;
+    }
+    return;
+  }
+
+  double *dst = (double *)descr->access(NULL, model, id, ACCESS_FLAG_SET);
+  if (dst) {
+    *dst = v;
+    *flags |= OSDI_MODEL_TNOM_AUTO;
+  }
+}
+
 /*
  * Handles any errors raised by the setup_instance and setup_model functions
  */
@@ -1283,6 +1402,7 @@ int OSDIsetup(SMPmatrix *matrix, GENmodel *inModel, CKTcircuit *ckt,
     void *model = osdi_model_data(gen_model);
 
     /* setup model parameter (setup_model)*/
+    osdi_model_nominal_temp(ckt, entry, gen_model, false); /* Enhancement-914 */
     handle = (OsdiNgspiceHandle){.kind = 1, .name = gen_model->GENmodName};
     descr->setup_model((void *)&handle, model, sim_params, &init_info);
     res = handle_init_info(init_info, descr, &handle, NULL, model);
@@ -2020,6 +2140,7 @@ extern int OSDItemp(GENmodel *inModel, CKTcircuit *ckt) {
        gen_model = gen_model->GENnextModel) {
     void *model = osdi_model_data(gen_model);
 
+    osdi_model_nominal_temp(ckt, entry, gen_model, true);  /* Enhancement-914 */
     handle = (OsdiNgspiceHandle){.kind = 4, .name = gen_model->GENmodName};
     descr->setup_model((void *)&handle, model, sim_params, &init_info);
     res = handle_init_info(init_info, descr, &handle, NULL, model);

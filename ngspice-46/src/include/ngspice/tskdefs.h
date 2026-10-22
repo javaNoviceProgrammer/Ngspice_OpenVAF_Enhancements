@@ -18,6 +18,7 @@ struct TSKtask {
     char *TSKname;
     double TSKtemp;
     double TSKnomTemp;
+    int TSKnomTempGiven;    /* Enhancement-914: `.option tnom` was written */
     int TSKmaxOrder;        /* maximum integration method order */
     int TSKintegrateMethod; /* the integration method to be used */
     double TSKxmu;          /* for trapezoidal method */

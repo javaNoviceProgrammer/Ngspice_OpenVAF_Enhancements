@@ -6178,6 +6178,23 @@ static int inp_fix_subckt_multiplier(struct names *subckt_w_params,
             if (ciprefix("v=", tmpstr))
                 continue;
         }
+        /* Enhancement-916 (options-and-convergence hunt of 2026-09-26, F7 and
+           F8): an N line gets the subcircuit's multiplier under a keyword of
+           its own, `_subckt_m`, which INPdevParse multiplies into the
+           device's multiplier once the device is known. Appended as `m=`, it
+           landed on whatever the device calls `m`: a compiled diode whose
+           grading coefficient is `m` refused the line as a model parameter,
+           and a module with an instance parameter `m` of its own had that
+           parameter overwritten and was not multiplied, in silence. Only the
+           parser can tell the two apart, and only it knows the multiplier's
+           spelling (`_mfactor` for a compiled device). An `m=` already on the
+           line is left as written for the same reason. */
+        if (curr_line[0] == 'n') {
+            new_str = tprintf("%s _subckt_m={m}", curr_line);
+            tfree(card->line);
+            card->line = new_str;
+            continue;
+        }
         /* Enhancement-394: an existing `m=` on the line is MULTIPLIED by the
            subcircuit's multiplier, not shadowed by it. This was done only in
            HSPICE compatibility mode; everywhere else a second ` m={m}` was

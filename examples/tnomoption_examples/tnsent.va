@@ -1,0 +1,13 @@
+// The EKV pattern: a "not given" sentinel as default, 25 C in the code.
+`include "disciplines.vams"
+module tnsent(p, n);
+    inout p, n; electrical p, n;
+    parameter real r = 1k;
+    parameter real tc = 0.01;
+    parameter real TNOM = 1.0e21;
+    real tn;
+    analog begin
+        if (TNOM == 1.0e21) tn = 25.0; else tn = TNOM;
+        I(p, n) <+ V(p, n) / (r * (1 + tc * ($temperature - 273.15 - tn)));
+    end
+endmodule

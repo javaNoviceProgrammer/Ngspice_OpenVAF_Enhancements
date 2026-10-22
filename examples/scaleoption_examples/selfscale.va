@@ -1,0 +1,10 @@
+// The CMC convention (r3_cmc, VBIC, PSP-HV): a model parameter `scale`
+// whose default is the simulator's, applied by the model to its geometry.
+`include "disciplines.vams"
+module selfscale(p, n);
+    inout p, n; electrical p, n;
+    (* units = "", desc = "scale factor for instance geometries" *)
+    parameter real scale = $simparam("scale", 1.0) from (0:1];
+    (* type = "instance", units = "m", desc = "Width" *) parameter real w = 1e-6;
+    analog I(p, n) <+ V(p, n) * w * scale * 1e3;
+endmodule

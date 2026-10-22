@@ -1,0 +1,40 @@
+`include "disciplines.vams"
+`include "constants.vams"
+
+// Twin of the ngspice built-in diode's core: I = IS*(exp(V/(N*Vt))-1) plus
+// the simulator's junction gmin, plus the standard depletion charge
+// (cjo/vj/m with the fc linearization above fc*vj) and diffusion charge
+// (tt*id). With a matching .model d(...) card the built-in and this module
+// produce the same currents and charges, so the rectifier benchmark's
+// waveforms must agree closely while Newton does the same work on both.
+module vadiode(a, c);
+    inout a, c;
+    electrical a, c;
+    parameter real is_ = 1e-14 from (0:inf);
+    parameter real n = 1.0 from (0:inf);
+    parameter real cjo = 0.0 from [0:inf);
+    parameter real vj = 1.0 from (0:inf);
+    parameter real m = 0.5 from (0:1);
+    parameter real fc = 0.5 from [0:0.95];
+    parameter real tt = 0.0 from [0:inf);
+    real vd, id, qd, f1, f2, f3;
+
+    analog begin
+        vd = V(a, c);
+        id = is_ * (limexp(vd / (n * $vt)) - 1.0);
+        I(a, c) <+ id + $simparam("gmin", 0.0) * vd;
+        if (cjo > 0.0) begin
+            if (vd < fc * vj)
+                qd = cjo * vj / (1.0 - m) * (1.0 - pow(1.0 - vd / vj, 1.0 - m));
+            else begin
+                f1 = cjo * vj / (1.0 - m) * (1.0 - pow(1.0 - fc, 1.0 - m));
+                f2 = pow(1.0 - fc, -1.0 - m);
+                f3 = 1.0 - fc * (1.0 + m);
+                qd = f1 + cjo * f2 * (f3 * (vd - fc * vj)
+                     + m / (2.0 * vj) * (vd * vd - fc * fc * vj * vj));
+            end
+            I(a, c) <+ ddt(qd);
+        end
+        I(a, c) <+ ddt(tt * id);
+    end
+endmodule

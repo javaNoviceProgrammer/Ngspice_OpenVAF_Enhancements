@@ -1,0 +1,16 @@
+// The VA-Models BSIM4 pattern: a tnom of 27 C on the card's default, and a
+// fallback of 25 C in the code when the card does not give it ("Verilog-A
+// does not support access to the modelcard default Tnom value", bsim4.va).
+`include "disciplines.vams"
+module tn27(p, n);
+    inout p, n; electrical p, n;
+    parameter real r = 1k;
+    parameter real tc = 0.01;
+    (* desc = "Parameter measurement temperature", units = "C" *)
+    parameter real tnom = 27.0 from [-200.0:300.0];
+    real tn;
+    analog begin
+        if ($param_given(tnom)) tn = tnom; else tn = 25.0;
+        I(p, n) <+ V(p, n) / (r * (1 + tc * ($temperature - 273.15 - tn)));
+    end
+endmodule

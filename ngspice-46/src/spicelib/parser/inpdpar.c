@@ -424,6 +424,19 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
     if (seen_as)
         memset(seen_as, 0, (size_t)n_track * sizeof(char *));
 
+    /* Enhancement-916 (options-and-convergence hunt of 2026-09-26, F7/F8):
+     * the subcircuit's multiplier on an N line, which inpcom.c appends as
+     * `_subckt_m=`. The multiplier the card or the line gives is held, and
+     * the product is written once, after the line, through the device's own
+     * multiplier -- `_mfactor` on a compiled device, `m` otherwise -- so a
+     * module that owns a parameter `m` keeps it and is still multiplied, and
+     * the m=0 note, the negative-m warning and the n-port's "not applied"
+     * line see the one value that is applied. */
+    const int e916_mult_id = e426_multiplier_id(device);
+    const int e916_defer = *line && strstr(*line, "_subckt_m=") != NULL;
+    double e916_mult = 1.0, e916_subckt = 1.0;
+    int e916_mult_type = IF_REAL;
+
     int error;                  /* int to store evaluate error return codes in */
     char *parm = NULL;
     char *errbuf;
@@ -483,6 +496,11 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
                     p->keyword);
         }
 
+        if (e916_defer && p->id == e916_mult_id) {      /* Enhancement-916 */
+            e916_mult_type = p->dataType & IF_VARTYPES;
+            e916_mult = e916_mult_type == IF_INTEGER ? (double) val->iValue : val->rValue;
+            continue;
+        }
         e426_check_multiplier(device, fast, p, val, e426_multiplier_id(device));
         error = e467_bad_instance_value(ckt, device, fast, p, val)
                     ? 0
@@ -522,6 +540,17 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
         if (error) {
             rtn  = INPerror(error);
             goto quit;
+        }
+
+        if (cieq(parm, "_subckt_m")) {                   /* Enhancement-916 */
+            double v = INPevaluate(line, &error, 1);
+            if (error) {
+                rtn = INPerror(E_PARMVAL);
+                goto quit;
+            }
+            e916_subckt *= v;
+            FREE(parm);
+            continue;
         }
 
         IFparm *p = find_instance_parameter(parm, device);
@@ -616,6 +645,12 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
                     fast && fast->GENname ? fast->GENname : device->name,
                     p->keyword);
         }
+        if (e916_defer && p->id == e916_mult_id) {      /* Enhancement-916 */
+            e916_mult_type = p->dataType & IF_VARTYPES;
+            e916_mult = e916_mult_type == IF_INTEGER ? (double) val->iValue : val->rValue;
+            FREE(parm);
+            continue;
+        }
         e426_check_multiplier(device, fast, p, val, e426_multiplier_id(device));
         error = e467_bad_instance_value(ckt, device, fast, p, val)
                     ? 0
@@ -640,6 +675,40 @@ INPdevParse(char **line, CKTcircuit *ckt, int dev, GENinstance *fast,
         }
 
         FREE(parm);
+    }
+
+    /* Enhancement-916: the multiplier the instance runs with, written once */
+    if (e916_defer) {
+        if (e916_mult_id < 0) {
+            if (e916_mult * e916_subckt != 1.0)
+                fprintf(stderr,
+                        "Warning: %s: the device takes no multiplier; the "
+                        "subcircuit's m=%g is not applied.\n",
+                        fast && fast->GENname ? fast->GENname : device->name,
+                        e916_subckt);
+        } else {
+            IFvalue mv;
+            IFparm *mp = NULL;
+            for (int i = 0; i < *(device->numInstanceParms); i++)
+                if (device->instanceParms[i].id == e916_mult_id) {
+                    mp = &device->instanceParms[i];
+                    break;
+                }
+            if (!mp)
+                goto quit;
+            if (e916_mult_type == IF_INTEGER)
+                mv.iValue = (int) floor(e916_mult * e916_subckt + 0.5);
+            else
+                mv.rValue = e916_mult * e916_subckt;
+            e426_check_multiplier(device, fast, mp, &mv, e916_mult_id);
+            error = e467_bad_instance_value(ckt, device, fast, mp, &mv)
+                        ? 0
+                        : ft_sim->setInstanceParm(ckt, fast, e916_mult_id, &mv, NULL);
+            if (!error)
+                INPcardDefaultNote(fast, e916_mult_id, 1);
+            else
+                rtn = INPerror(error);
+        }
     }
 
  quit:

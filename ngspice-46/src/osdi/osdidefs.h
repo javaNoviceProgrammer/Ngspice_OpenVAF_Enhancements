@@ -417,8 +417,27 @@ static inline uint32_t osdi_wire_slots(const OsdiRegistryEntry *entry) {
 
 typedef struct OsdiModelData {
   GENmodel gen;
+  uint32_t ng_flags;  /* Enhancement-914: OSDI_MODEL_TNOM_* below */
   max_align_t data;
 } OsdiModelData;
+
+/* Enhancement-914: who set the model's nominal-temperature parameter
+ * (OsdiRegistryEntry tnom_param). AUTO: the simulator wrote the circuit's
+ * nominal temperature, and refreshes it at every setup; USER: a card,
+ * `altermod` or any other OSDImParam write, which the simulator leaves alone
+ * (the fallback for an object without the givenness entry point). NOTED and
+ * RANGED: the note that `.option tnom` does not reach the model, and the
+ * warning that its value is outside the parameter's range, were printed.
+ * CLASSED: the model's default was judged, once; KELVIN: the parameter is in
+ * Kelvin; ASKS: its default asks for the simulator's value. */
+#define OSDI_MODEL_TNOM_AUTO    (1u << 0)
+#define OSDI_MODEL_TNOM_USER    (1u << 1)
+#define OSDI_MODEL_TNOM_NOTED   (1u << 2)
+#define OSDI_MODEL_TNOM_RANGED  (1u << 3)
+#define OSDI_MODEL_TNOM_CLASSED (1u << 4)
+#define OSDI_MODEL_TNOM_KELVIN  (1u << 5)
+#define OSDI_MODEL_TNOM_ASKS    (1u << 6)
+extern uint32_t *osdi_model_flags(GENmodel *model);
 
 extern size_t osdi_instance_data_off(const OsdiRegistryEntry *entry);
 extern void *osdi_instance_data(const OsdiRegistryEntry *entry,

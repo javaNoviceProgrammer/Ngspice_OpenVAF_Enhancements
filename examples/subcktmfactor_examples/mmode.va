@@ -1,0 +1,9 @@
+// A module with an instance parameter `m` of its own -- here a count that
+// adds 1 uA per unit beside a 1 k conductance (hunt F8). The compiler warns
+// (L029) that `m` is ngspice's reserved multiplier name.
+`include "disciplines.vams"
+module mmode(p, n);
+    inout p, n; electrical p, n;
+    (* type = "instance" *) parameter integer m = 1 from [1:8];
+    analog I(p, n) <+ V(p, n) / 1k + m * 1u;
+endmodule

@@ -4,7 +4,8 @@
 `ngspice-46/build/src/ngspice` at the E-738 state (KLU, `--disable-openmp`,
 Apple clang) and `OpenVAF-master-20260610/target/opt/openvaf-r`. **Status:
 open** — a one-hour hunt, nothing in the repository was changed, no finding
-was fixed. Probe decks and logs are under the session scratchpad `bh/`.
+was fixed. (Every finding has since been folded: F9 as E-739, N1 as E-740, F5 as E-751, F6 as
+E-755, F1 as E-914, F2 as E-915, F7 and F8 as E-916, F3 and F4 as E-917.) Probe decks and logs are under the session scratchpad `bh/`.
 
 The hunt worked in two directions that earlier passes had not taken: the
 simulator-wide `.option`s and instance keywords that ngspice's built-in
@@ -18,20 +19,22 @@ resistor — so a difference is the integration's, not the model's.
 
 | # | finding | severity |
 |---|---|---|
-| [F1](#f1--option-tnom-does-not-reach-compiled-models) | `.option tnom=50` changes nothing in a compiled BSIM4 while the built-in twin moves as it does with `tnom=50` on its card; the banner still prints *TNOM = 50* | **medium** — silent |
-| [F2](#f2--option-scale-is-not-applied-to-compiled-instances) | `.option scale=1e-6` with `w=1 l=0.1` gives the built-in the same point as `w=1u l=100n`; the compiled instance is simulated as a 1 m × 0.1 m device with no message | **medium** — silent |
-| [F3](#f3--the-operating-point-of-a-long-compiled-bsim4-chain-takes-24-the-built-ins-iterations-and-not-monotonically) | a common-source chain of N compiled BSIM4 stages converges its `op` in 9 iterations up to N = 500, then 100 at 700, 184 at 1 000, 135 at 2 000, 146 at 10 000 (built-in: 10, 46, 65); at 600 stages 73 under KLU and 363 under Sparse, COLAMD or `klu_btf=off` | medium — performance |
-| [F4](#f4--the-long-chain-transient-rejects-two-to-three-times-the-built-ins-timepoints) | on the 1 000-stage chain 21 of 177 timepoints are rejected against the built-in's 8 of 206; 53 against 16 at 10 000 stages; 1 207 against 1 123 at reltol 1e-6; the limiter is not the cause | low–medium — performance |
+| [F1](#f1--option-tnom-does-not-reach-compiled-models) | *(fixed in [E-914](../../enhancements_doc/Enhancement-914.md): an ungiven compiled `tnom` takes the circuit's nominal temperature, in its own unit, when `.option tnom` is given or the model's default is 27 C or a sentinel; BSIM4 runs at 27 C by default)* `.option tnom=50` changes nothing in a compiled BSIM4 while the built-in twin moves as it does with `tnom=50` on its card; the banner still prints *TNOM = 50* | **medium** — silent |
+| [F2](#f2--option-scale-is-not-applied-to-compiled-instances) | *(fixed in [E-915](../../enhancements_doc/Enhancement-915.md): w, l, ps, pd times the scale and as, ad times its square when the model declares them as lengths or areas; a model with its own `scale` applies it itself)* `.option scale=1e-6` with `w=1 l=0.1` gives the built-in the same point as `w=1u l=100n`; the compiled instance is simulated as a 1 m × 0.1 m device with no message | **medium** — silent |
+| [F3](#f3--the-operating-point-of-a-long-compiled-bsim4-chain-takes-24-the-built-ins-iterations-and-not-monotonically) | *(fixed in [E-917](../../enhancements_doc/Enhancement-917.md): a non-finite raw voltage counts as moved by the limiter: the chain converges in 9 iterations at every length, on the same point)* a common-source chain of N compiled BSIM4 stages converges its `op` in 9 iterations up to N = 500, then 100 at 700, 184 at 1 000, 135 at 2 000, 146 at 10 000 (built-in: 10, 46, 65); at 600 stages 73 under KLU and 363 under Sparse, COLAMD or `klu_btf=off` | medium — performance |
+| [F4](#f4--the-long-chain-transient-rejects-two-to-three-times-the-built-ins-timepoints) | *(fixed in [E-917](../../enhancements_doc/Enhancement-917.md): does not reproduce at E-913: the compiled chain rejects about as many timepoints as the built-in)* on the 1 000-stage chain 21 of 177 timepoints are rejected against the built-in's 8 of 206; 53 against 16 at 10 000 stages; 1 207 against 1 123 at reltol 1e-6; the limiter is not the cause | low–medium — performance |
 | [F5](#f5--m0-deletes-a-compiled-instance-silently) | *(fixed in [E-751](../../enhancements_doc/Enhancement-751.md): the compiled layer prints one Note per instance naming it, on every route, capped at ten; the instance stays disabled and the built-ins stay silent)* `m=0` or `_mfactor=0` on a compiled instance removes the device from the circuit with no message; a negative value is caught | low |
 | [F6](#f6--the-negative-multiplier-check-prints-two-warnings-that-contradict-each-other) | *(fixed in [E-755](../../enhancements_doc/Enhancement-755.md): one warning, from the OSDI setter, naming the instance and saying the value is ignored; the parser leaves a compiled device's negative m to it, the built-ins keep its sentence)* the two warnings for `m=-1` say "the device's contribution is sign-inverted" and "the value is ignored"; measured, it is ignored | low — diagnostics |
-| [F7](#f7--a-compiled-model-that-owns-a-parameter-m-cannot-be-used-inside-a-subcircuit-called-with-m) | a compiled diode (`vadiode`, whose grading coefficient is `m`) inside a `.subckt` instantiated with `m=2` is refused — *unknown parameter (m): it is a model parameter of this device* — because the expansion appends `m=2` to the inner line; `_mfactor=3` on the inner line is refused too, as a double setting; the built-in diode multiplies | **medium** |
-| [F8](#f8--a-compiled-module-with-its-own-instance-parameter-m-is-not-multiplied-inside-a-subcircuit-called-with-m-its-parameter-is-overwritten) | a module declaring an instance parameter `m` of its own (`I <+ V/1k + m*1u`) inside a `.subckt` called with `m=2` reports 0.502 mA where a multiplied device gives 1.002 mA: the expansion's `m=2` sets the module's parameter and no multiplier is applied, with no message from ngspice (the compiler warns once at compile time) | **medium–high** — silent wrong result |
+| [F7](#f7--a-compiled-model-that-owns-a-parameter-m-cannot-be-used-inside-a-subcircuit-called-with-m) | *(fixed in [E-916](../../enhancements_doc/Enhancement-916.md): an N line gets the subcircuit's multiplier as `_subckt_m=`, multiplied into the device's own `_mfactor` by the parser)* a compiled diode (`vadiode`, whose grading coefficient is `m`) inside a `.subckt` instantiated with `m=2` is refused — *unknown parameter (m): it is a model parameter of this device* — because the expansion appends `m=2` to the inner line; `_mfactor=3` on the inner line is refused too, as a double setting; the built-in diode multiplies | **medium** |
+| [F8](#f8--a-compiled-module-with-its-own-instance-parameter-m-is-not-multiplied-inside-a-subcircuit-called-with-m-its-parameter-is-overwritten) | *(fixed in [E-916](../../enhancements_doc/Enhancement-916.md): the same: the module keeps its own `m`, and the multiplier is `$mfactor`'s)* a module declaring an instance parameter `m` of its own (`I <+ V/1k + m*1u`) inside a `.subckt` called with `m=2` reports 0.502 mA where a multiplied device gives 1.002 mA: the expansion's `m=2` sets the module's parameter and no multiplier is applied, with no message from ngspice (the compiler warns once at compile time) | **medium–high** — silent wrong result |
 | [F9](#f9--disto-of-a-compiled-diode-with-diffusion-charge-is-wrong-by-a-sixth-in-the-second-harmonic-and-two-fifths-in-the-third-and-the-built-in-is-right) | *(fixed in [E-739](../../enhancements_doc/Enhancement-739.md): the driver's evaluations now request the reactive Jacobian; the suite pins a charge polynomial against its closed form and against the transient, and the charge-storage diode against the built-in)* `.disto` on the twin diodes agrees to six digits without charge storage and within 1 % with junction capacitance only, but with diffusion charge (`tt=5n`) the second harmonic at 10 MHz is −7.6e-5 + j6.3e-5 against the built-in's −1.15e-4 + j1.6e-5, and at 100 MHz 6.7e-6 − j1.9e-6 against 1.9e-5 + j4.0e-5; a tight transient's `fourier` gives 1.164e-4 at 82° for the second and 2.17e-6 for the third harmonic, the built-in's numbers, so the compiled path is the wrong one; a module whose only nonlinearity is a cubic charge gives exactly zero distortion where the transient shows 5.9 % THD — the compiled path contributes nothing from reactive nonlinearity, because its perturbed evaluations never ask for the reactive Jacobian (`osdidisto.c:237`) | **medium–high** — wrong numbers from an analysis, silently |
 | [N1](#n1--notes-not-osdi-specific-or-by-design) | `level=` on a compiled model card is accepted silently; `off`, `ic=` and a wrong instance prefix give a bare *Error on line N*; `meas` on a device vector needs a `save` first; `stop when` re-fires at once on `resume`; `maxord` above 2 needs `dynorder` | notes |
 
 ---
 
 ## F1 — `.option tnom` does not reach compiled models
+
+*Fixed in [E-914](../../enhancements_doc/Enhancement-914.md).* An ungiven `tnom` on a compiled model now takes the circuit's nominal temperature before `setup_model`, in two cases: `.option tnom` was given, or the model's own default is the SPICE 27 °C (300.15 K) or a "not given" sentinel. Its unit is read from the default before the `units` attribute. The VA-Models BSIM4 and EKV run at 27 °C by default, and DIODE_CMC keeps its 21 °C until the option is written. A value outside the parameter's range is not written, and a warning says so. PSP's `tr` and MEXTRAM's `tref` are not reached: a note names them when the option is given.
 
 ngspice's built-in models take the circuit's nominal temperature as the
 default of their `tnom` when the model card does not give one
@@ -85,6 +88,8 @@ compiler's OSDI descriptor could flag the nominal-temperature parameter.
 
 ## F2 — `.option scale` is not applied to compiled instances
 
+*Fixed in [E-915](../../enhancements_doc/Enhancement-915.md).* The compiled layer scales `w`, `l`, `ps` and `pd` by the scale and `as`, `ad` by its square, as the built-ins do. It does so when the model declares them in metres (square metres), or with no units and a description that says so. A model with its own `scale` parameter (the CMC models) applies the scale itself and is not scaled again. The value reads back as written, so a `.dc` sweep of it restores it. The built-ins' own sweep restore scales twice: `w` reads 1e-12 after `dc @m1[w] ...` under scale=1e-6. That is noted and not changed.
+
 `.option scale` multiplies the geometric instance parameters of the built-in
 MOSFETs (`w`, `l`, `as`, `ad`, `ps`, `pd`). A compiled model has no such
 list, and the OSDI layer applies nothing, so a deck written for
@@ -103,6 +108,8 @@ warning at setup when `scale` is not 1 and a compiled instance exists would
 already remove the silence.
 
 ## F3 — the operating point of a long compiled-BSIM4 chain takes 2–4× the built-in's iterations, and not monotonically
+
+*Fixed in [E-917](../../enhancements_doc/Enhancement-917.md).* The jump at 600 stages is an overflow, not a path that parts. The first Newton step through hundreds of inverting stages brings the far nodes back as ±∞, for the built-in chain too, which also falls to gmin stepping from about 550 stages. The compiled limiter brought each step back to a finite one. It then judged "moved" by `|lim − raw| > reltol·|raw| + vntol`, which is ∞ > ∞, false, so it kept the raw point and loaded NaN. A non-finite raw value now counts as moved. The chain converges in 9 iterations at 600, 1 000, 3 000 and 10 000 stages, under KLU and Sparse, on the same point (3e-16 V).
 
 A chain of N common-source stages (`nm{k} in{k+1} in{k} 0 0 mos_va w=1u
 l=100n`, `r{k} vdd in{k+1} 20k`, `vin` at 0.6 V, `vdd` 1.2 V), `op`, KLU, no
@@ -149,6 +156,8 @@ sweep of 101 points takes 258 iterations against the built-in's 209, and its
 `op` 14 against 9; a 100-stage chain's DC sweep is even, 177 against 171.
 
 ## F4 — the long-chain transient rejects two to three times the built-in's timepoints
+
+*Fixed in [E-917](../../enhancements_doc/Enhancement-917.md).* Not reproduced at E-913. With full-swing input pulses the 1 000-stage chain rejects 26 timepoints against the built-in's 33, and the 10 000-stage chain 91 against 85. The compiled chain takes 5–17 % more Newton iterations. Neither the limiter's non-convergence flag nor the E-889 convergence test accounts for that; it is the two BSIM4 implementations.
 
 The same chains with a pulse on `vin`, `tran`:
 
@@ -225,6 +234,8 @@ inverting.
 
 ## F7 — a compiled model that owns a parameter `m` cannot be used inside a subcircuit called with `m=`
 
+*Fixed in [E-916](../../enhancements_doc/Enhancement-916.md).* The subcircuit expansion appends the multiplier to an N line as `_subckt_m=`, a keyword of its own. The parser multiplies it into the device's own multiplier (`_mfactor` on a compiled device), times whatever the line or the card gives. The compiled diode in `X1 a 0 dsub m=2` gives the built-in diode's point, and `_mfactor=3` on its line is six diodes.
+
 ```
 .subckt dsub p n
 nd1 p n dva
@@ -265,6 +276,8 @@ inner device accepts (`_mfactor` for a compiled instance), and multiply an
 existing `_mfactor` as an existing `m` is multiplied today.
 
 ## F8 — a compiled module with its own instance parameter `m` is not multiplied inside a subcircuit called with `m=`; its parameter is overwritten
+
+*Fixed in [E-916](../../enhancements_doc/Enhancement-916.md).* With the same change, `mmode` in `X1 a 0 msub m=2` draws 1.002 mA, and with `m=3` on its line its parameter stays 3 and it draws 1.006 mA. This reverses E-396's pin in `instknobs`, which had held such a module at 1× as the model's bug.
 
 ```
 module mmode(p, n);

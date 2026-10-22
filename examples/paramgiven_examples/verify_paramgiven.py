@@ -209,16 +209,18 @@ if os.path.isfile(BSIM4):
     r = subprocess.run([OPENVAF, va, "-o", osdi], cwd=b4dir, capture_output=True, text=True, timeout=600)
     os.remove(va)
     assert r.returncode == 0, r.stdout + r.stderr
+    # E-914: the drain current below is BSIM4 at the simulator's 27 C nominal
+    # temperature; before, the model fell back to its own 25 C (-1.12387e-4)
     B4 = ("pg {tag}\nvdd vdd 0 dc 1.2\nrload vdd d 1k\nvg g 0 dc 0.6\nn1 d g 0 0 mos_va\n"
           ".model mos_va bsim4va({card})\n.control\npre_osdi _pg_bsim4.osdi\n{body}\n.endc\n.end\n")
     out = run(B4.format(tag="b1", card="toxe=2e-9",
                         body="set osdimc\nset mcseed=5\nrepeat 3\n  op\n  print i(vdd)\nend"), "b1")
     idd = seq(out, "i(vdd)")
     check("[7] BSIM4, toxp derived from toxe: the drain current is the same on every trial and the note names toxp",
-          len(idd) == 3 and max(idd) - min(idd) < 1e-12 and abs(idd[0] + 1.12387e-4) < 1e-8
+          len(idd) == 3 and max(idd) - min(idd) < 1e-12 and abs(idd[0] + 1.14022e-4) < 1e-8
           and "mos_va:toxp is not given" in out and out.count("not drawn") == 1, f"i(vdd)={idd}")
     out = run(B4.format(tag="b2", card="toxe=2e-9 toxp=2e-9",
-                        body="set osdimc\nset mcseed=5\nrepeat 3\n  op\n  print i(vdd)\nend"), "b2")
+                        body="set numdgt=12\nset osdimc\nset mcseed=5\nrepeat 3\n  op\n  print i(vdd)\nend"), "b2")
     idd = seq(out, "i(vdd)")
     check("[8] BSIM4 with toxp on the card: drawn",
           len(idd) == 3 and idd[1] != idd[0] and "not drawn" not in out, f"i(vdd)={idd}")
@@ -226,13 +228,13 @@ if os.path.isfile(BSIM4):
                         body="op\nprint i(vdd)\ndc @mos_va[toxp] 2.5e-9 3.5e-9 0.5e-9\nop\nprint i(vdd)"), "b3")
     idd = seq(out, "i(vdd)")
     check("[9] BSIM4: a dc sweep of toxp leaves the drain current where it was",
-          len(idd) == 2 and abs(idd[0] - idd[1]) < 1e-12 and abs(idd[0] + 1.12387e-4) < 1e-8, f"i(vdd)={idd}")
+          len(idd) == 2 and abs(idd[0] - idd[1]) < 1e-12 and abs(idd[0] + 1.14022e-4) < 1e-8, f"i(vdd)={idd}")
     out = run(B4.format(tag="b4", card="toxe=2e-9",
                         body="set osdimc\nset mcseed=5\nop\nmontecarlo 3 -seed 1 -analysis op -expr id=i(vdd)\n"
                              "setplot $montecarlo_plot\nprint id"), "b4")
     ids = [float(m.group(1)) for m in re.finditer(r"^\d+\s+(\S+)", out, re.M)]
     check("[10] montecarlo -expr on the gated deck records the nominal, not a switched model",
-          len(ids) == 3 and all(abs(v + 1.12387e-4) < 1e-8 for v in ids), f"id={ids}")
+          len(ids) == 3 and all(abs(v + 1.14022e-4) < 1e-8 for v in ids), f"id={ids}")
 else:
     for k in (7, 8, 9, 10):
         check(f"[{k}] (BSIM4 source not found; skipped)", True)

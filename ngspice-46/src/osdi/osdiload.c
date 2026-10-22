@@ -1184,6 +1184,12 @@ static void osdi_lim_report(const OsdiRegistryEntry *entry, void *inst,
  * vds ~ 1e-8 is a relative change of 1e-8 -- a "change" every iteration,
  * and a Newton that can never be declared converged. */
 static bool osdi_lim_moved(const CKTcircuit *ckt, double lim, double raw) {
+  /* Enhancement-917 (options-and-convergence hunt F3): a raw voltage that is
+   * not finite was judged "not moved" -- its tolerance, reltol * |raw|, is
+   * infinite too, and inf > inf is false -- so the device was evaluated at
+   * the overflowed point the limiter had just brought back, and loaded NaN. */
+  if (!isfinite(raw))
+    return true;
   double tol = ckt->CKTreltol * fmax(fabs(lim), fabs(raw)) + ckt->CKTvoltTol;
   return fabs(lim - raw) > tol;
 }

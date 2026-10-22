@@ -152,6 +152,8 @@ struct CKTcircuit {
     double CKTdeltaOld[7];      /* Memory for the 7 most recent CKTdelta */
     double CKTtemp;             /* Actual temperature of CKT, initialzed to 300.15 K in cktinit.c*/
     double CKTnomTemp;          /* Reference temperature 300.15 K set in cktinit.c */
+    int CKTnomTempGiven;        /* Enhancement-914: CKTnomTemp came from `.option tnom`;
+                                   a compiled model's ungiven `tnom` then takes it */
     double CKTvt;               /* Thernmal voltage at CKTtemp */
     double CKTag[7];            /* the gear variable coefficient matrix */
 #ifdef PREDICTOR

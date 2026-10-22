@@ -1,0 +1,7 @@
+// An instance parameter named l that is an inductance: not a length.
+`include "disciplines.vams"
+module henry(p, n);
+    inout p, n; electrical p, n;
+    (* type = "instance", units = "H", desc = "Inductance" *) parameter real l = 1n;
+    analog I(p, n) <+ V(p, n) * l * 1e6;
+endmodule

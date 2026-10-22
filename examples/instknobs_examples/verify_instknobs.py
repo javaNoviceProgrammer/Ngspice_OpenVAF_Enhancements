@@ -33,16 +33,17 @@ WHAT IT PINS
 
   [3] A model that declares one of these names OWNS IT. ngspice hands over the
       netlist value and applies nothing of its own, for `m`, `temp`, `dtemp` and
-      `dt` alike. A model that declares `m` and USES it scales correctly and
-      leaves `$mfactor` at 1 -- there is no double application in either
-      direction. A model that declares `m` and IGNORES it loses the multiplier,
-      which is the model's bug and is pinned here so that "fixing" it by
-      double-applying would fail this suite.
+      `dt` alike, on the instance line.
 
-      This is exactly the case that produced a wrong finding in E-396: a probe
-      that declared `m` without using it looked like "the subcircuit multiplier
-      is silently defeated". A real compact model declares `m` and scales by it,
-      which is what `has_m` exists for.
+      A SUBCIRCUIT's multiplier is another matter since Enhancement-916: it is
+      the simulator's, and it goes to `$mfactor`, never to the model's own `m`.
+      A model that declares `m` and uses it as a multiplier still scales once
+      in `X1 m=3` -- its `m` keeps 1, `$mfactor` is 3 -- and one that declares
+      `m` for something else (a count, a grading coefficient) is multiplied
+      like any device. E-396 pinned the second case at 1x as "the model's bug";
+      the options-and-convergence hunt of 2026-09-26 (F8) showed it is the
+      ordinary case -- a module whose `m` is not a multiplier had it
+      overwritten and ran 1x in silence.
 
   [4] Temperature arrives correctly by every route -- `.temp`, `.option temp`,
       instance `temp=` (converted from Celsius), instance `dtemp=`/`dt=` (both
@@ -322,13 +323,15 @@ def main():
     # ------------------------------------------- [3] a model that owns `m`
     print("\n  -- [3] a model that declares one of these names owns it --")
     for tag, mult, note in [("own_m_used", 3.0, "declares and USES m"),
-                            ("own_m_unused", 1.0, "declares and IGNORES m (model's bug)")]:
+                            ("own_m_unused", 3.0, "declares m and does not multiply by it")]:
         dd = build(tag)[0]
         r = osdi(dd, "X1 a 0 s m=3", cards=MODEL + SUBCKTS, path="n.x1.n1")
-        check(f"{note}: X1 m=3 gives {mult:g}x", close(r["i"], -1e-3 * mult),
+        check(f"{note}: X1 m=3 gives {mult:g}x" +
+              ("" if tag == "own_m_used" else " (E-916; 1x before)"), close(r["i"], -1e-3 * mult),
               f"i={r['i']} $mfactor={r['mfact']} own_m={r['ownm']}")
-        check(f"{note}: $mfactor stays 1 (ngspice applies nothing)",
-              close(r["mfact"], 1.0), f"{r['mfact']}")
+        check(f"{note}: the subcircuit's multiplier is $mfactor's, its own m keeps 1 "
+              "(no double application; E-916)",
+              close(r["mfact"], 3.0) and close(r["ownm"], 1.0), f"{r['mfact']} {r['ownm']}")
 
     di = build("own_m_int")[0]
     for label, net, mult in [("integer m=3", "N1 a 0 mm m=3", 3.0),

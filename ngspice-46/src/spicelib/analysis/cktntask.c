@@ -37,6 +37,7 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
         /* create options by copying the circuit's defaults */
         tsk->TSKtemp            = def->TSKtemp;
         tsk->TSKnomTemp         = def->TSKnomTemp;
+        tsk->TSKnomTempGiven    = def->TSKnomTempGiven; /* Enhancement-914 */
         tsk->TSKmaxOrder        = def->TSKmaxOrder;
         tsk->TSKintegrateMethod = def->TSKintegrateMethod;
         tsk->TSKindverbosity    = def->TSKindverbosity;
@@ -150,6 +151,7 @@ CKTnewTask(CKTcircuit *ckt, TSKtask **taskPtr, IFuid taskName, TSKtask **defPtr)
         tsk->TSKpivotRelTol     = 1e-3;
         tsk->TSKtemp            = 300.15;
         tsk->TSKnomTemp         = 300.15;
+        tsk->TSKnomTempGiven    = 0;    /* Enhancement-914 */
         tsk->TSKdefaultMosM     = 1;
         tsk->TSKdefaultMosL     = 1e-4;
         tsk->TSKdefaultMosW     = 1e-4;

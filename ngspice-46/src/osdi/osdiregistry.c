@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 
 #include "osdi.h"
+#include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,6 +47,21 @@ static void free_dlerr_msg(char *msg);
 
 char *inputdir = NULL;
 int osdi_va_cache = 0;          /* Enhancement-500: `.option osdicache` */
+
+/* Enhancement-914: a case-insensitive substring test (strcasestr is not on
+ * every platform this builds on) */
+static bool e914_contains(const char *hay, const char *needle) {
+  size_t n = strlen(needle);
+  for (; *hay; hay++) {
+    size_t k = 0;
+    while (k < n && hay[k] &&
+           tolower((unsigned char)hay[k]) == tolower((unsigned char)needle[k]))
+      k++;
+    if (k == n)
+      return true;
+  }
+  return false;
+}
 
 /* Returns true if path is an absolute path and false if it is a
  * relative path. No check is done for the existance of the path. */
@@ -994,6 +1010,67 @@ extern OsdiObjectFile load_object_file(const char *input) {
         }
       }
     }
+    /* Enhancement-914: the nominal-temperature parameter (its unit and
+     * whether its default asks for the simulator's value are judged per model
+     * at setup, osdi_model_nominal_temp in osdisetup.c) */
+    uint32_t tnom_param = UINT32_MAX, tref_hint = UINT32_MAX;
+    for (uint32_t pid = descr->num_instance_params; pid < descr->num_params; pid++) {
+      const OsdiParamOpvar *po = &descr->param_opvar[pid];
+      if ((po->flags & PARA_TY_MASK) != PARA_TY_REAL || po->len ||
+          (po->flags & PARA_FLAG_FIXED))
+        continue;
+      for (uint32_t k = 0; k <= po->num_alias && tnom_param == UINT32_MAX; k++)
+        if (po->name[k] && !strcasecmp(po->name[k], "tnom"))
+          tnom_param = pid;
+      if (tnom_param == pid)
+        break;
+      if (tref_hint == UINT32_MAX && po->description &&
+          e914_contains(po->description, "temperature") &&
+          (e914_contains(po->description, "reference") ||
+           e914_contains(po->description, "nominal")))
+        tref_hint = pid;
+    }
+    if (tnom_param != UINT32_MAX)
+      tref_hint = UINT32_MAX;
+
+    /* Enhancement-915: the geometry `.option scale` applies to */
+    uint8_t num_geom = 0, geom_pow[8] = {0};
+    uint32_t geom_id[8] = {0};
+    bool self_scaled = false;
+    for (uint32_t pid = 0; pid < descr->num_params && !self_scaled; pid++)
+      for (uint32_t k = 0; k <= descr->param_opvar[pid].num_alias; k++)
+        if (descr->param_opvar[pid].name[k] &&
+            !strcasecmp(descr->param_opvar[pid].name[k], "scale"))
+          self_scaled = true;
+    for (uint32_t pid = 0; pid < descr->num_instance_params && !self_scaled && num_geom < 8;
+         pid++) {
+      const OsdiParamOpvar *po = &descr->param_opvar[pid];
+      if ((po->flags & PARA_TY_MASK) != PARA_TY_REAL || po->len ||
+          (po->flags & PARA_FLAG_FIXED) || !po->name[0])
+        continue;
+      const char *nm = po->name[0];
+      uint8_t pw = (!strcasecmp(nm, "w") || !strcasecmp(nm, "l") ||
+                    !strcasecmp(nm, "ps") || !strcasecmp(nm, "pd")) ? 1
+                 : (!strcasecmp(nm, "as") || !strcasecmp(nm, "ad")) ? 2 : 0;
+      if (!pw)
+        continue;
+      const char *u = po->units ? po->units : "";
+      const char *d = po->description ? po->description : "";
+      bool metres = pw == 1 ? (!strcmp(u, "m") || !strcmp(u, "meter") || !strcmp(u, "metre"))
+                            : (!strcmp(u, "m^2") || !strcmp(u, "m2") || !strcmp(u, "m**2") ||
+                               !strcmp(u, "m*m") || !strcmp(u, "m\xc2\xb2"));
+      if (!metres && *u)
+        continue;                     /* a declared unit that is no length */
+      /* no units: the description decides (the VA-Models BSIM4 gives as, ad,
+       * ps and pd units "" and "Source to Substrate Junction Area", ...) */
+      if (!*u)
+        metres = pw == 1 ? (e914_contains(d, "length") || e914_contains(d, "width") ||
+                            e914_contains(d, "perimeter"))
+                         : e914_contains(d, "area");
+      geom_id[num_geom] = pid;
+      geom_pow[num_geom++] = (uint8_t)(metres ? pw : (pw | OSDI_GEOM_NOUNITS));
+    }
+
     dst[i] = (OsdiRegistryEntry){
         .descriptor = descr,
         .uses_limit = lim_table_len > 0,               /* F1 */
@@ -1003,6 +1080,13 @@ extern OsdiObjectFile load_object_file(const char *input) {
         .lim_noi = lim_noi,
         .lim_type_param = lim_type_param,
         .lim_vth_param = lim_vth_param,
+        .tnom_param = tnom_param,                                       /* E-914 */
+        .tref_hint = tref_hint,
+        .num_geom = num_geom,                                           /* E-915 */
+        .geom_id = {geom_id[0], geom_id[1], geom_id[2], geom_id[3],
+                    geom_id[4], geom_id[5], geom_id[6], geom_id[7]},
+        .geom_pow = {geom_pow[0], geom_pow[1], geom_pow[2], geom_pow[3],
+                     geom_pow[4], geom_pow[5], geom_pow[6], geom_pow[7]},
         .inst_offset = (uint32_t)inst_off,
         .noise_offset = (uint32_t)noise_off,
         .dt = dt,
@@ -1130,6 +1214,10 @@ inline size_t osdi_model_data_off(void) {
 
 inline void *osdi_model_data(GENmodel *model) {
   return (void *)&((OsdiModelData *)model)->data;
+}
+
+uint32_t *osdi_model_flags(GENmodel *model) {           /* Enhancement-914 */
+  return &((OsdiModelData *)model)->ng_flags;
 }
 
 inline void *osdi_model_data_from_inst(GENinstance *inst) {

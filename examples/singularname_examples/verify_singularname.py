@@ -96,8 +96,10 @@ def main():
         check("BSIM4 gate through a Verilog-A capacitor: every report says 'check node g' (KLU said d)",
               b == {"g"}, f"blamed={sorted(b)}")
         s = scalars(out)
-        check("...and the point is the same as before: v(g)=0.5987, v(d)=0.4371",
-              abs(s.get("v(g)", 9) - 0.5986935) < 1e-4 and abs(s.get("v(d)", 9) - 0.4370724) < 1e-4,
+        # E-914: BSIM4 at the simulator's 27 C nominal temperature; its own 25 C
+        # fallback gave v(d) = 0.4371
+        check("...and the point is the same as before: v(g)=0.5987, v(d)=0.4283",
+              abs(s.get("v(g)", 9) - 0.5986935) < 1e-4 and abs(s.get("v(d)", 9) - 0.4282983) < 1e-4,
               f"v(g)={s.get('v(g)')} v(d)={s.get('v(d)')}")
         out = ngspice(op_deck("bsim4 open gate", "vdd vdd 0 1.2\nrd vdd d 10k\nnm1 d g 0 0 nmv w=1u l=0.2u\n"
                               ".model nmv bsim4va(type=1 w=1e-6 l=0.2e-6)", "v(d) v(g)", f"pre_osdi {BSIM4}\n"))

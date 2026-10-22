@@ -13,12 +13,54 @@
 #include "ngspice/ngspice.h"
 #include "ngspice/typedefs.h"
 #include "ngspice/fteext.h"   /* Enhancement-600: ft_save_probe */
+#include "ngspice/cpextern.h" /* Enhancement-915: cp_getvar("scale") */
 
 #include "osdidefs.h"
 
 #include <math.h>   /* round-3 audit: floor(), for the LRM 9.18 angle wrap */
 #include <stdint.h>
 #include <string.h>
+
+/* Enhancement-915 (hunt 2026-09-26 F2): `.option scale` on the geometry of a
+ * compiled instance, as every built-in MOSFET applies it in its setter
+ * (b4par.c, hsm2par.c, mos1par.c, ...): w, l, ps and pd are written times
+ * the scale, as and ad times its square. The registry lists the parameters
+ * (osdiitf.h geom_*): named so, in metres or square metres; one that
+ * declares no units is left as written and warned about once. A model with
+ * its own `scale` parameter applies the scale itself and lists none.
+ *
+ * The value reads back as it was written -- `print @n1[w]` gives 1 under
+ * scale=1e-6 for `w=1` -- because the machine routes read a parameter
+ * through the ask and write it back through the setter: a `.dc @n1[w]`
+ * sweep's restore and a `sens` perturbation. A built-in reads back the
+ * scaled value, so its sweep restore scales it again (`w=1` comes back as
+ * 1e-12 after `dc @m1[w] ...`). Returns 1 or 2 (the power), 0 for no
+ * scaling; *scale the factor in force. */
+static int osdi_geom_scaling(OsdiRegistryEntry *entry, int param, double *scale) {
+  for (uint8_t k = 0; k < entry->num_geom; k++) {
+    if (entry->geom_id[k] != (uint32_t)param)
+      continue;
+    double s;
+    if (!cp_getvar("scale", CP_REAL, &s, 0) || s == 1.0)
+      return 0;
+    if (entry->geom_pow[k] & OSDI_GEOM_NOUNITS) {
+      if (!entry->geom_warned) {
+        const OsdiDescriptor *descr = entry->descriptor;
+        entry->geom_warned = true;
+        fprintf(stderr,
+                "Warning: .option scale=%g is not applied to the compiled "
+                "model '%s's instance parameter '%s': it declares no units, so "
+                "ngspice cannot tell it is a length; the value is used as "
+                "written.\n",
+                s, descr->name, descr->param_opvar[param].name[0]);
+      }
+      return 0;
+    }
+    *scale = s;
+    return entry->geom_pow[k];
+  }
+  return 0;
+}
 
 static int osdi_param_access(OsdiParamOpvar *param_info, bool write_value,
                              IFvalue *value, void *ptr) {
@@ -260,6 +302,18 @@ extern int OSDIparam(int param, IFvalue *value, GENinstance *instPtr,
     value->rValue = a;
   }
 
+  /* Enhancement-915: `.option scale` on the geometry, as the built-ins */
+  IFvalue scaled_value;
+  {
+    double s;
+    int pw = osdi_geom_scaling(entry, param, &s);
+    if (pw) {
+      scaled_value = *value;
+      scaled_value.rValue *= pw == 2 ? s * s : s;
+      value = &scaled_value;
+    }
+  }
+
   void *inst = osdi_instance_data(entry, instPtr);
   void *dst = descr->access(inst, NULL, (uint32_t)param,
                             ACCESS_FLAG_SET | ACCESS_FLAG_INSTANCE);
@@ -306,6 +360,12 @@ extern int OSDImParam(int param, IFvalue *value, GENmodel *modelPtr) {
 
   void *model = osdi_model_data(modelPtr);
   void *dst = descr->access(NULL, model, (uint32_t)param, ACCESS_FLAG_SET);
+
+  /* Enhancement-914: a nominal temperature written to the model is no longer
+   * the circuit's to refresh (osdi_model_nominal_temp, osdisetup.c) */
+  if ((uint32_t)param == entry->tnom_param)
+    *osdi_model_flags(modelPtr) =
+        (*osdi_model_flags(modelPtr) & ~OSDI_MODEL_TNOM_AUTO) | OSDI_MODEL_TNOM_USER;
 
   /* recentering: see the F1 note in OSDIparam above -- user routes only.
    * E-535 fix (hunt bug 14): machine writes pin, as in OSDIparam above. */
@@ -570,7 +630,15 @@ extern int OSDIask(CKTcircuit *ckt, GENinstance *instPtr, int id,
   }
 
   void *src = descr->access(inst, model, (uint32_t)id, flags);
-  return osdi_read_param(src, value, id, descr);
+  int err = osdi_read_param(src, value, id, descr);
+  /* Enhancement-915: the geometry reads back as it was written */
+  if (err == OK && id < (int)descr->num_instance_params) {
+    double s;
+    int pw = osdi_geom_scaling(entry, id, &s);
+    if (pw)
+      value->rValue /= pw == 2 ? s * s : s;
+  }
+  return err;
 }
 
 /* Enhancement-413: the terminal names of an OSDI instance, or 0 if `name` is

@@ -1,0 +1,10 @@
+// The PSP pattern: no tnom; the reference temperature is TR, 21 C.
+`include "disciplines.vams"
+module tntr(p, n);
+    inout p, n; electrical p, n;
+    parameter real r = 1k;
+    parameter real tc = 0.01;
+    (* desc = "nominal (reference) temperature", units = "C" *)
+    parameter real TR = 21.0 from [-273.0:inf);
+    analog I(p, n) <+ V(p, n) / (r * (1 + tc * ($temperature - 273.15 - TR)));
+endmodule

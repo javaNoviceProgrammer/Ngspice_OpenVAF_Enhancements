@@ -118,7 +118,32 @@ typedef struct OsdiRegistryEntry {
   uint32_t lim_vth_param;  /* a MODEL parameter named vth0 / vto / vt0 (the threshold the limiter
                               centres on, as b4ld.c uses `von`), or UINT32_MAX for the 0.5 V default */
 
+  /* Enhancement-914: the model parameter that takes the circuit's nominal
+   * temperature, as every built-in's tnom does -- a real scalar MODEL
+   * parameter named `tnom` (any case), or UINT32_MAX; and, for a model
+   * without one, a model parameter whose description reads as its reference
+   * temperature (PSP's `tr`, MEXTRAM's `tref`), named by the note that
+   * `.option tnom` does not reach the model, or UINT32_MAX. */
+  uint32_t tnom_param;
+  uint32_t tref_hint;
+
+  /* Enhancement-915: the instance parameters `.option scale` applies to, as
+   * every built-in MOSFET applies it -- w, l, ps and pd times scale, as and
+   * ad times its square -- when the model declares them in metres (square
+   * metres for the areas), or declares no units and a description that says
+   * length, width or perimeter (area). OSDI_GEOM_NOUNITS marks one with
+   * neither: ngspice cannot tell it is a length, leaves it as written and
+   * warns once (geom_warned). A model that declares its own `scale`
+   * parameter applies the scale itself (the CMC models: r2_cmc, r3_cmc,
+   * VBIC, PSP-HV take $simparam("scale") as its default) and has none. */
+  uint8_t num_geom;
+  uint32_t geom_id[8];
+  uint8_t geom_pow[8];
+  bool geom_warned;
+
 } OsdiRegistryEntry;
+
+#define OSDI_GEOM_NOUNITS 0x80   /* Enhancement-915, in geom_pow */
 
 #define OSDI_LIM_NONE 0
 #define OSDI_LIM_MOS 1

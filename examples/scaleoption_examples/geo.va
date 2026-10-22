@@ -1,0 +1,14 @@
+// A conductance made of the six geometric instance parameters a built-in
+// MOSFET scales: w, l, ps, pd in metres (ps, pd declared as BSIM4 does, with
+// no units and a description), as, ad in square metres.
+`include "disciplines.vams"
+module geo(p, n);
+    inout p, n; electrical p, n;
+    (* type = "instance", units = "m", desc = "Width" *)    parameter real w = 0;
+    (* type = "instance", units = "m", desc = "Length" *)   parameter real l = 0;
+    (* type = "instance", units = "m^2", desc = "Source area" *) parameter real as = 0;
+    (* type = "instance", units = "m^2", desc = "Drain area" *)  parameter real ad = 0;
+    (* type = "instance", units = "", desc = "Source perimeter" *) parameter real ps = 0;
+    (* type = "instance", units = "", desc = "Drain perimeter" *)  parameter real pd = 0;
+    analog I(p, n) <+ V(p, n) * (1e3 * (w + l + ps + pd) + 1e9 * (as + ad));
+endmodule

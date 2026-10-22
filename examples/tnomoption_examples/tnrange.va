@@ -1,0 +1,10 @@
+// The HiSIM-SOI pattern: a nominal temperature the model confines to 22..32 C.
+`include "disciplines.vams"
+module tnrange(p, n);
+    inout p, n; electrical p, n;
+    parameter real r = 1k;
+    parameter real tc = 0.01;
+    (* desc = "temperature selected as a nominal value", units = "C" *)
+    parameter real TNOM = 27.0 from [22:32];
+    analog I(p, n) <+ V(p, n) / (r * (1 + tc * ($temperature - 273.15 - TNOM)));
+endmodule
