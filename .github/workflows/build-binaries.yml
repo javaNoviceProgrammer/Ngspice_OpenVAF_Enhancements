@@ -118,6 +118,49 @@ jobs:
           # Build ngspice with X (Xaw plotting) and readline support.
           echo "NGSPICE_XREADLINE=--with-x --with-readline=yes" >> "$GITHUB_ENV"
 
+      - name: Rust toolchain
+        # This step replaces dtolnay/rust-toolchain@stable. That action's retry
+        # loop covers one failure only, a checksum mismatch while the release
+        # server is mid-update (it greps rustup's output for both messages), and
+        # exits on the first attempt for anything else. So a DNS blip on
+        # static.rust-lang.org failed the step in under a second: run 42409993465
+        # (commit 4f699e3e8) lost its macos-intel build, sweep and binaries that
+        # way. The "Retrying rustup toolchain install" line in that log is the
+        # action's script being echoed, not a retry. Here every network call
+        # (sh.rustup.rs, rustup-init's own download, the toolchain install) goes
+        # through the same backoff retry as the apt/curl calls above, whatever
+        # the error.
+        #
+        # It runs before the macOS dependency step (20+ min of Homebrew on
+        # macos-intel), so a toolchain failure ends the job in a minute instead
+        # of half an hour. Neither step uses the other's output. On Linux it
+        # stays after the deps step, which installs curl.
+        #
+        # Kept from the action: rustup itself when missing (the jammy container
+        # has none; the macOS images ship it), the minimal profile, `rustup
+        # default`, CARGO_HOME, CARGO_INCREMENTAL=0, CARGO_TERM_COLOR and
+        # RUSTUP_PERMIT_COPY_RENAME. Its sparse-registry and curl 8.0
+        # workarounds only apply to Rust 1.66-1.71, so they are dropped.
+        shell: bash
+        env:
+          RUSTUP_PERMIT_COPY_RENAME: 1
+        run: |
+          set -e
+          retry() { i=1; while [ "$i" -le 5 ]; do "$@" && return 0; echo "::warning::retry $i/5 (sleep $((i*15))s): $*"; sleep $((i*15)); i=$((i+1)); done; echo "::error::gave up: $*"; return 1; }
+          export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+          echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
+          if ! command -v rustup >/dev/null; then
+            retry curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/rustup-init.sh https://sh.rustup.rs
+            retry sh /tmp/rustup-init.sh --default-toolchain none -y
+            export PATH="$CARGO_HOME/bin:$PATH"
+            echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          fi
+          retry rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+          echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"
+          rustc --version --verbose
+
       - name: Install build deps (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -228,24 +271,6 @@ jobs:
           # openvaf) does not resolve the SDK system-library stubs, which breaks
           # readline's tgetent/terminfo link check.
           echo "NGSPICE_CC=CC=/usr/bin/clang CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
-
-      - name: Pre-install rustup (Linux container)
-        if: runner.os == 'Linux'
-        # The Linux legs run inside an ubuntu:22.04 container with no preinstalled
-        # rustup, so dtolnay/rust-toolchain falls back to curling sh.rustup.rs. That
-        # fetch has intermittently failed (curl: (7) Couldn't connect to server) and
-        # the action's own --retry-connrefused does not cover a plain connect/DNS
-        # blip. Install rustup here with backoff retries and put it on PATH so the
-        # toolchain step finds it (command -v rustup) and skips its own download.
-        run: |
-          set -e
-          retry() { i=1; while [ "$i" -le 5 ]; do "$@" && return 0; echo "::warning::retry $i/5 (sleep $((i*15))s): $*"; sleep $((i*15)); i=$((i+1)); done; echo "::error::gave up: $*"; return 1; }
-          retry curl --proto '=https' --tlsv1.2 -fsSL -o /tmp/rustup-init.sh https://sh.rustup.rs
-          sh /tmp/rustup-init.sh --default-toolchain none -y
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo + target
         uses: actions/cache@v6
@@ -463,6 +488,29 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # This replaces dtolnay/rust-toolchain@stable for the reason given at the
+      # Unix job's "Rust toolchain" step: that action retries only a checksum
+      # race on the release server, not a network error, and this leg runs the
+      # same `rustup toolchain install`. windows-latest ships rustup, so there
+      # is no install-if-missing branch. The step used to sit just before the
+      # openvaf-r build, behind 20 minutes of MSYS2, ngspice, LLVM and vcpkg; it
+      # now runs first, so a failure costs a minute. None of those steps touch
+      # Rust, and the LIB path the cargo build needs is still set before it.
+      - name: Rust toolchain (MSVC)
+        shell: bash
+        env:
+          RUSTUP_PERMIT_COPY_RENAME: 1
+        run: |
+          set -e
+          retry() { i=1; while [ "$i" -le 5 ]; do "$@" && return 0; echo "::warning::retry $i/5 (sleep $((i*15))s): $*"; sleep $((i*15)); i=$((i+1)); done; echo "::error::gave up: $*"; return 1; }
+          [ -n "$CARGO_HOME" ] || CARGO_HOME="$USERPROFILE\\.cargo"
+          echo "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
+          retry rustup toolchain install stable --profile minimal --no-self-update --target x86_64-pc-windows-msvc
+          rustup default stable
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+          echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"
+          rustc --version --verbose
+
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -552,11 +600,6 @@ jobs:
           }
           # Expose to both the compiler and the Rust linker via the LIB search path
           "LIB=$env:LIB;$lib" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-      - name: Rust toolchain (MSVC)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
 
       - name: Build openvaf-r (MSVC + LLVM 18)
         shell: pwsh
