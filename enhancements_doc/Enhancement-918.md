@@ -11,7 +11,9 @@ ngspice:
 **Suites:**
 - [`pareto_examples`](../examples/pareto_examples/): 30 checks per solver, 13 of which fail on E-917.
 - `optimize` 73, `optmethods` 97, `helpcmd` 27 and the other suites that run `optimize`: unchanged.
-- The full sweep was not run.
+- The full sweep on CI at `2940faeca`: macOS Apple silicon 605 of 605, macOS Intel 601 of 601, Linux Intel 601 of 601,
+  Windows 598 of 598, Linux ARM 604 of 605. That one is `teardown` under Sparse, a timing check (doubling from 40 to 80
+  instances cost 3.26x per point, 0.18 to 0.59 ms), which passed under KLU and when CI ran it again with a trace.
 
 ## What was wrong
 
