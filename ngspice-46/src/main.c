@@ -183,6 +183,8 @@ static void app_rl_readlines(void);
 static char *prompt(void);
 #ifndef X_DISPLAY_MISSING
 # include "frontend/plotting/x11.h"
+# include <sys/ioctl.h>
+# include <sys/select.h>
 static int app_event_func(void);
 #endif
 #endif
@@ -612,6 +614,27 @@ prompt(void)
 
 #ifndef X_DISPLAY_MISSING
 #if defined(HAVE_GNUREADLINE) || defined(HAVE_BSDEDITLINE)
+#ifdef HAVE_GNUREADLINE
+/* Enhancement-919: is rl_instream readable with nothing to read? That is its
+ * end: a pipe whose writer has gone, a file read to its last byte. Asked afresh
+ * rather than taken from X11_Input's return, which a terminal's SIGWINCH also
+ * brings back with nothing to read: without this a resize ended the session. */
+static bool
+app_rl_input_at_end(void)
+{
+    int fd = fileno(rl_instream);
+    int avail = 0;
+    fd_set rfds;
+    struct timeval now = { 0, 0 };
+
+    FD_ZERO(&rfds);
+    FD_SET(fd, &rfds);
+    if (select(fd + 1, &rfds, NULL, NULL, &now) <= 0)
+        return FALSE;
+    return ioctl(fd, FIONREAD, &avail) == 0 && avail == 0;
+}
+#endif
+
 /* -------------------------------------------------------------------------- */
 /* Process device events in Readline's hook since there is no where
    else to do it now - AV */
@@ -622,6 +645,17 @@ app_event_func(void)
     static REQUEST reqst = { char_option, 0 };
     reqst.fp = rl_instream;
     X11_Input(&reqst, NULL);
+#ifdef HAVE_GNUREADLINE
+    /* Enhancement-919: while a hook is set, readline waits by asking FIONREAD
+     * and calling the hook again, and never reaches its read(), the one place
+     * it would see the end of the input. At that end X11_Input returns at once
+     * and FIONREAD says 0, so ngspice spun at the prompt for good: any run with
+     * an X display and piped input. Stuffing EOF is what rl_gather_tyi itself
+     * does at the end of the input: the line so far is accepted, and the next
+     * readline() returns NULL, which quits. */
+    if (app_rl_input_at_end())
+        rl_stuff_char(EOF);
+#endif
     return 0;
 }
 #endif
