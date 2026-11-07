@@ -2780,7 +2780,7 @@ static void al_solve(struct optctx *c, int which, double *ubest, double *fbest)
  * prologue (deck-param re-source + in-place alter). */
 static void opt_eval_objs(struct optctx *c, const double *u, double *f)
 {
-    int i, k;
+    int i, k, failed;
     char cmd[512];
 
     /* E-536 (hunt bug 17): see opt_eval -- wind down without more analyses */
@@ -2811,11 +2811,23 @@ static void opt_eval_objs(struct optctx *c, const double *u, double *f)
     c->nevals++;
 
     opt_run_cmd(c->analysis[0]);
-    for (i = 0; i < c->nobj; i++) {
+    /* Enhancement-918: a design that did not solve, or with an objective that
+     * cannot be read, is worst in every objective. A failure used to be 1e15 in
+     * that objective alone, negated with the rest under -maximize to the best
+     * value there is, and in the others whatever they read: such a design led
+     * the front. And the analysis's own failure was not asked about. */
+    failed = opt_run_failed();
+    for (i = 0; i < c->nobj && !failed; i++) {
         double v = opt_eval_expr(c->obj[i]);
         if (v >= OPT_PENALTY)
-            v = 1e15;                       /* failed eval -> dominated everywhere */
-        f[i] = c->obj_max[i] ? -v : v;      /* minimization convention */
+            failed = 1;
+        else
+            f[i] = c->obj_max[i] ? -v : v;  /* minimization convention */
+    }
+    if (failed) {
+        c->nfailed++;
+        for (i = 0; i < c->nobj; i++)
+            f[i] = OPT_PENALTY;
     }
     ft_optimizing = FALSE;
 }
@@ -3024,7 +3036,7 @@ static void nsga2(struct optctx *c)
         if (c->verbose) {
             nsga_sort(F, N, m, rank);
             int nfront = 0;
-            for (i = 0; i < N; i++) if (rank[i] == 0) nfront++;
+            for (i = 0; i < N; i++) if (rank[i] == 0 && F[i * m] < OPT_PENALTY) nfront++;
             fprintf(cp_out, "  gen %-3d  front size %-3d  (%d evals)\n",
                     gen + 1, nfront, c->nevals);
         }
@@ -3034,15 +3046,25 @@ static void nsga2(struct optctx *c)
     nsga_sort(F, N, m, rank);
     {
         int *fr = TMALLOC(int, N), nfr = 0;
-        for (i = 0; i < N; i++) if (rank[i] == 0) fr[nfr++] = i;
+        /* (E-918: with no design that solved, the failed ones are the first rank) */
+        for (i = 0; i < N; i++) if (rank[i] == 0 && F[i * m] < OPT_PENALTY) fr[nfr++] = i;
         /* sort the front by the first objective (in its natural, un-negated sense) */
         for (i = 1; i < nfr; i++) {
             int key = fr[i];
             for (j = i - 1; j >= 0 && F[fr[j] * m] > F[key * m]; j--) fr[j + 1] = fr[j];
             fr[j + 1] = key;
         }
+        if (nfr == 0 && !c->interrupted)
+            c->status = OPT_ST_NOSOLVE;
         fprintf(cp_out, "optimize: NSGA-II Pareto front -- %d non-dominated design%s "
                         "after %d evaluations\n", nfr, nfr == 1 ? "" : "s", c->nevals);
+        if (c->nfailed)
+            fprintf(cp_out, "optimize: NOTE -- %d of %d evaluation%s did not solve or had "
+                            "an objective that could not be read, and %s no part of the "
+                            "front; check that the search range stays inside every "
+                            "parameter's legal domain.\n",
+                    c->nfailed, c->nevals, c->nfailed == 1 ? "" : "s",
+                    c->nfailed == 1 ? "is" : "are");
         /* header: objective names, then parameter names */
         fprintf(cp_out, "   ");
         for (o = 0; o < m; o++)
@@ -3696,7 +3718,10 @@ void com_optimize(wordlist *wl)
                         "front\n", c.nobj);
         goto cleanup;
     }
-    if (c.np < 1 || c.ns < 1 || (!c.objective && c.nt == 0 && !c.center)) {
+    /* (E-918: under nsga2 -maximize is an objective as -minimize is; only the
+     * first -minimize sets c.objective, the scalar methods' one) */
+    if (c.np < 1 || c.ns < 1 ||
+        (!c.objective && c.nt == 0 && !c.center && !(c.method == 6 && c.nobj > 0))) {
         fprintf(cp_err, "usage: optimize (-param|-mparam|-dparam) <name> <init> "
                         "<lo> <hi> [...] -analysis <cmd> (-minimize <expr> | -target "
                         "<expr> <val> [<w>] ... | -center (-spec <m> [-max hi] [-min lo])... "

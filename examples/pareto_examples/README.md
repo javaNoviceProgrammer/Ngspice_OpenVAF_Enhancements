@@ -37,12 +37,17 @@ along it.
 
 ## What is verified
 
-`verify_pareto.py` (6 checks, both solvers):
+`verify_pareto.py` (30 checks, both solvers):
 1. the run returns a front of a reasonable number of points;
 2. every point is genuinely **non-dominated**;
 3. the published front lies on the analytic curve to **machine precision** (8.9e-16),
    and the printed front matches `f1=px²`, `f2=(px-2)²` at display precision;
 4. the front **spans** the trade-off (`px` reaches near 0 and near 2).
+5. a design that failed is **no part of a front**
+   ([E-918](../../enhancements_doc/Enhancement-918.md)): a solve with no solution, an objective
+   that cannot be read and a value the model refuses, each under `-maximize` and `-minimize`;
+   the failures are counted in a NOTE, nothing solving gives status `nosolve`, and a front of
+   `-maximize` objectives alone is accepted.
 
 ## Run
 

@@ -14,7 +14,7 @@ its reproduction.
 | [F2](#f2--the-knob-and-target-numbers-are-lenient) | *(fixed in [E-763](../../enhancements_doc/Enhancement-763.md): every number strict, an init inside the box, a positive weight, bare flags, stray tokens, extra objectives and duplicate knobs refused, a raised population announced)* `-param R2 1k abc 10k` takes `abc` as 0 and `10o` as 10 in silence; an init outside `[lo, hi]` is clamped without a word; a `-target` weight of −1 is accepted; a bare `-method`, a second `-minimize` under a scalar method and `-swarmsize 3` are absorbed in silence | **medium** — E-499 made the options strict and left the knobs and targets as they were |
 | [F3](#f3--an-expression-or-command-that-begins-with-a-minus-sign-is-read-as-a-flag) | *(fixed in [E-763](../../enhancements_doc/Enhancement-763.md): the bare form is refused with the quoting hint, `-minimize "-v(out)"` and `0-v(out)` run, a spaced target is refused)* `-minimize -v(out)` and `-target v(out) - v(in) 0.4` are torn apart at the `-`: the first ends in "incomplete or empty netlist", the second fits to a target of 0 and answers a different question | **medium** — a negated objective is the natural way to maximise |
 | [F4](#f4--simulated-annealing-seeds-its-temperature-from-the-failure-penalty) | a start inside the failing region gives `T0 = 7.9e29`; after 40 cooling levels T is still `1e26`, every uphill move is accepted, the schedule is meaningless | **medium** |
-| [F5](#f5--nsga-ii-ignores-failed-evaluations) | a design the model refuses (`g = −0.0011`) sits on the reported Pareto front with a neighbour's objectives; no NOTE; E-438's check and E-472's reuse are missing from the multi-objective path | **high** — the front is the answer |
+| [F5](#f5--nsga-ii-ignores-failed-evaluations) | *(fixed in [E-918](../../enhancements_doc/Enhancement-918.md), its setup reuse left open)* a design the model refuses (`g = −0.0011`) sits on the reported Pareto front with a neighbour's objectives; no NOTE; E-438's check and E-472's reuse are missing from the multi-objective path | **high** — the front is the answer |
 | [F6](#f6--a-search-started-inside-a-failing-region-never-leaves-it) | NM stops after 3 evaluations and LM after 15, both "converged" at the failing start; LM's residual vector is left uninitialised on a failed stage | **high** |
 | [F7](#f7--the-dparam-optimum-is-not-written-into-the-deck-when-the-fast-path-is-armed) | *(fixed in [E-767](../../enhancements_doc/Enhancement-767.md): the optimum is written into the deck once after the search when the fast path was armed)* on a deck of 80 weighted devices or more the fitted `.param` value never reaches the deck: `listing param` shows the initial value and a user `reset` reverts the circuit (0.9 → 0.5); a small deck keeps it | **high** — the answer evaporates at the next reset, and only for large decks |
 | [O1](#observations) | particle swarm with a six-member swarm collapses onto a bound (0.036 against 2e-14 for NM) and its stall test calls it converged; default swarms are fine but stop at 1e-6, four to seven orders above the local methods | observation |
@@ -174,6 +174,10 @@ is never counted on this path.
 **Fix.** The same three lines `opt_eval` has: after the analysis, `sim_status != 0` scores
 every objective 1e15 (dominated by any solvable design, which NSGA-II then drops from the
 front) and counts `nfailed`; ask for the setup reuse; print E-438's NOTE.
+
+**Fixed in [E-918](../../enhancements_doc/Enhancement-918.md),** which found it worse than this: a
+failure under `-maximize` read as the best value there is. Worst in every objective now, and said.
+`opt_reuse_ask()` on this path is left open: speed, not correctness.
 
 ## F6 — a search started inside a failing region never leaves it
 
