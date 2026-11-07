@@ -488,6 +488,8 @@ PLATFORM_EXCLUDE = {
                    "(pty, termios), which Windows has no counterpart of",
         "syntaxhl": "tests terminal syntax colouring through a POSIX pseudo-terminal",
         "vafcolor": "tests the compiler's terminal colours through a POSIX pseudo-terminal",
+        "x11eof": "drives ngspice's prompt through pipes and a POSIX pseudo-terminal "
+                  "(pty, select on a pipe), and Windows builds without X",
     },
     ("*", "x86_64"): {
         "arrayscale": "x86-64 code generation of huge modules: a 10 000-entry "
